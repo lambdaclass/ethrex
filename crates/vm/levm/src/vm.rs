@@ -11,14 +11,16 @@ use crate::{
     },
     l2_precompiles,
     memory::Memory,
-    precompiles,
+    precompiles::{
+        self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
+    },
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{Log, Transaction},
+    types::{Fork, Log, Transaction},
 };
 use std::{
     cell::RefCell,
@@ -49,6 +51,7 @@ pub struct Substate {
 
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
+    pub current_call_frame: CallFrame,
     pub env: Environment,
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
@@ -76,77 +79,67 @@ impl<'a> VM<'a> {
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
+        let mut substate = Substate::initialize(&env, tx)?;
+
+        let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
+
         let mut vm = Self {
-            call_frames: vec![],
-            env,
-            substate: Substate::default(),
+            call_frames: Vec::new(),
+            substate,
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            substate_backups: vec![],
+            substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            current_call_frame: CallFrame::new(
+                env.origin,
+                callee,
+                Address::default(), // Will be assigned at the end of prepare_execution
+                Bytes::new(),       // Will be assigned at the end of prepare_execution
+                tx.value(),
+                tx.data().clone(),
+                false,
+                env.gas_limit,
+                0,
+                true,
+                is_create,
+                0,
+                0,
+                Stack::default(),
+                Memory::default(),
+            ),
+            env,
         };
-
-        vm.setup_vm()?;
-
-        Ok(vm)
-    }
-
-    fn add_hook(&mut self, hook: impl Hook + 'static) {
-        self.hooks.push(Rc::new(RefCell::new(hook)));
-    }
-
-    /// Initializes substate and creates first execution callframe.
-    pub fn setup_vm(&mut self) -> Result<(), VMError> {
-        self.initialize_substate()?;
-
-        let (callee, is_create) = self.get_tx_callee()?;
-
-        let initial_call_frame = CallFrame::new(
-            self.env.origin,
-            callee,
-            Address::default(), // Will be assigned at the end of prepare_execution
-            Bytes::new(),       // Will be assigned at the end of prepare_execution
-            self.tx.value(),
-            self.tx.data().clone(),
-            false,
-            self.env.gas_limit,
-            0,
-            true,
-            is_create,
-            0,
-            0,
-            Stack::default(),
-            Memory::default(),
-        );
-
-        self.call_frames.push(initial_call_frame);
 
         let call_type = if is_create {
             CallType::CREATE
         } else {
             CallType::CALL
         };
-        self.tracer.enter(
+        vm.tracer.enter(
             call_type,
-            self.env.origin,
+            vm.env.origin,
             callee,
-            self.tx.value(),
-            self.env.gas_limit,
-            self.tx.data(),
+            vm.tx.value(),
+            vm.env.gas_limit,
+            vm.tx.data(),
         );
 
         #[cfg(feature = "debug")]
         {
             // Enable debug mode for printing in Solidity contracts.
-            self.debug_mode.enabled = true;
+            vm.debug_mode.enabled = true;
         }
 
-        Ok(())
+        Ok(vm)
+    }
+
+    fn add_hook(&mut self, hook: impl Hook + 'static) {
+        self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
@@ -284,5 +277,55 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
+    }
+}
+
+impl Substate {
+    /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
+    pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
+        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+
+        // Add Tx sender to accessed accounts
+        initial_accessed_addresses.insert(env.origin);
+
+        // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
+        if env.config.fork >= Fork::Shanghai {
+            initial_accessed_addresses.insert(env.coinbase);
+        }
+
+        // Add precompiled contracts addresses to accessed accounts.
+        let max_precompile_address = match env.config.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(InternalError::InvalidFork.into()),
+        };
+        for i in 1..=max_precompile_address {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(i));
+        }
+
+        // Add access lists contents to accessed accounts and accessed storage slots.
+        for (address, keys) in tx.access_list().clone() {
+            initial_accessed_addresses.insert(address);
+            let mut warm_slots = BTreeSet::new();
+            for slot in keys {
+                warm_slots.insert(slot);
+            }
+            initial_accessed_storage_slots.insert(address, warm_slots);
+        }
+
+        let substate = Substate {
+            selfdestruct_set: HashSet::new(),
+            accessed_addresses: initial_accessed_addresses,
+            accessed_storage_slots: initial_accessed_storage_slots,
+            created_accounts: HashSet::new(),
+            refunded_gas: 0,
+            transient_storage: HashMap::new(),
+            logs: Vec::new(),
+        };
+
+        Ok(substate)
     }
 }

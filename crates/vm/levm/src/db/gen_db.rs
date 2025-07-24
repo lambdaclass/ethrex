@@ -143,9 +143,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
 
@@ -222,9 +220,7 @@ impl<'a> VM<'a> {
         address: Address,
         account: Account,
     ) -> Result<(), InternalError> {
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, &account)?;
 

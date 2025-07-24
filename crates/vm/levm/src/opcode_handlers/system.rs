@@ -754,7 +754,7 @@ impl<'a> VM<'a> {
             stack,
             next_memory,
         );
-        self.call_frames.push(new_call_frame);
+        self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
@@ -889,7 +889,7 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
-            self.call_frames.push(new_call_frame);
+            self.add_callframe(new_call_frame);
 
             // Transfer value from caller to callee.
             if should_transfer_value {

@@ -362,15 +362,33 @@ impl CallFrame {
 
 impl<'a> VM<'a> {
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
-        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
+        Ok(&mut self.current_call_frame)
     }
 
     pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
-        self.call_frames.last().ok_or(InternalError::CallFrame)
+        Ok(&self.current_call_frame)
     }
 
+    /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
+    #[inline(always)]
+    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        self.call_frames.push(new_call_frame);
+        #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
+        unsafe {
+            std::mem::swap(
+                &mut self.current_call_frame,
+                self.call_frames.last_mut().unwrap_unchecked(),
+            );
+        }
+    }
+
+    #[inline(always)]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
-        self.call_frames.pop().ok_or(InternalError::CallFrame)
+        let mut new = self.call_frames.pop().ok_or(InternalError::CallFrame)?;
+
+        std::mem::swap(&mut new, &mut self.current_call_frame);
+
+        Ok(new)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {

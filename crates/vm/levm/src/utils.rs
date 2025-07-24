@@ -1,5 +1,5 @@
 use crate::{
-    EVMConfig,
+    EVMConfig, Environment,
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -20,7 +20,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, tx_fields::*},
+    types::{Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{
@@ -615,21 +615,26 @@ impl<'a> VM<'a> {
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
     /// Bool indicates whether it is a `create` transaction or not.
-    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
-        match self.tx.to() {
+    pub fn get_tx_callee(
+        tx: &Transaction,
+        db: &mut GeneralizedDatabase,
+        env: &Environment,
+        substate: &mut Substate,
+    ) -> Result<(Address, bool), VMError> {
+        match tx.to() {
             TxKind::Call(address_to) => {
-                self.substate.accessed_addresses.insert(address_to);
+                substate.accessed_addresses.insert(address_to);
 
                 Ok((address_to, false))
             }
 
             TxKind::Create => {
-                let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
+                let sender_nonce = db.get_account(env.origin)?.info.nonce;
 
-                let created_address = calculate_create_address(self.env.origin, sender_nonce)?;
+                let created_address = calculate_create_address(env.origin, sender_nonce)?;
 
-                self.substate.accessed_addresses.insert(created_address);
-                self.substate.created_accounts.insert(created_address);
+                substate.accessed_addresses.insert(created_address);
+                substate.created_accounts.insert(created_address);
 
                 Ok((created_address, true))
             }
