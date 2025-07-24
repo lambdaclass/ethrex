@@ -124,7 +124,7 @@ impl<'a> VM<'a> {
             0,
             Stack::default(),
             Memory::default(),
-            self.jump_cache.clone()
+            self.jump_cache.clone(),
         );
 
         self.call_frames.push(initial_call_frame);
