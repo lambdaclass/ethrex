@@ -205,6 +205,9 @@ async fn test_upgrade(
         ],
     )
     .await;
+
+    assert!(tx_receipt.receipt.status);
+
     let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
         .await?;
     let final_impl = l2_client
@@ -411,6 +414,9 @@ async fn test_erc20_roundtrip(
     let res = wait_for_transaction_receipt(deposit_tx, l1_client, 10)
         .await
         .unwrap();
+
+    assert!(res.receipt.status);
+
     wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
         .await
         .unwrap();
@@ -508,6 +514,9 @@ async fn test_aliasing(
         ],
     )
     .await;
+
+    assert!(receipt_l1.receipt.status);
+
     let receipt_l2 =
         wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
             .await
@@ -564,9 +573,13 @@ async fn test_erc20_failed_deposit(
     )
     .await
     .unwrap();
+
     let res = wait_for_transaction_receipt(deposit_tx, l1_client, 10)
         .await
         .unwrap();
+
+    assert!(res.receipt.status);
+
     let res = wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
         .await
         .unwrap();
@@ -646,6 +659,9 @@ async fn test_forced_withdrawal(
     println!("Waiting for L1 to L2 transaction receipt on L1");
 
     let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.receipt.status);
+
     l1_gas_costs +=
         l1_to_l2_tx_receipt.tx_info.gas_used * l1_to_l2_tx_receipt.tx_info.effective_gas_price;
     println!("Waiting for L1 to L2 transaction receipt on L2");
@@ -797,6 +813,8 @@ async fn test_deposit(
     let deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
 
+    assert!(deposit_tx_receipt.receipt.status);
+
     let depositor_l1_balance_after_deposit = l1_client
         .get_balance(depositor, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -917,6 +935,9 @@ async fn test_transfer_with_privileged_tx(
     println!("Waiting for L1 to L2 transaction receipt on L1");
 
     let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.receipt.status);
+
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
     let _ = wait_for_l2_deposit_receipt(
@@ -1000,6 +1021,9 @@ async fn test_privileged_tx_not_enough_balance(
     println!("Waiting for L1 to L2 transaction receipt on L1");
 
     let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.receipt.status);
+
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
     let _ = wait_for_l2_deposit_receipt(
@@ -1467,6 +1491,8 @@ async fn test_call_to_contract_with_deposit(
     println!("Waiting for L1 to L2 transaction receipt on L1");
 
     let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.receipt.status);
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
