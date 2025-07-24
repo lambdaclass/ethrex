@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753386576911,
+  "lastUpdate": 1753386912160,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12568,6 +12568,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007760069767441861,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3a786b384cbbc2ffd66c613d2ae613cfc16c277c",
+          "message": "perf(l2): avoid cloning all fields from ExecutionWitnessResult  (#3765)\n\n**Motivation**\n\nWhen proving a large batch performance was being affected because we\nwere cloning the entire ExecutionWitnessResult struct, this meant\ncloning all the BlockHeaders, Code and ChainConfig for every block.\n\n**Description**\n\n- Wrap ExecutionWitnessResult in a struct that has an inner field\nArc<Mutex<ExecutionWitnessResult>> that implements VmDatabase trait,\nwhich can be cheaply cloned\n- Remove all the Arc<Mutex<>> from ExecutionWitnessResult, remove the\nVmDatabase trait implementation, remove the derive Clone.\n\n**Perf Metrics**\n\ncommand:\n\n```\nTRACE_FILE=output.json TRACE_SAMPLE_RATE=100 RUST_BACKTRACE=full cargo run --release --features \"sp1,l2\" -- execute batch --rpc-url RPC_URL --network 65536300 13\n```\n\nspecs:\n```\nModel Identifier: MacBookAir10,1\nChip: Apple M1\nTotal Number of Cores: 8 (4 performance and 4 efficiency)\nMemory: 16 GB\nSystem Firmware Version: 11881.121.1\nOS Loader Version: 11881.121.1\n```\n\ncommits:\nThis branch (commit 16420ed)\nMain (commit ce5c47df7)\n\n- Time:\n    Main:    `Elapsed: 147.28s`\n    This branch:    `Elapsed: 67.07s`\n- Samply\n    Main: https://share.firefox.dev/3H2Hd5A\n    This branch: https://share.firefox.dev/40yeDzP",
+          "timestamp": "2025-07-24T15:46:20Z",
+          "tree_id": "0b98b16f157af9b0d0328bff1eea0720401c6c6e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3a786b384cbbc2ffd66c613d2ae613cfc16c277c"
+        },
+        "date": 1753386899603,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013254538232373386,
             "unit": "Mgas/s"
           }
         ]
