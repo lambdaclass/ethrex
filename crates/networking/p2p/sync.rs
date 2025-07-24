@@ -346,6 +346,7 @@ impl Syncer {
                         for (account_hash, account) in
                             account_hashes.into_iter().zip(account_states)
                         {
+                            // TODO: download bytecodes after healing is done
                             if account.code_hash != *EMPTY_KECCACK_HASH {
                                 bytecode_hashes.push(account.code_hash);
                             }
@@ -429,7 +430,8 @@ impl Syncer {
                         time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
                     }
                     let state_root = pivot_header.state_root;
-                    healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+                    healing_done =
+                        heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
                     info!("healing_done: {healing_done}");
                 }
 
