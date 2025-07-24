@@ -101,7 +101,7 @@ impl RLPDecode for Block {
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     #[serde(skip)]
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=crate::rkyv_utils::OnecCellBlockHashWrapper)]
     pub hash: OnceCell<BlockHash>,
     #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub parent_hash: H256,
