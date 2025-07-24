@@ -120,7 +120,7 @@ impl GenServer for EthrexMonitor {
     ) -> Result<Self::State, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(state.widget.tick_rate),
+            Duration::from_millis(state.widget.cfg.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
