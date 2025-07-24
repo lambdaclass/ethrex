@@ -322,17 +322,6 @@ impl Syncer {
                     })
                     .collect();
 
-                let (storages_key_value_pairs, should_continue) = self
-                    .peers
-                    .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
-                    .await
-                    .unwrap();
-
-                assert!(
-                    !should_continue,
-                    "since we downloaded the whole trie, the storage ranges should not continue"
-                );
-
                 let mut healing_done = false;
                 while !healing_done {
                     info!("started healing pivot movement");
@@ -394,6 +383,17 @@ impl Syncer {
                 info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
                 let storages_store_start = Instant::now();
+
+                let (storages_key_value_pairs, should_continue) = self
+                    .peers
+                    .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
+                    .await
+                    .unwrap();
+
+                assert!(
+                    !should_continue,
+                    "since we downloaded the whole trie, the storage ranges should not continue"
+                );
 
                 let store_clone = store.clone();
                 tokio::task::spawn_blocking(move || {
