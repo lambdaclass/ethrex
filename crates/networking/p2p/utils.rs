@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ethrex_common::{H256, H512};
+use ethrex_common::{H256, H512, types::BlockHeader};
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 
@@ -45,4 +45,21 @@ pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
         }
     }
     addr
+}
+
+/// Validates the block headers received from a peer by checking that the parent hash of each header
+/// matches the hash of the previous one, i.e. the headers are chained
+pub fn are_block_headers_chained(block_headers: &[BlockHeader]) -> bool {
+    block_headers
+        .windows(2)
+        .all(|headers| headers[1].parent_hash == headers[0].hash())
+}
+
+pub fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }

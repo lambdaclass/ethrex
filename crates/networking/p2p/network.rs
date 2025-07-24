@@ -175,12 +175,6 @@ pub async fn periodically_show_peer_stats() {
 
         /* Snap Sync */
 
-        // Headers
-        let total_headers_downloaders = METRICS.total_header_downloaders.lock().await;
-        let free_headers_downloaders = METRICS.free_header_downloaders.lock().await;
-        let busy_headers_downloaders =
-            total_headers_downloaders.saturating_sub(*free_headers_downloaders);
-
         let total_headers_to_download = METRICS.headers_to_download.lock().await;
         let downloaded_headers = METRICS.downloaded_headers.lock().await;
         let remaining_headers = total_headers_to_download.saturating_sub(*downloaded_headers);
@@ -208,11 +202,7 @@ pub async fn periodically_show_peer_stats() {
             }
         }
 
-        // Account Tries
-        let total_account_tries_downloaders = METRICS.total_accounts_downloaders.lock().await;
-        let free_account_tries_downloaders = METRICS.free_accounts_downloaders.lock().await;
-        let busy_account_tries_downloaders =
-            total_account_tries_downloaders.saturating_sub(*free_account_tries_downloaders);
+        let downloaded_account_tries = *METRICS.downloaded_account_tries.lock().await;
 
         let time_taken_to_download_account_tries = {
             let end_time = METRICS
@@ -232,12 +222,6 @@ pub async fn periodically_show_peer_stats() {
                 })
         };
 
-        // Storage Tries
-        let total_storage_tries_downloaders = METRICS.total_storages_downloaders.lock().await;
-        let free_storage_tries_downloaders = METRICS.free_storages_downloaders.lock().await;
-        let busy_storage_tries_downloaders =
-            total_storage_tries_downloaders.saturating_sub(*free_storage_tries_downloaders);
-
         let time_taken_to_download_storage_tries = {
             let end_time = METRICS
                 .storage_tries_download_end_time
@@ -256,21 +240,64 @@ pub async fn periodically_show_peer_stats() {
                 })
         };
 
-        // Bytecodes
-        let total_bytecode_downloaders = METRICS.total_bytecode_downloaders.lock().await;
-        let free_bytecode_downloaders = METRICS.free_bytecode_downloaders.lock().await;
-        let busy_bytecode_downloaders =
-            total_bytecode_downloaders.saturating_sub(*free_bytecode_downloaders);
+        let total_storage_tries_to_download = METRICS.storage_tries_to_download.lock().await;
 
-        let time_taken_to_download_bytecodes = {
+        let downloaded_storage_tries = METRICS.downloaded_storage_tries.lock().await;
+
+        let remaining_storage_tries =
+            total_storage_tries_to_download.saturating_sub(*downloaded_storage_tries);
+
+        let current_storage_tries_download_progress = if *total_storage_tries_to_download == 0 {
+            0.0
+        } else {
+            (*downloaded_storage_tries as f64 / *total_storage_tries_to_download as f64) * 100.0
+        };
+
+        // Storage tries state roots
+        let total_storage_tries_state_roots_to_compute =
+            METRICS.storage_tries_state_roots_to_compute.lock().await;
+
+        let computed_storage_tries_state_roots = METRICS.storage_tries_state_roots_computed.get();
+
+        let remaining_storage_tries_state_roots = total_storage_tries_state_roots_to_compute
+            .saturating_sub(computed_storage_tries_state_roots);
+
+        let current_storage_tries_state_roots_progress =
+            if *total_storage_tries_state_roots_to_compute == 0 {
+                0.0
+            } else {
+                (computed_storage_tries_state_roots as f64
+                    / *total_storage_tries_state_roots_to_compute as f64)
+                    * 100.0
+            };
+
+        let time_taken_to_compute_storage_tries_state_roots = {
             let end_time = METRICS
-                .storage_tries_download_end_time
+                .storage_tries_state_roots_end_time
                 .lock()
                 .await
                 .unwrap_or(SystemTime::now());
 
             METRICS
-                .storage_tries_download_start_time
+                .storage_tries_state_roots_start_time
+                .lock()
+                .await
+                .map(|start_time| {
+                    end_time
+                        .duration_since(start_time)
+                        .expect("Failed to get storage tries state roots compute time")
+                })
+        };
+
+        let time_taken_to_download_bytecodes = {
+            let end_time = METRICS
+                .bytecode_download_end_time
+                .lock()
+                .await
+                .unwrap_or(SystemTime::now());
+
+            METRICS
+                .bytecode_download_start_time
                 .lock()
                 .await
                 .map(|start_time| {
@@ -280,12 +307,23 @@ pub async fn periodically_show_peer_stats() {
                 })
         };
 
+        let total_bytecodes_to_download = METRICS.bytecodes_to_download.lock().await;
+
+        let downloaded_bytecodes = METRICS.downloaded_bytecodes.lock().await;
+
+        let remaining_bytecodes = total_bytecodes_to_download.saturating_sub(*downloaded_bytecodes);
+
+        let current_bytecodes_download_progress = if *total_bytecodes_to_download == 0 {
+            0.0
+        } else {
+            (*downloaded_bytecodes as f64 / *total_bytecodes_to_download as f64) * 100.0
+        };
+
         info!(
             r#"
-elapsed: {elapsed}
-
 P2P:
 ====
+elapsed: {elapsed}
 {current_contacts} current contacts ({new_contacts_rate} contacts/m)
 {discarded_nodes} discarded nodes
 {discovered_nodes} total discovered nodes over time
@@ -299,56 +337,20 @@ Clients diversity: {peers_by_client:#?}
 
 Snap Sync:
 ==========
-
-Overview:
----------
-time to receive sync head block: {time_to_retrieve_sync_head_block}
-sync head hash: {sync_head_hash:#x}
-sync head block: {sync_head_block}
-
-Headers:
---------
-download time: {headers_download_time}
-progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers})
-total downloaders: {total_headers_downloaders}
-busy downloaders: {busy_headers_downloaders}
-free downloaders: {free_headers_downloaders}
-download tasks queued: {header_downloads_tasks_queued}
-
-Account Tries:
---------------
-download time: {account_tries_download_time}
-downloaded: {downloaded_account_tries}
-total downloaders: {total_account_tries_downloaders}
-busy downloaders: {busy_account_tries_downloaders}
-free downloaders: {free_account_tries_downloaders}
-download tasks queued: {account_tries_tasks_queued}
-
-Storage Tries:
---------------
-download time: {storage_tries_download_time}
-downloaded: {downloaded_storage_tries}
-total downloaders: {total_storage_tries_downloaders}
-busy downloaders: {busy_storage_tries_downloaders}
-free downloaders: {free_storage_tries_downloaders}
-download tasks queued: {storage_tries_tasks_queued}
-
-Bytecodes:
---------------
-download time: {bytecodes_download_time}
-downloaded: {downloaded_bytecodes}
-total downloaders: {total_bytecode_downloaders}
-busy downloaders: {busy_bytecode_downloaders}
-free downloaders: {free_bytecode_downloaders}
-download tasks queued: {bytecode_downloads_tasks_queued}"#,
+headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers}, elapsed: {headers_download_time})
+downloaded account tries: {downloaded_account_tries}, elapsed: {account_tries_download_time}
+storage tries progress: {storage_tries_download_progress} (total: {storage_tries_to_download}, downloaded: {downloaded_storage_tries}, remaining: {remaining_storage_tries}, slots: {downloaded_storage_slots}, tasks: {storage_tries_tasks_queued}, elapsed: {storage_tries_download_time})
+account tries state root: {account_tries_state_root}
+storage tries state root progress: {storage_tries_state_roots_compute_progress} (total: {total_storage_tries_state_roots_to_compute}, computed: {computed_storage_tries_state_roots}, remaining: {remaining_storage_tries_state_roots}, elapsed: {storage_tries_state_roots_compute_time})
+bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {downloaded_bytecodes}, remaining: {remaining_bytecodes}, elapsed: {bytecodes_download_time})"#,
             elapsed = format_duration(start.elapsed()),
+            peers = METRICS.peers.lock().await,
             current_contacts = METRICS.contacts.lock().await,
             new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
             discarded_nodes = METRICS.discarded_nodes.get(),
             discovered_nodes = METRICS.discovered_nodes.get(),
             sent_pings = METRICS.pings_sent.get(),
             sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
-            peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
             lost_peers = rlpx_disconnections
                 .values()
@@ -358,52 +360,47 @@ download tasks queued: {bytecode_downloads_tasks_queued}"#,
             rlpx_connection_attempts = METRICS.connection_attempts.get(),
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
-            time_to_retrieve_sync_head_block = METRICS
-                .time_to_retrieve_sync_head_block
-                .lock()
-                .await
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
-            sync_head_hash = *METRICS.sync_head_hash.lock().await,
-            sync_head_block = METRICS.sync_head_block.lock().await,
-            headers_download_time = maybe_headers_download_time
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
+            peers_by_client = rlpx_connection_client_types,
             headers_download_progress = format!("{current_headers_download_progress:.2}%"),
             headers_to_download = total_headers_to_download,
             downloaded_headers = downloaded_headers,
-            remaining_headers = remaining_headers,
-            total_headers_downloaders = total_headers_downloaders,
-            busy_headers_downloaders = busy_headers_downloaders,
-            free_headers_downloaders = free_headers_downloaders,
-            header_downloads_tasks_queued = METRICS.header_downloads_tasks_queued.lock().await,
-            peers_by_client = rlpx_connection_client_types,
+            downloaded_account_tries = downloaded_account_tries,
+            storage_tries_download_progress =
+                format!("{current_storage_tries_download_progress:.2}%"),
+            storage_tries_to_download = total_storage_tries_to_download,
+            downloaded_storage_tries = downloaded_storage_tries,
+            bytecodes_download_progress = format!("{current_bytecodes_download_progress:.2}%"),
+            bytecodes_to_download = total_bytecodes_to_download,
+            downloaded_bytecodes = downloaded_bytecodes,
+            headers_download_time = maybe_headers_download_time
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_owned()),
             account_tries_download_time = time_taken_to_download_account_tries
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
-            downloaded_account_tries = *METRICS.downloaded_account_tries.lock().await,
-            total_account_tries_downloaders = total_account_tries_downloaders,
-            busy_account_tries_downloaders = busy_account_tries_downloaders,
-            free_account_tries_downloaders = free_account_tries_downloaders,
-            account_tries_tasks_queued = METRICS.accounts_downloads_tasks_queued.lock().await,
             storage_tries_download_time = time_taken_to_download_storage_tries
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
-            downloaded_storage_tries = *METRICS.downloaded_storage_tries.lock().await,
-            total_storage_tries_downloaders = total_storage_tries_downloaders,
-            busy_storage_tries_downloaders = busy_storage_tries_downloaders,
-            free_storage_tries_downloaders = free_storage_tries_downloaders,
-            storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
             bytecodes_download_time = time_taken_to_download_bytecodes
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
-            downloaded_bytecodes = *METRICS.downloaded_bytecodes.lock().await,
-            total_bytecode_downloaders = total_bytecode_downloaders,
-            busy_bytecode_downloaders = busy_bytecode_downloaders,
-            free_bytecode_downloaders = free_bytecode_downloaders,
-            bytecode_downloads_tasks_queued = METRICS.bytecode_downloads_tasks_queued.lock().await,
-            // rlpx_disconnections = rlpx_disconnections,
-            // rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
+            account_tries_state_root = METRICS
+                .account_tries_state_root
+                .lock()
+                .await
+                .map(|state_root| format!("{state_root:#x}"),)
+                .unwrap_or_else(|| "N/A".to_owned()),
+            storage_tries_state_roots_compute_progress =
+                format!("{current_storage_tries_state_roots_progress:.2}%"),
+            total_storage_tries_state_roots_to_compute = total_storage_tries_state_roots_to_compute,
+            computed_storage_tries_state_roots = computed_storage_tries_state_roots,
+            remaining_storage_tries_state_roots = remaining_storage_tries_state_roots,
+            storage_tries_state_roots_compute_time =
+                time_taken_to_compute_storage_tries_state_roots
+                    .map(format_duration)
+                    .unwrap_or_else(|| "-".to_owned()),
+            downloaded_storage_slots = *METRICS.downloaded_storage_slots.lock().await,
+            storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
         );
 
         tokio::time::sleep(Duration::from_secs(1)).await;

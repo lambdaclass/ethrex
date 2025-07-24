@@ -56,11 +56,6 @@ pub struct PeerHandler {
     peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
-pub enum BlockRequestOrder {
-    OldToNew,
-    NewToOld,
-}
-
 impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {
@@ -135,7 +130,6 @@ impl PeerHandler {
         &self,
         start: u64,
         sync_head: H256,
-        order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
 
@@ -264,7 +258,7 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
@@ -379,12 +373,6 @@ impl PeerHandler {
                     break;
                 }
 
-                let batch_show = downloaded_count / 10_000;
-
-                if current_show < batch_show {
-                    current_show += 1;
-                }
-
                 continue;
             };
 
@@ -425,11 +413,6 @@ impl PeerHandler {
                 .unwrap();
             });
 
-            // 4) assign the tasks to the peers
-            //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-
-            // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
-
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
             }
@@ -442,17 +425,17 @@ impl PeerHandler {
 
         let elapsed = start_time.elapsed().expect("Failed to get elapsed time");
 
-        info!(
+        debug!(
             "Downloaded {} headers in {} seconds",
             ret.len(),
-            format_duration(elapsed)
+            super::utils::format_duration(elapsed)
         );
 
         {
             let downloaded_headers = ret.len();
             let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
 
-            info!(
+            debug!(
                 "Downloaded {} headers, unique: {}, duplicates: {}",
                 downloaded_headers,
                 unique_headers.len(),
@@ -475,17 +458,7 @@ impl PeerHandler {
             }
         }
 
-        // 4) assign the tasks to the peers
-        //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-        //     4.2) mark the peer as busy
-        //     4.3) wait for the response and handle it
-
-        // 5) loop until all the chunks are received (retry to get the chunks that failed)
-
-        ret.sort_by(|x, y| x.number.cmp(&y.number));
-        info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
-        // std::process::exit(0);
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
@@ -533,7 +506,7 @@ impl PeerHandler {
         .map_err(|_| "Failed to receive block headers")?
         .ok_or("Block no received".to_owned())?;
 
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+        if super::utils::are_block_headers_chained(&block_headers) {
             Ok(block_headers)
         } else {
             warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
@@ -706,7 +679,11 @@ impl PeerHandler {
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
     /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
-    /// Returns the account range or None if:
+    ///
+    /// # Returns
+    ///
+    /// The account range or `None` if:
+    ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
@@ -797,7 +774,7 @@ impl PeerHandler {
 
                 downloaded_count += accounts.len() as u64;
 
-                info!(
+                debug!(
                     "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
                     accounts.len(),
                     peer_id
@@ -844,23 +821,12 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -926,7 +892,8 @@ impl PeerHandler {
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1086,6 +1053,7 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
+        *METRICS.bytecodes_to_download.lock().await = all_bytecode_hashes.len() as u64;
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
@@ -1126,7 +1094,7 @@ impl PeerHandler {
                 let peer_score = scores.entry(peer_id).or_default();
                 *peer_score += 1;
 
-                info!(
+                debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
                     bytecodes.len(),
                 );
@@ -1169,23 +1137,12 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -1241,7 +1198,8 @@ impl PeerHandler {
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1328,7 +1286,6 @@ impl PeerHandler {
         mut pivot_header: BlockHeader,
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
-        const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
@@ -1336,17 +1293,25 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
+        #[derive(Debug)]
+        struct Task {
+            start_index: usize,
+            end_index: usize,
+            start_hash: H256,
+            // end_hash is None if the task is for the first big storage request
+            end_hash: Option<H256>,
+        }
+        let mut tasks_queue_not_started = VecDeque::<Task>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
-            tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
+            tasks_queue_not_started.push_back(Task {
+                start_index: chunk_start,
+                end_index: chunk_end,
+                start_hash: H256::zero(),
+                end_hash: None,
+            });
         }
-        // Modify the last chunk to go up to the last element
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .expect("we just inserted some elements");
-        last_task.1 = account_storage_roots.len();
 
         // 2) request the chunks from peers
         let peers_table = self
@@ -1357,13 +1322,14 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
         let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
 
+        #[derive(Debug)]
         struct TaskResult {
             start_index: usize,
             account_storages: Vec<Vec<(H256, U256)>>,
             peer_id: H256,
             remaining_start: usize,
             remaining_end: usize,
-            remaining_start_hash: H256,
+            remaining_hash_range: (H256, Option<H256>),
         }
 
         // channel to send the tasks to the peers
@@ -1376,10 +1342,15 @@ impl PeerHandler {
         );
 
         info!("Starting to download storage ranges from peers");
-
-        *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+        *METRICS.storage_tries_to_download.lock().await = account_storage_roots.len() as u64;
+        METRICS
+            .storage_tries_download_start_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
+        let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
@@ -1401,18 +1372,93 @@ impl PeerHandler {
                     peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (hash_start, hash_end),
                 } = result;
+                if task_count - completed_tasks < 30 {
+                    info!(
+                        "Received result for account_hash: {}, account storages: {}, peer id: {peer_id}, remaining start: {remaining_start}, remaining end: {remaining_end}, hash range: {hash_start:?} - {hash_end:?}",
+                        account_storage_roots[start_index].0,
+                        account_storages.len(),
+                    );
+                }
+                completed_tasks += 1;
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
 
                 if remaining_start < remaining_end {
                     trace!("Failed to download chunk from peer {peer_id}");
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true;
-                    });
-                    let task = (remaining_start, remaining_end, remaining_start_hash);
-                    tasks_queue_not_started.push_back(task);
-                } else {
-                    completed_tasks += 1;
+                    if hash_start.is_zero() {
+                        // Task is common storage range request
+                        let task = Task {
+                            start_index: remaining_start,
+                            end_index: remaining_end,
+                            start_hash: H256::zero(),
+                            end_hash: None,
+                        };
+                        tasks_queue_not_started.push_back(task);
+                        task_count += 1;
+                    } else if let Some(hash_end) = hash_end {
+                        // Task was a big storage account result
+                        if hash_start <= hash_end {
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: hash_start,
+                                end_hash: Some(hash_end),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                    } else {
+                        if remaining_start + 1 < remaining_end {
+                            let task = Task {
+                                start_index: remaining_start + 1,
+                                end_index: remaining_end,
+                                start_hash: H256::zero(),
+                                end_hash: None,
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                        // Task found a big storage account, so we split the chunk into multiple chunks
+                        let start_hash_u256 = U256::from_big_endian(&hash_start.0);
+                        let missing_storage_range = U256::MAX - start_hash_u256;
+
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap().max(1);
+                        let storage_density = start_hash_u256 / slot_count;
+
+                        let slots_per_chunk = U256::from(10000);
+                        let chunk_size = storage_density
+                            .checked_mul(slots_per_chunk)
+                            .unwrap_or(U256::MAX);
+
+                        let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+
+                        for i in 0..chunk_count {
+                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                            let start_hash = H256::from_uint(&start_hash_u256);
+                            let end_hash = if i == chunk_count - 1 {
+                                H256::repeat_byte(0xff)
+                            } else {
+                                let end_hash_u256 = start_hash_u256
+                                    .checked_add(chunk_size - 1)
+                                    .unwrap_or(U256::MAX);
+                                H256::from_uint(&end_hash_u256)
+                            };
+
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_start + 1,
+                                start_hash,
+                                end_hash: Some(end_hash),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                        debug!("Split big storage account into {chunk_count} chunks.");
+                    }
                 }
 
                 if account_storages.is_empty() {
@@ -1426,9 +1472,18 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
+                if let Some(hash_end) = hash_end {
+                    // This is a big storage account, and we might have received duplicate slots
+                    let last_slot = account_storages[0].last().unwrap().clone();
+                    // If the last slot is outside the range, remove it
+                    if last_slot.0 > hash_end {
+                        account_storages[0].pop();
+                    }
+                }
+
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
-                if !remaining_start_hash.is_zero() {
+                if !hash_start.is_zero() {
                     downloaded_count -= 1;
                 }
 
@@ -1437,12 +1492,16 @@ impl PeerHandler {
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
-                info!(
+
+                *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
+
+                debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
+                debug!(
+                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
+                    tasks_queue_not_started.len()
+                );
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
                     all_account_storages[start_index].extend(account_storages.remove(0));
@@ -1480,18 +1539,10 @@ impl PeerHandler {
                 continue;
             }
 
-            // let Some(free_peer_id) = free_downloaders
-            //     .get(random::<usize>() % free_downloaders.len())
-            //     .map(|(peer_id, _)| *peer_id)
-            // else {
-            //     debug!("No free downloaders available, waiting for a peer to finish, retrying");
-            //     continue;
-            // };
-
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1510,8 +1561,8 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((start, end, start_hash)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
+            let Some(task) = tasks_queue_not_started.pop_front() else {
+                if completed_tasks >= task_count {
                     info!("All account storages downloaded successfully");
                     break;
                 }
@@ -1527,16 +1578,12 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            let size = if !start_hash.is_zero() {
-                1
-            } else {
-                end - start
-            };
+
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
                     .iter()
-                    .skip(start)
-                    .take((size).min(MAX_STORAGE_REQUEST_SIZE))
+                    .skip(task.start_index)
+                    .take(task.end_index - task.start_index)
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
 
@@ -1559,18 +1606,26 @@ impl PeerHandler {
                 time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             }
             let state_root = pivot_header.state_root;
+            if task_count - completed_tasks < 30 {
+                info!(
+                    "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
+                    chunk_account_hashes.first().unwrap_or(&H256::zero()),
+                    chunk_storage_roots.first().unwrap_or(&H256::zero()),
+                );
+            }
 
             tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}"
-                );
+                let start = task.start_index;
+                let end = task.end_index;
+                let start_hash = task.start_hash;
+
                 let empty_task_result = TaskResult {
-                    start_index: start,
+                    start_index: task.start_index,
                     account_storages: Vec::new(),
                     peer_id: free_peer_id,
-                    remaining_start: start,
-                    remaining_end: end,
-                    remaining_start_hash: start_hash,
+                    remaining_start: task.start_index,
+                    remaining_end: task.end_index,
+                    remaining_hash_range: (start_hash, task.end_hash),
                 };
                 let request_id = rand::random();
                 let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -1578,11 +1633,12 @@ impl PeerHandler {
                     root_hash: state_root,
                     account_hashes: chunk_account_hashes.clone(),
                     starting_hash: start_hash,
-                    limit_hash: HASH_MAX,
+                    limit_hash: task.end_hash.unwrap_or(HASH_MAX),
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1608,22 +1664,12 @@ impl PeerHandler {
                 .flatten();
                 let Some((slots, proof)) = request_result else {
                     tracing::error!("Failed to get storage range");
-                    let task_result = TaskResult {
-                        start_index: start,
-                        account_storages: chunk_account_hashes.iter().map(|_| vec![]).collect(),
-                        peer_id: free_peer_id,
-                        remaining_start: end,
-                        remaining_end: end,
-                        remaining_start_hash: H256::zero(),
-                    };
-                    tx.send(task_result).await.ok();
-                    //tx.send(empty_task_result).await.ok();
+                    tx.send(empty_task_result).await.ok();
                     return;
                 };
-                if slots.is_empty() {
+                if slots.is_empty() && proof.is_empty() {
                     tx.send(empty_task_result).await.ok();
-                    // Too spammy
-                    // tracing::error!("Received empty account range");
+                    tracing::debug!("Received empty account range");
                     return;
                 }
                 // Check we got some data and no more than the requested amount
@@ -1690,7 +1736,8 @@ impl PeerHandler {
                 }
                 let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
                     let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
-                    let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                    let next_hash_u256 =
+                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
                     let next_hash = H256::from_uint(&next_hash_u256);
                     (start + account_storages.len() - 1, end, next_hash)
                 } else {
@@ -1702,7 +1749,7 @@ impl PeerHandler {
                     peer_id: free_peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (remaining_start_hash, task.end_hash),
                 };
                 tx.send(task_result).await.ok();
             });
@@ -1717,6 +1764,11 @@ impl PeerHandler {
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
+        METRICS
+            .storage_tries_download_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading storage ranges, total storage slots: {total_slots}");
@@ -1880,96 +1932,6 @@ impl PeerHandler {
         None
     }
 
-    /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
-    /// This is a simplified version of `request_storage_range` meant to be used for large tries that require their own single requests
-    /// account_hashes & storage_roots must have the same length
-    /// storage_root must not be an empty trie hash, we will treat empty ranges as invalid responses
-    /// Returns true if the account's storage was not completely fetched by the request
-    /// Returns the list of hashed storage keys and values for the account's storage or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_storage_range(
-        &self,
-        state_root: H256,
-        storage_root: H256,
-        account_hash: H256,
-        start: H256,
-    ) -> Option<(Vec<H256>, Vec<U256>, bool)> {
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
-                id: request_id,
-                root_hash: state_root,
-                account_hashes: vec![account_hash],
-                starting_hash: start,
-                limit_hash: HASH_MAX,
-                response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some((mut slots, proof)) =
-                tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::StorageRanges(StorageRanges {
-                                id,
-                                slots,
-                                proof,
-                            })) if id == request_id => {
-                                self.record_peer_success(peer_id).await;
-                                return Some((slots, proof));
-                            }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() != 1 {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
-                    .remove(0)
-                    .into_iter()
-                    .map(|slot| (slot.hash, slot.data))
-                    .unzip();
-                let encoded_values = storage_values
-                    .iter()
-                    .map(|val| val.encode_to_vec())
-                    .collect::<Vec<_>>();
-                // Verify storage range
-                if let Ok(should_continue) =
-                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
-                {
-                    self.record_snap_peer_success(peer_id, peer_ids).await;
-                    return Some((storage_keys, storage_values, should_continue));
-                }
-            }
-        }
-        None
-    }
-
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&self) -> Vec<PeerData> {
         self.peer_table
@@ -2033,22 +1995,4 @@ impl PeerHandler {
         }
         None
     }
-}
-
-/// Validates the block headers received from a peer by checking that the parent hash of each header
-/// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
-    block_headers.windows(2).all(|headers| match order {
-        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
-        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
-    })
-}
-
-fn format_duration(duration: Duration) -> String {
-    let total_seconds = duration.as_secs();
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
