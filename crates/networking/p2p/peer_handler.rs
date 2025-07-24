@@ -1309,6 +1309,7 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+        #[derive(Debug)]
         struct Task {
             start_index: usize,
             end_index: usize,
@@ -1579,6 +1580,10 @@ impl PeerHandler {
                 }
                 continue;
             };
+
+            if task_count - completed_tasks < 8 {
+                info!("{task:?}");
+            }
 
             let tx = task_sender.clone();
             downloaders
