@@ -87,11 +87,8 @@ fn build_sp1_program() {
         )
         .expect("could not write SP1 vk to file");
     } else {
-        let vk = vk.vk.bytes32_raw();
-        std::fs::write(
-            "./sp1/out/riscv32im-succinct-zkvm-vk",
-            format!("0x{}\n", hex::encode(vk)),
-        )
-        .expect("could not write SP1 vk to file");
+        let vk = vk.vk.bytes32();
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", format!("{}\n", vk))
+            .expect("could not write SP1 vk to file");
     };
 }
