@@ -1581,10 +1581,6 @@ impl PeerHandler {
                 continue;
             };
 
-            if task_count - completed_tasks < 8 {
-                info!("{task:?}");
-            }
-
             let tx = task_sender.clone();
             downloaders
                 .entry(free_peer_id)
@@ -1602,6 +1598,14 @@ impl PeerHandler {
                     .take(task.end_index - task.start_index)
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
+
+            if task_count - completed_tasks < 30 {
+                info!(
+                    "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
+                    chunk_account_hashes.first().unwrap_or(&H256::zero()),
+                    chunk_storage_roots.first().unwrap_or(&H256::zero()),
+                );
+            }
 
             tokio::spawn(async move {
                 let start = task.start_index;
