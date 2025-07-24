@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753310365169,
+  "lastUpdate": 1753364254714,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5755,6 +5755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169012552199,
             "range": "± 557548655",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "67cd8bea1ce06c8a875599f420a1ca05f528aa07",
+          "message": "feat(l2): embed contracts in deployer and system_contracts_updater (#3604)\n\n**Motivation**\n\nThis PR embeds the bytecode of the contracts used in the `deployer` and\n`system_contracts_updater` as constants within the resulting binaries.\n\n**Description**\n\n- Adds a `build.rs` script under `crates/l2/contracts/bin/build.rs` that\ndownloads all necessary dependencies and compiles all required\ncontracts.\n- Modifies `deployer` and `system_contracts_updater` to import the\nresulting bytecodes as constants using `include_bytes!`, instead of\ncompiling them at runtime.\n- Removes the `download_contract_deps` function from the SDK, as it was\nonly cloning the same two repositories and was used even when only one\nwas needed.\n- Updates the `compile_contract` function in the SDK to accept a list of\n`remappings`.\n- Adds `deploy_contract_from_bytecode` and\n`deploy_with_proxy_from_bytecode` functions to the SDK.\n- Updates tests to work with the new SDK API.\n\n> [!NOTE]\n> The new `build.rs` script checks if `COMPILE_CONTRACTS` is set to\ndecide whether to compile the contracts.\n> This prevents `cargo check --workspace` from requiring `solc` as a\ndependency.\n\nCloses #3380",
+          "timestamp": "2025-07-24T12:52:01Z",
+          "tree_id": "181b3933b4e4d0214fffc3f5448d06d614709de8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67cd8bea1ce06c8a875599f420a1ca05f528aa07"
+        },
+        "date": 1753364241494,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167882348176,
+            "range": "± 329419272",
             "unit": "ns/iter"
           }
         ]
