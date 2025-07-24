@@ -16,6 +16,8 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
+    env:
+      ETHEREUM_EXECUTION_SPEC_TEST_VERSION: v4.5.0
     strategy:
       matrix:
         test:
@@ -85,7 +87,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.buildarg branch=v4.5.0 --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1 --docker.nocache "ethereum/eest/*"
+        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.buildarg branch=${{ env.ETHEREUM_EXECUTION_SPEC_TEST_VERSION }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1 --docker.nocache "ethereum/eest/*"
         continue-on-error: true
 
       - name: Upload results
