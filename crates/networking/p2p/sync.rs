@@ -1,13 +1,7 @@
-mod bytecode_fetcher;
-mod fetcher_queue;
-mod state_healing;
-mod storage_healing;
-
 use crate::{
     metrics::METRICS,
     peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
-use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256, U512,
