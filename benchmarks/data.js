@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753385589409,
+  "lastUpdate": 1753385882440,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5935,6 +5935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167380057089,
             "range": "± 256642640",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aa04d3fcef2f047b1f3eaebc0ad6324ae17d6626",
+          "message": "chore(l2): remove save_state file (#3817)\n\n**Motivation**\n\nThe `save_state.rs` file was accidentally re-added during merge conflict\nresolution.\n\n**Description**\n\nRemoves the `save_state.rs` file.\n\n\nCloses None",
+          "timestamp": "2025-07-24T18:52:52Z",
+          "tree_id": "95f96905edb0c54c466b4f83590765fee62e92a7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/aa04d3fcef2f047b1f3eaebc0ad6324ae17d6626"
+        },
+        "date": 1753385869874,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168101671231,
+            "range": "± 638762535",
             "unit": "ns/iter"
           }
         ]
