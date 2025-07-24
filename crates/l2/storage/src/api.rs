@@ -84,6 +84,32 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError>;
 
     async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
+  
+    /// Stores the sequencer signature for a given block hash.
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Retrieves the sequencer signature for a given block hash.
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
+
+    /// Stores the sequencer signature for a given batch number.
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Retrieves the sequencer signature for a given batch number.
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 

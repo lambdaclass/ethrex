@@ -9,8 +9,14 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS};
+use crate::{
+    monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    sequencer::errors::MonitorError,
+};
 
+const BATCH_WINDOW_SIZE: usize = 50;
+
+#[derive(Clone, Default)]
 pub struct BatchesTable {
     pub state: TableState,
     // batch number | # blocks | # messages | commit tx hash | verify tx hash
@@ -21,61 +27,65 @@ pub struct BatchesTable {
 }
 
 impl BatchesTable {
-    pub async fn new(
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_store: &StoreRollup,
-    ) -> Self {
-        let mut last_l1_block_fetched = 0;
-        let items = Self::fetch_new_items(
-            &mut last_l1_block_fetched,
-            on_chain_proposer_address,
-            eth_client,
-            rollup_store,
-        )
-        .await;
+    pub fn new(on_chain_proposer_address: Address) -> Self {
         Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
             on_chain_proposer_address,
+            ..Default::default()
         }
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_store: &StoreRollup) {
+    pub async fn on_tick(
+        &mut self,
+        eth_client: &EthClient,
+        rollup_store: &StoreRollup,
+    ) -> Result<(), MonitorError> {
         let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
             rollup_store,
         )
-        .await;
-        new_latest_batches.truncate(50);
+        .await?;
+        new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
         let n_new_latest_batches = new_latest_batches.len();
-        self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(rollup_store).await;
+        self.items
+            .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
+        self.refresh_items(rollup_store).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
+
+        Ok(())
     }
 
-    async fn refresh_items(&mut self, rollup_store: &StoreRollup) {
+    async fn refresh_items(&mut self, rollup_store: &StoreRollup) -> Result<(), MonitorError> {
         if self.items.is_empty() {
-            return;
+            return Ok(());
         }
 
-        let mut from = self.items.last().expect("Expected items in the table").0 - 1;
+        let mut refreshed_batches = Vec::new();
 
-        let refreshed_batches = Self::get_batches(
-            &mut from,
-            self.items.first().expect("Expected items in the table").0,
-            rollup_store,
-        )
-        .await;
+        for batch in self.items.iter() {
+            if batch.3.is_some() && batch.4.is_some() {
+                // Both commit and verify tx hashes are present
+                refreshed_batches.push(*batch);
+            } else {
+                let batch_number = batch.0;
+                let new_batch = rollup_store
+                    .get_batch(batch_number)
+                    .await
+                    .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
+                    .ok_or(MonitorError::BatchNotFound(batch_number))?;
 
-        let refreshed_items = Self::process_batches(refreshed_batches).await;
+                refreshed_batches.push(Self::process_batch(&new_batch));
+            }
+        }
 
-        self.items = refreshed_items;
+        Self::reorder_batches(&mut refreshed_batches);
+
+        self.items = refreshed_batches;
+
+        Ok(())
     }
 
     async fn fetch_new_items(
@@ -83,56 +93,74 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+    ) -> Result<Vec<(u64, u64, usize, Option<H256>, Option<H256>)>, MonitorError> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
-            .expect("Failed to get latest L2 batch");
+            .map_err(|_| MonitorError::GetLatestBatch)?;
+
+        *last_l2_batch_fetched = (*last_l2_batch_fetched).max(
+            last_l2_batch_number.saturating_sub(
+                BATCH_WINDOW_SIZE
+                    .try_into()
+                    .map_err(|_| MonitorError::BatchWindow)?,
+            ),
+        );
 
         let new_batches =
-            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await;
+            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
 
-        Self::process_batches(new_batches).await
+        Ok(Self::process_batches(new_batches))
     }
 
-    async fn get_batches(from: &mut u64, to: u64, rollup_store: &StoreRollup) -> Vec<Batch> {
+    async fn get_batches(
+        from: &mut u64,
+        to: u64,
+        rollup_store: &StoreRollup,
+    ) -> Result<Vec<Batch>, MonitorError> {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
             let batch = rollup_store
                 .get_batch(batch_number)
                 .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get batch by number ({batch_number}): {err}")
-                })
-                .unwrap_or_else(|| panic!("Batch {batch_number} not found in the rollup store"));
+                .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
+                .ok_or(MonitorError::BatchNotFound(batch_number))?;
 
             *from = batch_number;
 
             new_batches.push(batch);
         }
 
-        new_batches
+        Ok(new_batches)
     }
 
-    async fn process_batches(
+    fn process_batch(batch: &Batch) -> (u64, u64, usize, Option<H256>, Option<H256>) {
+        (
+            batch.number,
+            batch.last_block - batch.first_block + 1,
+            batch.message_hashes.len(),
+            batch.commit_tx,
+            batch.verify_tx,
+        )
+    }
+
+    #[expect(clippy::type_complexity)]
+    fn reorder_batches(new_blocks_processed: &mut [(u64, u64, usize, Option<H256>, Option<H256>)]) {
+        new_blocks_processed
+            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+    }
+
+    #[expect(clippy::type_complexity)]
+    fn process_batches(
         new_batches: Vec<Batch>,
     ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
         let mut new_blocks_processed = new_batches
             .iter()
-            .map(|batch| {
-                (
-                    batch.number,
-                    batch.last_block - batch.first_block + 1,
-                    batch.message_hashes.len(),
-                    batch.commit_tx,
-                    batch.verify_tx,
-                )
-            })
+            .map(Self::process_batch)
             .collect::<Vec<_>>();
 
-        new_blocks_processed
-            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+        Self::reorder_batches(&mut new_blocks_processed);
 
         new_blocks_processed
     }

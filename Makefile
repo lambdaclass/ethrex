@@ -14,7 +14,6 @@ lint: ## 🧹 Linter check
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
 	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
-	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -69,7 +68,11 @@ localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-pack
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_ethrex_only.yaml
+	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
+
+localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_multiple_cl.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
@@ -102,7 +105,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 1
+SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
