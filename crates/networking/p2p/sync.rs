@@ -408,6 +408,7 @@ impl Syncer {
 
                 let mut healing_done = false;
                 while !healing_done {
+                    info!("started healing pivot movement");
                     const SNAP_LIMIT: u64 = 128;
                     let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
                     while current_unix_time() > time_limit {
