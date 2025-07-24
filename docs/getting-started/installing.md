@@ -58,7 +58,7 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
     --tag <LATEST_VERSION_HERE> \
-    --features dev
+    --features dev,rollup_storage_sql,metrics
 ```
 
 This installs the `ethrex` binary.
@@ -78,6 +78,10 @@ ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 
 After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
 
+> [!TIP]
+> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
+> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
+
 ## Building from source
 
 This section assumes you already have [Rust's `cargo`](https://www.rust-lang.org/tools/install) and [`git`](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) installed.
@@ -91,7 +95,7 @@ git clone --branch <LATEST_VERSION_HERE> --depth 1 https://github.com/lambdaclas
 After that, you can run the following command inside the cloned repo to build the client:
 
 ```sh
-cargo build --bin ethrex --release --features dev
+cargo build --bin ethrex --release --features dev,rollup_storage_sql,metrics
 ```
 
 You can find the built binary inside `target/release` directory:
@@ -105,6 +109,10 @@ This should output something like:
 ```text
 ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 ```
+
+> [!TIP]
+> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
+> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
 
 > [!TIP]
 > For convenience, you can move the `ethrex` binary to a directory in your `PATH`, so you can run it from anywhere.
