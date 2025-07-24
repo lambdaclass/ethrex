@@ -13,12 +13,12 @@ use ethrex_common::{H256, U256, types::Log};
 impl<'a> VM<'a> {
     // LOG operation
     pub fn op_log<const N_TOPICS: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        if current_call_frame.is_static {
+        let cur_frame = self.cur_frame_mut()?;
+        if cur_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        let [offset, size] = *current_call_frame.stack.pop()?;
+        let [offset, size] = *cur_frame.stack.pop()?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -26,24 +26,24 @@ impl<'a> VM<'a> {
             Ok(x) => x,
             Err(_) => usize::MAX,
         };
-        let topics = current_call_frame
+        let topics = cur_frame
             .stack
             .pop::<N_TOPICS>()?
             .map(|topic| H256(U256::to_big_endian(&topic)));
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::log(
+        cur_frame.increase_consumed_gas(gas_cost::log(
             new_memory_size,
-            current_call_frame.memory.len(),
+            cur_frame.memory.len(),
             size,
             N_TOPICS,
         )?)?;
 
         let log = Log {
-            address: current_call_frame.to,
+            address: cur_frame.to,
             topics: topics.to_vec(),
-            data: Bytes::from(current_call_frame.memory.load_range(offset, size)?),
+            data: Bytes::from(cur_frame.memory.load_range(offset, size)?),
         };
 
         self.tracer.log(&log)?;

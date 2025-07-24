@@ -159,7 +159,7 @@ impl<'a> VM<'a> {
 
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
-        self.current_call_frame_mut()?.call_frame_backup.clear();
+        self.cur_frame_mut()?.call_frame_backup.clear();
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
@@ -179,12 +179,12 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-        if self.is_precompile(&self.current_call_frame()?.to) {
+        if self.is_precompile(&self.cur_frame()?.to) {
             return self.execute_precompile();
         }
 
         loop {
-            let opcode = self.current_call_frame()?.next_opcode();
+            let opcode = self.cur_frame()?.next_opcode();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
@@ -216,7 +216,7 @@ impl<'a> VM<'a> {
     pub fn execute_precompile(&mut self) -> Result<ContextResult, VMError> {
         let vm_type = self.vm_type.clone();
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = self.cur_frame_mut()?;
 
         let precompile_result = match vm_type {
             VMType::L1 => precompiles::execute_precompile(
@@ -238,7 +238,7 @@ impl<'a> VM<'a> {
 
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> Result<bool, InternalError> {
-        Ok(self.current_call_frame()?.is_create)
+        Ok(self.cur_frame()?.is_create)
     }
 
     /// Executes without making changes to the cache.

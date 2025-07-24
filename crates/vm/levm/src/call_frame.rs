@@ -361,11 +361,11 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
+    pub fn cur_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
         self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
+    pub fn cur_frame(&self) -> Result<&CallFrame, InternalError> {
         self.call_frames.last().ok_or(InternalError::CallFrame)
     }
 
@@ -379,7 +379,7 @@ impl<'a> VM<'a> {
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        let callframe_backup = self.cur_frame()?.call_frame_backup.clone();
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -392,7 +392,7 @@ impl<'a> VM<'a> {
         child_call_frame_backup: &CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
-            .current_call_frame_mut()?
+            .cur_frame_mut()?
             .call_frame_backup
             .original_accounts_info;
         for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
@@ -402,7 +402,7 @@ impl<'a> VM<'a> {
         }
 
         let parent_backup_storage = &mut self
-            .current_call_frame_mut()?
+            .cur_frame_mut()?
             .call_frame_backup
             .original_account_storage_slots;
         for (address, storage) in child_call_frame_backup
@@ -423,6 +423,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame_mut()?.increment_pc_by(count)
+        self.cur_frame_mut()?.increment_pc_by(count)
     }
 }

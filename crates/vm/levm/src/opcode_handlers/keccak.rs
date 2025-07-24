@@ -12,8 +12,8 @@ use sha3::{Digest, Keccak256};
 
 impl<'a> VM<'a> {
     pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        let [offset, size] = *current_call_frame.stack.pop()?;
+        let cur_frame = self.cur_frame_mut()?;
+        let [offset, size] = *cur_frame.stack.pop()?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -24,15 +24,15 @@ impl<'a> VM<'a> {
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::keccak256(
+        cur_frame.increase_consumed_gas(gas_cost::keccak256(
             new_memory_size,
-            current_call_frame.memory.len(),
+            cur_frame.memory.len(),
             size,
         )?)?;
 
         let mut hasher = Keccak256::new();
-        hasher.update(current_call_frame.memory.load_range(offset, size)?);
-        current_call_frame
+        hasher.update(cur_frame.memory.load_range(offset, size)?);
+        cur_frame
             .stack
             .push1(u256_from_big_endian(&hasher.finalize()))?;
 

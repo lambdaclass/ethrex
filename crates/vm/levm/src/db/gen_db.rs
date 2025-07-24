@@ -316,7 +316,7 @@ impl<'a> VM<'a> {
         key: H256,
         current_value: U256,
     ) -> Result<(), InternalError> {
-        self.current_call_frame_mut()?
+        self.cur_frame_mut()?
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)

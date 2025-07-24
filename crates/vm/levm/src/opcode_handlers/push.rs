@@ -11,10 +11,10 @@ use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
+        let cur_frame = self.cur_frame_mut()?;
+        cur_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
-        let current_pc = current_call_frame.pc;
+        let current_pc = cur_frame.pc;
 
         // Check to avoid multiple checks.
         if current_pc.checked_add(N.wrapping_add(1)).is_none() {
@@ -28,22 +28,20 @@ impl<'a> VM<'a> {
             // bytecode
             .wrapping_add(1);
 
-        let value = if let Some(slice) = current_call_frame
-            .bytecode
-            .get(pc_offset..pc_offset.wrapping_add(N))
-        {
-            u256_from_big_endian_const(
-                // SAFETY: If the get succeeded, we got N elements so the cast is safe.
-                #[expect(unsafe_code)]
-                unsafe {
-                    *slice.as_ptr().cast::<[u8; N]>()
-                },
-            )
-        } else {
-            U256::zero()
-        };
+        let value =
+            if let Some(slice) = cur_frame.bytecode.get(pc_offset..pc_offset.wrapping_add(N)) {
+                u256_from_big_endian_const(
+                    // SAFETY: If the get succeeded, we got N elements so the cast is safe.
+                    #[expect(unsafe_code)]
+                    unsafe {
+                        *slice.as_ptr().cast::<[u8; N]>()
+                    },
+                )
+            } else {
+                U256::zero()
+            };
 
-        current_call_frame.stack.push1(value)?;
+        cur_frame.stack.push1(value)?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
         let increment_pc_by = N.wrapping_add(1);
@@ -59,11 +57,11 @@ impl<'a> VM<'a> {
         if self.env.config.fork < Fork::Shanghai {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
-        let current_call_frame = self.current_call_frame_mut()?;
+        let cur_frame = self.cur_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
+        cur_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
-        current_call_frame.stack.push1(U256::zero())?;
+        cur_frame.stack.push1(U256::zero())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
