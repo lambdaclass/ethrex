@@ -142,9 +142,11 @@ impl JumpTargetFilter {
                     }
                 }
             }
-        }
 
-        self.filter.binary_search(&address).is_ok()
+            self.filter.last() == Some(&address)
+        } else {
+            self.filter.binary_search(&address).is_ok()
+        }
     }
 }
 
