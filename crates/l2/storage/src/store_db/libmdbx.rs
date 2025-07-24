@@ -249,7 +249,6 @@ impl StoreEngineRollup for Store {
         }
     }
 
-
     async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         let txn = self
             .db
@@ -265,7 +264,7 @@ impl StoreEngineRollup for Store {
 
         Ok(latest_key)
     }
-  
+
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
