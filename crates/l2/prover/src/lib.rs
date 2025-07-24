@@ -30,17 +30,11 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     match backend {
-        Backend::Exec => {
-            backends::exec::prove(input, aligned_mode).map(|output| ProveOutput::Exec(output))
-        }
+        Backend::Exec => backends::exec::prove(input, aligned_mode).map(ProveOutput::Exec),
         #[cfg(feature = "sp1")]
-        Backend::SP1 => {
-            backends::sp1::prove(input, aligned_mode).map(|output| ProveOutput::SP1(output))
-        }
+        Backend::SP1 => backends::sp1::prove(input, aligned_mode).map(ProveOutput::SP1),
         #[cfg(feature = "risc0")]
-        Backend::RISC0 => {
-            backends::risc0::prove(input, aligned_mode).map(|output| ProveOutput::RISC0(output))
-        }
+        Backend::RISC0 => backends::risc0::prove(input, aligned_mode).map(ProveOutput::RISC0),
     }
 }
 
