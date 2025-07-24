@@ -8,7 +8,7 @@
 //! This process will stop once it has fixed all trie inconsistencies or when the pivot becomes stale, in which case it can be resumed on the next cycle
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
-use std::{cmp::min, time::Instant};
+use std::{cmp::min, time::{Duration, Instant}};
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -18,12 +18,27 @@ use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
 
 use crate::{
-    peer_handler::PeerHandler,
-    sync::{
-        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
-        SHOW_PROGRESS_INTERVAL_DURATION, bytecode_fetcher, node_missing_children,
-    },
+    peer_handler::PeerHandler, sync::node_missing_children,
 };
+
+/// The minimum amount of blocks from the head that we want to full sync during a snap sync
+const MIN_FULL_BLOCKS: usize = 64;
+/// Max size of bach to start a bytecode fetch request in queues
+const BYTECODE_BATCH_SIZE: usize = 70;
+/// Max size of a bach to start a storage fetch request in queues
+const STORAGE_BATCH_SIZE: usize = 300;
+/// Max size of a bach to start a node fetch request in queues
+const NODE_BATCH_SIZE: usize = 900;
+/// Maximum amount of concurrent paralell fetches for a queue
+const MAX_PARALLEL_FETCHES: usize = 10;
+/// Maximum amount of messages in a channel
+const MAX_CHANNEL_MESSAGES: usize = 500;
+/// Maximum amount of messages to read from a channel at once
+const MAX_CHANNEL_READS: usize = 200;
+/// Pace at which progress is shown via info tracing
+const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+/// Amount of blocks to execute in a single batch during FullSync
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
 use super::SyncError;
 
@@ -36,12 +51,12 @@ pub(crate) async fn heal_state_trie(
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
-    let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
+    // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+    // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
+    //     bytecode_receiver,
+    //     peers.clone(),
+    //     store.clone(),
+    // ));
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
@@ -60,7 +75,7 @@ pub(crate) async fn heal_state_trie(
                 batch,
                 peers.clone(),
                 store.clone(),
-                bytecode_sender.clone(),
+                //bytecode_sender.clone(),
             ));
             // End loop if we have no more paths to fetch
             if paths.is_empty() {
@@ -87,8 +102,8 @@ pub(crate) async fn heal_state_trie(
         store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
-    bytecode_sender.send(vec![]).await?;
-    bytecode_fetcher_handle.await??;
+    // bytecode_sender.send(vec![]).await?;
+    // bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
 }
 
@@ -100,7 +115,7 @@ async fn heal_state_batch(
     mut batch: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    bytecode_sender: Sender<Vec<H256>>,
+    //bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(Vec<Nibbles>, bool), SyncError> {
     if let Some(nodes) = peers
         .request_state_trienodes(state_root, batch.clone())
@@ -163,7 +178,7 @@ async fn heal_state_batch(
                 .await?;
         }
         if !code_hashes.is_empty() {
-            bytecode_sender.send(code_hashes).await?;
+            //bytecode_sender.send(code_hashes).await?;
         }
         Ok((batch, false))
     } else {

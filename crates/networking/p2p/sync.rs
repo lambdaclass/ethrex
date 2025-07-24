@@ -1,5 +1,4 @@
 mod state_healing;
-mod trie_rebuild;
 
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
