@@ -42,8 +42,8 @@ ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
-ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
-ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
+ethrex_L2_DEV_LIBMDBX?=dev_ethrex/l2
+ethrex_L1_DEV_LIBMDBX=dev_ethrex/l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
@@ -135,9 +135,9 @@ DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADD
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics, dev" -- \
 	l2 \
-	--watcher.block-delay 0 \
+	--watcher.block-delay 0 --dev \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \

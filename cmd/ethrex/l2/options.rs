@@ -2,7 +2,7 @@ use crate::{
     cli::Options as NodeOptions,
     utils::{self},
 };
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethrex_common::Address;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
@@ -536,10 +536,10 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: false,
-            proof_coordinator_tdx_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .unwrap(),
+            proof_coordinator_tdx_private_key: utils::parse_private_key(
+                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+            )
+            .unwrap(),
         }
     }
 }

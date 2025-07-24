@@ -1,9 +1,9 @@
 use clap::Parser;
 use ethrex::{
-    cli::CLI,
+    cli::{CLI, Options},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_rpc_api, init_store, init_tracing,
+        init_l1, init_metrics, init_rpc_api, init_store, init_tracing,
     },
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
@@ -69,80 +69,7 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
-    let data_dir = set_datadir(&opts.datadir);
-
-    let network = get_network(&opts);
-
-    let genesis = network.get_genesis()?;
-    let store = init_store(&data_dir, genesis).await;
-
-    #[cfg(feature = "sync-test")]
-    set_sync_block(&store).await;
-
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
-
-    let signer = get_signer(&data_dir);
-
-    let local_p2p_node = get_local_p2p_node(&opts, &signer);
-
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
-        &local_p2p_node,
-        &signer,
-    )));
-
-    let peer_table = peer_table(local_p2p_node.node_id());
-
-    // TODO: Check every module starts properly.
-    let tracker = TaskTracker::new();
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
-
-    init_rpc_api(
-        &opts,
-        peer_table.clone(),
-        local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
-        store.clone(),
-        blockchain.clone(),
-        cancel_token.clone(),
-        tracker.clone(),
-    )
-    .await;
-
-    if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "dev")] {
-
-            use ethrex::initializers::init_dev_network;
-
-            init_dev_network(&opts, &store, tracker.clone()).await;
-        } else {
-            use ethrex::initializers::init_network;
-            if opts.p2p_enabled {
-                init_network(
-                    &opts,
-                    &network,
-                    &data_dir,
-                    local_p2p_node,
-                    local_node_record.clone(),
-                    signer,
-                    peer_table.clone(),
-                    store.clone(),
-                    tracker.clone(),
-                    blockchain.clone(),
-                    None
-                )
-                .await;
-            } else {
-                info!("P2P is disabled");
-            }
-        }
-    }
-
+    let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
     tokio::select! {

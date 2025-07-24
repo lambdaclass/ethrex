@@ -2,6 +2,7 @@ use std::{
     fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     time::{Duration, Instant},
 };
 
@@ -16,7 +17,7 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
+    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
     l2,
     networks::Network,
     utils::{self, get_client_version, set_datadir},
@@ -322,7 +323,39 @@ impl Subcommand {
             }
             Subcommand::L2Tools(command) => command.run().await?,
             Subcommand::L2 { options: l2_opts } => {
-                l2::init_l2(l2_opts).await?;
+                l2::init_tracing(&l2_opts);
+
+                if l2_opts.node_opts.dev {
+                    let l2_options = l2::options::Options::default();
+                    //remove_db(&format!("{}/l1", l2_options.node_opts.datadir), true);
+                    //remove_db(&format!("{}/l2", l2_options.node_opts.datadir), true);
+                    remove_db("dev_ethrex/l1", true);
+                    remove_db("dev_ethrex/l2", true);
+                    init_l1(Options {
+                        network: Some(Network::GenesisPath(
+                            PathBuf::from_str("../../fixtures/genesis/l1-dev.json").unwrap(),
+                        )),
+                        datadir: "dev_ethrex/l1".to_string(),
+                        dev: true,
+                        evm: EvmEngine::LEVM,
+                        http_addr: "0.0.0.0".to_string(),
+                        http_port: "8545".to_string(),
+                        authrpc_port: "8551".to_string(),
+                        metrics_addr: "0.0.0.0".to_string(),
+                        metrics_port: "9090".to_string(),
+                        authrpc_addr: "localhost".to_string(),
+                        authrpc_jwtsecret: "jwt.hex".to_string(),
+                        p2p_enabled: true,
+                        p2p_addr: "0.0.0.0".to_string(),
+                        p2p_port: "30303".to_string(),
+                        discovery_addr: "0.0.0.0".to_string(),
+                        discovery_port: "30303".to_string(),
+                        ..Default::default()
+                    })
+                    .await?;
+                } else {
+                    l2::init_l2(l2_opts).await?;
+                }
             }
         }
         Ok(())
