@@ -1981,7 +1981,7 @@ impl PeerHandler {
     // TODO: Implement the logic to remove a peer from the peer table
     pub async fn remove_peer(&self, _peer_id: H256) {}
 
-    async fn get_block_header(&self, block_number: u64) -> Option<BlockHeader> {
+    pub async fn get_block_header(&self, block_number: u64) -> Option<BlockHeader> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
