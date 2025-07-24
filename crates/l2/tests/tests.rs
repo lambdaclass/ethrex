@@ -14,8 +14,8 @@ use ethrex_l2_sdk::calldata::{self, encode_calldata};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, claim_withdraw,
-    compile_contract, deposit_erc20, download_contract_deps, get_address_alias,
-    get_address_from_secret_key, get_erc1967_slot, wait_for_transaction_receipt,
+    compile_contract, deposit_erc20, get_address_alias, get_address_from_secret_key,
+    get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, eth_sender::Overrides, from_hex_string_to_u256},
@@ -173,8 +173,18 @@ async fn test_upgrade(
     let private_key = l1_rich_wallet_private_key();
 
     let contracts_path = Path::new("contracts");
-    download_contract_deps(contracts_path).unwrap();
-    compile_contract(contracts_path, "src/l2/CommonBridgeL2.sol", false)?;
+    get_contract_dependencies(contracts_path);
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        contracts_path,
+        Path::new("contracts/src/l2/CommonBridgeL2.sol"),
+        false,
+        Some(&remappings),
+    )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
     let deploy_address = test_deploy(&bridge_code, &private_key, l2_client).await?;
@@ -353,8 +363,19 @@ async fn test_erc20_roundtrip(
     let token_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
 
     let contracts_path = Path::new("contracts");
-    ethrex_l2_sdk::download_contract_deps(contracts_path)?;
-    compile_contract(contracts_path, "src/example/L2ERC20.sol", false)?;
+
+    get_contract_dependencies(contracts_path);
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        contracts_path,
+        &contracts_path.join("src/example/L2ERC20.sol"),
+        false,
+        Some(&remappings),
+    )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
     )?)?)?;
@@ -617,7 +638,7 @@ async fn test_forced_withdrawal(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
         Some(0),
-        Some(21000 * 15),
+        None,
         L1ToL2TransactionData::new(
             COMMON_BRIDGE_L2_ADDRESS,
             21000 * 5,
@@ -894,7 +915,7 @@ async fn test_transfer_with_privileged_tx(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         transferer_address,
         Some(0),
-        Some(21000 * 15),
+        None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
         common_bridge_address(),
@@ -975,7 +996,7 @@ async fn test_privileged_tx_not_enough_balance(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
         Some(0),
-        Some(21000 * 10),
+        None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
         common_bridge_address(),
@@ -1689,4 +1710,18 @@ pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
+}
+
+fn get_contract_dependencies(contracts_path: &Path) {
+    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .expect("Failed to convert path to str"),
+        None,
+        true,
+    )
+    .unwrap();
 }

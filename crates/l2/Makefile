@@ -38,7 +38,6 @@ ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
-ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
@@ -103,7 +102,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--contracts-path contracts \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -118,12 +116,11 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--contracts-path contracts
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml --
 
 update-system-contracts:
+	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
-	--contracts-path contracts \
 	--l2-genesis-path ../../fixtures/genesis/l2.json
 
 # L2
