@@ -884,7 +884,6 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let state_root = pivot_header.state_root;
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             while current_unix_time() > time_limit {
@@ -903,6 +902,7 @@ impl PeerHandler {
                 );
                 time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             }
+            let state_root = pivot_header.state_root;
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
@@ -1532,7 +1532,6 @@ impl PeerHandler {
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
 
-            let state_root = pivot_header.state_root;
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             while current_unix_time() > time_limit {
@@ -1551,6 +1550,7 @@ impl PeerHandler {
                 );
                 time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             }
+            let state_root = pivot_header.state_root;
 
             tokio::spawn(async move {
                 debug!(
