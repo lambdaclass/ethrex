@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate, Fork, Genesis},
+    types::{Account, AccountUpdate, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -48,8 +47,8 @@ pub struct AccountMismatch {
     pub address: Address,
     pub balance_diff: Option<(U256, U256)>,
     pub nonce_diff: Option<(u64, u64)>,
-    pub code_diff: Option<(Bytes, Bytes)>,
-    pub storage_diff: Option<(HashMap<U256, U256>, BTreeMap<H256, U256>)>,
+    pub code_diff: Option<(H256, H256)>,
+    pub storage_diff: Option<(BTreeMap<H256, U256>, BTreeMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -295,26 +294,22 @@ fn verify_matching_accounts(
     actual_account: &Account,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
+    let mut formatted_expected_storage = BTreeMap::new();
+    for (key, value) in &expected_account.storage {
+        let formatted_key = H256::from(key.to_big_endian());
+        formatted_expected_storage.insert(formatted_key, *value);
+    }
     let mut account_mismatch = AccountMismatch::default();
     let code_matches = actual_account.code == expected_account.code;
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
-    let mut storage_matches = true;
-
-    for (storage_key, content) in &expected_account.storage {
-        let key = &H256::from(storage_key.to_big_endian());
-        if actual_account.storage.contains_key(key) {
-            if actual_account.storage.get(key).unwrap() != content {
-                storage_matches = false;
-            }
-        } else {
-            storage_matches = false;
-        }
-    }
+    let storage_matches = formatted_expected_storage == actual_account.storage;
 
     if !code_matches {
-        account_mismatch.code_diff =
-            Some((expected_account.code.clone(), actual_account.code.clone()));
+        account_mismatch.code_diff = Some((
+            code_hash(&expected_account.code),
+            actual_account.info.code_hash,
+        ));
     }
     if !balance_matches {
         account_mismatch.balance_diff =
@@ -324,10 +319,8 @@ fn verify_matching_accounts(
         account_mismatch.nonce_diff = Some((expected_account.nonce, actual_account.info.nonce));
     }
     if !storage_matches {
-        account_mismatch.storage_diff = Some((
-            expected_account.storage.clone(),
-            actual_account.storage.clone(),
-        ));
+        account_mismatch.storage_diff =
+            Some((formatted_expected_storage, actual_account.storage.clone()));
     }
 
     if account_mismatch != AccountMismatch::default() {

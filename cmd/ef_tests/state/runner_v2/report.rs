@@ -107,7 +107,7 @@ impl fmt::Display for PostCheckResult {
                 if let Some(code_diff) = acc_mismatch.code_diff {
                     writeln!(
                         f,
-                        "     Expected code: 0x{}\n     Actual   code: 0x{}\n",
+                        "     Expected code hash: 0x{}\n     Actual   code hash: 0x{}\n",
                         hex::encode(code_diff.0),
                         hex::encode(code_diff.1)
                     )?;
