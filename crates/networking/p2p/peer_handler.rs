@@ -1568,7 +1568,7 @@ impl PeerHandler {
                 let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
                     id: request_id,
                     root_hash: state_root,
-                    account_hashes: chunk_account_hashes,
+                    account_hashes: chunk_account_hashes.clone(),
                     starting_hash: start_hash,
                     limit_hash: HASH_MAX,
                     response_bytes: MAX_RESPONSE_BYTES,
@@ -1600,7 +1600,16 @@ impl PeerHandler {
                 .flatten();
                 let Some((slots, proof)) = request_result else {
                     tracing::error!("Failed to get account range");
-                    tx.send(empty_task_result).await.ok();
+                    let task_result = TaskResult {
+                        start_index: start,
+                        account_storages: chunk_account_hashes.iter().map(|_| vec![]).collect(),
+                        peer_id: free_peer_id,
+                        remaining_start: start + chunk_account_hashes.len(),
+                        remaining_end: end,
+                        remaining_start_hash: H256::zero(),
+                    };
+                    tx.send(task_result).await.ok();
+                    //tx.send(empty_task_result).await.ok();
                     return;
                 };
                 if slots.is_empty() {
