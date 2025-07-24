@@ -13,6 +13,8 @@ contract RewardVault is Initializable {
 
     // TODO: we should replace this value with a mechanism that changes over time.
     uint256 public tokensUnlockedPerDay;
+    
+    mapping(uint256 => bool) public claimedBatches;
 
     bool public claimed;
 
@@ -30,13 +32,14 @@ contract RewardVault is Initializable {
     function claimRewards(uint256[] calldata _batchNumbers) external {
         // TODO: should we prevent a prover from claiming many times per day?
         address sender = msg.sender;
-
         uint256 numberOfBatches = _batchNumbers.length;
         uint256 gasProvenByClaimer = 0;
+
         for (uint256 i = 0; i < numberOfBatches; i++) {
             uint256 batchNumber = _batchNumbers[i];
             VerifiedBatchInfo memory verifiedBatchInfo = onChainProposer.verifiedBatches(batchNumber);
-            require(verifiedBatchInfo.prover == sender, "Sender is not the prover");
+            require(verifiedBatchInfo.prover == sender, "Sender must be the prover address");
+            require(!claimedBatches[batchNumber], "Batch already claimed");
             gasProvenByClaimer += verifiedBatchInfo.gasProven;
         }
 
@@ -45,10 +48,11 @@ contract RewardVault is Initializable {
         uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** IERC20Metadata(rewardToken).decimals();
         uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
 
-        // TODO: mark the claimer as having claimed
-        // to prevent double claiming.
-        
-        // rewardToken.transfer(sender, totalRewards);
-        claimed = true;
+        // mark the batches as claimed, so they cannot be claimed again
+        for (uint256 i = 0; i < numberOfBatches; i++) {
+            claimedBatches[_batchNumbers[i]] = true;
+        }
+
+        // TODO: transfer the tokens
     }
 }
