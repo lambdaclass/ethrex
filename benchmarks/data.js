@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753473701408,
+  "lastUpdate": 1753475457550,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6265,6 +6265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163053752344,
             "range": "± 648058314",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "330571a4f818dc6a997b6cf034ac2ee3690b6492",
+          "message": "fix(l2): use new rex send and call interface for ci (#3832)\n\n**Motivation**\n\nWith the changes made\n[here](https://github.com/lambdaclass/rex/pull/179) the CI failed\n\n**Description**\n\n- Use new rex cli interface\n- Pin `rex` version",
+          "timestamp": "2025-07-25T19:38:25Z",
+          "tree_id": "f54a3c4cc1f150ede2cf3e3bcfb4b1514a27fa5d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/330571a4f818dc6a997b6cf034ac2ee3690b6492"
+        },
+        "date": 1753475444786,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163445892442,
+            "range": "± 683244780",
             "unit": "ns/iter"
           }
         ]
