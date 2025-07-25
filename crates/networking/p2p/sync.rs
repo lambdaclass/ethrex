@@ -626,6 +626,9 @@ impl Syncer {
         info!("Finished storage healing");
 
         for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+            if account_state.storage_root == *EMPTY_TRIE_HASH {
+                continue;
+            }
             let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
             assert!(storage_trie.root_node().is_ok_and(|f| f.is_some()));
         }
