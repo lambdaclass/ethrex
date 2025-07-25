@@ -183,7 +183,6 @@ impl RangeProof<'_> {
 struct ProofProcessingResult {
     external_references: Vec<(Nibbles, NodeHash)>,
     left_value: Vec<u8>,
-    right_value: Vec<u8>,
     num_right_references: usize,
 }
 
@@ -205,7 +204,7 @@ fn process_proof_nodes(
 
     // Initialize the external references container.
     let mut external_references = Vec::new();
-    let (mut left_value, mut right_value) = (Vec::new(), Vec::new());
+    let mut left_value = Vec::new();
     let mut num_right_references = 0;
 
     // Iterate over the proofs tree.
@@ -260,16 +259,12 @@ fn process_proof_nodes(
             if current_path == bounds.0 {
                 left_value = value.clone();
             }
-            if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
-                right_value = value.clone();
-            }
         }
     }
 
     let result = ProofProcessingResult {
         external_references,
         left_value,
-        right_value,
         num_right_references,
     };
     Ok(result)
