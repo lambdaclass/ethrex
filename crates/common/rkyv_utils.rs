@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use ethereum_types::{Bloom, H160, H256, U256};
-use once_cell::sync::OnceCell;
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
     rancor::{Fallible, Source},
@@ -102,23 +101,6 @@ fn bloom_to_bytes(bloom: &Bloom) -> [u8; 256] {
 impl From<BloomWrapper> for Bloom {
     fn from(value: BloomWrapper) -> Self {
         Self::from_slice(&value.bloom_bytes)
-    }
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = OnceCell<H256>)]
-pub struct OnecCellBlockHashWrapper {
-    #[rkyv(with = H256Wrapper, getter = h256_from_once_cell)]
-    _hash: H256,
-}
-// The cell will be re initialized if needed with block.hash()
-fn h256_from_once_cell(_once: &OnceCell<H256>) -> H256 {
-    H256::zero()
-}
-// The cell will be re initialized if needed with block.hash()
-impl From<OnecCellBlockHashWrapper> for OnceCell<H256> {
-    fn from(_value: OnecCellBlockHashWrapper) -> Self {
-        OnceCell::new()
     }
 }
 
