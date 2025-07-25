@@ -314,11 +314,11 @@ pub async fn deposit_erc20(
         )
         .await?;
 
-    let tx_call = tx.clone();
-    let result = client
+    let tx_call = deposit_tx.clone();
+    let result = eth_client
         .call(
-            to,
-            tx.data.clone(),
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+            tx_call.data.clone(),
             Overrides {
                 value: Some(tx_call.value),
                 nonce: Some(tx_call.nonce),
@@ -331,6 +331,7 @@ pub async fn deposit_erc20(
             },
         )
         .await;
+    let result = result?;
     dbg!(result);
 
     send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await

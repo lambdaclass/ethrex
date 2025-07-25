@@ -823,6 +823,7 @@ async fn test_send(
             },
         )
         .await;
+    let result = result.unwrap();
     dbg!(result);
     let tx_hash = send_eip1559_transaction(client, &tx, &signer)
         .await
