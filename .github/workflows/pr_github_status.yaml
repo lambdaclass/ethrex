@@ -277,7 +277,7 @@ jobs:
 
             if (isDraftTransition) {
               newStatus = "In Progress";
-            } else if (readyForReview) {
+            } else if (readyForReview || ((action === "opened" || action === "reopened") && !pr.draft)) {
               newStatus = "In Review";
             } else if (requestedChanges) {
               newStatus = "Requested Changes";
