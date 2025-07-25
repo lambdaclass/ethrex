@@ -137,7 +137,7 @@ _blake2b_f:
     vpblendd        ymm13,  ymm5,   ymm7,   0xCC
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x00E0], ymm12
-    blake2b_mix1
+    blake2b_mix1    ymm12
     blake2b_undiag
 
     sub     rdi,    0x01
