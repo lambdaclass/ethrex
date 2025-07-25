@@ -17,7 +17,10 @@ use ratatui::{
 };
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{
+        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
+        spawn_listener,
+    },
 };
 use std::io;
 use std::sync::Arc;
@@ -104,7 +107,7 @@ impl GenServer for EthrexMonitor {
     type OutMsg = OutMessage;
     type Error = MonitorError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Tick handling
         send_interval(
             Duration::from_millis(self.widget.tick_rate),
@@ -117,7 +120,7 @@ impl GenServer for EthrexMonitor {
             |event: Event| Self::CastMsg::Event(event),
             EventStream::new(),
         );
-        Ok(self)
+        Ok(Success(self))
     }
 
     async fn handle_cast(
