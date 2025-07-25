@@ -605,7 +605,7 @@ impl Blockchain {
     ) -> Result<H256, MempoolError> {
         // Validate blobs bundle
         if self.mempool.get_mempool_size()?.1 > 10_000 {
-            return Ok(H256::default());
+            return Err(MempoolError::Busy);
         }
 
         blobs_bundle.validate(&transaction)?;
@@ -636,7 +636,7 @@ impl Blockchain {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
         if self.mempool.get_mempool_size()?.0 > 10_000 {
-            return Ok(H256::default());
+            return Err(MempoolError::Busy);
         }
         let sender = transaction.sender()?;
         // Validate transaction
