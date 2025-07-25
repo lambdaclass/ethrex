@@ -224,10 +224,9 @@ fn process_proof_nodes(
             Node::Branch(node) => {
                 for (index, choice) in node.choices.into_iter().enumerate() {
                     if choice.is_valid() {
-                        visit_child_node(
+                        num_right_references += visit_child_node(
                             &mut stack,
                             &mut external_references,
-                            &mut num_right_references,
                             &proof,
                             &bounds,
                             first_key.as_ref(),
@@ -240,10 +239,9 @@ fn process_proof_nodes(
             }
             Node::Extension(node) => {
                 current_path.extend(&node.prefix);
-                visit_child_node(
+                num_right_references += visit_child_node(
                     &mut stack,
                     &mut external_references,
-                    &mut num_right_references,
                     &proof,
                     &bounds,
                     first_key.as_ref(),
@@ -273,15 +271,16 @@ fn process_proof_nodes(
 fn visit_child_node(
     stack: &mut VecDeque<(Nibbles, Node)>,
     external_refs: &mut Vec<(Nibbles, NodeHash)>,
-    num_right_references: &mut usize,
     proof: &RangeProof,
     bounds: &(Nibbles, Option<Nibbles>),
     first_key: Option<&Nibbles>,
     mut partial_path: Nibbles,
     child: NodeRef,
-) -> Result<(), TrieError> {
+) -> Result<usize, TrieError> {
     let cmp_l = bounds.0.compare_prefix(&partial_path);
     let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
+
+    let mut is_right_reference = false;
 
     if cmp_l.is_ge() || cmp_r.is_none_or(Ordering::is_le) {
         let NodeRef::Hash(hash) = child else {
@@ -333,11 +332,11 @@ fn visit_child_node(
 
         // Increment right-reference counter.
         if cmp_l.is_lt() && cmp_r.is_none_or(|x| x.is_lt()) {
-            *num_right_references += 1;
+            is_right_reference = true;
         }
     }
 
-    Ok(())
+    Ok(if is_right_reference { 1 } else { 0 })
 }
 
 #[cfg(test)]
