@@ -226,7 +226,7 @@ fn process_proof_nodes(
                             &mut num_right_refs,
                             &proof,
                             &bounds,
-                            &first_key,
+                            first_key.as_ref(),
                             current_path.append_new(index as u8),
                             choice,
                         )?;
@@ -242,7 +242,7 @@ fn process_proof_nodes(
                     &mut num_right_refs,
                     &proof,
                     &bounds,
-                    &first_key,
+                    first_key.as_ref(),
                     current_path.clone(),
                     node.child,
                 )?;
@@ -270,14 +270,14 @@ fn visit_child_node(
     num_right_refs: &mut usize,
     proof: &RangeProof,
     bounds: &(Nibbles, Option<Nibbles>),
-    first_key: &Option<Nibbles>,
+    first_key: Option<&Nibbles>,
     mut partial_path: Nibbles,
     child: NodeRef,
 ) -> Result<(), TrieError> {
     let cmp_l = bounds.0.compare_prefix(&partial_path);
     let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
 
-    if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
+    if cmp_l.is_ge() || cmp_r.is_none_or(Ordering::is_le) {
         let NodeRef::Hash(hash) = child else {
             // This is unreachable because the nodes have just been decoded, therefore only
             // having hash references.
@@ -303,9 +303,7 @@ fn visit_child_node(
                 // Note: The right bound cannot be a proof of absence because it cannot be
                 //   specified externally, and is always keys.last(). In other words, if
                 //   there is a right bound, it'll always exist.
-                if first_key.as_ref().is_some_and(|first_key| {
-                    first_key.compare_prefix(&partial_path) == Ordering::Greater
-                }) {
+                if first_key.is_some_and(|fk| fk.compare_prefix(&partial_path).is_gt()) {
                     // The subtree is not part of the path to the first available key. Treat
                     // the entire subtree as an external reference.
                     external_refs.push((partial_path, hash));
@@ -319,7 +317,7 @@ fn visit_child_node(
                 }
             }
             None => {
-                if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
+                if cmp_l.is_eq() || cmp_r.is_some_and(|x| x.is_eq()) {
                     return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
                 }
 
@@ -328,7 +326,7 @@ fn visit_child_node(
         }
 
         // Increment right-reference counter.
-        if cmp_l == Ordering::Less && cmp_r.is_none_or(|x| x == Ordering::Less) {
+        if cmp_l.is_lt() && cmp_r.is_none_or(|x| x.is_lt()) {
             *num_right_refs += 1;
         }
     }
