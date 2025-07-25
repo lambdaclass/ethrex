@@ -257,7 +257,7 @@ make load-test-io
 <pre><code class="language-sh">--txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
 </code></pre>
 <h3 id="changing-block-gas-limit"><a class="header" href="#changing-block-gas-limit">Changing block gas limit</a></h3>
-<p>By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>genesis-l2.json</code>, in the case of <code>reth</code> it's <code>genesis-load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
+<p>Currently the gas limit is set to 150M gas. If you wish to change the default value edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>fixtures/genesis/l2.json</code>, in the case of <code>reth</code> it's <code>fixtures/genesis/load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
 <h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
 <p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
 <p>For <code>ethrex</code>, you can run the server with:</p>

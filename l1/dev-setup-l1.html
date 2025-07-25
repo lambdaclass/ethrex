@@ -257,7 +257,7 @@ when you start the client. The location of the db's files will depend on your OS
 </code></pre>
 <ul>
 <li>RPC endpoint: localhost:8545</li>
-<li>Genesis file: ./test_data/genesis-l1.json</li>
+<li>Genesis file: fixtures/genesis/l1-dev.json</li>
 </ul>
 <h2 id="test"><a class="header" href="#test">Test</a></h2>
 <p>For testing, we're using three kinds of tests.</p>
@@ -321,7 +321,7 @@ make localnet-assertoor-blob
 <p>For reference on each individual check see the <a href="https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor">assertoor-wiki</a></p>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
 <p>Example run:</p>
-<pre><code class="language-bash">cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+<pre><code class="language-bash">cargo run --bin ethrex -- --network fixtures/genesis/kurtosis.json
 </code></pre>
 <p>The <code>network</code> argument is mandatory, as it defines the parameters of the chain.
 For more information about the different cli arguments check out the next section.</p>
@@ -484,10 +484,10 @@ INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated
 <pre><code class="language-bash"># Navigate to tooling/sync directory
 cd tooling/sync
 
-# Run target for hoodi 
+# Run target for hoodi
 make start-hoodi-metrics-docker
 
- # Run target for holesky 
+ # Run target for holesky
 make start-holesky-metrics-docker
 </code></pre>
 </li>
@@ -507,18 +507,17 @@ A consensus node must be running for the syncing to work.</p>
 <p>Enable metrics by using the <code>--metrics</code> flag when starting the node.</p>
 </li>
 <li>
-<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>crates/blockchain/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
+<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
 </li>
 <li>
 <p>Run the docker containers:</p>
-<pre><code class="language-bash"># Navigate to crates/blockchain/metrics directory
-cd crates/blockchain/metrics
+<pre><code class="language-bash">cd metrics
 
  docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
 </code></pre>
 </li>
 </ol>
-<p>For more details on running a sync go to <code>ethrex/tooling/sync/readme.md</code>.</p>
+<p>For more details on running a sync go to <code>tooling/sync/readme.md</code>.</p>
 
                     </main>
 

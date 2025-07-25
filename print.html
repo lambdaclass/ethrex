@@ -833,7 +833,7 @@ when you start the client. The location of the db's files will depend on your OS
 </code></pre>
 <ul>
 <li>RPC endpoint: localhost:8545</li>
-<li>Genesis file: ./test_data/genesis-l1.json</li>
+<li>Genesis file: fixtures/genesis/l1-dev.json</li>
 </ul>
 <h2 id="test"><a class="header" href="#test">Test</a></h2>
 <p>For testing, we're using three kinds of tests.</p>
@@ -897,7 +897,7 @@ make localnet-assertoor-blob
 <p>For reference on each individual check see the <a href="https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor">assertoor-wiki</a></p>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
 <p>Example run:</p>
-<pre><code class="language-bash">cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+<pre><code class="language-bash">cargo run --bin ethrex -- --network fixtures/genesis/kurtosis.json
 </code></pre>
 <p>The <code>network</code> argument is mandatory, as it defines the parameters of the chain.
 For more information about the different cli arguments check out the next section.</p>
@@ -1060,10 +1060,10 @@ INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated
 <pre><code class="language-bash"># Navigate to tooling/sync directory
 cd tooling/sync
 
-# Run target for hoodi 
+# Run target for hoodi
 make start-hoodi-metrics-docker
 
- # Run target for holesky 
+ # Run target for holesky
 make start-holesky-metrics-docker
 </code></pre>
 </li>
@@ -1083,18 +1083,17 @@ A consensus node must be running for the syncing to work.</p>
 <p>Enable metrics by using the <code>--metrics</code> flag when starting the node.</p>
 </li>
 <li>
-<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>crates/blockchain/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
+<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
 </li>
 <li>
 <p>Run the docker containers:</p>
-<pre><code class="language-bash"># Navigate to crates/blockchain/metrics directory
-cd crates/blockchain/metrics
+<pre><code class="language-bash">cd metrics
 
  docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
 </code></pre>
 </li>
 </ol>
-<p>For more details on running a sync go to <code>ethrex/tooling/sync/readme.md</code>.</p>
+<p>For more details on running a sync go to <code>tooling/sync/readme.md</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -4331,7 +4330,8 @@ TODO: add updated graph with L1 block time distribution
 cargo build --release --bin ethrex
 
 # Execute the import
-./target/release/ethrex --network cmd/ethrex/networks/hoodi/genesis.json import test_data/hoodi-blocks-first-thousand.rlp
+# Notice that the .rlp file is stored with Git LFS, it needs to be downloaded before importing
+./target/release/ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 </code></pre>
 <ul>
 <li>The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.</li>
@@ -4642,7 +4642,7 @@ make load-test-io
 <pre><code class="language-sh">--txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
 </code></pre>
 <h3 id="changing-block-gas-limit"><a class="header" href="#changing-block-gas-limit">Changing block gas limit</a></h3>
-<p>By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>genesis-l2.json</code>, in the case of <code>reth</code> it's <code>genesis-load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
+<p>Currently the gas limit is set to 150M gas. If you wish to change the default value edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>fixtures/genesis/l2.json</code>, in the case of <code>reth</code> it's <code>fixtures/genesis/load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
 <h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
 <p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
 <p>For <code>ethrex</code>, you can run the server with:</p>

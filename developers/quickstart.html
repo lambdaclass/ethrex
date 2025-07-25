@@ -245,7 +245,8 @@
 cargo build --release --bin ethrex
 
 # Execute the import
-./target/release/ethrex --network cmd/ethrex/networks/hoodi/genesis.json import test_data/hoodi-blocks-first-thousand.rlp
+# Notice that the .rlp file is stored with Git LFS, it needs to be downloaded before importing
+./target/release/ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 </code></pre>
 <ul>
 <li>The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.</li>
