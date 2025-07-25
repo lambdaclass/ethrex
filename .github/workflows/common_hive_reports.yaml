@@ -79,7 +79,7 @@ jobs:
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
-      # We use the `main` branch for now since its working, but if we can pin it to a specific release if necessary
+      # We use the `main` branch for now since it's working, but we can pin it to a specific release if necessary
       - name: Set custom hive flags
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
