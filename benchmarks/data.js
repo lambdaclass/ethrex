@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753461664443,
+  "lastUpdate": 1753467199590,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6205,6 +6205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167237478686,
             "range": "± 291293505",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b99a5c82fe7f9b76e41bae58d6fee763594c2fe9",
+          "message": "build(l1, l2): add files to .dockerignore (#3645)\n\n**Motivation**\nRunning `COPY` locally was taking a long time\n\n**Description**\n- Added more stuff to .dockerignore\n- Removed some legacy MLIR stuff\n- Improved comments in `Dockerfile`",
+          "timestamp": "2025-07-25T17:22:39Z",
+          "tree_id": "39e73d707b93d1dd6b7bee5c96d52d27e1e8e654",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b99a5c82fe7f9b76e41bae58d6fee763594c2fe9"
+        },
+        "date": 1753467186024,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169246832041,
+            "range": "± 489162941",
             "unit": "ns/iter"
           }
         ]
