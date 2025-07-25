@@ -18,6 +18,7 @@ use ethrex_common::{
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use std::str::FromStr;
 use std::thread::Scope;
 use std::{
     array,
@@ -501,12 +502,18 @@ impl Syncer {
         let account_store_start = Instant::now();
         let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
+        let known_hash_account = H256::from_str("0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4").expect("Const from_str");
+
         let (computed_state_root, bytecode_hashes) = tokio::task::spawn_blocking(move || {
             let mut bytecode_hashes = vec![];
             let mut trie = trie;
             let mut i = 0;
             let accounts_len = account_hashes.len();
             for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
+                if account_hash == known_hash_account {
+                    info!("Account: {account_hash} Debug: {account:?}")
+                }
+
                 // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
                 if account.code_hash != *EMPTY_KECCACK_HASH {
                     bytecode_hashes.push(account.code_hash);
