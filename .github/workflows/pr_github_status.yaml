@@ -26,9 +26,17 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/github-script@v7
+      - name: Generate GitHub App Token
+        id: generate_token
+        uses: actions/create-github-app-token@v1
         with:
-          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
+          app-id: ${{ vars.PROJECT_SYNC_APP_ID }}
+          private-key: ${{ secrets.PROJECT_SYNC_PRIVATE_KEY }}
+
+      - name: Update PR status
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.generate_token.outputs.token }}
           script: |
             // ========== FUNCTIONS ==========
 
