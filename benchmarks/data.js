@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753447822801,
+  "lastUpdate": 1753448355337,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12802,6 +12802,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013280915422885572,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a21b5dfe15ad4a75919550ecdd1cb97f395511a1",
+          "message": "ci(l2): integration test flaky not required for now (#3827)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- l2 integration test is flaky and it is a required check, so we change\nits name so that it's not required anymore until it is fixed.",
+          "timestamp": "2025-07-25T11:43:21Z",
+          "tree_id": "bfba08d78c9d9bd7d38e3d9c83491e4e29aa501a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a21b5dfe15ad4a75919550ecdd1cb97f395511a1"
+        },
+        "date": 1753448340227,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0075408587570621475,
             "unit": "Mgas/s"
           }
         ]
