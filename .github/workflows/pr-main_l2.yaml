@@ -258,7 +258,8 @@ jobs:
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+    # TODO: change name back to "Integration Test" after fixing https://github.com/lambdaclass/ethrex/issues/3828
+    name: not an Integration Test
     runs-on: ubuntu-latest
     needs: [integration-test, state-diff-test, integration-test-based]
     # Make sure this job runs even if the previous jobs failed or were skipped
