@@ -155,7 +155,7 @@ fn main() {
 
     // Set initial stack and memory
     info!("Setting initial stack: {:?}", runner_input.initial_stack);
-    let stack = &mut vm.current_call_frame_mut().unwrap().stack;
+    let stack = &mut vm.current_call_frame.stack;
     for elem in runner_input.initial_stack {
         stack.push(&[elem]).expect("Stack Overflow");
     }
@@ -164,8 +164,7 @@ fn main() {
         runner_input.initial_memory
     );
     let _ = vm
-        .current_call_frame_mut()
-        .unwrap()
+        .current_call_frame
         .memory
         .store_data(0, &runner_input.initial_memory);
 

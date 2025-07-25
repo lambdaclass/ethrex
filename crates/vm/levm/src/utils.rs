@@ -1,5 +1,5 @@
 use crate::{
-    EVMConfig,
+    EVMConfig, Environment,
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -20,7 +20,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, tx_fields::*},
+    types::{Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{
@@ -441,7 +441,7 @@ impl<'a> VM<'a> {
 
         let intrinsic_gas = self.get_intrinsic_gas()?;
 
-        self.current_call_frame_mut()?
+        self.current_call_frame
             .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
@@ -455,7 +455,7 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
 
         intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -471,11 +471,7 @@ impl<'a> VM<'a> {
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
-                let number_of_words = &self
-                    .current_call_frame()?
-                    .calldata
-                    .len()
-                    .div_ceil(WORD_SIZE);
+                let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
                 let double_number_of_words: u64 = number_of_words
                     .checked_mul(2)
                     .ok_or(OutOfGas)?
@@ -530,9 +526,9 @@ impl<'a> VM<'a> {
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame()?.bytecode
+            &self.current_call_frame.bytecode
         } else {
-            &self.current_call_frame()?.calldata
+            &self.current_call_frame.calldata
         };
 
         // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
@@ -615,21 +611,26 @@ impl<'a> VM<'a> {
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
     /// Bool indicates whether it is a `create` transaction or not.
-    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
-        match self.tx.to() {
+    pub fn get_tx_callee(
+        tx: &Transaction,
+        db: &mut GeneralizedDatabase,
+        env: &Environment,
+        substate: &mut Substate,
+    ) -> Result<(Address, bool), VMError> {
+        match tx.to() {
             TxKind::Call(address_to) => {
-                self.substate.accessed_addresses.insert(address_to);
+                substate.accessed_addresses.insert(address_to);
 
                 Ok((address_to, false))
             }
 
             TxKind::Create => {
-                let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
+                let sender_nonce = db.get_account(env.origin)?.info.nonce;
 
-                let created_address = calculate_create_address(self.env.origin, sender_nonce)?;
+                let created_address = calculate_create_address(env.origin, sender_nonce)?;
 
-                self.substate.accessed_addresses.insert(created_address);
-                self.substate.created_accounts.insert(created_address);
+                substate.accessed_addresses.insert(created_address);
+                substate.created_accounts.insert(created_address);
 
                 Ok((created_address, true))
             }

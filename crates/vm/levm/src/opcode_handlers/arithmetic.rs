@@ -12,7 +12,7 @@ use ethrex_common::{U256, U512};
 impl<'a> VM<'a> {
     // ADD operation
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
         let [augend, addend] = *current_call_frame.stack.pop()?;
@@ -24,7 +24,7 @@ impl<'a> VM<'a> {
 
     // SUB operation
     pub fn op_sub(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
         let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
     // MUL operation
     pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
         let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
@@ -48,7 +48,7 @@ impl<'a> VM<'a> {
 
     // DIV operation
     pub fn op_div(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
@@ -63,7 +63,7 @@ impl<'a> VM<'a> {
 
     // SDIV operation
     pub fn op_sdiv(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SDIV)?;
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
@@ -94,7 +94,7 @@ impl<'a> VM<'a> {
 
     // MOD operation
     pub fn op_mod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
@@ -108,7 +108,7 @@ impl<'a> VM<'a> {
 
     // SMOD operation
     pub fn op_smod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SMOD)?;
 
         let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
@@ -142,7 +142,7 @@ impl<'a> VM<'a> {
 
     // ADDMOD operation
     pub fn op_addmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADDMOD)?;
 
         let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
@@ -172,7 +172,7 @@ impl<'a> VM<'a> {
 
     // MULMOD operation
     pub fn op_mulmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MULMOD)?;
 
         let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
@@ -201,7 +201,7 @@ impl<'a> VM<'a> {
 
     // EXP operation
     pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         let [base, exponent] = *current_call_frame.stack.pop()?;
 
         let gas_cost = gas_cost::exp(exponent)?;
@@ -216,7 +216,7 @@ impl<'a> VM<'a> {
 
     // SIGNEXTEND operation
     pub fn op_signextend(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 
         let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;

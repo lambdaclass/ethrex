@@ -12,7 +12,7 @@ use sha3::{Digest, Keccak256};
 
 impl<'a> VM<'a> {
     pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = size
             .try_into()

@@ -4,6 +4,8 @@
 
 ### 2025-07-24
 
+- Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
+
 - Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
 
 ### 2025-07-21
