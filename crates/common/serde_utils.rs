@@ -46,12 +46,8 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        U256::from_str_radix(
-            value
-                .trim_start_matches("0x"),
-            16,
-        )
-        .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+        U256::from_str_radix(value.trim_start_matches("0x"), 16)
+            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
     }
 
     pub fn deser_hex_str_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
@@ -60,12 +56,9 @@ pub mod u256 {
     {
         let s = Option::<String>::deserialize(d)?;
         match s {
-            Some(s) => U256::from_str_radix(
-                s.trim_start_matches("0x"),
-                16,
-            )
-            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
-            .map(Some),
+            Some(s) => U256::from_str_radix(s.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+                .map(Some),
             None => Ok(None),
         }
     }
@@ -76,12 +69,8 @@ pub mod u256 {
     {
         let value = String::deserialize(d)?;
         if value.starts_with("0x") {
-            U256::from_str_radix(
-                value
-                    .trim_start_matches("0x"),
-                16,
-            )
-            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+            U256::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
         } else {
             U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
         }
