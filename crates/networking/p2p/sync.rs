@@ -418,7 +418,7 @@ impl Syncer {
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
-        let pivot_idx = all_block_hashes.len().saturating_sub(3);
+        let pivot_idx = all_block_hashes.len().saturating_sub(90);
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
@@ -528,7 +528,7 @@ impl Syncer {
         info!("Expected state root: {state_root:?}");
         info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
-        let pivot_idx = pivot_idx + 2;
+        let pivot_idx = pivot_idx + 89;
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
