@@ -401,9 +401,9 @@ impl Subcommand {
                     l2_options
                         .sequencer_opts
                         .committer_opts
-                        .on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
+                        .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
                     l2_options.sequencer_opts.watcher_opts.bridge_address =
-                        contract_addresses.bridge_address;
+                        Some(contract_addresses.bridge_address);
                 }
                 l2::init_l2(l2_options).await?;
             }

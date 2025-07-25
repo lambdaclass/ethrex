@@ -143,11 +143,11 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
         Ok(Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.block_producer_opts.block_time_ms,
-                coinbase_address: opts.block_producer_opts.coinbase_address,
+                coinbase_address: opts.block_producer_opts.coinbase_address.unwrap(),
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
             },
             l1_committer: CommitterConfig {
-                on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
+                on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address.unwrap(),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
@@ -165,7 +165,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .maximum_allowed_max_fee_per_blob_gas,
             },
             l1_watcher: L1WatcherConfig {
-                bridge_address: opts.watcher_opts.bridge_address,
+                bridge_address: opts.watcher_opts.bridge_address.unwrap(),
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
@@ -178,7 +178,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key,
+                    .proof_coordinator_tdx_private_key.unwrap(),
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -295,9 +295,10 @@ pub struct WatcherOptions {
         long = "l1.bridge-address",
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
-        help_heading = "L1 Watcher options"
+        help_heading = "L1 Watcher options",
+        required_unless_present = "dev"
     )]
-    pub bridge_address: Address,
+    pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
         default_value = "1000",
@@ -329,9 +330,9 @@ pub struct WatcherOptions {
 impl Default for WatcherOptions {
     fn default() -> Self {
         Self {
-            bridge_address: "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
+            bridge_address: Some("0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
                 .parse()
-                .unwrap(),
+                .unwrap()),
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
@@ -354,9 +355,10 @@ pub struct BlockProducerOptions {
         long = "block-producer.coinbase-address",
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
-        help_heading = "Block producer options"
+        help_heading = "Block producer options",
+        required_unless_present = "dev",
     )]
-    pub coinbase_address: Address,
+    pub coinbase_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -371,9 +373,9 @@ impl Default for BlockProducerOptions {
     fn default() -> Self {
         Self {
             block_time_ms: 5000,
-            coinbase_address: "0x0007a881cd95b1484fca47615b64803dad620c8d"
+            coinbase_address: Some("0x0007a881cd95b1484fca47615b64803dad620c8d"
                 .parse()
-                .unwrap(),
+                .unwrap()),
             elasticity_multiplier: 2,
         }
     }
@@ -390,6 +392,7 @@ pub struct CommitterOptions {
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
         conflicts_with_all = &["committer_remote_signer_url", "committer_remote_signer_public_key"],
         required_unless_present = "committer_remote_signer_url",
+        required_unless_present = "dev"
     )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -399,7 +402,8 @@ pub struct CommitterOptions {
         help_heading = "L1 Committer options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "committer_remote_signer_public_key",
-        required_unless_present = "committer_l1_private_key"
+        required_unless_present = "committer_l1_private_key",
+        required_unless_present = "dev"
     )]
     pub committer_remote_signer_url: Option<Url>,
     #[arg(
@@ -416,9 +420,10 @@ pub struct CommitterOptions {
         long = "l1.on-chain-proposer-address",
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
-        help_heading = "L1 Committer options"
+        help_heading = "L1 Committer options",
+        required_unless_present = "dev"
     )]
-    pub on_chain_proposer_address: Address,
+    pub on_chain_proposer_address: Option<Address>,
     #[arg(
         long = "committer.commit-time",
         default_value = "60000",
@@ -445,9 +450,9 @@ impl Default for CommitterOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .ok(),
-            on_chain_proposer_address: "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
+            on_chain_proposer_address: Some("0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
                 .parse()
-                .unwrap(),
+                .unwrap()),
             commit_time_ms: 60000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
@@ -467,6 +472,7 @@ pub struct ProofCoordinatorOptions {
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
         conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
         required_unless_present = "remote_signer_url",
+        required_unless_present = "dev"
     )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -476,8 +482,9 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
+        required_unless_present = "dev"
     )]
-    pub proof_coordinator_tdx_private_key: SecretKey,
+    pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
@@ -485,7 +492,8 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "remote_signer_public_key",
-        required_unless_present = "proof_coordinator_l1_private_key"
+        required_unless_present = "proof_coordinator_l1_private_key",
+        required_unless_present = "dev"
     )]
     pub remote_signer_url: Option<Url>,
     #[arg(
@@ -548,10 +556,10 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: true,
-            proof_coordinator_tdx_private_key: utils::parse_private_key(
+            proof_coordinator_tdx_private_key: Some(utils::parse_private_key(
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
             )
-            .unwrap(),
+            .unwrap()),
         }
     }
 }
