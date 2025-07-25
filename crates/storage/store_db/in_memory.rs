@@ -17,6 +17,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
+use tracing::info;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -627,7 +628,10 @@ impl StoreEngine for Store {
             .snap_state
             .storage_heal_paths
             .as_mut()
-            .map(|paths| paths.drain(..limit).collect())
+            .map(|paths| { 
+                info!("take_storage_heal_paths paths.len(): {}", paths.len());
+                paths.drain(..limit).collect()
+    })
             .unwrap_or_default())
     }
 

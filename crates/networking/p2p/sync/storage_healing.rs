@@ -72,6 +72,7 @@ pub(crate) async fn heal_storage_trie(
         // If we have few storages in queue, fetch more from the store
         // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
+            info!("pending_paths {}", pending_paths.len());
             pending_paths.extend(
                 store
                     .take_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)
