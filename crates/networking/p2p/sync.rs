@@ -1,7 +1,9 @@
 mod state_healing;
+mod storage_healing;
 
 use crate::metrics::METRICS;
 use crate::sync::state_healing::heal_state_trie;
+use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
     utils::current_unix_time,
@@ -418,7 +420,7 @@ impl Syncer {
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
-        let pivot_idx = all_block_hashes.len().saturating_sub(90);
+        let pivot_idx = all_block_hashes.len().saturating_sub(2);
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
@@ -483,7 +485,7 @@ impl Syncer {
             })
             .collect();
 
-/*         let (storages_key_value_pairs, should_continue) = self
+         let (storages_key_value_pairs, should_continue) = self
             .peers
             .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
             .await
@@ -492,7 +494,7 @@ impl Syncer {
         assert!(
             !should_continue,
             "since we downloaded the whole trie, the storage ranges should not continue"
-        ); */
+        ); 
 
         info!("Starting to compute the state root...");
 
@@ -528,26 +530,6 @@ impl Syncer {
         info!("Expected state root: {state_root:?}");
         info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
-        let pivot_idx = pivot_idx + 89;
-        let mut pivot_header = store
-            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-            .ok_or(SyncError::CorruptDB)?;
-        let state_root_new = pivot_header.state_root;
-        info!("new state root: {state_root_new:?}");
-
-        let mut healing_done = false;
-        info!("Starting healing");
-        while !healing_done {
-            healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
-        }
-        info!("Finished healing");
-
-        let trie = store.open_state_trie(state_root_new).expect("This should open");
-
-        let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();        
-
-        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root} state_root_new: {state_root_new}");
-
         let storages_store_start = Instant::now();
 
         METRICS
@@ -561,7 +543,7 @@ impl Syncer {
 
         let store_clone = store.clone();
 
-/*         tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let store = store_clone;
             // Store trie in storage
             for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
@@ -601,7 +583,7 @@ impl Syncer {
                     );
                 }
             }
-        }).await.unwrap(); */
+        }).await.expect("");
 
         METRICS
             .storage_tries_state_roots_end_time
@@ -611,6 +593,42 @@ impl Syncer {
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
+
+        let pivot_idx = pivot_idx + 1;
+        let mut pivot_header = store
+            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+            .ok_or(SyncError::CorruptDB)?;
+        let state_root_new = pivot_header.state_root;
+        info!("new state root: {state_root_new:?}");
+
+        let mut healing_done = false;
+        info!("Starting state healing");
+        while !healing_done {
+            healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
+        }
+        info!("Finished state healing");
+
+        let trie = store.open_state_trie(state_root_new).expect("This should open");
+        let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
+        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root} state_root_new: {state_root_new}");
+
+        healing_done = false;
+        info!("Starting storage healing");
+        while !healing_done {
+            healing_done = heal_storage_trie(
+                state_root_new, 
+                self.peers.clone(),
+                store.clone(), 
+                CancellationToken::new(),
+                Arc::new(AtomicBool::new(true))
+            ).await?;
+        }
+        info!("Finished storage healing");
+
+        for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+            let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
+            assert!(storage_trie.root_node().is_ok_and(|f| f.is_some()));
+        }
 
         // Download bytecodes
         info!(
