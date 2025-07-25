@@ -11,32 +11,46 @@ RUN cargo install cargo-chef
 
 WORKDIR /ethrex
 
+
 FROM chef AS planner
+
 COPY crates ./crates
 COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
+
 # Determine the crates that need to be built from dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 
+
 FROM chef AS builder
+
 COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
 
-# Optional build flags
-ARG BUILD_FLAGS=""
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
 COPY Cargo.* ./
+COPY fixtures ./fixtures
+
+# Optional build flags
+ARG BUILD_FLAGS=""
 RUN cargo build --release $BUILD_FLAGS
 
-FROM ubuntu:24.04
+
+FROM gcr.io/distroless/cc-debian12
+
 WORKDIR /usr/local/bin
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder ethrex/target/release/ethrex .
+
 EXPOSE 8545
+EXPOSE 8551
+EXPOSE 1729
+EXPOSE 3900
+
 ENTRYPOINT [ "./ethrex" ]

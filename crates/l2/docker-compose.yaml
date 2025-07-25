@@ -1,7 +1,17 @@
-include:
-  - ../blockchain/dev/docker-compose-dev.yaml
-
 services:
+  ethrex_l1:
+    container_name: ethrex_l1
+    image: "ethrex:dev"
+    build:
+      context: ../../
+      args:
+        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
+    ports:
+      - 127.0.0.1:8545:8545
+    volumes:
+      - ../../../fixtures/genesis/l1-dev.json:/genesis/l1-dev.json
+    command: --network /genesis/l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --dev
+
   contract_deployer:
     platform: linux/amd64
     container_name: contract_deployer
@@ -48,15 +58,15 @@ services:
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - COMPILE_CONTRACTS=true
     depends_on:
-      - ethrex
+      - ethrex_l1
 
   ethrex_l2:
-    restart: always
     container_name: ethrex_l2
-    image: "ethrex_l2"
+    image: "ethrex:dev"
     build:
       context: ../../
-      dockerfile: ./crates/l2/Dockerfile
+      args:
+        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
     ports:
       # RPC
       - 127.0.0.1:1729:1729
@@ -92,3 +102,6 @@ services:
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
       --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+    depends_on:
+      contract_deployer:
+        condition: service_completed_successfully

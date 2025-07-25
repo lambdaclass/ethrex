@@ -32,8 +32,6 @@ restart-testnet:
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
-ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
-ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
@@ -56,7 +54,7 @@ L2_PROMETHEUS_METRICS_PORT = 3702
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
+	docker compose up -d ethrex_l1
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
@@ -81,8 +79,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
-	docker compose -f docker-compose-l2.yaml down
+	docker compose down ethrex_l1
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
@@ -213,10 +210,10 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	docker compose up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
@@ -227,11 +224,11 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	docker compose up --detach --build
 
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
 	cargo test l2 --release -- --nocapture --test-threads=1
@@ -247,9 +244,9 @@ state-diff-test:
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
+	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
-	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release

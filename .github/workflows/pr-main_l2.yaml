@@ -52,16 +52,16 @@ jobs:
           - name: "Validium"
             validium: true
             web3signer: false
-            compose_targets: [docker-compose-l2.yaml]
+            compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
-            compose_targets: [docker-compose-l2.yaml]
+            compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
             compose_targets:
-              [docker-compose-l2.yaml, docker-compose-l2-web3signer.yaml]
+              [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -95,8 +95,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
+          tags: ethrex:dev
+          build-args: --features dev,rollup_storage_sql,metrics
           push: false
 
       - name: Start L1 & Deploy contracts
@@ -109,7 +109,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Start Sequencer
         run: |
@@ -147,8 +147,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
+          tags: ethrex:dev
+          build-args: --features dev,rollup_storage_sql,metrics
           push: false
 
       # also creates empty verification keys (as workflow runs with exec backend)
@@ -169,7 +169,7 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Install rex
         run: |
@@ -205,7 +205,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
-          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+          docker compose up --detach ethrex_l2
 
       - name: Run test
         run: |
@@ -228,8 +228,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
+          tags: ethrex:dev
+          build-args: --features dev,rollup_storage_sql,metrics
           push: false
 
       - name: Install solc
@@ -248,7 +248,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           COMPILE_CONTRACTS=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Run tests
         run: |
