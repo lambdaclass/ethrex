@@ -8,7 +8,7 @@
 
 ## L1 Side
 
-In addition to the components described in the [ethrex-L2-Contracts documentation](../../docs/contracts.md), the based feature introduces new contracts and modifies existing ones to enhance decentralization, security, and transparency. Below are the key updates and additions:
+In addition to the components described in the [ethrex-L2-Contracts documentation](../contracts.md), the based feature introduces new contracts and modifies existing ones to enhance decentralization, security, and transparency. Below are the key updates and additions:
 
 ### OnChainProposer (Modified)
 
