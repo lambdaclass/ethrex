@@ -35,7 +35,7 @@ Reth has a default mempool size of 10k transactions. If the load test goes too f
 
 ### Changing block gas limit
 
-By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the `gasLimit` field in the genesis file (in the case of `ethrex` it's `genesis-l2.json`, in the case of `reth` it's `genesis-load-test.json`). Note that the number has to be passed as a hextstring.
+Currently the gas limit is set to 150M gas. If you wish to change the default value edit the `gasLimit` field in the genesis file (in the case of `ethrex` it's `fixtures/genesis/l2.json`, in the case of `reth` it's `fixtures/genesis/load-test.json`). Note that the number has to be passed as a hextstring.
 
 ## Flamegraphs
 

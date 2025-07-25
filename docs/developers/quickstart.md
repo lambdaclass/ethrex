@@ -11,7 +11,8 @@ The simplest task a node can do is import blocks offline. We would do so like th
 cargo build --release --bin ethrex
 
 # Execute the import
-./target/release/ethrex --network cmd/ethrex/networks/hoodi/genesis.json import test_data/hoodi-blocks-first-thousand.rlp
+# Notice that the .rlp file is stored with Git LFS, it needs to be downloaded before importing
+./target/release/ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 ```
 
 - The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.
@@ -102,7 +103,7 @@ let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;
 ```
 
-The VM is a transient object. It is created with an engine/backend (LEVM or REVM) and a db reference. It is discarded after executing each block. 
+The VM is a transient object. It is created with an engine/backend (LEVM or REVM) and a db reference. It is discarded after executing each block.
 
 The `StoreVmDatabase` is just an implementation of the `VmDatabase` trait, using our `Store` (reference to a key-value store). It's an adapter between the store and the vm and allows the VM to not depend on a concrete DB.
 
@@ -157,7 +158,7 @@ Imports
 
 - Add references to our code for MPT and snapshots.
 - What account updates are. What does it mean to apply them.
-  
+
 Live node block execution
 
 - Engine api endpoints (fork choice updated with no attrs, new payload).

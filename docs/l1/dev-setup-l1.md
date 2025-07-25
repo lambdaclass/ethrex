@@ -29,7 +29,7 @@ make dev
 ```
 
 - RPC endpoint: localhost:8545
-- Genesis file: ./test_data/genesis-l1.json
+- Genesis file: fixtures/genesis/l1-dev.json
 
 ## Test
 
@@ -138,7 +138,7 @@ For reference on each individual check see the [assertoor-wiki](https://github.c
 Example run:
 
 ```bash
-cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+cargo run --bin ethrex -- --network fixtures/genesis/kurtosis.json
 ```
 
 The `network` argument is mandatory, as it defines the parameters of the chain.
@@ -334,11 +334,11 @@ Make sure you have your docker daemon running.
    ```bash
    # Navigate to tooling/sync directory
    cd tooling/sync
-   
-   # Run target for hoodi 
+
+   # Run target for hoodi
    make start-hoodi-metrics-docker
 
-    # Run target for holesky 
+    # Run target for holesky
    make start-holesky-metrics-docker
    ```
 
@@ -355,13 +355,12 @@ A consensus node must be running for the syncing to work.
 To run the execution node on any network with metrics, the next steps should be followed:
 1. Build the `ethrex` binary for the network you want (see node options in [CLI Commands](#cli-commands)) with the `metrics` feature enabled.
 2. Enable metrics by using the `--metrics` flag when starting the node.
-3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `crates/blockchain/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml`
+3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml`
 4. Run the docker containers:
 
    ```bash
-   # Navigate to crates/blockchain/metrics directory
-   cd crates/blockchain/metrics
+   cd metrics
 
     docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
     ```
-For more details on running a sync go to `ethrex/tooling/sync/readme.md`.
+For more details on running a sync go to `tooling/sync/readme.md`.
