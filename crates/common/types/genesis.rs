@@ -2,6 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -90,15 +91,7 @@ impl TryFrom<&Path> for Genesis {
 
 #[allow(unused)]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
@@ -109,15 +102,7 @@ pub struct ForkBlobSchedule {
 
 #[allow(unused)]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct BlobSchedule {
@@ -162,9 +147,9 @@ fn default_prague_schedule() -> ForkBlobSchedule {
     Deserialize,
     Default,
     PartialEq,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    RSerialize,
+    RDeserialize,
+    Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ChainConfig {

@@ -12,6 +12,7 @@ use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
@@ -25,7 +26,7 @@ type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     // Rlp encoded state trie nodes

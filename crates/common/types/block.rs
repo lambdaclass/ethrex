@@ -20,6 +20,7 @@ use ethrex_rlp::{
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
@@ -30,16 +31,7 @@ pub type BlockHash = H256;
 use once_cell::sync::OnceCell;
 
 #[derive(
-    PartialEq,
-    Eq,
-    Debug,
-    Clone,
-    Deserialize,
-    Serialize,
-    Default,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default, RSerialize, RDeserialize, Archive,
 )]
 pub struct Block {
     pub header: BlockHeader,
@@ -87,16 +79,7 @@ impl RLPDecode for Block {
 
 /// Header part of a block on the chain.
 #[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Serialize,
-    Default,
-    Deserialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
@@ -247,16 +230,7 @@ impl RLPDecode for BlockHeader {
 
 // The body of a block on the chain
 #[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    Default,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive,
 )]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
@@ -354,15 +328,7 @@ impl BlockHeader {
 }
 
 #[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Deserialize,
-    Serialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct Withdrawal {
