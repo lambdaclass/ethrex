@@ -1,4 +1,8 @@
-.PHONY = start_geth_holesky start_lighthouse_holesky gen_jwt
+.PHONY = help create_data_dir gen_jwt sync start_geth_holesky flamegraph-main  flamegraph \
+flamegraph-branch flamegraph-holesky flamegraph-hoodi start-lighthouse holesky-lighthouse \
+hoodi-lighthouse sepolia-lighthouse backup-db start-ethrex-hoodi start-ethrex-holesky \
+start-ethrex-sepolia start-hoodi-metrics-docker start-holesky-metrics-docker \
+start-sepolia-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
