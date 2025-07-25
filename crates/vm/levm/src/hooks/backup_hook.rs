@@ -14,7 +14,7 @@ pub struct BackupHook {
 impl Hook for BackupHook {
     fn prepare_execution(&mut self, vm: &mut crate::vm::VM<'_>) -> Result<(), VMError> {
         // Here we need to backup the callframe for undoing transaction changes if we want to.
-        self.pre_execution_backup = vm.current_call_frame()?.call_frame_backup.clone();
+        self.pre_execution_backup = vm.current_call_frame.call_frame_backup.clone();
         Ok(())
     }
 
@@ -25,7 +25,7 @@ impl Hook for BackupHook {
     ) -> Result<(), VMError> {
         // We want to restore to the initial state, this includes saving the changes made by the prepare execution
         // and the changes made by the execution itself.
-        let mut execution_backup = vm.current_call_frame()?.call_frame_backup.clone();
+        let mut execution_backup = vm.current_call_frame.call_frame_backup.clone();
         let pre_execution_backup = std::mem::take(&mut self.pre_execution_backup);
         execution_backup.extend(pre_execution_backup);
         vm.db.tx_backup = Some(execution_backup);

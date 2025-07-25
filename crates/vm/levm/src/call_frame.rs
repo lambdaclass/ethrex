@@ -361,25 +361,35 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
-        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
+    /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
+    #[inline(always)]
+    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        self.call_frames.push(new_call_frame);
+        #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
+        unsafe {
+            std::mem::swap(
+                &mut self.current_call_frame,
+                self.call_frames.last_mut().unwrap_unchecked(),
+            );
+        }
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
-        self.call_frames.last().ok_or(InternalError::CallFrame)
-    }
-
+    #[inline(always)]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
-        self.call_frames.pop().ok_or(InternalError::CallFrame)
+        let mut new = self.call_frames.pop().ok_or(InternalError::CallFrame)?;
+
+        std::mem::swap(&mut new, &mut self.current_call_frame);
+
+        Ok(new)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {
-        self.call_frames.len() == 1
+        self.call_frames.is_empty()
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -392,7 +402,7 @@ impl<'a> VM<'a> {
         child_call_frame_backup: &CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_accounts_info;
         for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
@@ -402,16 +412,14 @@ impl<'a> VM<'a> {
         }
 
         let parent_backup_storage = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_account_storage_slots;
         for (address, storage) in child_call_frame_backup
             .original_account_storage_slots
             .iter()
         {
-            let parent_storage = parent_backup_storage
-                .entry(*address)
-                .or_insert(HashMap::new());
+            let parent_storage = parent_backup_storage.entry(*address).or_default();
             for (key, value) in storage {
                 if parent_storage.get(key).is_none() {
                     parent_storage.insert(*key, *value);
@@ -423,6 +431,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame_mut()?.increment_pc_by(count)
+        self.current_call_frame.increment_pc_by(count)
     }
 }
