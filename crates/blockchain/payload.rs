@@ -446,7 +446,13 @@ impl Blockchain {
                 Err(e) => {
                     error!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
-                    txs.pop();
+                    let txs_to_remove = std::iter::once(tx_hash).chain(
+                        txs.pop()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|tx| tx.compute_hash()),
+                    );
+                    self.remove_transactions_from_pool(txs_to_remove)?;
                     continue;
                 }
             };
@@ -653,11 +659,12 @@ impl TransactionQueue {
     }
 
     /// Removes current head transaction and all transactions from the given sender
-    pub fn pop(&mut self) {
-        if !self.is_empty() {
-            let sender = self.heads.remove(0).tx.sender();
-            self.txs.remove(&sender);
+    pub fn pop(&mut self) -> Option<Vec<MempoolTransaction>> {
+        if self.is_empty() {
+            return None;
         }
+        let sender = self.heads.remove(0).tx.sender();
+        self.txs.remove(&sender)
     }
 
     /// Remove the top transaction

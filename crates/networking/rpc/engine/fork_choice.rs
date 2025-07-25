@@ -225,36 +225,40 @@ async fn handle_forkchoice(
     )
     .await
     {
-        Ok(head) => {
+        Ok(new_canonical) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
+            let mut txs_to_remove = Vec::new();
             context.blockchain.clear_mempool()?;
-            // match context.storage.get_block_by_hash(head.hash()).await {
-            //     Ok(Some(block)) => {
-            //         for tx in &block.body.transactions {
-            //             context
-            //                 .blockchain
-            //                 .remove_transaction_from_pool(&tx.compute_hash())
-            //                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
-            //         }
-            //     }
-            //     Ok(None) => {
-            //         warn!(
-            //             "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
-            //         )
-            //     }
-            //     Err(_) => {
-            //         return Err(RpcErr::Internal(
-            //             "Failed to get block by hash to remove transactions from the mempool"
-            //                 .to_string(),
-            //         ));
-            //     }
-            // };
+            for block_header in &new_canonical {
+                match context.storage.get_block_by_hash(block_header.hash()).await {
+                    Ok(Some(block)) => {
+                        for tx in &block.body.transactions {
+                            txs_to_remove.push(tx.compute_hash());
+                        }
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+                        )
+                    }
+                    Err(_) => {
+                        return Err(RpcErr::Internal(
+                            "Failed to get block by hash to remove transactions from the mempool"
+                                .to_string(),
+                        ));
+                    }
+                };
+            }
+            context
+                .blockchain
+                .remove_transactions_from_pool(txs_to_remove.into_iter())
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
 
             Ok((
-                Some(head),
+                new_canonical.last().cloned(),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
                     fork_choice_state.head_block_hash,
                 )),

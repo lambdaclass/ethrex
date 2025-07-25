@@ -85,6 +85,26 @@ impl Mempool {
         Ok(())
     }
 
+    pub fn remove_transactions(
+        &self,
+        hashes: impl Iterator<Item = H256>,
+    ) -> Result<(), StoreError> {
+        let mut tx_pool = self
+            .transaction_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut blobs_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+        for hash in hashes {
+            tx_pool.remove(&hash);
+            blobs_pool.remove(&hash);
+        }
+
+        Ok(())
+    }
+
     /// Removes all transactions from the mempool.
     /// On success returns the number of removed entries.
     pub fn clear(&self) -> Result<usize, StoreError> {

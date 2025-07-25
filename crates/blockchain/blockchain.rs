@@ -658,6 +658,13 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
+    pub fn remove_transactions_from_pool(
+        &self,
+        hashes: impl Iterator<Item = H256>,
+    ) -> Result<(), StoreError> {
+        self.mempool.remove_transactions(hashes)
+    }
+
     pub fn clear_mempool(&self) -> Result<usize, StoreError> {
         self.mempool.clear()
     }
