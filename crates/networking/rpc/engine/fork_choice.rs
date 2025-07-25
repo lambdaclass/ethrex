@@ -231,7 +231,6 @@ async fn handle_forkchoice(
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             let mut txs_to_remove = Vec::new();
-            context.blockchain.clear_mempool()?;
             for block_header in &new_canonical {
                 match context.storage.get_block_by_hash(block_header.hash()).await {
                     Ok(Some(block)) => {
