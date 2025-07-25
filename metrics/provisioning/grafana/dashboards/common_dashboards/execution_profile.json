@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 4,
   "links": [],
   "panels": [
     {
@@ -81,7 +81,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "sum by(function_name) (\n  function_duration_seconds{run_id=\"$run_id\", function_name!=\"add_block\"}\n)\n",
+          "expr": "sum by(function_name) (\n  function_duration_seconds_sum\n)\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -100,27 +100,7 @@
   "schemaVersion": 41,
   "tags": [],
   "templating": {
-    "list": [
-      {
-        "allowCustomValue": false,
-        "current": {
-          "text": "1750967413248",
-          "value": "1750967413248"
-        },
-        "definition": "label_values(current_run_id,run_id)",
-        "name": "run_id",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(current_run_id,run_id)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "regex": "",
-        "sort": 4,
-        "type": "query"
-      }
-    ]
+    "list": []
   },
   "time": {
     "from": "now-6h",
@@ -130,5 +110,5 @@
   "timezone": "browser",
   "title": "Execution profile",
   "uid": "1f6035c3-1180-4e5b-9c1b-1384ac2e53d1",
-  "version": 7
+  "version": 1
 }

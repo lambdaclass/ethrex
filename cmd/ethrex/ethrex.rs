@@ -64,6 +64,7 @@ async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     // TODO: Check every module starts properly.
+
     let tracker = TaskTracker::new();
 
     if opts.metrics_enabled {

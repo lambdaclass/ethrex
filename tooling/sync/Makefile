@@ -211,7 +211,6 @@ endif
 	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
 	--network cmd/ethrex/networks/hoodi/genesis.json \
 	--metrics \
-	--profiling \
 	--metrics.port 3701 \
 	import $(RLP_FILE) \
 	--removedb 
