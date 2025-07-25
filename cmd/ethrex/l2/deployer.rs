@@ -335,9 +335,9 @@ impl Default for DeployerOptions {
             )
             .unwrap(),
             env_file_path: None,
-            deposit_rich: false,
-            private_keys_file_path: None,
-            genesis_l1_path: None,
+            deposit_rich: true,
+            private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
+            genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
             genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([

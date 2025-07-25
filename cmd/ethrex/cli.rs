@@ -20,6 +20,10 @@ use crate::{
     initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store}, l2::{self, options::{AlignedOptions, BasedOptions, BlockFetcherOptions, MonitorOptions, StateUpdaterOptions}, BlockProducerOptions, CommitterOptions, EthOptions, ProofCoordinatorOptions, SequencerOptions, WatcherOptions}, networks::Network, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
 };
 
+const DB_ETHREX_DEV_L1 : &str = "dev_ethrex_l1";
+const DB_ETHREX_DEV_L2 : &str = "dev_ethrex_l2";
+const L2_GENESIS_PATH : &str = "../../fixtures/genesis/l2.json";
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
@@ -188,6 +192,51 @@ pub struct Options {
     pub discovery_port: String,
 }
 
+impl Options {
+    pub fn default_l1() -> Self {
+        Self {
+            network: Some(Network::GenesisPath(
+                PathBuf::from_str("../../fixtures/genesis/l1-dev.json").unwrap(),
+            )),
+            datadir: DB_ETHREX_DEV_L1.to_string(),
+            dev: true,
+            http_addr: "0.0.0.0".to_string(),
+            http_port: "8545".to_string(),
+            authrpc_port: "8551".to_string(),
+            metrics_port: "9090".to_string(),
+            authrpc_addr: "localhost".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".to_string(),
+            p2p_port: "30303".to_string(),
+            discovery_addr: "0.0.0.0".to_string(),
+            discovery_port: "30303".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn default_l2() -> Self {
+        Self {
+            network: Some(Network::GenesisPath(L2_GENESIS_PATH.into())), 
+            datadir: DB_ETHREX_DEV_L2.to_string(), 
+            metrics_port: "3702".into(), 
+            metrics_enabled: true, 
+            dev: true, 
+            http_addr: "0.0.0.0".into(), 
+            http_port: "1729".into(), 
+            authrpc_addr: "localhost".into(), 
+            authrpc_port: "8551".into(), 
+            authrpc_jwtsecret: "jwt.hex".into(), 
+            p2p_enabled: true, 
+            p2p_addr: "0.0.0.0".into(), 
+            p2p_port: "30303".into(), 
+            discovery_addr: "0.0.0.0".into(), 
+            discovery_port: "30303".into(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -324,59 +373,17 @@ impl Subcommand {
                 let mut l2_options = l2_opts;
 
                 if l2_options.node_opts.dev {
-                    //remove_db(&format!("{}/l1", l2_options.node_opts.datadir), true);
-                    //remove_db(&format!("{}/l2", l2_options.node_opts.datadir), true);
-                    remove_db("dev_ethrex/l1", true);
-                    remove_db("dev_ethrex/l2", true);
-                    init_l1(Options {
-                        network: Some(Network::GenesisPath(
-                            PathBuf::from_str("../../fixtures/genesis/l1-dev.json").unwrap(),
-                        )),
-                        datadir: "dev_ethrex/l1".to_string(),
-                        dev: true,
-                        evm: EvmEngine::LEVM,
-                        http_addr: "0.0.0.0".to_string(),
-                        http_port: "8545".to_string(),
-                        authrpc_port: "8551".to_string(),
-                        metrics_addr: "0.0.0.0".to_string(),
-                        metrics_port: "9090".to_string(),
-                        authrpc_addr: "localhost".to_string(),
-                        authrpc_jwtsecret: "jwt.hex".to_string(),
-                        p2p_enabled: true,
-                        p2p_addr: "0.0.0.0".to_string(),
-                        p2p_port: "30303".to_string(),
-                        discovery_addr: "0.0.0.0".to_string(),
-                        discovery_port: "30303".to_string(),
-                        ..Default::default()
-                    })
+                    remove_db(DB_ETHREX_DEV_L1, true);
+                    remove_db(DB_ETHREX_DEV_L2, true);
+                    init_l1(Options::default_l1())
                     .await?;
-                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str("../../fixtures/genesis/l2.json").unwrap())?;
-                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions{
-                        rpc_url: "http://localhost:8545".into(),
-                        private_key: utils::parse_private_key("0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").unwrap(),
-                        risc0_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
-                        sp1_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
-                        tdx_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
-                        aligned_aggregator_address: "0x00000000000000000000000000000000000000aa".parse().unwrap(),
-                        on_chain_proposer_owner: "0x4417092b70a3e5f10dc504d0947dd256b965fc62".parse().unwrap(),
-                        bridge_owner: "0x4417092b70a3e5f10dc504d0947dd256b965fc62".parse().unwrap(),
-                        deposit_rich: true,
-                        private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
-                        genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
-                        genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
-                        ..Default::default()
-                    }).await?;
+                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(L2_GENESIS_PATH)?)?;
+                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default()).await?;
 
-                    l2_options = l2::options::Options { 
-                        node_opts: Options { log_level: Level::INFO, network: Some(Network::GenesisPath("../../fixtures/genesis/l2.json".into())), bootnodes: vec![], datadir: "dev_ethrex/l2".into(), force: false, syncmode: SyncMode::Full, metrics_addr: "0.0.0.0".into(), metrics_port: "3702".into(), metrics_enabled: true, dev: true, evm: EvmEngine::LEVM, http_addr: "0.0.0.0".into(), http_port: "1729".into(), authrpc_addr: "localhost".into(), authrpc_port: "8551".into(), authrpc_jwtsecret: "jwt.hex".into(), p2p_enabled: true, p2p_addr: "0.0.0.0".into(), p2p_port: "30303".into(), discovery_addr: "0.0.0.0".into(), discovery_port: "30303".into() }, 
-                        sequencer_opts: SequencerOptions { 
-                            eth_opts: EthOptions { rpc_url: vec!["http://localhost:8545".into()], maximum_allowed_max_fee_per_gas: 10000000000, maximum_allowed_max_fee_per_blob_gas: 10000000000, max_number_of_retries: 10, backoff_factor: 2, min_retry_delay: 96, max_retry_delay: 1800 }, 
-                            watcher_opts: WatcherOptions { bridge_address: "0x9ce8eb164027c55e94f14850818b5f4656f0b902".parse().unwrap(), watch_interval_ms: 1000, max_block_step: 5000, watcher_block_delay: 0 }, 
-                            block_producer_opts: BlockProducerOptions { block_time_ms: 5000, coinbase_address: "0x0007a881cd95b1484fca47615b64803dad620c8d".parse().unwrap(), elasticity_multiplier: 2 }, 
-                            committer_opts: CommitterOptions { committer_l1_private_key: Some(utils::parse_private_key("0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").unwrap()), committer_remote_signer_url: None, committer_remote_signer_public_key: None, on_chain_proposer_address: "0x04ef270dfac09618565fe7e62eade2809ed7347f".parse().unwrap(), commit_time_ms: 60000, arbitrary_base_blob_gas_price: 1000000000 }, 
-                            proof_coordinator_opts: ProofCoordinatorOptions { proof_coordinator_l1_private_key: Some(utils::parse_private_key("0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d").unwrap()), proof_coordinator_tdx_private_key: utils::parse_private_key("0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d").unwrap(), remote_signer_url: None, remote_signer_public_key: None, listen_ip: std::net::IpAddr::V4("127.0.0.1".parse().unwrap()), listen_port: 3900, proof_send_interval_ms: 5000, dev_mode: true }, 
-                            based_opts: BasedOptions { state_updater_opts: StateUpdaterOptions { sequencer_registry: None, check_interval_ms: 1000 }, block_fetcher: BlockFetcherOptions { fetch_interval_ms: 5000, fetch_block_step: 5000 } }, aligned_opts: AlignedOptions { aligned: false, aligned_verifier_interval_ms: 5000, beacon_url: None, aligned_network: Some("devnet".into()), fee_estimate: "instant".into(), aligned_sp1_elf_path: None }, 
-                            monitor_opts: MonitorOptions { tick_rate: 1000 }, validium: false, based: false, monitor: false }, sponsorable_addresses_file_path: None, sponsor_private_key: utils::parse_private_key("0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192").unwrap() };
+                    l2_options = l2::options::Options{
+                        node_opts: Options::default_l2(),
+                        ..Default::default()
+                    };
                     l2_options.sequencer_opts.committer_opts.on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
                     l2_options.sequencer_opts.watcher_opts.bridge_address = contract_addresses.bridge_address;
                 } 

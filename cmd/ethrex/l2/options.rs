@@ -279,8 +279,8 @@ impl Default for EthOptions {
     fn default() -> Self {
         Self {
             rpc_url: vec!["http://localhost:8545".to_string()],
-            maximum_allowed_max_fee_per_gas: Default::default(),
-            maximum_allowed_max_fee_per_blob_gas: Default::default(),
+            maximum_allowed_max_fee_per_gas: 10000000000,
+            maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
@@ -334,12 +334,12 @@ impl Default for WatcherOptions {
                 .unwrap(),
             watch_interval_ms: 1000,
             max_block_step: 5000,
-            watcher_block_delay: 128,
+            watcher_block_delay: 0,
         }
     }
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Debug)]
 pub struct BlockProducerOptions {
     #[arg(
         long = "block-producer.block-time",
@@ -365,6 +365,18 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
+}
+
+impl Default for BlockProducerOptions {
+    fn default() -> Self {
+        Self {
+            block_time_ms: 5000,
+            coinbase_address: "0x0007a881cd95b1484fca47615b64803dad620c8d"
+                .parse()
+                .unwrap(),
+            elasticity_multiplier: 2,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -436,7 +448,7 @@ impl Default for CommitterOptions {
             on_chain_proposer_address: "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
                 .parse()
                 .unwrap(),
-            commit_time_ms: 1000,
+            commit_time_ms: 60000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
             committer_remote_signer_public_key: None,
@@ -535,7 +547,7 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: false,
+            dev_mode: true,
             proof_coordinator_tdx_private_key: utils::parse_private_key(
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
             )
@@ -608,13 +620,10 @@ impl Default for AlignedOptions {
         Self {
             aligned: false,
             aligned_verifier_interval_ms: 5000,
-            beacon_url: Some(vec![Url::parse("http://127.0.0.1:58801").unwrap()]),
+            beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: Some(format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            )),
+            aligned_sp1_elf_path: None,
         }
     }
 }
@@ -627,7 +636,7 @@ pub struct BasedOptions {
     pub block_fetcher: BlockFetcherOptions,
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Debug)]
 pub struct StateUpdaterOptions {
     #[arg(
         long = "state-updater.sequencer-registry",
@@ -647,7 +656,16 @@ pub struct StateUpdaterOptions {
     pub check_interval_ms: u64,
 }
 
-#[derive(Parser, Default, Debug)]
+impl Default for StateUpdaterOptions {
+    fn default() -> Self {
+        Self {
+            sequencer_registry: None,
+            check_interval_ms: 1000,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
 pub struct BlockFetcherOptions {
     #[arg(
         long = "block-fetcher.fetch_interval_ms",
@@ -667,9 +685,26 @@ pub struct BlockFetcherOptions {
     pub fetch_block_step: u64,
 }
 
-#[derive(Parser, Default, Debug)]
+impl Default for BlockFetcherOptions {
+    fn default() -> Self {
+        Self {
+            fetch_interval_ms: 5000,
+            fetch_block_step: 5000,
+        }
+    }
+}
+
+
+
+#[derive(Parser, Debug)]
 pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
     pub tick_rate: u64,
+}
+
+impl Default for MonitorOptions {
+    fn default() -> Self {
+        Self { tick_rate: 1000 }
+    }
 }
