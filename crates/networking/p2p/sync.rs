@@ -642,10 +642,10 @@ impl Syncer {
                     }
                 },
                 Err(err) => {
+                    error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
                     error!("storage_trie.root_node() {err:?}");
                 },
             }
-            assert!(storage_trie.root_node().is_ok_and(|f| f.is_some()));
         }
 
         // Download bytecodes
