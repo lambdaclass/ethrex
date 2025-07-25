@@ -621,7 +621,7 @@ impl StoreEngine for Store {
 
     async fn take_storage_heal_paths(
         &self,
-        limit: usize,
+        mut limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
         Ok(self
             .inner()?
@@ -630,8 +630,12 @@ impl StoreEngine for Store {
             .as_mut()
             .map(|paths| { 
                 info!("take_storage_heal_paths paths.len(): {}", paths.len());
+                let size = paths.len();
+                if limit > size {
+                    limit = size;
+                }
                 paths.drain(..limit).collect()
-    })
+            })
             .unwrap_or_default())
     }
 
