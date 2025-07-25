@@ -396,6 +396,10 @@ impl Subcommand {
 
                     l2_options = l2::options::Options {
                         node_opts: Options::default_l2(),
+                        sequencer_opts: SequencerOptions {
+                            monitor: true,
+                            .. Default::default()
+                        },
                         ..Default::default()
                     };
                     l2_options

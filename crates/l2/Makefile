@@ -134,7 +134,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
 	l2 \
 	--watcher.block-delay 0 \
-	--network ${L2_GENESIS_FILE_PATH} \
+	--network ${L2_GENESIS_FILE_PATH} --monitor \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
@@ -153,7 +153,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics,dev" -- \
-	l2 --dev
+	l2 --dev --monitor
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
