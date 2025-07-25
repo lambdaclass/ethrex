@@ -483,16 +483,16 @@ impl Syncer {
             })
             .collect();
 
-        let (storages_key_value_pairs, should_continue) = self
+/*         let (storages_key_value_pairs, should_continue) = self
             .peers
             .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
             .await
-            .unwrap();
+            .unwrap(); 
 
         assert!(
             !should_continue,
             "since we downloaded the whole trie, the storage ranges should not continue"
-        );
+        ); */
 
         info!("Starting to compute the state root...");
 
@@ -506,14 +506,6 @@ impl Syncer {
             let accounts_len = account_hashes.len();
             for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
                 // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
-                if i == accounts_len - 1 {
-                    info!("Modifying the last account");
-                    account.nonce += 1;
-                    account.balance = U256::max_value();
-                    account.storage_root = H256::repeat_byte(0xff);
-                    account.code_hash = H256::repeat_byte(0xff);
-                }
-                i += 1;
                 if account.code_hash != *EMPTY_KECCACK_HASH {
                     bytecode_hashes.push(account.code_hash);
                 }
@@ -561,7 +553,7 @@ impl Syncer {
 
         let store_clone = store.clone();
 
-        tokio::task::spawn_blocking(move || {
+/*         tokio::task::spawn_blocking(move || {
             let store = store_clone;
             // Store trie in storage
             for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
@@ -601,7 +593,7 @@ impl Syncer {
                     );
                 }
             }
-        }).await.unwrap();
+        }).await.unwrap(); */
 
         METRICS
             .storage_tries_state_roots_end_time

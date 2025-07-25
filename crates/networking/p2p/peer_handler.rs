@@ -876,25 +876,28 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            const SNAP_LIMIT: u64 = 6;
+            const SNAP_LIMIT: u64 = 3;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             let scores_cloned = scores.clone();
-            // while current_unix_time() > time_limit {
-            //     info!("We are stale, updating pivot");
-            //     let Some(header) = self
-            //         .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
-            //         .await
-            //     else {
-            //         info!("Received None pivot_header");
-            //         continue;
-            //     };
-            //     pivot_header = header;
-            //     info!(
-            //         "New pivot block number: {}, header: {:?}",
-            //         pivot_header.number, pivot_header
-            //     );
-            //     time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-            // }
+            
+            // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
+             while current_unix_time() > time_limit {
+                 info!("We are stale, updating pivot");
+                 let Some(header) = self
+                     .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
+                     .await
+                 else {
+                     info!("Received None pivot_header");
+                     continue;
+                 };
+                 pivot_header = header;
+                 info!(
+                     "New pivot block number: {}, header: {:?}",
+                     pivot_header.number, pivot_header
+                 );
+                 time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+             }
+             // TODO: not remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
             let state_root = pivot_header.state_root;
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
