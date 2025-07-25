@@ -16,7 +16,9 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::tasks::{
+    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -271,14 +273,14 @@ impl GenServer for L1Watcher {
     type OutMsg = OutMessage;
     type Error = L1WatcherError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Perform the check and suscribe a periodic Watch.
         handle
             .clone()
             .cast(Self::CastMsg::Watch)
             .await
             .map_err(Self::Error::GenServerError)?;
-        Ok(self)
+        Ok(Success(self))
     }
 
     async fn handle_cast(
