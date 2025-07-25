@@ -121,7 +121,6 @@
       when: not nodejs_check.stat.exists
 
     - name: Move NodeJS
-      become: true
       shell: "sudo cp -r /tmp/node-v{{ nodejs_version }}-linux-{{ architecture }}/* /usr/local/"
       vars:
         ansible_ssh_user: admin
@@ -136,6 +135,7 @@
         update_cache: true
 
     - name: Clone Explorer repository
+      become: false
       git:
         repo: "{{ explorer_url }}"
         dest: "{{ explorer_dir }}"
