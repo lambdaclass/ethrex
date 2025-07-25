@@ -314,6 +314,25 @@ pub async fn deposit_erc20(
         )
         .await?;
 
+    let tx_call = tx.clone();
+    let result = client
+        .call(
+            to,
+            tx.data.clone(),
+            Overrides {
+                value: Some(tx_call.value),
+                nonce: Some(tx_call.nonce),
+                chain_id: Some(tx_call.chain_id),
+                gas_limit: Some(tx_call.gas_limit),
+                max_fee_per_gas: Some(tx_call.max_fee_per_gas),
+                max_priority_fee_per_gas: Some(tx_call.max_priority_fee_per_gas),
+                access_list: tx_call.access_list,
+                ..Default::default()
+            },
+        )
+        .await;
+    dbg!(result);
+
     send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await
 }
 
