@@ -1,37 +1,21 @@
-use prometheus::{Encoder, GaugeVec, TextEncoder, register_gauge_vec};
+use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
-    time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tracing::{Subscriber, span::Id};
+use tracing::{Span, Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
 
-pub static METRICS_PROFILING: LazyLock<GaugeVec> = LazyLock::new(initialize_profiling_vec);
-pub static RUN_ID: LazyLock<u128> = LazyLock::new(get_current_time);
-pub static RUN_ID_GAUGE: LazyLock<GaugeVec> = LazyLock::new(initialize_current_run_id);
+pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
+    LazyLock::new(initialize_histogram_vec);
 
-fn get_current_time() -> u128 {
-    let start = SystemTime::now();
-    start.duration_since(UNIX_EPOCH).unwrap().as_millis()
-}
-
-fn initialize_current_run_id() -> GaugeVec {
-    register_gauge_vec!(
-        "current_run_id",
-        "Keeps track of the timestamp at which the latest import benchmark started and uses it as an id. Used to avoid Grafana mixing data from different runs.",
-        &["run_id"]
-    )
-    .unwrap()
-}
-
-fn initialize_profiling_vec() -> GaugeVec {
-    register_gauge_vec!(
+fn initialize_histogram_vec() -> HistogramVec {
+    register_histogram_vec!(
         "function_duration_seconds",
-        "Duration of spans inside add blocks",
-        &["function_name", "run_id"]
+        "Histogram of the run time of the functions in block processing",
+        &["function_name"]
     )
     .unwrap()
 }
@@ -40,8 +24,7 @@ fn initialize_profiling_vec() -> GaugeVec {
 // We need to do this because things like database reads and writes are spread out throughout the code, so we need to gather multiple measurements to publish
 #[derive(Default)]
 pub struct FunctionProfilingLayer {
-    functions: Mutex<HashMap<Id, Instant>>,
-    durations: Mutex<HashMap<String, f64>>, // Temporary per-function storage
+    function_timers: Mutex<HashMap<Id, HistogramTimer>>,
 }
 
 impl<S> Layer<S> for FunctionProfilingLayer
@@ -49,41 +32,23 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        let name = ctx.span(id).unwrap().metadata().name();
-        if name != "execution_context" {
-            self.functions
-                .lock()
-                .unwrap()
-                .insert(id.clone(), Instant::now());
-        }
+        let name = match ctx.span(id) {
+            Some(span) => span.metadata().name(),
+            None => "Error retrieving span name",
+        };
+
+        let timer = METRICS_BLOCK_PROCESSING_PROFILE
+            .with_label_values(&[&name])
+            .start_timer();
+        let mut timers = self.function_timers.lock().unwrap();
+        timers.insert(id.clone(), timer);
     }
 
-    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let name = ctx.span(id).unwrap().metadata().name();
-        if name != "execution_context" {
-            let start_time = self.functions.lock().unwrap().remove(id).unwrap();
-            let duration = start_time.elapsed().as_secs_f64();
-            self.durations
-                .lock()
-                .unwrap()
-                .entry(name.to_string())
-                .and_modify(|v| *v += duration)
-                .or_insert(duration);
-        } else {
-            self.export_and_clear();
+    fn on_exit(&self, id: &Id, _ctx: Context<'_, S>) {
+        let mut timers = self.function_timers.lock().unwrap();
+        if let Some(timer) = timers.remove(id) {
+            timer.observe_duration();
         }
-    }
-}
-
-impl FunctionProfilingLayer {
-    fn export_and_clear(&self) {
-        let mut durations = self.durations.lock().unwrap();
-        for (function_name, duration) in durations.iter() {
-            METRICS_PROFILING
-                .with_label_values(&[function_name, &RUN_ID.to_string()])
-                .set(*duration);
-        }
-        durations.clear();
     }
 }
 
@@ -102,8 +67,5 @@ pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
 }
 
 pub fn initialize_profiling_metrics() {
-    METRICS_PROFILING.reset();
-    RUN_ID_GAUGE
-        .with_label_values(&[&RUN_ID.to_string()])
-        .set(0.0);
+    METRICS_BLOCK_PROCESSING_PROFILE.reset();
 }

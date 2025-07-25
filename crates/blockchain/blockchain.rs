@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument};
+use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -379,7 +379,7 @@ impl Blockchain {
             .await
             .map_err(|e| e.into())
     }
-    #[instrument(name = "execution_context", level = "trace", skip_all)]
+
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
@@ -454,7 +454,6 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
-    #[instrument(name = "execution_context", level = "trace", skip_all)]
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
