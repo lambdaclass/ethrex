@@ -62,6 +62,7 @@ impl LEVM {
                 matches!(report.result.clone(), TxResult::Success),
                 cumulative_gas_used,
                 report.logs.clone(),
+                report.output.clone(),
             );
 
             receipts.push(receipt);
