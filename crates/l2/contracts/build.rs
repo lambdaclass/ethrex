@@ -154,8 +154,14 @@ fn compile_contract_to_bytecode(
     remappings: Option<&[(&str, PathBuf)]>,
 ) {
     println!("Compiling {contract_name} contract");
-    ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings, &[&output_dir])
-        .expect("Failed to compile contract");
+    ethrex_l2_sdk::compile_contract(
+        output_dir,
+        contract_path,
+        runtime_bin,
+        remappings,
+        &[&output_dir],
+    )
+    .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
 
     // Resolve the resulted file path

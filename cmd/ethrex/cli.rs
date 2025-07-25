@@ -17,12 +17,22 @@ use secp256k1::SecretKey;
 use tracing::{Level, info, warn};
 
 use crate::{
-    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store}, l2::{self, options::{AlignedOptions, BasedOptions, BlockFetcherOptions, MonitorOptions, StateUpdaterOptions}, BlockProducerOptions, CommitterOptions, EthOptions, ProofCoordinatorOptions, SequencerOptions, WatcherOptions}, networks::Network, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
+    DEFAULT_DATADIR,
+    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
+    l2::{
+        self, BlockProducerOptions, CommitterOptions, EthOptions, ProofCoordinatorOptions,
+        SequencerOptions, WatcherOptions,
+        options::{
+            AlignedOptions, BasedOptions, BlockFetcherOptions, MonitorOptions, StateUpdaterOptions,
+        },
+    },
+    networks::Network,
+    utils::{self, get_client_version, set_datadir},
 };
 
-const DB_ETHREX_DEV_L1 : &str = "dev_ethrex_l1";
-const DB_ETHREX_DEV_L2 : &str = "dev_ethrex_l2";
-const L2_GENESIS_PATH : &str = "../../fixtures/genesis/l2.json";
+const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
+const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -217,20 +227,20 @@ impl Options {
 
     pub fn default_l2() -> Self {
         Self {
-            network: Some(Network::GenesisPath(L2_GENESIS_PATH.into())), 
-            datadir: DB_ETHREX_DEV_L2.to_string(), 
-            metrics_port: "3702".into(), 
-            metrics_enabled: true, 
-            dev: true, 
-            http_addr: "0.0.0.0".into(), 
-            http_port: "1729".into(), 
-            authrpc_addr: "localhost".into(), 
-            authrpc_port: "8551".into(), 
-            authrpc_jwtsecret: "jwt.hex".into(), 
-            p2p_enabled: true, 
-            p2p_addr: "0.0.0.0".into(), 
-            p2p_port: "30303".into(), 
-            discovery_addr: "0.0.0.0".into(), 
+            network: Some(Network::GenesisPath(L2_GENESIS_PATH.into())),
+            datadir: DB_ETHREX_DEV_L2.to_string(),
+            metrics_port: "3702".into(),
+            metrics_enabled: true,
+            dev: true,
+            http_addr: "0.0.0.0".into(),
+            http_port: "1729".into(),
+            authrpc_addr: "localhost".into(),
+            authrpc_port: "8551".into(),
+            authrpc_jwtsecret: "jwt.hex".into(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".into(),
+            p2p_port: "30303".into(),
+            discovery_addr: "0.0.0.0".into(),
             discovery_port: "30303".into(),
             ..Default::default()
         }
@@ -375,18 +385,26 @@ impl Subcommand {
                 if l2_options.node_opts.dev {
                     remove_db(DB_ETHREX_DEV_L1, true);
                     remove_db(DB_ETHREX_DEV_L2, true);
-                    init_l1(Options::default_l1())
+                    init_l1(Options::default_l1()).await?;
+                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(
+                        L2_GENESIS_PATH,
+                    )?)?;
+                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(
+                        l2::deployer::DeployerOptions::default(),
+                    )
                     .await?;
-                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(L2_GENESIS_PATH)?)?;
-                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default()).await?;
 
-                    l2_options = l2::options::Options{
+                    l2_options = l2::options::Options {
                         node_opts: Options::default_l2(),
                         ..Default::default()
                     };
-                    l2_options.sequencer_opts.committer_opts.on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
-                    l2_options.sequencer_opts.watcher_opts.bridge_address = contract_addresses.bridge_address;
-                } 
+                    l2_options
+                        .sequencer_opts
+                        .committer_opts
+                        .on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
+                    l2_options.sequencer_opts.watcher_opts.bridge_address =
+                        contract_addresses.bridge_address;
+                }
                 l2::init_l2(l2_options).await?;
             }
         }

@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::error::Error;
-use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
 use std::{
     env, fs,
     path::{Path, PathBuf},
 };
+use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
 // This build code is needed to add some env vars in order to construct the node client version
 // VERGEN_RUSTC_HOST_TRIPLE to get the build OS
 // VERGEN_RUSTC_SEMVER to get the rustc version
@@ -17,7 +17,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
     println!("cargo:rerun-if-changed=src");
-
 
     // Export build OS and rustc version as environment variables
     let rustc = RustcBuilder::default()
@@ -33,9 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_instructions(&git2)?
         .emit()?;
 
-    
     download_script();
-
 
     Ok(())
 }
@@ -43,9 +40,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn download_script() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
-    println!("cargo:warning=Compiling contracts to: {}", output_contracts_path.display());
+    println!(
+        "cargo:warning=Compiling contracts to: {}",
+        output_contracts_path.display()
+    );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
-    
 
     // If COMPILE_CONTRACTS is not set, skip and write empty files
     if env::var_os("COMPILE_CONTRACTS").is_none() {
@@ -73,7 +72,7 @@ fn download_script() {
         "SP1Verifier",
         false,
         None,
-        &[&output_contracts_path]
+        &[&output_contracts_path],
     );
 
     // Get the openzeppelin contracts remappings
@@ -92,23 +91,49 @@ fn download_script() {
 
     // L1 contracts
     let l1_contracts = [
-        (&Path::new("../../crates/l2/contracts/src/l1/OnChainProposer.sol"), "OnChainProposer"),
-        (&Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"), "CommonBridge"),
+        (
+            &Path::new("../../crates/l2/contracts/src/l1/OnChainProposer.sol"),
+            "OnChainProposer",
+        ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"),
+            "CommonBridge",
+        ),
     ];
     for (path, name) in l1_contracts {
-        compile_contract_to_bytecode(&output_contracts_path, path, name, false, Some(&remappings), &[&contracts_path]);
+        compile_contract_to_bytecode(
+            &output_contracts_path,
+            path,
+            name,
+            false,
+            Some(&remappings),
+            &[&contracts_path],
+        );
     }
     // L2 contracts
     let l2_contracts = [
-        (&Path::new("../../crates/l2/contracts/src/l2/CommonBridgeL2.sol"), "CommonBridgeL2"),
-        (&Path::new("../../crates/l2/contracts/src/l2/L2ToL1Messenger.sol"), "L2ToL1Messenger"),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/CommonBridgeL2.sol"),
+            "CommonBridgeL2",
+        ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/L2ToL1Messenger.sol"),
+            "L2ToL1Messenger",
+        ),
         (
             &Path::new("../../crates/l2/contracts/src/l2/L2Upgradeable.sol"),
             "UpgradeableSystemContract",
         ),
     ];
     for (path, name) in l2_contracts {
-        compile_contract_to_bytecode(&output_contracts_path, path, name, true, Some(&remappings), &[&contracts_path]);
+        compile_contract_to_bytecode(
+            &output_contracts_path,
+            path,
+            name,
+            true,
+            Some(&remappings),
+            &[&contracts_path],
+        );
     }
 
     // Based contracts
@@ -118,14 +143,14 @@ fn download_script() {
         "SequencerRegistry",
         false,
         Some(&remappings),
-        &[&contracts_path]
+        &[&contracts_path],
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
         Path::new("../../crates/l2/contracts/src/l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
-        &[&contracts_path]
+        &[&contracts_path],
     )
     .unwrap();
 
@@ -190,8 +215,14 @@ fn compile_contract_to_bytecode(
     allow_paths: &[&Path],
 ) {
     println!("Compiling {contract_name} contract");
-    ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings, allow_paths)
-        .expect("Failed to compile contract");
+    ethrex_l2_sdk::compile_contract(
+        output_dir,
+        contract_path,
+        runtime_bin,
+        remappings,
+        allow_paths,
+    )
+    .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
 
     // Resolve the resulted file path
@@ -219,4 +250,3 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
 
     fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
 }
-

@@ -694,8 +694,6 @@ impl Default for BlockFetcherOptions {
     }
 }
 
-
-
 #[derive(Parser, Debug)]
 pub struct MonitorOptions {
     /// time in ms between two ticks.
