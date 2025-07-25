@@ -9,6 +9,7 @@ use ethrex_p2p::{
     kademlia::Kademlia,
     network::P2PContext,
     peer_handler::PeerHandler,
+    snap_sync::coordinator::Coordinator,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -112,6 +113,8 @@ pub async fn init_rpc_api(
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
+    let sync_coordinator = Coordinator::spawn(peer_table.clone());
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -130,6 +133,7 @@ pub async fn init_rpc_api(
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
+        sync_coordinator,
         syncer,
         peer_handler,
         get_client_version(),

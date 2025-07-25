@@ -4,7 +4,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::{snap_sync::coordinator, sync::SyncMode};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -211,9 +211,33 @@ async fn handle_forkchoice(
     }
 
     if context.syncer.sync_mode() == SyncMode::Snap {
+        let local_head_block_hash = if let Some(local_head_block_hash) =
+            context.storage.get_header_download_checkpoint().await?
+        {
+            Ok(local_head_block_hash)
+        } else {
+            context
+                .storage
+                .get_latest_canonical_block_hash()
+                .await?
+                .ok_or(SyncError::NoLatestCanonical)
+        };
+
+        let local_head_block_number = context
+            .storage
+            .get_block_number(current_head)
+            .await
+            .unwrap()
+            .unwrap();
+
         context
-            .syncer
-            .sync_to_head(fork_choice_state.head_block_hash);
+            .sync_coordinator
+            .clone()
+            .cast(coordinator::CastMessage::SyncToHead {
+                from_block_number: local_head_block_number,
+                to_block_head: fork_choice_state.head_block_hash,
+            });
+
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
@@ -266,9 +290,34 @@ async fn handle_forkchoice(
                 ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    context
-                        .syncer
-                        .sync_to_head(fork_choice_state.head_block_hash);
+                    if context.syncer.sync_mode() == SyncMode::Snap {
+                        let local_head_block_hash = context
+                            .storage
+                            .get_header_download_checkpoint()
+                            .await?
+                            .ok_or(RpcErr::Internal(
+                                "Missing header download checkpoint".to_owned(),
+                            ))?;
+                        let local_head_block_number = context
+                            .storage
+                            .get_block_number(local_head_block_hash)
+                            .await?
+                            .ok_or(RpcErr::Internal(
+                                "Missing local head block number".to_owned(),
+                            ))?;
+
+                        context.sync_coordinator.clone().cast(
+                            coordinator::CastMessage::SyncToHead {
+                                from_block_number: local_head_block_number,
+                                to_block_head: fork_choice_state.head_block_hash,
+                            },
+                        );
+                    } else {
+                        context
+                            .syncer
+                            .sync_to_head(fork_choice_state.head_block_hash);
+                    }
+
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {

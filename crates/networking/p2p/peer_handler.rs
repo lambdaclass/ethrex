@@ -198,6 +198,7 @@ impl PeerHandler {
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = *sync_head_number.lock().await + 1 - start;
+
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks

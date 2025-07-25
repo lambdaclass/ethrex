@@ -49,12 +49,14 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::snap_sync::coordinator::Coordinator;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -78,6 +80,7 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
+    pub sync_coordinator: GenServerHandle<Coordinator>,
     pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
@@ -121,6 +124,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
+    sync_coordinator: GenServerHandle<Coordinator>,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
@@ -132,6 +136,7 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
+        sync_coordinator,
         syncer: Arc::new(syncer),
         peer_handler,
         node_data: NodeData {

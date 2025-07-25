@@ -4,6 +4,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_p2p::snap_sync::coordinator;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
@@ -643,7 +644,32 @@ async fn try_execute_payload(
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context.syncer.sync_to_head(block_hash);
+            if context.syncer.sync_mode() == SyncMode::Snap {
+                let local_head_block_hash = context
+                    .storage
+                    .get_header_download_checkpoint()
+                    .await?
+                    .ok_or(RpcErr::Internal(
+                        "Missing header download checkpoint".to_owned(),
+                    ))?;
+                let local_head_block_number = context
+                    .storage
+                    .get_block_number(local_head_block_hash)
+                    .await?
+                    .ok_or(RpcErr::Internal(
+                        "Missing local head block number".to_owned(),
+                    ))?;
+
+                context
+                    .sync_coordinator
+                    .clone()
+                    .cast(coordinator::CastMessage::SyncToHead {
+                        from_block_number: local_head_block_number,
+                        to_block_head: block_hash,
+                    });
+            } else {
+                context.syncer.sync_to_head(block_hash);
+            }
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state

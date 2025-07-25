@@ -5,6 +5,7 @@ pub mod network;
 pub mod peer_handler;
 pub mod rlpx;
 pub(crate) mod snap;
+pub mod snap_sync;
 pub mod sync;
 pub mod sync_manager;
 pub mod types;
