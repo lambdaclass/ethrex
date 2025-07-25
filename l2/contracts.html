@@ -282,7 +282,7 @@
 </li>
 <li>
 <p>Upgrade the proxy by calling the method <code>upgradeToAndCall(address newImplementation, bytes memory data)</code>. The <code>data</code> parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.</p>
-<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 0 &lt;PRIVATE_KEY&gt; -- 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION_ADDRESS&gt; &lt;INITIALIZATION_CALLDATA&gt;
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION_ADDRESS&gt; &lt;INITIALIZATION_CALLDATA&gt; --private-key &lt;PRIVATE_KEY&gt;
 </code></pre>
 </li>
 <li>
@@ -296,12 +296,12 @@
 <ol>
 <li>
 <p>Start the transfer:</p>
-<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 0 &lt;CURRENT_OWNER_PRIVATE_KEY&gt; -- 'transferOwnership(address)' &lt;NEW_OWNER_ADDRESS&gt;
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'transferOwnership(address)' &lt;NEW_OWNER_ADDRESS&gt; --private-key &lt;CURRENT_OWNER_PRIVATE_KEY&gt;
 </code></pre>
 </li>
 <li>
 <p>Accept the ownership:</p>
-<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 0 &lt;NEW_OWNER_PRIVATE_KEY&gt; -- 'acceptOwnership()'
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'acceptOwnership()' --private-key &lt;NEW_OWNER_PRIVATE_KEY&gt;
 </code></pre>
 </li>
 </ol>
