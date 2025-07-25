@@ -45,6 +45,7 @@ impl EthClient {
             } else {
                 self.get_gas_price().await?.as_u64()
             },
+            nonce: overrides.nonce,
             ..Default::default()
         };
 
@@ -61,6 +62,7 @@ impl EthClient {
                     "input": format!("0x{:#x}", tx.input),
                     "value": format!("{:#x}", tx.value),
                     "from": format!("{:#x}", tx.from),
+                    "nonce": format!("{:#x}", tx.nonce.unwrap_or_default()),
                 }),
                 overrides
                     .block

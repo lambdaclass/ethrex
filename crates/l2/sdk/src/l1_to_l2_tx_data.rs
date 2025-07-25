@@ -82,6 +82,27 @@ pub async fn send_l1_to_l2_tx(
         .build_eip1559_transaction(bridge_address, l1_from, l1_calldata.into(), l1_tx_overrides)
         .await?;
 
+    let tx_call = l1_to_l2_tx.clone();
+    let result = eth_client
+        .call(
+            bridge_address,
+            tx_call.data.clone(),
+            Overrides {
+                value: Some(tx_call.value),
+                nonce: Some(tx_call.nonce),
+                chain_id: Some(tx_call.chain_id),
+                gas_limit: Some(tx_call.gas_limit),
+                max_fee_per_gas: Some(tx_call.max_fee_per_gas),
+                max_priority_fee_per_gas: Some(tx_call.max_priority_fee_per_gas),
+                access_list: tx_call.access_list,
+                from: Some(l1_from),
+                ..Default::default()
+            },
+        )
+        .await;
+    let result = result?;
+    dbg!(result);
+
     let signer = LocalSigner::new(*sender_private_key).into();
 
     send_eip1559_transaction(eth_client, &l1_to_l2_tx, &signer).await
