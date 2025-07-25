@@ -8,7 +8,7 @@
 
 ## Components
 
-In addition to the components outlined in the [ethrex-L2-Sequencer documentation](../../docs/sequencer.md), the `based` feature introduces new components to enable decentralized L2 sequencing. These additions enhance the system's ability to operate across multiple nodes, ensuring resilience, scalability, and state consistency.
+In addition to the components outlined in the [ethrex-L2-Sequencer documentation](../sequencer.md), the `based` feature introduces new components to enable decentralized L2 sequencing. These additions enhance the system's ability to operate across multiple nodes, ensuring resilience, scalability, and state consistency.
 
 ### Sequencer State
 
