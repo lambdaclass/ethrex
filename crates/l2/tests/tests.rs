@@ -1614,7 +1614,7 @@ async fn wait_for_l2_deposit_receipt(
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
     let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
 
     for line in reader.lines() {
