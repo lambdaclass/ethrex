@@ -190,7 +190,7 @@ pub struct EIP2930Transaction {
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -213,7 +213,7 @@ pub struct EIP1559Transaction {
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -237,7 +237,7 @@ pub struct EIP4844Transaction {
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
@@ -265,7 +265,7 @@ pub struct EIP7702Transaction {
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     #[rkyv(with=rkyv::with::Skip)]
     pub authorization_list: AuthorizationList,
@@ -290,7 +290,7 @@ pub struct PrivilegedL2Transaction {
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
-    #[rkyv(with=rkyv::with::Skip)]
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
