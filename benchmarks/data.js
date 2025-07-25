@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753458486908,
+  "lastUpdate": 1753459167585,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6145,6 +6145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167177088013,
             "range": "± 392055372",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c8b3390756c491abb6a655e8fb5111129806e28",
+          "message": "ci(l1): add the posibility to pin execution-spec-test ref (#3833)\n\n**Motivation**\nRecently the daily Hive job broke because we're using the `main` branch\nof https://github.com/lambdaclass/execution-spec-tests and a commit\nmight have broken. This has been fixed but I want to make it explicit\nthat we're using `main`. Don't think there's a need to pin right now.\n\nCloses https://github.com/lambdaclass/ethrex/issues/3674\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-07-25T15:14:18Z",
+          "tree_id": "9233f55f131dfbae44fccebf4ae9c3e21f1c25a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9c8b3390756c491abb6a655e8fb5111129806e28"
+        },
+        "date": 1753459154664,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166327641191,
+            "range": "± 218311218",
             "unit": "ns/iter"
           }
         ]
