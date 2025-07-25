@@ -24,7 +24,6 @@ impl From<U256Wrapper> for U256 {
 }
 
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(transparent)]
 #[rkyv(remote = H160)]
 pub struct H160Wrapper([u8; 20]);
 
@@ -34,14 +33,41 @@ impl From<H160Wrapper> for H160 {
     }
 }
 
+impl PartialEq for ArchivedH160Wrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ArchivedH160Wrapper {}
+
+impl Hash for ArchivedH160Wrapper {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(transparent)]
 #[rkyv(remote = H256)]
 pub struct H256Wrapper([u8; 32]);
 
 impl From<H256Wrapper> for H256 {
     fn from(value: H256Wrapper) -> Self {
         Self(value.0)
+    }
+}
+
+impl PartialEq for ArchivedH256Wrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ArchivedH256Wrapper {}
+
+impl Hash for ArchivedH256Wrapper {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
     }
 }
 
@@ -202,33 +228,6 @@ where
     }
 }
 
-impl PartialEq for ArchivedH256Wrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Eq for ArchivedH256Wrapper {}
-
-impl Hash for ArchivedH256Wrapper {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
-
-impl PartialEq for ArchivedH160Wrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Eq for ArchivedH160Wrapper {}
-
-impl Hash for ArchivedH160Wrapper {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
 #[cfg(test)]
 mod test {
     use ethereum_types::{H160, H256};
