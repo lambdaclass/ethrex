@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753453577875,
+  "lastUpdate": 1753458486908,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6115,6 +6115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166411400100,
             "range": "± 452376794",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3d8787362d6190cc16d8f8e0a2c6c27061ed84c3",
+          "message": "chore(l1,l2): rename `grafana_provisioning` folder to just `grafana`. (#3835)\n\n**Motivation**\nIt's already under the `provisioning` folder",
+          "timestamp": "2025-07-25T15:02:45Z",
+          "tree_id": "804eee7f438550f03fadcfdf08b98a20b96f65ec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3d8787362d6190cc16d8f8e0a2c6c27061ed84c3"
+        },
+        "date": 1753458473763,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167177088013,
+            "range": "± 392055372",
             "unit": "ns/iter"
           }
         ]
