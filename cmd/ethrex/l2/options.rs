@@ -178,7 +178,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key.unwrap(),
+                    .proof_coordinator_tdx_private_key
+                    .unwrap(),
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -330,9 +331,11 @@ pub struct WatcherOptions {
 impl Default for WatcherOptions {
     fn default() -> Self {
         Self {
-            bridge_address: Some("0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
-                .parse()
-                .unwrap()),
+            bridge_address: Some(
+                "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
+                    .parse()
+                    .unwrap(),
+            ),
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
@@ -356,7 +359,7 @@ pub struct BlockProducerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
         help_heading = "Block producer options",
-        required_unless_present = "dev",
+        required_unless_present = "dev"
     )]
     pub coinbase_address: Option<Address>,
     #[arg(
@@ -373,9 +376,11 @@ impl Default for BlockProducerOptions {
     fn default() -> Self {
         Self {
             block_time_ms: 5000,
-            coinbase_address: Some("0x0007a881cd95b1484fca47615b64803dad620c8d"
-                .parse()
-                .unwrap()),
+            coinbase_address: Some(
+                "0x0007a881cd95b1484fca47615b64803dad620c8d"
+                    .parse()
+                    .unwrap(),
+            ),
             elasticity_multiplier: 2,
         }
     }
@@ -450,9 +455,11 @@ impl Default for CommitterOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .ok(),
-            on_chain_proposer_address: Some("0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
-                .parse()
-                .unwrap()),
+            on_chain_proposer_address: Some(
+                "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
+                    .parse()
+                    .unwrap(),
+            ),
             commit_time_ms: 60000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
@@ -556,10 +563,12 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: true,
-            proof_coordinator_tdx_private_key: Some(utils::parse_private_key(
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-            )
-            .unwrap()),
+            proof_coordinator_tdx_private_key: Some(
+                utils::parse_private_key(
+                    "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+                )
+                .unwrap(),
+            ),
         }
     }
 }

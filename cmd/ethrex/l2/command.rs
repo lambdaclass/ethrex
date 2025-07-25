@@ -1,5 +1,14 @@
 use crate::{
-    cli::{self as ethrex_cli, remove_db, Options as NodeOptions}, initializers::init_store, l2::{self, deployer::{ethrex_l2_l1_deployer, DeployerOptions}, system_contracts_updater::{update_genesis_file, SystemContractsUpdaterOptions}}, networks::Network, utils::{parse_private_key, set_datadir}, DEFAULT_L2_DATADIR
+    DEFAULT_L2_DATADIR,
+    cli::{self as ethrex_cli, Options as NodeOptions, remove_db},
+    initializers::init_store,
+    l2::{
+        self,
+        deployer::{DeployerOptions, ethrex_l2_l1_deployer},
+        system_contracts_updater::{SystemContractsUpdaterOptions, update_genesis_file},
+    },
+    networks::Network,
+    utils::{parse_private_key, set_datadir},
 };
 use clap::Subcommand;
 use ethrex_common::{
@@ -103,8 +112,7 @@ pub enum Command {
     DeployL1 {
         #[command(flatten)]
         options: DeployerOptions,
-    }
-    
+    },
 }
 
 impl Command {
