@@ -192,7 +192,7 @@ fn process_proof_nodes(
     let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
 
     // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
-    let proof: RangeProof = raw_proof.into();
+    let proof = RangeProof::from(raw_proof);
 
     // Initialize the external refs container.
     let mut external_refs = Vec::new();
@@ -205,70 +205,6 @@ fn process_proof_nodes(
     //   1. Nodes that fall within bounds will be filtered out.
     //   2. Nodes for which we have the proof will push themselves into the queue.
     //   3. Nodes for which we do not have the proof are treated as external references.
-    let mut process_child =
-        |stack: &mut VecDeque<_>, mut partial_path: Nibbles, child| -> Result<(), TrieError> {
-            let cmp_l = bounds.0.compare_prefix(&partial_path);
-            let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
-
-            if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
-                let NodeRef::Hash(hash) = child else {
-                    // This is unreachable because the nodes have just been decoded, therefore only
-                    // having hash references.
-                    unreachable!()
-                };
-
-                match proof.get_node(hash)? {
-                    Some(node) => {
-                        // Handle proofs of absences in the left bound.
-                        //
-                        // When the proof proves an absence, the left bound won't end up in a leaf
-                        // and there will not be a path that the external references can follow to
-                        // avoid inconsistent trie errors. In those cases, there will be subtrees
-                        // completely outside of the verification range. Since we have the hash of
-                        // the entire subtree within the proof, we can just treat it as an external
-                        // reference and ignore everything inside.
-                        //
-                        // This optimization should not be a problem because we're the ones that
-                        // have computed the hash of the subtree (it's not part of the proof)
-                        // therefore we can always be sure it's representing the data the proof has
-                        // provided.
-                        //
-                        // Note: The right bound cannot be a proof of absence because it cannot be
-                        //   specified externally, and is always keys.last(). In other words, if
-                        //   there is a right bound, it'll always exist.
-                        if first_key.as_ref().is_some_and(|first_key| {
-                            first_key.compare_prefix(&partial_path) == Ordering::Greater
-                        }) {
-                            // The subtree is not part of the path to the first available key. Treat
-                            // the entire subtree as an external reference.
-                            external_refs.push((partial_path, hash));
-                        } else {
-                            // Append implicit leaf extension when pushing leaves.
-                            if let Node::Leaf(node) = &node {
-                                partial_path.extend(&node.partial);
-                            }
-
-                            stack.push_back((partial_path, node));
-                        }
-                    }
-                    None => {
-                        if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
-                            return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
-                        }
-
-                        external_refs.push((partial_path, hash));
-                    }
-                }
-
-                // Increment right-reference counter.
-                if cmp_l == Ordering::Less && cmp_r.is_none_or(|x| x == Ordering::Less) {
-                    num_right_refs += 1;
-                }
-            }
-
-            Ok(())
-        };
-
     let mut stack = VecDeque::from_iter([(
         Nibbles::default(),
         proof.get_node(root)?.ok_or(TrieError::Verify(format!(
@@ -280,14 +216,32 @@ fn process_proof_nodes(
             Node::Branch(node) => {
                 for (index, choice) in node.choices.into_iter().enumerate() {
                     if choice.is_valid() {
-                        process_child(&mut stack, current_path.append_new(index as u8), choice)?;
+                        visit_child_node(
+                            &mut stack,
+                            &mut external_refs,
+                            &mut num_right_refs,
+                            &proof,
+                            &bounds,
+                            &first_key,
+                            current_path.append_new(index as u8),
+                            choice,
+                        )?;
                     }
                 }
                 node.value
             }
             Node::Extension(node) => {
                 current_path.extend(&node.prefix);
-                process_child(&mut stack, current_path.clone(), node.child)?;
+                visit_child_node(
+                    &mut stack,
+                    &mut external_refs,
+                    &mut num_right_refs,
+                    &proof,
+                    &bounds,
+                    &first_key,
+                    current_path.clone(),
+                    node.child,
+                )?;
                 Vec::new()
             }
             Node::Leaf(node) => node.value,
@@ -304,6 +258,78 @@ fn process_proof_nodes(
     }
 
     Ok((external_refs, (left_value, right_value), num_right_refs))
+}
+
+fn visit_child_node(
+    stack: &mut VecDeque<(Nibbles, Node)>,
+    external_refs: &mut Vec<(Nibbles, NodeHash)>,
+    num_right_refs: &mut usize,
+    proof: &RangeProof,
+    bounds: &(Nibbles, Option<Nibbles>),
+    first_key: &Option<Nibbles>,
+    mut partial_path: Nibbles,
+    child: NodeRef,
+) -> Result<(), TrieError> {
+    let cmp_l = bounds.0.compare_prefix(&partial_path);
+    let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
+
+    if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
+        let NodeRef::Hash(hash) = child else {
+            // This is unreachable because the nodes have just been decoded, therefore only
+            // having hash references.
+            unreachable!()
+        };
+
+        match proof.get_node(hash)? {
+            Some(node) => {
+                // Handle proofs of absences in the left bound.
+                //
+                // When the proof proves an absence, the left bound won't end up in a leaf
+                // and there will not be a path that the external references can follow to
+                // avoid inconsistent trie errors. In those cases, there will be subtrees
+                // completely outside of the verification range. Since we have the hash of
+                // the entire subtree within the proof, we can just treat it as an external
+                // reference and ignore everything inside.
+                //
+                // This optimization should not be a problem because we're the ones that
+                // have computed the hash of the subtree (it's not part of the proof)
+                // therefore we can always be sure it's representing the data the proof has
+                // provided.
+                //
+                // Note: The right bound cannot be a proof of absence because it cannot be
+                //   specified externally, and is always keys.last(). In other words, if
+                //   there is a right bound, it'll always exist.
+                if first_key.as_ref().is_some_and(|first_key| {
+                    first_key.compare_prefix(&partial_path) == Ordering::Greater
+                }) {
+                    // The subtree is not part of the path to the first available key. Treat
+                    // the entire subtree as an external reference.
+                    external_refs.push((partial_path, hash));
+                } else {
+                    // Append implicit leaf extension when pushing leaves.
+                    if let Node::Leaf(node) = &node {
+                        partial_path.extend(&node.partial);
+                    }
+
+                    stack.push_back((partial_path, node));
+                }
+            }
+            None => {
+                if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
+                    return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
+                }
+
+                external_refs.push((partial_path, hash));
+            }
+        }
+
+        // Increment right-reference counter.
+        if cmp_l == Ordering::Less && cmp_r.is_none_or(|x| x == Ordering::Less) {
+            *num_right_refs += 1;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
