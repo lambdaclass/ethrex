@@ -16,6 +16,7 @@ use ratatui::{
 use crate::{
     monitor::{
         self,
+        utils::SelectableScroller,
         widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
     },
     sequencer::errors::MonitorError,
@@ -148,6 +149,7 @@ pub struct L2ToL1MessagesTable {
     pub items: Vec<L2ToL1MessageRow>,
     last_l2_block_fetched: U256,
     common_bridge_address: Address,
+    selected: bool,
 }
 
 impl L2ToL1MessagesTable {
@@ -355,7 +357,11 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             )
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L2 to L1 Messages",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -363,5 +369,24 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             );
 
         l1_to_l2_messages_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for L2ToL1MessagesTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

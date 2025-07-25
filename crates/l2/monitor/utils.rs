@@ -49,3 +49,9 @@ pub async fn get_logs(
 
     Ok(batch_committed_logs)
 }
+
+pub trait SelectableScroller {
+    fn selected(&mut self, is_selected: bool);
+    fn scroll_up(&mut self);
+    fn scroll_down(&mut self);
+}
