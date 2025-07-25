@@ -143,7 +143,5 @@ pub fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContra
 
     write_genesis_as_json(genesis, Path::new(l2_genesis_path)).map_err(std::io::Error::other)?;
 
-    println!("Updated L2 genesis file.");
-
     Ok(())
 }

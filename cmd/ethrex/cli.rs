@@ -383,12 +383,16 @@ impl Subcommand {
                 let mut l2_options = l2_opts;
 
                 if l2_options.node_opts.dev {
+                    println!("Removing L1 and L2 databases...");
                     remove_db(DB_ETHREX_DEV_L1, true);
                     remove_db(DB_ETHREX_DEV_L2, true);
+                    println!("Initializing L1");
                     init_l1(Options::default_l1()).await?;
+                    println!("Updating L2 genesis file...");
                     l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(
                         L2_GENESIS_PATH,
                     )?)?;
+                    println!("Deploying contracts...");
                     let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(
                         l2::deployer::DeployerOptions::default(),
                     )
@@ -408,6 +412,7 @@ impl Subcommand {
                         .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
                     l2_options.sequencer_opts.watcher_opts.bridge_address =
                         Some(contract_addresses.bridge_address);
+                    println!("Initializing L2");
                 }
                 l2::init_l2(l2_options).await?;
             }
