@@ -106,6 +106,10 @@ pub fn verify_range(
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }
 
+    dbg!(H256::from_slice(
+        Keccak256::new_with_prefix(&proof[0]).finalize().as_slice()
+    ));
+
     // Process proofs to check if they are valid.
     let (external_refs, _, num_right_refs) = process_proof_nodes(
         proof,
@@ -438,6 +442,31 @@ mod tests {
         let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
         // Our trie contains more elements to the right
         assert!(fetch_more)
+    }
+
+    #[test]
+    fn test_verify_range_failing_case() {
+        let storage_root =
+            H256::from_str("fcfa16e6b6e7476573ae3e8dc70ebcbfb9b66afa1e063f266ae2a7d9a1a42d8b")
+                .unwrap();
+        let hashed_keys = ethrex_rlp::get_hashed_keys()
+            .into_iter()
+            .map(|s| H256::from_str(s).unwrap())
+            .collect::<Vec<_>>();
+        let proof = ethrex_rlp::get_proofs();
+        let start_hash =
+            H256::from_str("cef26dc292fd733d3fc6106fea3510e4daa177a5a96b27750323be831d02b9cd")
+                .unwrap();
+        let encoded_values: Vec<Vec<u8>> = ethrex_rlp::get_encoded_values();
+
+        verify_range(
+            storage_root,
+            &start_hash,
+            &hashed_keys,
+            &encoded_values,
+            &proof,
+        )
+        .unwrap();
     }
 
     // Proptests for verify_range
