@@ -630,6 +630,21 @@ impl Syncer {
                 continue;
             }
             let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
+            
+            match storage_trie.root_node() {
+                Ok(node_op) => {
+                    match node_op {
+                        Some(_) => {},
+                        None => {                   
+                            error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
+                            error!("missing storage_trie.root_node()");
+                        },
+                    }
+                },
+                Err(err) => {
+                    error!("storage_trie.root_node() {err:?}");
+                },
+            }
             assert!(storage_trie.root_node().is_ok_and(|f| f.is_some()));
         }
 
