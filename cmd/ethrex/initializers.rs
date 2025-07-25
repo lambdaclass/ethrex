@@ -6,7 +6,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 
-use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_profiling_metrics};
+use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -48,7 +48,7 @@ pub fn init_tracing(opts: &Options) {
         .add_directive(Directive::from(opts.log_level));
 
     let fmt_layer = fmt::layer().with_filter(log_filter);
-    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.profiling_enabled {
+    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
     } else {
@@ -69,9 +69,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_port.clone(),
     );
 
-    if opts.profiling_enabled {
-        initialize_profiling_metrics();
-    }
+    initialize_block_processing_profile();
 
     tracker.spawn(metrics_api);
 }

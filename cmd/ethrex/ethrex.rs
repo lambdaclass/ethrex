@@ -66,7 +66,7 @@ async fn main() -> eyre::Result<()> {
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
-    if opts.metrics_enabled || opts.profiling_enabled {
+    if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
 

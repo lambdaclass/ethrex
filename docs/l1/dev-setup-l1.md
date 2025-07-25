@@ -193,9 +193,6 @@ Node options:
       --metrics
           Enable metrics collection and exposition
 
-      --profiling
-          Enable profiling of the client via function instrumentation
-
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 

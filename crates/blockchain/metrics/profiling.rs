@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
-use tracing::{Span, Subscriber, span::Id};
+use tracing::{Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -38,7 +38,7 @@ where
         };
 
         let timer = METRICS_BLOCK_PROCESSING_PROFILE
-            .with_label_values(&[&name])
+            .with_label_values(&[name])
             .start_timer();
         let mut timers = self.function_timers.lock().unwrap();
         timers.insert(id.clone(), timer);
@@ -66,6 +66,6 @@ pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
     Ok(res)
 }
 
-pub fn initialize_profiling_metrics() {
+pub fn initialize_block_processing_profile() {
     METRICS_BLOCK_PROCESSING_PROFILE.reset();
 }
