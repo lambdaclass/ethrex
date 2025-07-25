@@ -18,7 +18,6 @@ clap.workspace = true
 kzg-rs.workspace = true
 cfg-if.workspace = true
 rkyv.workspace = true
-bytecheck.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
 

@@ -3980,7 +3980,6 @@ dependencies = [
 name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
- "bytecheck",
  "bytes",
  "c-kzg",
  "crc32fast",
@@ -4224,7 +4223,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
- "bytecheck",
  "bytes",
  "cfg-if 1.0.1",
  "clap 4.5.40",
@@ -13989,7 +13987,6 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
- "bytecheck",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
