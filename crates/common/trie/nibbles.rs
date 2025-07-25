@@ -297,4 +297,40 @@ mod test {
         let b = Nibbles::from_hex(vec![2, 3, 4, 5, 6]);
         assert_eq!(a.count_prefix(&b), 0);
     }
+
+    #[test]
+    fn compare_prefix_equal() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_prefix_less() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_prefix_greater() {
+        let a = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Greater);
+    }
+
+    #[test]
+    // TODO: This is failing
+    fn compare_prefix_equal_b_longer() {
+        let a = Nibbles::from_hex(vec![1, 2, 3]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_prefix_equal_a_longer() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
 }
