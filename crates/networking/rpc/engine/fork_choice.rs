@@ -225,14 +225,14 @@ async fn handle_forkchoice(
     )
     .await
     {
-        Ok(new_canonical) => {
+        Ok((head, new_canonical)) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             let mut txs_to_remove = Vec::new();
-            for block_header in &new_canonical {
-                match context.storage.get_block_by_hash(block_header.hash()).await {
+            for (_, block_hash) in new_canonical {
+                match context.storage.get_block_by_hash(block_hash).await {
                     Ok(Some(block)) => {
                         for tx in &block.body.transactions {
                             txs_to_remove.push(tx.compute_hash());
@@ -257,7 +257,7 @@ async fn handle_forkchoice(
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
 
             Ok((
-                new_canonical.last().cloned(),
+                Some(head),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
                     fork_choice_state.head_block_hash,
                 )),

@@ -23,7 +23,7 @@ pub async fn apply_fork_choice(
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
-) -> Result<Vec<BlockHeader>, InvalidForkChoice> {
+) -> Result<(BlockHeader, Vec<(u64, BlockHash)>), InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
@@ -122,15 +122,7 @@ pub async fn apply_fork_choice(
     }
     store.update_latest_block_number(head.number).await?;
 
-    new_canonical_blocks
-        .into_iter()
-        .filter_map(|(_, block_hash)| {
-            store
-                .get_block_header_by_hash(block_hash)
-                .map_err(InvalidForkChoice::StoreError)
-                .transpose()
-        })
-        .collect()
+    Ok((head, new_canonical_blocks))
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
