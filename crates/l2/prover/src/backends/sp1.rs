@@ -1,10 +1,11 @@
+use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
-use zkvm_interface::io::{JSONProgramInput, ProgramInput};
+use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2_common::{
     calldata::Value,
@@ -53,12 +54,15 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
-
+    use std::time::Instant;
+    let now = Instant::now();
     setup.client.execute(PROGRAM_ELF, &stdin).run()?;
-
+    let elapsed = now.elapsed();
+    println!("Successfully executed SP1 program  in {:.2?}", elapsed);
     info!("Successfully executed SP1 program.");
     Ok(())
 }
@@ -68,7 +72,8 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
@@ -76,7 +81,12 @@ pub fn prove(
     let proof = if aligned_mode {
         setup.client.prove(&setup.pk, &stdin).compressed().run()?
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        use std::time::Instant;
+        let now = Instant::now();
+        let p = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
+        let elapsed = now.elapsed();
+        println!("Successfully executed SP1 program  in {:.2?}", elapsed);
+        p
     };
 
     info!("Successfully generated SP1Proof.");
