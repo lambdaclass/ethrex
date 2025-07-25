@@ -47,7 +47,7 @@ _blake2b_f:
     vzeroall
 
     # Allocate space for shuffled message.
-    mov     rax,    rsp
+    mov     r9,     rsp
     sub     rsp,    0x0500  # Allocate space for 32b * 4 * 10 rounds.
     and     rsp,    -0x20   # Align to 32B boundary.
 
@@ -497,7 +497,7 @@ _blake2b_f:
     vmovdqu [rsp + 0x20],   ymm1
 
     # Restore original stack pointer.
-    mov     rsp,    rax
+    mov     rsp,    r9
     ret
 
 
