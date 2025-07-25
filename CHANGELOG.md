@@ -2,9 +2,49 @@
 
 ## Perf
 
+### 2025-07-24
+
+- Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
+
+- Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
+
+### 2025-07-21
+
+- Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
+
+### 2025-07-18
+
+- Migrate EcAdd and EcMul to Arkworks [#3719](https://github.com/lambdaclass/ethrex/pull/3719)
+
+- Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
+
+- Improve precompiles by avoiding 0 value transfers [#3715](https://github.com/lambdaclass/ethrex/pull/3715)
+
+- Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
+
+  Added push1 and pop1 to avoid using arrays for single variable operations.
+
+  Avoid checking for blob hashes length twice.
+
+### 2025-07-17
+
+- Use a lookup table for opcode execution [#3669](https://github.com/lambdaclass/ethrex/pull/3669)
+
+- Improve CodeCopy perfomance [#3675](https://github.com/lambdaclass/ethrex/pull/3675)
+
+- Improve sstore perfomance further [#3657](https://github.com/lambdaclass/ethrex/pull/3657)
+
+### 2025-07-16
+
+- Improve levm memory model [#3564](https://github.com/lambdaclass/ethrex/pull/3564)
+
 ### 2025-07-15
 
 - Add sstore bench [#3552](https://github.com/lambdaclass/ethrex/pull/3552)
+
+### 2025-07-10
+
+- Add AVX256 implementation of BLAKE2 [#3590](https://github.com/lambdaclass/ethrex/pull/3590)
 
 ### 2025-07-08
 

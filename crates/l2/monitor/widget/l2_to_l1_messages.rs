@@ -143,7 +143,7 @@ pub struct L2ToL1MessageRow {
     pub l2_tx_hash: H256,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct L2ToL1MessagesTable {
     pub state: TableState,
     pub items: Vec<L2ToL1MessageRow>,
