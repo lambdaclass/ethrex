@@ -321,21 +321,11 @@ impl GenServer for RLPxConnection {
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.inner_state {
-            InnerState::Established(mut established_state) => {
+            InnerState::Established(established_state) => {
                 log_peer_debug(
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-                // Send disconnect message to the peer
-                // There's not much we can do if the send fails,
-                // so we don't handle the possible error here.
-                let _ = send(
-                    &mut established_state,
-                    Message::Disconnect(DisconnectMessage::new(Some(
-                        DisconnectReason::DisconnectRequested,
-                    ))),
-                )
-                .await;
                 established_state
                     .table
                     .lock()
