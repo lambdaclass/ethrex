@@ -27,17 +27,6 @@ ethereum-package/
 **/.idea
 **/.zed
 
-
-# EVM Mlir stuff
-**/*.mlir
-**/*.ll
-**/*.o
-**/*.asm
-crates/levm_mlir/output
-
-crates/levm_mlir/ethtests
-crates/levm_mlir/*.tar.gz
-
 # ethrex L2 stuff
 volumes
 jwt.hex
