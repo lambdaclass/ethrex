@@ -49,6 +49,7 @@ cfg-if = "1.0.0"
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
+genesis-tool = { path = "../../tooling/genesis" }
 
 [[bin]]
 name = "ethrex"
@@ -98,3 +99,5 @@ harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+ethrex-sdk = { path = "../../crates/l2/sdk" }
+hex.workspace = true

@@ -1,8 +1,12 @@
 use crate::{
     DEFAULT_L2_DATADIR,
-    cli::{self as ethrex_cli, Options as NodeOptions},
+    cli::remove_db,
     initializers::init_store,
-    l2::{self},
+    l2::{
+        self,
+        deployer::{DeployerOptions, ethrex_l2_l1_deployer},
+        system_contracts_updater::{SystemContractsUpdaterOptions, update_genesis_file},
+    },
     networks::Network,
     utils::{parse_private_key, set_datadir},
 };
@@ -101,18 +105,21 @@ pub enum Command {
         )]
         datadir: String,
     },
+    UpdateSystemContracts {
+        #[command(flatten)]
+        options: SystemContractsUpdaterOptions,
+    },
+    DeployL1 {
+        #[command(flatten)]
+        options: DeployerOptions,
+    },
 }
 
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Self::RemoveDB { datadir, force } => {
-                Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
-                        .await
-                })
-                .await?
+                remove_db(&datadir, force);
             }
             Command::BlobsSaver {
                 l1_eth_rpc,
@@ -400,6 +407,12 @@ impl Command {
                     call_contract(&client, &private_key, contract_address, "unpause()", vec![])
                         .await?;
                 }
+            }
+            Command::UpdateSystemContracts { options } => {
+                update_genesis_file(&options.l2_genesis_path)?;
+            }
+            Command::DeployL1 { options } => {
+                ethrex_l2_l1_deployer(options).await?;
             }
         }
         Ok(())

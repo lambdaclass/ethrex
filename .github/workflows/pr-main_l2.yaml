@@ -196,9 +196,10 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
+          cd ../crates/l2
 
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \

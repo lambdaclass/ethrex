@@ -1,13 +1,16 @@
 use crate::{
     cli::Options,
     networks::{self, Network, PublicNetwork},
-    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
+    utils::{
+        get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        set_datadir,
+    },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{P2PContext, public_key_from_signing_key},
+    network::{P2PContext, peer_table, public_key_from_signing_key},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -348,4 +351,84 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+pub async fn init_l1(
+    opts: Options,
+) -> eyre::Result<(
+    String,
+    CancellationToken,
+    Arc<Mutex<KademliaTable>>,
+    Arc<Mutex<NodeRecord>>,
+)> {
+    let data_dir = set_datadir(&opts.datadir);
+
+    let network = get_network(&opts);
+
+    let genesis = network.get_genesis()?;
+    let store = init_store(&data_dir, genesis).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
+
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+
+    let signer = get_signer(&data_dir);
+
+    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &data_dir,
+        &local_p2p_node,
+        &signer,
+    )));
+
+    let peer_table = peer_table(local_p2p_node.node_id());
+
+    // TODO: Check every module starts properly.
+    let tracker = TaskTracker::new();
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    init_rpc_api(
+        &opts,
+        peer_table.clone(),
+        local_p2p_node.clone(),
+        local_node_record.lock().await.clone(),
+        store.clone(),
+        blockchain.clone(),
+        cancel_token.clone(),
+        tracker.clone(),
+    )
+    .await;
+
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "dev")] {
+            init_dev_network(&opts, &store, tracker.clone()).await;
+        } else {
+            if opts.p2p_enabled {
+                init_network(
+                    &opts,
+                    &network,
+                    &data_dir,
+                    local_p2p_node,
+                    local_node_record.clone(),
+                    signer,
+                    peer_table.clone(),
+                    store.clone(),
+                    tracker.clone(),
+                    blockchain.clone(),
+                    None
+                )
+                .await;
+            } else {
+                info!("P2P is disabled");
+            }
+        }
+    }
+    Ok((data_dir, cancel_token, peer_table, local_node_record))
 }

@@ -99,7 +99,7 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2-tools deploy-l1 \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -116,26 +116,25 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml --
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2-tools deploy-l1
 
 update-system-contracts:
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2-tools update-system-contracts \
 	--l2-genesis-path ../../fixtures/genesis/l2.json
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	export $(shell cat .env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
 	l2 \
 	--watcher.block-delay 0 \
-	--network ${L2_GENESIS_FILE_PATH} \
+	--network ${L2_GENESIS_FILE_PATH} --monitor \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
@@ -150,6 +149,11 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
 	--proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+
+init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
+	COMPILE_CONTRACTS=true \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics,dev" -- \
+	l2 --dev --monitor
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

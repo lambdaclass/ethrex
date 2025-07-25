@@ -2,6 +2,7 @@ use std::{
     fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     time::{Duration, Instant},
 };
 
@@ -16,11 +17,15 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
-    l2,
+    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
+    l2::{self, SequencerOptions},
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
+
+const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
+const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -32,7 +37,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -190,6 +195,51 @@ pub struct Options {
     pub discovery_port: String,
 }
 
+impl Options {
+    pub fn default_l1() -> Self {
+        Self {
+            network: Some(Network::GenesisPath(
+                PathBuf::from_str("../../fixtures/genesis/l1-dev.json").unwrap(),
+            )),
+            datadir: DB_ETHREX_DEV_L1.to_string(),
+            dev: true,
+            http_addr: "0.0.0.0".to_string(),
+            http_port: "8545".to_string(),
+            authrpc_port: "8551".to_string(),
+            metrics_port: "9090".to_string(),
+            authrpc_addr: "localhost".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".to_string(),
+            p2p_port: "30303".to_string(),
+            discovery_addr: "0.0.0.0".to_string(),
+            discovery_port: "30303".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn default_l2() -> Self {
+        Self {
+            network: Some(Network::GenesisPath(L2_GENESIS_PATH.into())),
+            datadir: DB_ETHREX_DEV_L2.to_string(),
+            metrics_port: "3702".into(),
+            metrics_enabled: true,
+            dev: true,
+            http_addr: "0.0.0.0".into(),
+            http_port: "1729".into(),
+            authrpc_addr: "localhost".into(),
+            authrpc_port: "8551".into(),
+            authrpc_jwtsecret: "jwt.hex".into(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".into(),
+            p2p_port: "30303".into(),
+            discovery_addr: "0.0.0.0".into(),
+            discovery_port: "30303".into(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -291,7 +341,7 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
-            Self::L2 { options: _ } | Self::L2Tools(_) => {}
+            Self::L2 { options: _ } => {}
             _ => init_tracing(opts),
         }
         match self {
@@ -322,7 +372,43 @@ impl Subcommand {
             }
             Subcommand::L2Tools(command) => command.run().await?,
             Subcommand::L2 { options: l2_opts } => {
-                l2::init_l2(l2_opts).await?;
+                l2::init_tracing(&l2_opts);
+                let mut l2_options = l2_opts;
+
+                if l2_options.node_opts.dev {
+                    println!("Removing L1 and L2 databases...");
+                    remove_db(DB_ETHREX_DEV_L1, true);
+                    remove_db(DB_ETHREX_DEV_L2, true);
+                    println!("Initializing L1");
+                    init_l1(Options::default_l1()).await?;
+                    println!("Updating L2 genesis file...");
+                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(
+                        L2_GENESIS_PATH,
+                    )?)?;
+                    println!("Deploying contracts...");
+                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(
+                        l2::deployer::DeployerOptions::default(),
+                    )
+                    .await?;
+
+                    l2_options = l2::options::Options {
+                        node_opts: Options::default_l2(),
+                        sequencer_opts: SequencerOptions {
+                            monitor: true,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    l2_options
+                        .sequencer_opts
+                        .committer_opts
+                        .on_chain_proposer_address =
+                        Some(contract_addresses.on_chain_proposer_address);
+                    l2_options.sequencer_opts.watcher_opts.bridge_address =
+                        Some(contract_addresses.bridge_address);
+                    println!("Initializing L2");
+                }
+                l2::init_l2(l2_options).await?;
             }
         }
         Ok(())
