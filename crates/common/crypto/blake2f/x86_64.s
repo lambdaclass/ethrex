@@ -1,25 +1,37 @@
 .macro  blake2b_mix0 x
     // G(x)
-    vpaddq
-    vpaddq
-    vpxor
-    vpshufd 0xB1
-    vpaddq
-    vpxor
-    vpshufb ror24
+    vpaddq  ymm0,   ymm0,   ymm1
+    vpaddq  ymm0,   ymm0,   \x
+    vpxor   ymm3,   ymm3,   ymm0
+    vpshufd ymm3,   ymm3,   0xB1
+    vpaddq  ymm2,   ymm2,   ymm3
+    vpxor   ymm1,   ymm1,   ymm2
+    vpshufb ymm1,   ymm1,   ymm14
 .endm
 
 .macro  blake2b_mix1 x
     // G(y)
-    vpaddq
-    vpaddq
-    vpxor
-    vpshufb ror16
-    vpaddq
-    vpxor
-    vpsrlq
-    vpsllq
-    vpor
+    vpaddq  ymm0,   ymm0,   ymm1
+    vpaddq  ymm0,   ymm0,   \y
+    vpxor   ymm3,   ymm3,   ymm0
+    vpshufb ymm3,   ymm3,   ymm15
+    vpaddq  ymm2,   ymm2,   ymm3
+    vpxor   ymm1,   ymm1,   ymm2
+    vpsrlq  ymm12,  ymm1,   63
+    vpsllq  ymm1,   ymm1,   1
+    vpor    ymm1,   ymm1,   ymm12
+.endm
+
+.macro  blake2b_diag
+    vpermq      ymm1,   ymm1,   0x39
+    vpermq      ymm3,   ymm3,   0x93
+    vperm2i128  ymm2,   ymm2,   ymm2,   0x01
+.endm
+
+.macro  blake2b_undiag
+    vpermq      ymm1,   ymm1,   0x93
+    vpermq      ymm3,   ymm3,   0x39
+    vperm2i128  ymm2,   ymm2,   ymm2,   0x01
 .endm
 
 
