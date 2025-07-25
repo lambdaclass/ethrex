@@ -270,7 +270,7 @@ jobs:
 
             const isDraftTransition = (action === "opened" || action === "reopened") && pr.draft || action === "converted_to_draft";
             const readyForReview = action === "ready_for_review";
-            const requestedChanges = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
+            const requestedChanges = context.eventName === "pull_request_review" && context.payload.review?.state === "changes_requested";
 
             // Determine new status of the PR.
             let newStatus = null;
