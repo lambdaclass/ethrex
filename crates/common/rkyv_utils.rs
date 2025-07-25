@@ -1,8 +1,5 @@
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-};
-
+use bytes::Bytes;
+use ethereum_types::{Bloom, H160, H256, U256};
 use once_cell::sync::OnceCell;
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
@@ -11,12 +8,16 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = ethereum_types::U256)]
+#[rkyv(remote = U256)]
 pub struct U256Wrapper([u64; 4]);
 
-impl From<U256Wrapper> for ethereum_types::U256 {
+impl From<U256Wrapper> for U256 {
     fn from(value: U256Wrapper) -> Self {
         Self(value.0)
     }
@@ -24,10 +25,10 @@ impl From<U256Wrapper> for ethereum_types::U256 {
 
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-#[rkyv(remote = ethereum_types::H160)]
+#[rkyv(remote = H160)]
 pub struct H160Wrapper([u8; 20]);
 
-impl From<H160Wrapper> for ethereum_types::H160 {
+impl From<H160Wrapper> for H160 {
     fn from(value: H160Wrapper) -> Self {
         Self(value.0)
     }
@@ -35,75 +36,74 @@ impl From<H160Wrapper> for ethereum_types::H160 {
 
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-#[rkyv(remote = ethereum_types::H256)]
+#[rkyv(remote = H256)]
 pub struct H256Wrapper([u8; 32]);
 
-impl From<H256Wrapper> for ethereum_types::H256 {
+impl From<H256Wrapper> for H256 {
     fn from(value: H256Wrapper) -> Self {
         Self(value.0)
     }
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = bytes::Bytes)]
+#[rkyv(remote = Bytes)]
 pub struct BytesWrapper {
     #[rkyv(getter = bytes_to_vec)]
     bytes: Vec<u8>,
 }
 
-fn bytes_to_vec(bytes: &bytes::Bytes) -> Vec<u8> {
+fn bytes_to_vec(bytes: &Bytes) -> Vec<u8> {
     bytes.to_vec()
 }
 
-impl From<BytesWrapper> for bytes::Bytes {
+impl From<BytesWrapper> for Bytes {
     fn from(value: BytesWrapper) -> Self {
         Self::copy_from_slice(&value.bytes)
     }
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = ethereum_types::Bloom)]
+#[rkyv(remote = Bloom)]
 pub struct BloomWrapper {
     #[rkyv(getter = bloom_to_bytes)]
     bloom_bytes: [u8; 256],
 }
 
-fn bloom_to_bytes(bloom: &ethereum_types::Bloom) -> [u8; 256] {
+fn bloom_to_bytes(bloom: &Bloom) -> [u8; 256] {
     bloom.0
 }
 
-impl From<BloomWrapper> for ethereum_types::Bloom {
+impl From<BloomWrapper> for Bloom {
     fn from(value: BloomWrapper) -> Self {
         Self::from_slice(&value.bloom_bytes)
     }
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = OnceCell<ethereum_types::H256>)]
+#[rkyv(remote = OnceCell<H256>)]
 pub struct OnecCellBlockHashWrapper {
     #[rkyv(with = H256Wrapper, getter = h256_from_once_cell)]
-    _hash: ethereum_types::H256,
+    _hash: H256,
 }
-
-fn h256_from_once_cell(_once: &OnceCell<ethereum_types::H256>) -> ethereum_types::H256 {
-    // this is not currently working, always returns zero
-    ethereum_types::H256::zero()
+// The cell will be re initialized if needed with block.hash()
+fn h256_from_once_cell(_once: &OnceCell<H256>) -> H256 {
+    H256::zero()
 }
-
-impl From<OnecCellBlockHashWrapper> for OnceCell<ethereum_types::H256> {
+// The cell will be re initialized if needed with block.hash()
+impl From<OnecCellBlockHashWrapper> for OnceCell<H256> {
     fn from(_value: OnecCellBlockHashWrapper) -> Self {
         OnceCell::new()
     }
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = Option<ethereum_types::H256>)]
+#[rkyv(remote = Option<H256>)]
 pub enum OptionH256Wrapper {
-    Some(#[rkyv(with = H256Wrapper)] ethereum_types::H256),
+    Some(#[rkyv(with = H256Wrapper)] H256),
     None,
 }
 
-impl From<OptionH256Wrapper> for Option<ethereum_types::H256> {
+impl From<OptionH256Wrapper> for Option<H256> {
     fn from(value: OptionH256Wrapper) -> Self {
         if let OptionH256Wrapper::Some(x) = value {
             Some(x)
@@ -114,16 +114,16 @@ impl From<OptionH256Wrapper> for Option<ethereum_types::H256> {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = Option<HashMap<ethereum_types::H160, Vec<Vec<u8>>>>)]
+#[rkyv(remote = Option<HashMap<H160, Vec<Vec<u8>>>>)]
 pub enum OptionStorageWrapper {
     Some(
         #[rkyv(with = rkyv::with::MapKV<H160Wrapper, rkyv::with::AsBox>)]
-        HashMap<ethereum_types::H160, Vec<Vec<u8>>>,
+        HashMap<H160, Vec<Vec<u8>>>,
     ),
     None,
 }
 
-impl From<OptionStorageWrapper> for Option<HashMap<ethereum_types::H160, Vec<Vec<u8>>>> {
+impl From<OptionStorageWrapper> for Option<HashMap<H160, Vec<Vec<u8>>>> {
     fn from(value: OptionStorageWrapper) -> Self {
         if let OptionStorageWrapper::Some(x) = value {
             Some(x)
@@ -139,11 +139,11 @@ pub struct AccessListItemWrapperResolver {
     inner: VecResolver,
 }
 
-impl ArchiveWith<(ethereum_types::H160, Vec<ethereum_types::H256>)> for AccessListItemWrapper {
+impl ArchiveWith<(H160, Vec<H256>)> for AccessListItemWrapper {
     type Archived = ArchivedVec<u8>;
     type Resolver = AccessListItemWrapperResolver;
     fn resolve_with(
-        _: &(ethereum_types::H160, Vec<ethereum_types::H256>),
+        _: &(H160, Vec<H256>),
         resolver: Self::Resolver,
         out: rkyv::Place<Self::Archived>,
     ) {
@@ -151,13 +151,12 @@ impl ArchiveWith<(ethereum_types::H160, Vec<ethereum_types::H256>)> for AccessLi
     }
 }
 
-impl<S> SerializeWith<(ethereum_types::H160, Vec<ethereum_types::H256>), S>
-    for AccessListItemWrapper
+impl<S> SerializeWith<(H160, Vec<H256>), S> for AccessListItemWrapper
 where
     S: Fallible + Allocator + Writer + ?Sized,
 {
     fn serialize_with(
-        field: &(ethereum_types::H160, Vec<ethereum_types::H256>),
+        field: &(H160, Vec<H256>),
         serializer: &mut S,
     ) -> Result<Self::Resolver, S::Error> {
         let mut encoded: Vec<u8> = Vec::new();
@@ -177,16 +176,15 @@ where
     }
 }
 
-impl<D> DeserializeWith<Archived<Vec<u8>>, (ethereum_types::H160, Vec<ethereum_types::H256>), D>
-    for AccessListItemWrapper
+impl<D> DeserializeWith<Archived<Vec<u8>>, (H160, Vec<H256>), D> for AccessListItemWrapper
 where
     D: Fallible<Error = rkyv::rancor::Error> + ?Sized,
 {
     fn deserialize_with(
         field: &Archived<Vec<u8>>,
         _: &mut D,
-    ) -> Result<(ethereum_types::H160, Vec<ethereum_types::H256>), D::Error> {
-        let address = ethereum_types::H160::from_slice(&field[0..20]);
+    ) -> Result<(H160, Vec<H256>), D::Error> {
+        let address = H160::from_slice(&field[0..20]);
 
         let access_list_length =
             u64::from_le_bytes(field[20..28].try_into().map_err(rkyv::rancor::Error::new)?)
@@ -196,7 +194,7 @@ where
         let mut start = 28_usize;
         let mut end = start + 32_usize; // 60
         for _ in 0..access_list_length {
-            access_list_keys.push(ethereum_types::H256::from_slice(&field[start..end]));
+            access_list_keys.push(H256::from_slice(&field[start..end]));
             start = end;
             end = start + 32_usize;
         }
