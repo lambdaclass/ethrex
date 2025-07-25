@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753467199590,
+  "lastUpdate": 1753467315176,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13144,6 +13144,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013523120567375886,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7925e990be7673a9fe442e8edd3f96638250cfe1",
+          "message": "refactor(l2): remove clippy expects from monitor (#3664)\n\n**Motivation**\n\nWe want to clean up the monitor code.\n\n**Description**\n\nRemoves clippy expects.\n\nCloses #3534",
+          "timestamp": "2025-07-25T12:24:54Z",
+          "tree_id": "671984fc5f3fb740e45318e2eb54dfbc06e0ffec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7925e990be7673a9fe442e8edd3f96638250cfe1"
+        },
+        "date": 1753467299238,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007760069767441861,
             "unit": "Mgas/s"
           }
         ]
