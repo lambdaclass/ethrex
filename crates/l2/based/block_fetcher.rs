@@ -64,11 +64,11 @@ pub enum BlockFetcherError {
     EmptyBatchError,
     #[error("Failed to retrieve data: {0}")]
     RetrievalError(String),
-    #[error("Inconsistent storage: {0}")]
+    #[error("Inconsistent Storage: {0}")]
     InconsistentStorage(String),
-    #[error("Conversion error: {0}")]
+    #[error("Conversion Error: {0}")]
     ConversionError(String),
-    #[error("Calculation error: {0}")]
+    #[error("Calculation Error: {0}")]
     CalculationError(String),
 }
 
