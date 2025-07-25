@@ -526,7 +526,7 @@ impl Syncer {
             (computed_state_root, bytecode_hashes)
         })
         .await
-        .unwrap();
+        .expect("");
 
         *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
 
@@ -541,6 +541,12 @@ impl Syncer {
             healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
         }
         info!("Finished healing");
+
+        let trie = store.open_state_trie(state_root).expect("This should open");
+
+        let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();        
+
+        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root}");
 
         let storages_store_start = Instant::now();
 
