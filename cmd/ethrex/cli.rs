@@ -13,14 +13,11 @@ use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
+use secp256k1::SecretKey;
 use tracing::{Level, info, warn};
 
 use crate::{
-    DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
-    l2,
-    networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store}, l2::{self, options::{AlignedOptions, BasedOptions, BlockFetcherOptions, MonitorOptions, StateUpdaterOptions}, BlockProducerOptions, CommitterOptions, EthOptions, ProofCoordinatorOptions, SequencerOptions, WatcherOptions}, networks::Network, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -33,7 +30,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -369,6 +366,17 @@ impl Subcommand {
                         genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
                         ..Default::default()
                     }).await?;
+
+                    l2_options = l2::options::Options { 
+                        node_opts: Options { log_level: Level::INFO, network: Some(Network::GenesisPath("../../fixtures/genesis/l2.json".into())), bootnodes: vec![], datadir: "dev_ethrex/l2".into(), force: false, syncmode: SyncMode::Full, metrics_addr: "0.0.0.0".into(), metrics_port: "3702".into(), metrics_enabled: true, dev: true, evm: EvmEngine::LEVM, http_addr: "0.0.0.0".into(), http_port: "1729".into(), authrpc_addr: "localhost".into(), authrpc_port: "8551".into(), authrpc_jwtsecret: "jwt.hex".into(), p2p_enabled: true, p2p_addr: "0.0.0.0".into(), p2p_port: "30303".into(), discovery_addr: "0.0.0.0".into(), discovery_port: "30303".into() }, 
+                        sequencer_opts: SequencerOptions { 
+                            eth_opts: EthOptions { rpc_url: vec!["http://localhost:8545".into()], maximum_allowed_max_fee_per_gas: 10000000000, maximum_allowed_max_fee_per_blob_gas: 10000000000, max_number_of_retries: 10, backoff_factor: 2, min_retry_delay: 96, max_retry_delay: 1800 }, 
+                            watcher_opts: WatcherOptions { bridge_address: "0x9ce8eb164027c55e94f14850818b5f4656f0b902".parse().unwrap(), watch_interval_ms: 1000, max_block_step: 5000, watcher_block_delay: 0 }, 
+                            block_producer_opts: BlockProducerOptions { block_time_ms: 5000, coinbase_address: "0x0007a881cd95b1484fca47615b64803dad620c8d".parse().unwrap(), elasticity_multiplier: 2 }, 
+                            committer_opts: CommitterOptions { committer_l1_private_key: Some(utils::parse_private_key("0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").unwrap()), committer_remote_signer_url: None, committer_remote_signer_public_key: None, on_chain_proposer_address: "0x04ef270dfac09618565fe7e62eade2809ed7347f".parse().unwrap(), commit_time_ms: 60000, arbitrary_base_blob_gas_price: 1000000000 }, 
+                            proof_coordinator_opts: ProofCoordinatorOptions { proof_coordinator_l1_private_key: Some(utils::parse_private_key("0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d").unwrap()), proof_coordinator_tdx_private_key: utils::parse_private_key("0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d").unwrap(), remote_signer_url: None, remote_signer_public_key: None, listen_ip: std::net::IpAddr::V4("127.0.0.1".parse().unwrap()), listen_port: 3900, proof_send_interval_ms: 5000, dev_mode: true }, 
+                            based_opts: BasedOptions { state_updater_opts: StateUpdaterOptions { sequencer_registry: None, check_interval_ms: 1000 }, block_fetcher: BlockFetcherOptions { fetch_interval_ms: 5000, fetch_block_step: 5000 } }, aligned_opts: AlignedOptions { aligned: false, aligned_verifier_interval_ms: 5000, beacon_url: None, aligned_network: Some("devnet".into()), fee_estimate: "instant".into(), aligned_sp1_elf_path: None }, 
+                            monitor_opts: MonitorOptions { tick_rate: 1000 }, validium: false, based: false, monitor: false }, sponsorable_addresses_file_path: None, sponsor_private_key: utils::parse_private_key("0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192").unwrap() };
                     l2_options.sequencer_opts.committer_opts.on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
                     l2_options.sequencer_opts.watcher_opts.bridge_address = contract_addresses.bridge_address;
                 } 

@@ -126,11 +126,10 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	export $(shell cat .env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	COMPILE_CONTRACTS=true \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics, dev" -- \
@@ -150,7 +149,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
-	--proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+	--proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
