@@ -1616,8 +1616,8 @@ fn transfer_value() -> U256 {
 
 fn on_chain_proposer_address() -> Address {
     Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS()")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS() env var not set"),
+        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
     )
     .unwrap()
 }
