@@ -41,7 +41,7 @@ fn download_script() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
     println!(
-        "cargo:warning=Compiling contracts to: {}",
+        "Compiling contracts to: {}",
         output_contracts_path.display()
     );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
@@ -107,7 +107,7 @@ fn download_script() {
             name,
             false,
             Some(&remappings),
-            &[&contracts_path],
+            &[contracts_path],
         );
     }
     // L2 contracts
@@ -132,7 +132,7 @@ fn download_script() {
             name,
             true,
             Some(&remappings),
-            &[&contracts_path],
+            &[contracts_path],
         );
     }
 
@@ -143,14 +143,14 @@ fn download_script() {
         "SequencerRegistry",
         false,
         Some(&remappings),
-        &[&contracts_path],
+        &[contracts_path],
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
         Path::new("../../crates/l2/contracts/src/l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
-        &[&contracts_path],
+        &[contracts_path],
     )
     .unwrap();
 

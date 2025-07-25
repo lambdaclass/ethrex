@@ -13,19 +13,12 @@ use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
-use secp256k1::SecretKey;
 use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
-    l2::{
-        self, BlockProducerOptions, CommitterOptions, EthOptions, ProofCoordinatorOptions,
-        SequencerOptions, WatcherOptions,
-        options::{
-            AlignedOptions, BasedOptions, BlockFetcherOptions, MonitorOptions, StateUpdaterOptions,
-        },
-    },
+    l2::{self, SequencerOptions},
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };

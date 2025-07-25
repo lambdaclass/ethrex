@@ -74,12 +74,6 @@ pub const IMPL_MASK: Address = H160([
     0x00, 0x00, 0x10, 0x00,
 ]);
 
-fn main() -> Result<(), SystemContractsUpdaterError> {
-    let opts = SystemContractsUpdaterOptions::parse();
-    update_genesis_file(&opts.l2_genesis_path)?;
-    Ok(())
-}
-
 fn add_with_proxy(
     genesis: &mut Genesis,
     address: Address,

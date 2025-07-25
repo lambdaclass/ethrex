@@ -25,7 +25,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
-use tracing::{Level, debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use ethrex_l2_sdk::DeployError;
 use ethrex_rpc::clients::{EthClientError, eth::errors::CalldataEncodeError};

@@ -1,6 +1,6 @@
 use crate::{
     DEFAULT_L2_DATADIR,
-    cli::{self as ethrex_cli, Options as NodeOptions, remove_db},
+    cli::remove_db,
     initializers::init_store,
     l2::{
         self,

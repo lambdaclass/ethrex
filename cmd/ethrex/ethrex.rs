@@ -1,14 +1,10 @@
 use clap::Parser;
 use ethrex::{
-    cli::{CLI, Options},
-    initializers::{
-        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_l1, init_metrics, init_rpc_api, init_store, init_tracing,
-    },
-    utils::{NodeConfigFile, set_datadir, store_node_config_file},
+    cli::CLI,
+    initializers::{init_l1, init_tracing},
+    utils::{NodeConfigFile, store_node_config_file},
 };
-use ethrex_blockchain::BlockchainType;
-use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
+use ethrex_p2p::{kademlia::KademliaTable, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
@@ -18,7 +14,7 @@ use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
 };
-use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 #[cfg(feature = "sync-test")]

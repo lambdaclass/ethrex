@@ -2,7 +2,7 @@ use crate::{
     cli::Options as NodeOptions,
     utils::{self},
 };
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
