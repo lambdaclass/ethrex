@@ -267,7 +267,6 @@ pub struct EIP7702Transaction {
     pub data: Bytes,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
-    #[rkyv(with=rkyv::with::Skip)]
     pub authorization_list: AuthorizationList,
     pub signature_y_parity: bool,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]

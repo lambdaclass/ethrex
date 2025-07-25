@@ -13,17 +13,36 @@ pub type AccessListItem = (Address, Vec<H256>);
 
 /// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
 pub type AuthorizationList = Vec<AuthorizationTuple>;
-#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 #[serde(rename_all = "camelCase")]
 /// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
 pub struct AuthorizationTuple {
+    #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub chain_id: U256,
+    #[rkyv(with = crate::rkyv_utils::H160Wrapper)]
     pub address: Address,
     pub nonce: u64,
+    #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub y_parity: U256,
     #[serde(rename = "r")]
+    #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub r_signature: U256,
     #[serde(rename = "s")]
+    #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub s_signature: U256,
 }
 
