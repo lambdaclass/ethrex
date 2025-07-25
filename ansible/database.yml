@@ -9,6 +9,12 @@
     pg_db: "blockscout"
 
   tasks:
+    - name: Install ACL package
+      apt:
+        name: 
+          - acl
+        state: present
+
     - name: Add PostgreSQL GPG key
       apt_key:
         url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
