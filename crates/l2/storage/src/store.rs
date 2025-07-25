@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
@@ -357,5 +357,18 @@ impl Store {
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
+    }
+
+    /// Returns privileged transactions about to be included in the next batch
+    pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        self.engine.precommit_privileged().await
+    }
+
+    /// Updates privileged transaction
+    pub async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        self.engine.update_precommit_privileged(range).await
     }
 }
