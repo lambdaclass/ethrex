@@ -14,7 +14,7 @@ use crate::{
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
 pub fn verify_range(
     root: H256,
-    first_key: &H256,
+    left_bound: &H256,
     keys: &[H256],
     values: &[ValueRLP],
     proof: &[Vec<u8>],
@@ -63,7 +63,7 @@ pub fn verify_range(
     if keys.is_empty() {
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
-        let result = process_proof_nodes(proof, root.into(), (*first_key, None), None)?;
+        let result = process_proof_nodes(proof, root.into(), (*left_bound, None), None)?;
         if result.num_right_references > 0 || !result.left_value.is_empty() {
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
@@ -76,9 +76,9 @@ pub fn verify_range(
     let last_key = keys.last().unwrap();
 
     // Special Case: There is only one element and the two edge keys are the same
-    if keys.len() == 1 && first_key == last_key {
+    if keys.len() == 1 && left_bound == last_key {
         // We need to check that the proof confirms the existence of the first key
-        if first_key != &keys[0] {
+        if left_bound != &keys[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid key".to_string(),
             ));
@@ -86,7 +86,7 @@ pub fn verify_range(
         let result = process_proof_nodes(
             proof,
             root.into(),
-            (*first_key, Some(*last_key)),
+            (*left_bound, Some(*last_key)),
             Some(*keys.first().unwrap()),
         )?;
         if result.left_value != values[0] {
@@ -98,7 +98,7 @@ pub fn verify_range(
     }
 
     // Regular Case: Two edge proofs
-    if first_key >= last_key {
+    if left_bound >= last_key {
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }
 
@@ -110,7 +110,7 @@ pub fn verify_range(
     let result = process_proof_nodes(
         proof,
         root.into(),
-        (*first_key, Some(*last_key)),
+        (*left_bound, Some(*last_key)),
         Some(*keys.first().unwrap()),
     )?;
 
@@ -221,17 +221,18 @@ fn process_proof_nodes(
         let value = match current_node {
             Node::Branch(node) => {
                 for (index, choice) in node.choices.into_iter().enumerate() {
-                    if choice.is_valid() {
-                        num_right_references += visit_child_node(
-                            &mut stack,
-                            &mut external_references,
-                            &proof,
-                            &bounds,
-                            first_key.as_ref(),
-                            current_path.append_new(index as u8),
-                            choice,
-                        )?;
+                    if !choice.is_valid() {
+                        continue;
                     }
+                    num_right_references += visit_child_node(
+                        &mut stack,
+                        &mut external_references,
+                        &proof,
+                        &bounds,
+                        first_key.as_ref(),
+                        current_path.append_new(index as u8),
+                        choice,
+                    )?;
                 }
                 node.value
             }
