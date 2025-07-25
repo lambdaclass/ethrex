@@ -348,7 +348,7 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
-            Self::L2 { options: _ } | Self::L2Tools(_) => {}
+            Self::L2 { options: _ } => {}
             _ => init_tracing(opts),
         }
         match self {

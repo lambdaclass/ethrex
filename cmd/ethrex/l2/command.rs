@@ -1,5 +1,5 @@
 use crate::{
-    cli::{self as ethrex_cli, Options as NodeOptions}, initializers::init_store, l2::{self, deployer::{ethrex_l2_l1_deployer, DeployerOptions}, system_contracts_updater::{update_genesis_file, SystemContractsUpdaterOptions}}, networks::Network, utils::{parse_private_key, set_datadir}, DEFAULT_L2_DATADIR
+    cli::{self as ethrex_cli, remove_db, Options as NodeOptions}, initializers::init_store, l2::{self, deployer::{ethrex_l2_l1_deployer, DeployerOptions}, system_contracts_updater::{update_genesis_file, SystemContractsUpdaterOptions}}, networks::Network, utils::{parse_private_key, set_datadir}, DEFAULT_L2_DATADIR
 };
 use clap::Subcommand;
 use ethrex_common::{
@@ -111,12 +111,7 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Self::RemoveDB { datadir, force } => {
-                Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
-                        .await
-                })
-                .await?
+                remove_db(&datadir, force);
             }
             Command::BlobsSaver {
                 l1_eth_rpc,
