@@ -95,3 +95,120 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
+
+  test-based:
+    name: Integration Test Prover SP1 - Based
+    runs-on: gpu
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check solc
+        run: solc --version
+
+      - name: RISC-V SP1 toolchain install
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          . "$HOME/.cargo/env"
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.0
+
+      - name: Set up Docker Buildx
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        uses: docker/setup-buildx-action@v3
+
+      # This step is needed because of an state bug in the GPU runner.
+      # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
+      - name: Clean .env
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: rm -rf crates/l2/.env
+
+      - name: Build prover
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cd crates/l2
+          make build-prover
+
+      - name: Build test
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cargo test l2 --no-run --release
+
+      - name: Start L1 & Deploy contracts
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cd crates/l2
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
+          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
+          docker compose -f docker-compose-l2.yaml up --build contract_deployer
+
+      - name: Ensure admin permissions in _work
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
+
+      - name: Install rex
+        run: |
+          cd ..
+          rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
+          rustup default nightly
+          
+          if [ ! -d "rex" ]; then
+            git clone https://github.com/lambdaclass/rex.git
+          else
+            echo "Rex directory already exists, skipping clone"
+          fi
+          
+          cd rex
+          make cli
+          echo "rex installed successfully at $(which rex)"
+
+      - name: Register sequencer
+        run: |
+          cd crates/l2
+          source .env
+
+          if [ -z "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" ]; then
+            echo "Failed to get ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS from .env file"
+            exit 1
+          fi
+          
+          rex send "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" 1000000000000000000 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex call "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" -- "leaderSequencer()"
+
+      - name: Start Sequencer
+        run: |
+          cd crates/l2
+          source .env
+
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_BASED=true \
+          ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" \
+          ETHREX_PROPOSER_BLOCK_TIME=12000 \
+          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+          ETHREX_COMMITTER_COMMIT_TIME=180000 \
+          docker compose -f docker-compose-l2.yaml up --build ethrex_l2 --detach
+
+      - name: Run test
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cd crates/l2
+          RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          killall ethrex_prover -s SIGINT
+
+      - name: Destroy Docker containers
+        if: always()
+        run: |
+          cd crates/l2
+          docker compose -f docker-compose-l2.yaml down
+
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
