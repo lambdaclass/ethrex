@@ -349,6 +349,13 @@ pub mod bool {
 pub mod bytes48 {
     use super::*;
 
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+    }
+
     pub mod vec {
         use super::*;
 
@@ -385,10 +392,16 @@ pub mod bytes48 {
 
 pub mod blob {
     use super::*;
+    use crate::types::BYTES_PER_BLOB;
+
+    pub fn serialize<S>(value: &[u8; BYTES_PER_BLOB], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+    }
 
     pub mod vec {
-        use crate::types::BYTES_PER_BLOB;
-
         use super::*;
 
         pub fn serialize<S>(
