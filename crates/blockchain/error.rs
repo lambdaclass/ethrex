@@ -108,6 +108,8 @@ pub enum MempoolError {
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
     InvalidTxSender(#[from] secp256k1::Error),
+    #[error("Mempool is full")]
+    Busy,
 }
 
 #[derive(Debug)]
