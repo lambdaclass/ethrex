@@ -54,7 +54,7 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    let bytes = rkyv::to_bytes::<Error>(&input).unwrap();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
@@ -72,7 +72,7 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    let bytes = rkyv::to_bytes::<Error>(&input).unwrap();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
