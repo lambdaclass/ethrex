@@ -237,7 +237,7 @@ start-holesky-metrics-docker: ## Start L1 docker compose, lighthouse in backgrou
 
 start-sepolia-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for sepolia
 	@echo "Starting L1 docker compose with metrics..."
-	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make sepolia-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
