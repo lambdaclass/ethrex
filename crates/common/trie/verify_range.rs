@@ -66,9 +66,8 @@ pub fn verify_range(
     if keys.is_empty() {
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
-        let (_, (left_value, _), num_right_refs) =
-            process_proof_nodes(proof, root.into(), (*first_key, None), None)?;
-        if num_right_refs > 0 || !left_value.is_empty() {
+        let result = process_proof_nodes(proof, root.into(), (*first_key, None), None)?;
+        if result.num_right_references > 0 || !result.left_value.is_empty() {
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
             ));
@@ -87,18 +86,18 @@ pub fn verify_range(
                 "correct proof but invalid key".to_string(),
             ));
         }
-        let (_, (left_value, _), num_right_refs) = process_proof_nodes(
+        let result = process_proof_nodes(
             proof,
             root.into(),
             (*first_key, Some(*last_key)),
             Some(*keys.first().unwrap()),
         )?;
-        if left_value != values[0] {
+        if result.left_value != values[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid data".to_string(),
             ));
         }
-        return Ok(num_right_refs > 0);
+        return Ok(result.num_right_references > 0);
     }
 
     // Regular Case: Two edge proofs
@@ -111,7 +110,7 @@ pub fn verify_range(
     ));
 
     // Process proofs to check if they are valid.
-    let (external_refs, _, num_right_refs) = process_proof_nodes(
+    let result = process_proof_nodes(
         proof,
         root.into(),
         (*first_key, Some(*last_key)),
@@ -125,7 +124,7 @@ pub fn verify_range(
 
     // Fill up the state with the nodes from the proof
     let mut trie = ProofTrie::from(trie);
-    for (partial_path, external_ref) in external_refs {
+    for (partial_path, external_ref) in result.external_references {
         trie.insert(partial_path, external_ref)?;
     }
 
@@ -136,7 +135,7 @@ pub fn verify_range(
             "invalid proof, expected root hash {root}, got  {hash}",
         )));
     }
-    Ok(num_right_refs > 0)
+    Ok(result.num_right_references > 0)
 }
 
 /// Parsed range proof
@@ -181,13 +180,19 @@ impl RangeProof<'_> {
 /// Also returns the number of references strictly to the right of the bounds. If the right bound
 /// is unbounded (aka. not provided), all nodes to the right (inclusive) of the left bound will
 /// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
-type ProcessProofNodesResult = (Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize);
+struct ProofProcessingResult {
+    external_references: Vec<(Nibbles, NodeHash)>,
+    left_value: Vec<u8>,
+    right_value: Vec<u8>,
+    num_right_references: usize,
+}
+
 fn process_proof_nodes(
     raw_proof: &[Vec<u8>],
     root: NodeHash,
     bounds: (H256, Option<H256>),
     first_key: Option<H256>,
-) -> Result<ProcessProofNodesResult, TrieError> {
+) -> Result<ProofProcessingResult, TrieError> {
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
         Nibbles::from_bytes(&bounds.0.0),
@@ -198,10 +203,10 @@ fn process_proof_nodes(
     // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
     let proof = RangeProof::from(raw_proof);
 
-    // Initialize the external refs container.
-    let mut external_refs = Vec::new();
+    // Initialize the external references container.
+    let mut external_references = Vec::new();
     let (mut left_value, mut right_value) = (Vec::new(), Vec::new());
-    let mut num_right_refs = 0;
+    let mut num_right_references = 0;
 
     // Iterate over the proofs tree.
     //
@@ -222,8 +227,8 @@ fn process_proof_nodes(
                     if choice.is_valid() {
                         visit_child_node(
                             &mut stack,
-                            &mut external_refs,
-                            &mut num_right_refs,
+                            &mut external_references,
+                            &mut num_right_references,
                             &proof,
                             &bounds,
                             first_key.as_ref(),
@@ -238,8 +243,8 @@ fn process_proof_nodes(
                 current_path.extend(&node.prefix);
                 visit_child_node(
                     &mut stack,
-                    &mut external_refs,
-                    &mut num_right_refs,
+                    &mut external_references,
+                    &mut num_right_references,
                     &proof,
                     &bounds,
                     first_key.as_ref(),
@@ -261,13 +266,19 @@ fn process_proof_nodes(
         }
     }
 
-    Ok((external_refs, (left_value, right_value), num_right_refs))
+    let result = ProofProcessingResult {
+        external_references,
+        left_value,
+        right_value,
+        num_right_references,
+    };
+    Ok(result)
 }
 
 fn visit_child_node(
     stack: &mut VecDeque<(Nibbles, Node)>,
     external_refs: &mut Vec<(Nibbles, NodeHash)>,
-    num_right_refs: &mut usize,
+    num_right_references: &mut usize,
     proof: &RangeProof,
     bounds: &(Nibbles, Option<Nibbles>),
     first_key: Option<&Nibbles>,
@@ -327,7 +338,7 @@ fn visit_child_node(
 
         // Increment right-reference counter.
         if cmp_l.is_lt() && cmp_r.is_none_or(|x| x.is_lt()) {
-            *num_right_refs += 1;
+            *num_right_references += 1;
         }
     }
 
