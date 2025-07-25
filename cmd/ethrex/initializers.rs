@@ -34,9 +34,13 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .from_env_lossy()
-        .add_directive(Directive::from(opts.log_level))
-        .add_directive(Directive::from_str("spawned_concurrency::tasks::gen_server=off")
-        .expect("this can't fail"));
+        .add_directive(
+            // Filters all spawned logs
+            // TODO: revert #3467 when error logs are no longer emitted
+            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+                .expect("this can't fail"),
+        )
+        .add_directive(Directive::from(opts.log_level));
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
         .finish();
