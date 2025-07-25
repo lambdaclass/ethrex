@@ -16,12 +16,19 @@ use crate::{
 
 const BATCH_WINDOW_SIZE: usize = 50;
 
+#[derive(Clone)]
+pub struct BatchLine {
+    number: u64,
+    block_count: u64,
+    message_count: usize,
+    commit_tx: Option<H256>,
+    verify_tx: Option<H256>,
+}
+
 #[derive(Clone, Default)]
 pub struct BatchesTable {
     pub state: TableState,
-    // batch number | # blocks | # messages | commit tx hash | verify tx hash
-    #[expect(clippy::type_complexity)]
-    pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
+    pub items: Vec<BatchLine>,
     last_l1_block_fetched: u64,
     on_chain_proposer_address: Address,
 }
@@ -66,11 +73,10 @@ impl BatchesTable {
         let mut refreshed_batches = Vec::new();
 
         for batch in self.items.iter() {
-            if batch.3.is_some() && batch.4.is_some() {
-                // Both commit and verify tx hashes are present
-                refreshed_batches.push(*batch);
+            if batch.commit_tx.is_some() && batch.verify_tx.is_some() {
+                refreshed_batches.push(batch.clone());
             } else {
-                let batch_number = batch.0;
+                let batch_number = batch.number;
                 let new_batch = rollup_store
                     .get_batch(batch_number)
                     .await
@@ -93,7 +99,7 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
-    ) -> Result<Vec<(u64, u64, usize, Option<H256>, Option<H256>)>, MonitorError> {
+    ) -> Result<Vec<BatchLine>, MonitorError> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
@@ -135,26 +141,21 @@ impl BatchesTable {
         Ok(new_batches)
     }
 
-    fn process_batch(batch: &Batch) -> (u64, u64, usize, Option<H256>, Option<H256>) {
-        (
-            batch.number,
-            batch.last_block - batch.first_block + 1,
-            batch.message_hashes.len(),
-            batch.commit_tx,
-            batch.verify_tx,
-        )
+    fn process_batch(batch: &Batch) -> BatchLine {
+        BatchLine {
+            number: batch.number,
+            block_count: batch.last_block - batch.first_block + 1,
+            message_count: batch.message_hashes.len(),
+            commit_tx: batch.commit_tx,
+            verify_tx: batch.verify_tx,
+        }
     }
 
-    #[expect(clippy::type_complexity)]
-    fn reorder_batches(new_blocks_processed: &mut [(u64, u64, usize, Option<H256>, Option<H256>)]) {
-        new_blocks_processed
-            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+    fn reorder_batches(new_blocks_processed: &mut [BatchLine]) {
+        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
     }
 
-    #[expect(clippy::type_complexity)]
-    fn process_batches(
-        new_batches: Vec<Batch>,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+    fn process_batches(new_batches: Vec<Batch>) -> Vec<BatchLine> {
         let mut new_blocks_processed = new_batches
             .iter()
             .map(Self::process_batch)
@@ -177,25 +178,25 @@ impl StatefulWidget for &mut BatchesTable {
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
         ];
-        let rows = self.items.iter().map(
-            |(number, n_blocks, n_messages, commit_tx_hash, verify_tx_hash)| {
-                Row::new(vec![
-                    Span::styled(number.to_string(), Style::default()),
-                    Span::styled(n_blocks.to_string(), Style::default()),
-                    Span::styled(n_messages.to_string(), Style::default()),
-                    Span::styled(
-                        commit_tx_hash
-                            .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
-                        Style::default(),
-                    ),
-                    Span::styled(
-                        verify_tx_hash
-                            .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
-                        Style::default(),
-                    ),
-                ])
-            },
-        );
+        let rows = self.items.iter().map(|batch| {
+            Row::new(vec![
+                Span::styled(batch.number.to_string(), Style::default()),
+                Span::styled(batch.block_count.to_string(), Style::default()),
+                Span::styled(batch.message_count.to_string(), Style::default()),
+                Span::styled(
+                    batch
+                        .commit_tx
+                        .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+                Span::styled(
+                    batch
+                        .verify_tx
+                        .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+            ])
+        });
         let committed_batches_table = Table::new(rows, constraints)
             .header(
                 Row::new(vec![
