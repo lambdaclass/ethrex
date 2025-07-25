@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753452726514,
+  "lastUpdate": 1753453577875,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6085,6 +6085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168347804787,
             "range": "± 479213548",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b64af9e7d0abc97d21a9dbe57e76408627641c2a",
+          "message": "fix(levm): fix custom bytecode runner (#3834)\n\n**Motivation**\n\nDue to the callframe change the runner stopped working, because it tries\nto pop the callframe when it should just use current_callframe\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-25T13:40:43Z",
+          "tree_id": "25a7a77f039529ea162f06c505a8fc16fca0cf63",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b64af9e7d0abc97d21a9dbe57e76408627641c2a"
+        },
+        "date": 1753453564997,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166411400100,
+            "range": "± 452376794",
             "unit": "ns/iter"
           }
         ]
