@@ -244,6 +244,7 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::cmp::Ordering;
 
     #[test]
     fn skip_prefix_true() {
