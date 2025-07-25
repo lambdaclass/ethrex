@@ -76,11 +76,11 @@ fn build_sp1_program() {
 
     if aligned_mode == "true" {
         let vk = vk.vk.hash_bytes();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", vk)
             .expect("could not write SP1 vk to file");
     } else {
         let vk = vk.vk.bytes32_raw();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", vk)
             .expect("could not write SP1 vk to file");
     };
 }
