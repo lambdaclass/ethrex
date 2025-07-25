@@ -11,7 +11,7 @@ use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         let current_pc = current_call_frame.pc;
@@ -59,7 +59,7 @@ impl<'a> VM<'a> {
         if self.env.config.fork < Fork::Shanghai {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
