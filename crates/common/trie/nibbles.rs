@@ -58,11 +58,12 @@ impl Nibbles {
         }
     }
 
+    /// Compares self to another, comparing prefixes only in case of unequal lengths.
     pub fn compare_prefix(&self, prefix: &Nibbles) -> cmp::Ordering {
         if self.len() > prefix.len() {
             self.data[..prefix.len()].cmp(&prefix.data)
         } else {
-            self.data.cmp(&prefix.data)
+            self.data[..].cmp(&prefix.data[..self.len()])
         }
     }
 
@@ -321,7 +322,6 @@ mod test {
     }
 
     #[test]
-    // TODO: This is failing
     fn compare_prefix_equal_b_longer() {
         let a = Nibbles::from_hex(vec![1, 2, 3]);
         let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
