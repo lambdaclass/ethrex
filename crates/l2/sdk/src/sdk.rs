@@ -327,6 +327,7 @@ pub async fn deposit_erc20(
                 max_fee_per_gas: Some(tx_call.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(tx_call.max_priority_fee_per_gas),
                 access_list: tx_call.access_list,
+                from: Some(from),
                 ..Default::default()
             },
         )
