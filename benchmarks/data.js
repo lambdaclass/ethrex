@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753446497764,
+  "lastUpdate": 1753446915145,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6025,6 +6025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170562643894,
             "range": "± 606607426",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13a9fa3324df9df34aeaf00958f9a58c5f84da83",
+          "message": "perf(levm): refactor current callframe (#3816)\n\n**Motivation**\n\nKeeps current call frame as a field, avoiding calling a function call\nthat requires error handling.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3777 \n\nCloses #3778\n\nCloses #3779\n\n<img width=\"2560\" height=\"2235\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/5f1914b5-ce0e-44ee-8f24-d4ab0aeee48e\"\n/>",
+          "timestamp": "2025-07-25T11:50:25Z",
+          "tree_id": "3c8ea16a83438e4ceab73856bd1236eb727447fa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/13a9fa3324df9df34aeaf00958f9a58c5f84da83"
+        },
+        "date": 1753446901918,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168448069220,
+            "range": "± 1253322747",
             "unit": "ns/iter"
           }
         ]
