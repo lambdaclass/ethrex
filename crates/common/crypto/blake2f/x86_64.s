@@ -12,7 +12,7 @@
 .macro  blake2b_mix1 x
     // G(y)
     vpaddq  ymm0,   ymm0,   ymm1
-    vpaddq  ymm0,   ymm0,   \y
+    vpaddq  ymm0,   ymm0,   \x
     vpxor   ymm3,   ymm3,   ymm0
     vpshufb ymm3,   ymm3,   ymm15
     vpaddq  ymm2,   ymm2,   ymm3
