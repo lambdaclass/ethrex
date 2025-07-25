@@ -1844,7 +1844,10 @@ impl PeerHandler {
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
-                        None => return None,
+                        None =>  {
+                            info!("we received noting from a peer");
+                            return None
+                        },
                     }
                 }
             })
@@ -1866,6 +1869,7 @@ impl PeerHandler {
                 return Some(nodes);
             }
         }
+        info!("we tried all these nodes {peer_ids:?} and none answered");
         None
     }
 
