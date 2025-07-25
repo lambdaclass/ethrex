@@ -259,12 +259,12 @@ impl From<EvmError> for RpcErr {
     }
 }
 
-fn get_message_from_revert_data(_data: &str) -> String {
+fn get_message_from_revert_data(data: &str) -> String {
     // TODO
     // Hive tests are not failing when revert message does not match, but currently it is not matching
     // It should be fixed
     // See https://github.com/ethereum/go-ethereum/blob/8fd43c80132434dca896d8ae5004ae2aac1450d3/accounts/abi/abi.go#L275
-    "".to_owned()
+    data.to_string()
 }
 
 pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
