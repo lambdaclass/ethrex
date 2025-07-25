@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-25
+
+- Make `JUMPDEST` blacklist lazily generated on-demand.
+
 ### 2025-07-24
 
 - Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)

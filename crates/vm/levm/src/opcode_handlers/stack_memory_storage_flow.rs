@@ -336,10 +336,10 @@ impl<'a> VM<'a> {
         call_frame.bytecode.get(jump_address).is_some_and(|&value| {
             // It's a constant, therefore the conversion cannot fail.
             value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
-                    .binary_search(&jump_address)
-                    .is_err()
+                && !call_frame
+                    .jump_target_filter
+                    .borrow_mut()
+                    .is_blacklisted(jump_address)
         })
     }
 
