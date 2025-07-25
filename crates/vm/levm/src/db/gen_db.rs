@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use std::collections::HashSet;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -143,9 +142,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
 
@@ -222,9 +219,7 @@ impl<'a> VM<'a> {
         address: Address,
         account: Account,
     ) -> Result<(), InternalError> {
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, &account)?;
 
@@ -316,11 +311,11 @@ impl<'a> VM<'a> {
         key: H256,
         current_value: U256,
     ) -> Result<(), InternalError> {
-        self.current_call_frame_mut()?
+        self.current_call_frame
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_insert(HashMap::new())
+            .or_default()
             .entry(key)
             .or_insert(current_value);
 
