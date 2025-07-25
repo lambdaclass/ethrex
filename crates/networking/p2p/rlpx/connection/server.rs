@@ -231,60 +231,84 @@ impl GenServer for RLPxConnection {
     ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
-            match message {
-                // TODO: handle all these "let _"
-                // See https://github.com/lambdaclass/ethrex/issues/3375
+            let result = match message {
                 Self::CastMsg::PeerMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received peer message: {message}"),
                     );
-                    let _ = handle_peer_message(&mut established_state, message).await;
+                    handle_peer_message(&mut established_state, message).await
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received backend message: {message}"),
                     );
-                    let _ = handle_backend_message(&mut established_state, message).await;
+                    handle_backend_message(&mut established_state, message).await
                 }
                 Self::CastMsg::SendPing => {
-                    let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
-                    log_peer_debug(&established_state.node, "Ping sent");
+                    send(&mut established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
-                    let _ = send_new_pooled_tx_hashes(&mut established_state).await;
+                    send_new_pooled_tx_hashes(&mut established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
-                    let _ = handle_broadcast(&mut established_state, (id, msg)).await;
+                    handle_broadcast(&mut established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
                     log_peer_debug(&established_state.node, "Block Range Update");
-                    let _ = handle_block_range_update(&mut established_state).await;
+                    handle_block_range_update(&mut established_state).await
                 }
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            let _ = l2_connection::send_sealed_batch(&mut established_state).await;
+                            l2_connection::send_sealed_batch(&mut established_state).await
                         }
                         L2Cast::BlockBroadcast => {
-                            let _ = l2::l2_connection::send_new_block(&mut established_state).await;
+                            l2::l2_connection::send_new_block(&mut established_state).await
                         }
                     }
                 }
-                _ => {
-                    log_peer_warn(
-                        &established_state.node,
-                        "No handler for cast message or no capabilities matched",
-                    );
-                    // TODO: return error when handled issue
+                _ => Err(RLPxError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                )),
+            };
+
+            if let Err(e) = result {
+                match e {
+                    RLPxError::Disconnected()
+                    | RLPxError::DisconnectReceived(_)
+                    | RLPxError::DisconnectSent(_)
+                    | RLPxError::HandshakeError(_)
+                    | RLPxError::NoMatchingCapabilities()
+                    | RLPxError::InvalidPeerId()
+                    | RLPxError::InvalidMessageLength()
+                    | RLPxError::StateError(_)
+                    | RLPxError::InvalidRecoveryId() => {
+                        log_peer_debug(&established_state.node, &e.to_string());
+                        return CastResponse::Stop;
+                    }
+                    RLPxError::IoError(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                        log_peer_error(
+                            &established_state.node,
+                            "Broken pipe with peer, disconnected",
+                        );
+                        return CastResponse::Stop;
+                    }
+                    _ => {
+                        log_peer_warn(
+                            &established_state.node,
+                            &format!("Error handling cast message: {e}"),
+                        );
+                    }
                 }
             }
+
             // Update the state
             self.inner_state = InnerState::Established(established_state);
             CastResponse::NoReply(self)
@@ -293,6 +317,27 @@ impl GenServer for RLPxConnection {
             error!("Connection not yet established");
             CastResponse::NoReply(self)
         }
+    }
+
+    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+        match self.inner_state {
+            InnerState::Established(established_state) => {
+                log_peer_debug(
+                    &established_state.node,
+                    "Closing connection with established peer",
+                );
+                established_state
+                    .table
+                    .lock()
+                    .await
+                    .replace_peer(established_state.node.node_id());
+                established_state.sink.lock().await.close().await?;
+            }
+            InnerState::Initiator(_) | InnerState::Receiver(_) => {
+                // Nothing to do if the connection was not established
+            }
+        };
+        Ok(())
     }
 }
 
