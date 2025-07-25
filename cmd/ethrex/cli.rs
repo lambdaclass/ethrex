@@ -324,9 +324,9 @@ impl Subcommand {
             Subcommand::L2Tools(command) => command.run().await?,
             Subcommand::L2 { options: l2_opts } => {
                 l2::init_tracing(&l2_opts);
+                let mut l2_options = l2_opts;
 
-                if l2_opts.node_opts.dev {
-                    let l2_options = l2::options::Options::default();
+                if l2_options.node_opts.dev {
                     //remove_db(&format!("{}/l1", l2_options.node_opts.datadir), true);
                     //remove_db(&format!("{}/l2", l2_options.node_opts.datadir), true);
                     remove_db("dev_ethrex/l1", true);
@@ -354,9 +354,25 @@ impl Subcommand {
                     })
                     .await?;
                     l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str("../../fixtures/genesis/l2.json").unwrap())?;
-                } else {
-                    l2::init_l2(l2_opts).await?;
-                }
+                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions{
+                        rpc_url: "http://localhost:8545".into(),
+                        private_key: utils::parse_private_key("0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").unwrap(),
+                        risc0_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
+                        sp1_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
+                        tdx_verifier_address: Some("0x00000000000000000000000000000000000000aa".parse().unwrap()),
+                        aligned_aggregator_address: "0x00000000000000000000000000000000000000aa".parse().unwrap(),
+                        on_chain_proposer_owner: "0x4417092b70a3e5f10dc504d0947dd256b965fc62".parse().unwrap(),
+                        bridge_owner: "0x4417092b70a3e5f10dc504d0947dd256b965fc62".parse().unwrap(),
+                        deposit_rich: true,
+                        private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
+                        genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
+                        genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
+                        ..Default::default()
+                    }).await?;
+                    l2_options.sequencer_opts.committer_opts.on_chain_proposer_address = contract_addresses.on_chain_proposer_address;
+                    l2_options.sequencer_opts.watcher_opts.bridge_address = contract_addresses.bridge_address;
+                } 
+                l2::init_l2(l2_options).await?;
             }
         }
         Ok(())
