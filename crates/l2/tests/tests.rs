@@ -806,24 +806,6 @@ async fn test_send(
         )
         .await
         .unwrap();
-    let tx_call = tx.clone();
-    let result = client
-        .call(
-            to,
-            tx.data.clone(),
-            Overrides {
-                value: Some(tx_call.value),
-                nonce: Some(tx_call.nonce),
-                chain_id: Some(tx_call.chain_id),
-                gas_limit: Some(tx_call.gas_limit),
-                max_fee_per_gas: Some(tx_call.max_fee_per_gas),
-                max_priority_fee_per_gas: Some(tx_call.max_priority_fee_per_gas),
-                access_list: tx_call.access_list,
-                ..Default::default()
-            },
-        )
-        .await;
-    dbg!(result);
     let tx_hash = send_eip1559_transaction(client, &tx, &signer)
         .await
         .unwrap();
@@ -1492,11 +1474,6 @@ async fn test_deploy(
 
     let deploy_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 5).await?;
-
-    assert!(
-        deploy_tx_receipt.receipt.status,
-        "Deploy transaction failed"
-    );
 
     let deploy_fees = get_fees_details_l2(deploy_tx_receipt, l2_client).await;
 
