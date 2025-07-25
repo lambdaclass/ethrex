@@ -441,7 +441,9 @@ impl BlockFetcher {
                 .get_receipt(
                     block_number,
                     index.try_into().map_err(|_| {
-                        BlockFetcherError::ConversionError("Failed to convert index to u64".to_owned())
+                        BlockFetcherError::ConversionError(
+                            "Failed to convert index to u64".to_owned(),
+                        )
                     })?,
                 )
                 .await?

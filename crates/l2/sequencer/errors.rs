@@ -233,8 +233,6 @@ pub enum CommitterError {
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Other Error: {0}")]
-    OtherError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Failed to sign error: {0}")]
@@ -243,6 +241,10 @@ pub enum CommitterError {
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
+    #[error("Retrieval Error: {0}")]
+    RetrievalError(String),
+    #[error("Conversion Error: {0}")]
+    ConversionError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
