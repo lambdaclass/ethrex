@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
 };
 
 use ethereum_types::H256;
@@ -135,6 +135,38 @@ pub fn verify_range(
     Ok(num_right_refs > 0)
 }
 
+/// Parsed range proof
+/// Has a mapping of node hashes to the encoded node data, useful for verifying the proof.
+struct RangeProof<'a> {
+    node_refs: BTreeMap<H256, &'a [u8]>,
+}
+
+impl<'a> From<&'a [Vec<u8>]> for RangeProof<'a> {
+    fn from(proof: &'a [Vec<u8>]) -> Self {
+        let node_refs = proof
+            .iter()
+            .map(|node| {
+                let hash = H256::from_slice(&Keccak256::new_with_prefix(node).finalize());
+                let encoded_data = node.as_slice();
+                (hash, encoded_data)
+            })
+            .collect();
+        RangeProof { node_refs }
+    }
+}
+
+impl RangeProof<'_> {
+    /// Get a node by its hash, returning `None` if the node is not present in the proof.
+    /// If the node is inline in the hash, it will be decoded directly from it.
+    fn get_node(&self, hash: NodeHash) -> Result<Option<Node>, TrieError> {
+        let encoded_node = match hash {
+            NodeHash::Hashed(hash) => self.node_refs.get(&hash).copied(),
+            NodeHash::Inline(_) => Some(hash.as_ref()),
+        };
+        Ok(encoded_node.map(|x| Node::decode_raw(x)).transpose()?)
+    }
+}
+
 /// Iterate over all provided proofs starting from the root and generate a set of hashes that fall
 /// outside the verification bounds.
 ///
@@ -147,7 +179,7 @@ pub fn verify_range(
 /// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
 type ProcessProofNodesResult = (Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize);
 fn process_proof_nodes(
-    proof: &[Vec<u8>],
+    raw_proof: &[Vec<u8>],
     root: NodeHash,
     bounds: (H256, Option<H256>),
     first_key: Option<H256>,
@@ -160,24 +192,7 @@ fn process_proof_nodes(
     let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
 
     // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
-    let proof = proof
-        .iter()
-        .map(|node| {
-            (
-                H256::from_slice(&Keccak256::new_with_prefix(node).finalize()),
-                node.as_slice(),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    fn get_node(proof: &HashMap<H256, &[u8]>, hash: NodeHash) -> Result<Option<Node>, TrieError> {
-        Ok(Some(Node::decode_raw(match hash {
-            NodeHash::Hashed(hash) => match proof.get(&hash) {
-                Some(x) => x,
-                None => return Ok(None),
-            },
-            NodeHash::Inline(_) => hash.as_ref(),
-        })?))
-    }
+    let proof: RangeProof = raw_proof.into();
 
     // Initialize the external refs container.
     let mut external_refs = Vec::new();
@@ -202,7 +217,7 @@ fn process_proof_nodes(
                     unreachable!()
                 };
 
-                match get_node(&proof, hash)? {
+                match proof.get_node(hash)? {
                     Some(node) => {
                         // Handle proofs of absences in the left bound.
                         //
@@ -256,8 +271,9 @@ fn process_proof_nodes(
 
     let mut stack = VecDeque::from_iter([(
         Nibbles::default(),
-        get_node(&proof, root)?
-            .ok_or(TrieError::Verify(format!("proof node missing: {root:?}")))?,
+        proof.get_node(root)?.ok_or(TrieError::Verify(format!(
+            "root node missing from proof: {root:?}"
+        )))?,
     )]);
     while let Some((mut current_path, current_node)) = stack.pop_front() {
         let value = match current_node {
