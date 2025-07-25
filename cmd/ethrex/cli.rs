@@ -353,6 +353,7 @@ impl Subcommand {
                         ..Default::default()
                     })
                     .await?;
+                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str("../../fixtures/genesis/l2.json").unwrap())?;
                 } else {
                     l2::init_l2(l2_opts).await?;
                 }

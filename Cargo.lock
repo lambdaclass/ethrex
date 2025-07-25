@@ -3910,6 +3910,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
+ "genesis-tool",
  "hex",
  "itertools 0.14.0",
  "keccak-hash",
