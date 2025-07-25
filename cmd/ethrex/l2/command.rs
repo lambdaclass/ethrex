@@ -1,10 +1,5 @@
 use crate::{
-    DEFAULT_L2_DATADIR,
-    cli::{self as ethrex_cli, Options as NodeOptions},
-    initializers::init_store,
-    l2::{self},
-    networks::Network,
-    utils::{parse_private_key, set_datadir},
+    cli::{self as ethrex_cli, Options as NodeOptions}, initializers::init_store, l2::{self, deployer::{ethrex_l2_l1_deployer, DeployerOptions}, system_contracts_updater::{update_genesis_file, SystemContractsUpdaterOptions}}, networks::Network, utils::{parse_private_key, set_datadir}, DEFAULT_L2_DATADIR
 };
 use clap::Subcommand;
 use ethrex_common::{
@@ -101,6 +96,15 @@ pub enum Command {
         )]
         datadir: String,
     },
+    UpdateSystemContracts {
+        #[command(flatten)]
+        options: SystemContractsUpdaterOptions,
+    },
+    DeployL1 {
+        #[command(flatten)]
+        options: DeployerOptions,
+    }
+    
 }
 
 impl Command {
@@ -400,6 +404,12 @@ impl Command {
                     call_contract(&client, &private_key, contract_address, "unpause()", vec![])
                         .await?;
                 }
+            }
+            Command::UpdateSystemContracts { options } => {
+                update_genesis_file(&options.l2_genesis_path)?;
+            }
+            Command::DeployL1 { options } => {
+                ethrex_l2_l1_deployer(options).await?;
             }
         }
         Ok(())
