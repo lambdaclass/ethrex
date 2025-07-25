@@ -1,4 +1,4 @@
-use crate::{config::ProverConfig, prove, to_batch_proof};
+use crate::{backends::Backend, config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
 use std::time::Duration;
@@ -21,6 +21,7 @@ struct ProverData {
 }
 
 struct Prover {
+    backend: Backend,
     prover_server_endpoint: String,
     proving_time_ms: u64,
     aligned_mode: bool,
@@ -30,6 +31,7 @@ struct Prover {
 impl Prover {
     pub fn new(cfg: ProverConfig) -> Self {
         Self {
+            backend: cfg.backend,
             prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
@@ -56,7 +58,7 @@ impl Prover {
 
             // If we get the input
             // Generate the Proof
-            let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
+            let Ok(batch_proof) = prove(self.backend, prover_data.input, self.aligned_mode)
                 .and_then(|output| to_batch_proof(output, self.aligned_mode))
                 .inspect_err(|e| error!("{}", e.to_string()))
             else {

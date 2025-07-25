@@ -419,7 +419,9 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
         ..Default::default()
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(program_input) {
+    if let Err(e) =
+        ethrex_prover_lib::execute(ethrex_prover_lib::backends::Backend::Exec, program_input)
+    {
         assert!(
             test_should_fail,
             "Expected test: {test_key} to succeed but failed with {e}"
