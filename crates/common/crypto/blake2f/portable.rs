@@ -99,14 +99,8 @@ pub fn blake2f_compress_f(
 
     v = word_permutation(rounds, v, m);
 
-    let mut output = [0; 8];
-
-    // XOR the two halves, put the results in the output slice
-    for (i, pos) in output.iter_mut().enumerate() {
-        *pos = h.get(i).unwrap() ^ v.get(i).unwrap() ^ v.get(i.overflowing_add(8).0).unwrap();
-    }
-
-    output
+    // XOR the two halves and return the result
+    std::array::from_fn(|i| h[i] ^ v[i] ^ v[i + 8])
 }
 
 #[cfg(test)]
