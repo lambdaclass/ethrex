@@ -63,6 +63,14 @@ async fn server_shutdown(
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
+    // TODO: Check every module starts properly.
+
+    let tracker = TaskTracker::new();
+
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
+
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }
@@ -93,9 +101,6 @@ async fn main() -> eyre::Result<()> {
 
     let peer_table = peer_table(local_p2p_node.node_id());
 
-    // TODO: Check every module starts properly.
-    let tracker = TaskTracker::new();
-
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
@@ -109,10 +114,6 @@ async fn main() -> eyre::Result<()> {
         tracker.clone(),
     )
     .await;
-
-    if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
-    }
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
