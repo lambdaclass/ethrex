@@ -418,7 +418,7 @@ impl Syncer {
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
-        let pivot_idx = all_block_hashes.len().saturating_sub(1);
+        let pivot_idx = all_block_hashes.len().saturating_sub(3);
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
@@ -524,21 +524,29 @@ impl Syncer {
 
         let account_store_time = Instant::now().saturating_duration_since(account_store_start);
 
+
         info!("Expected state root: {state_root:?}");
         info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+        let pivot_idx = pivot_idx + 2;
+        let mut pivot_header = store
+            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+            .ok_or(SyncError::CorruptDB)?;
+        let state_root_new = pivot_header.state_root;
+        info!("new state root: {state_root_new:?}");
 
         let mut healing_done = false;
         info!("Starting healing");
         while !healing_done {
-            healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+            healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
         }
         info!("Finished healing");
 
-        let trie = store.open_state_trie(state_root).expect("This should open");
+        let trie = store.open_state_trie(state_root_new).expect("This should open");
 
         let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();        
 
-        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root}");
+        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root} state_root_new: {state_root_new}");
 
         let storages_store_start = Instant::now();
 
