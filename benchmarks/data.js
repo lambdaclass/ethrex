@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753448859015,
+  "lastUpdate": 1753449019362,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6055,6 +6055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168448069220,
             "range": "± 1253322747",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7925e990be7673a9fe442e8edd3f96638250cfe1",
+          "message": "refactor(l2): remove clippy expects from monitor (#3664)\n\n**Motivation**\n\nWe want to clean up the monitor code.\n\n**Description**\n\nRemoves clippy expects.\n\nCloses #3534",
+          "timestamp": "2025-07-25T12:24:54Z",
+          "tree_id": "671984fc5f3fb740e45318e2eb54dfbc06e0ffec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7925e990be7673a9fe442e8edd3f96638250cfe1"
+        },
+        "date": 1753449005798,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168347804787,
+            "range": "± 479213548",
             "unit": "ns/iter"
           }
         ]
