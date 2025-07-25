@@ -1,7 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, VecDeque},
-};
+use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
@@ -195,7 +192,8 @@ fn process_proof_nodes(
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
         Nibbles::from_bytes(&bounds.0.0),
-        bounds.1.map(|x| Nibbles::from_bytes(&x.0)),
+        // In case there's no right bound, we use the left bound as the right bound.
+        Nibbles::from_bytes(&bounds.1.unwrap_or(bounds.0).0),
     );
     let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
 
@@ -272,71 +270,70 @@ fn visit_child_node(
     stack: &mut VecDeque<(Nibbles, Node)>,
     external_refs: &mut Vec<(Nibbles, NodeHash)>,
     proof: &RangeProof,
-    bounds: &(Nibbles, Option<Nibbles>),
+    (left_bound, right_bound): &(Nibbles, Nibbles),
     first_key: Option<&Nibbles>,
     mut partial_path: Nibbles,
     child: NodeRef,
 ) -> Result<usize, TrieError> {
-    let cmp_l = bounds.0.compare_prefix(&partial_path);
-    let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
+    let cmp_l = left_bound.compare_prefix(&partial_path);
+    let cmp_r = right_bound.compare_prefix(&partial_path);
 
-    let mut is_right_reference = false;
+    // We don't process nodes that lie inside bounds
+    // left_bound < partial_path < right_bound
+    if cmp_l.is_lt() && cmp_r.is_gt() {
+        return Ok(0);
+    }
+    let NodeRef::Hash(hash) = child else {
+        // This is unreachable because the nodes have just been decoded, therefore only
+        // having hash references.
+        unreachable!()
+    };
 
-    if cmp_l.is_ge() || cmp_r.is_none_or(Ordering::is_le) {
-        let NodeRef::Hash(hash) = child else {
-            // This is unreachable because the nodes have just been decoded, therefore only
-            // having hash references.
-            unreachable!()
-        };
-
-        match proof.get_node(hash)? {
-            Some(node) => {
-                // Handle proofs of absences in the left bound.
-                //
-                // When the proof proves an absence, the left bound won't end up in a leaf
-                // and there will not be a path that the external references can follow to
-                // avoid inconsistent trie errors. In those cases, there will be subtrees
-                // completely outside of the verification range. Since we have the hash of
-                // the entire subtree within the proof, we can just treat it as an external
-                // reference and ignore everything inside.
-                //
-                // This optimization should not be a problem because we're the ones that
-                // have computed the hash of the subtree (it's not part of the proof)
-                // therefore we can always be sure it's representing the data the proof has
-                // provided.
-                //
-                // Note: The right bound cannot be a proof of absence because it cannot be
-                //   specified externally, and is always keys.last(). In other words, if
-                //   there is a right bound, it'll always exist.
-                if first_key.is_some_and(|fk| fk.compare_prefix(&partial_path).is_gt()) {
-                    // The subtree is not part of the path to the first available key. Treat
-                    // the entire subtree as an external reference.
-                    external_refs.push((partial_path, hash));
-                } else {
-                    // Append implicit leaf extension when pushing leaves.
-                    if let Node::Leaf(node) = &node {
-                        partial_path.extend(&node.partial);
-                    }
-
-                    stack.push_back((partial_path, node));
-                }
-            }
-            None => {
-                if cmp_l.is_eq() || cmp_r.is_some_and(|x| x.is_eq()) {
-                    return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
-                }
-
+    match proof.get_node(hash)? {
+        Some(node) => {
+            // Handle proofs of absences in the left bound.
+            //
+            // When the proof proves an absence, the left bound won't end up in a leaf
+            // and there will not be a path that the external references can follow to
+            // avoid inconsistent trie errors. In those cases, there will be subtrees
+            // completely outside of the verification range. Since we have the hash of
+            // the entire subtree within the proof, we can just treat it as an external
+            // reference and ignore everything inside.
+            //
+            // This optimization should not be a problem because we're the ones that
+            // have computed the hash of the subtree (it's not part of the proof)
+            // therefore we can always be sure it's representing the data the proof has
+            // provided.
+            //
+            // Note: The right bound cannot be a proof of absence because it cannot be
+            //   specified externally, and is always keys.last(). In other words, if
+            //   there is a right bound, it'll always exist.
+            if first_key.is_some_and(|fk| fk.compare_prefix(&partial_path).is_gt()) {
+                // The subtree is not part of the path to the first available key. Treat
+                // the entire subtree as an external reference.
                 external_refs.push((partial_path, hash));
+            } else {
+                // Append implicit leaf extension when pushing leaves.
+                if let Node::Leaf(node) = &node {
+                    partial_path.extend(&node.partial);
+                }
+
+                stack.push_back((partial_path, node));
             }
         }
+        None => {
+            if cmp_l.is_eq() || cmp_r.is_eq() {
+                return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
+            }
 
-        // Increment right-reference counter.
-        if cmp_l.is_lt() && cmp_r.is_none_or(|x| x.is_lt()) {
-            is_right_reference = true;
+            external_refs.push((partial_path, hash));
         }
     }
 
-    Ok(if is_right_reference { 1 } else { 0 })
+    // left_bound < partial_path && right_bound < partial_path
+    let n_right_references = if cmp_l.is_lt() && cmp_r.is_lt() { 1 } else { 0 };
+
+    Ok(n_right_references)
 }
 
 #[cfg(test)]
