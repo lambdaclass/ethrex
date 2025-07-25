@@ -658,6 +658,10 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
+    pub fn clear_mempool(&self) -> Result<usize, StoreError> {
+        self.mempool.clear()
+    }
+
     /*
 
     SOME VALIDATIONS THAT WE COULD INCLUDE

@@ -85,6 +85,31 @@ impl Mempool {
         Ok(())
     }
 
+    /// Removes all transactions from the mempool.
+    /// On success returns the number of removed entries.
+    pub fn clear(&self) -> Result<usize, StoreError> {
+        let tx_pool_size = {
+            let mut tx_pool = self
+                .transaction_pool
+                .write()
+                .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+            let count = tx_pool.len();
+            tx_pool.clear();
+            count
+        };
+        let blobs_pool_size = {
+            let mut blobs_pool = self
+                .blobs_bundle_pool
+                .lock()
+                .map_err(|error| StoreError::Custom(error.to_string()))?;
+            let count = blobs_pool.len();
+            blobs_pool.clear();
+            count
+        };
+
+        Ok(tx_pool_size + blobs_pool_size)
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions(

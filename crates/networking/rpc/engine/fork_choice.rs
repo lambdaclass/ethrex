@@ -230,27 +230,28 @@ async fn handle_forkchoice(
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context.storage.get_block_by_hash(head.hash()).await {
-                Ok(Some(block)) => {
-                    for tx in &block.body.transactions {
-                        context
-                            .blockchain
-                            .remove_transaction_from_pool(&tx.compute_hash())
-                            .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                    }
-                }
-                Ok(None) => {
-                    warn!(
-                        "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
-                    )
-                }
-                Err(_) => {
-                    return Err(RpcErr::Internal(
-                        "Failed to get block by hash to remove transactions from the mempool"
-                            .to_string(),
-                    ));
-                }
-            };
+            context.blockchain.clear_mempool()?;
+            // match context.storage.get_block_by_hash(head.hash()).await {
+            //     Ok(Some(block)) => {
+            //         for tx in &block.body.transactions {
+            //             context
+            //                 .blockchain
+            //                 .remove_transaction_from_pool(&tx.compute_hash())
+            //                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            //         }
+            //     }
+            //     Ok(None) => {
+            //         warn!(
+            //             "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+            //         )
+            //     }
+            //     Err(_) => {
+            //         return Err(RpcErr::Internal(
+            //             "Failed to get block by hash to remove transactions from the mempool"
+            //                 .to_string(),
+            //         ));
+            //     }
+            // };
 
             Ok((
                 Some(head),
