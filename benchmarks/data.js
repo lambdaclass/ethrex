@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753545605356,
+  "lastUpdate": 1753547691024,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13403,6 +13403,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007253978260869565,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62400508+juan518munoz@users.noreply.github.com",
+            "name": "juan518munoz",
+            "username": "juan518munoz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1cf713fbe242f4fc54398423d450a93eafc54e07",
+          "message": "refactor(l1, l2): handle spawned errors (#3803)\n\n**Motivation**\n\nCurrent implementation does not handle errors, this PR aims to add\nlogging on failure and peer disconnection in the case of a broken pipe.\n\n**Description**\n\nNote: testing of broken pipe handling was done by running [three nodes\nat\nonce](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/docs/Network.md#an-example-of-how-you-might-build-a-network),\nand regression by running hive devp2p tests.\n\nCloses #3375\n\nReplaces #3600\n\n---------\n\nCo-authored-by: ElFantasma <estebandh@gmail.com>",
+          "timestamp": "2025-07-25T15:44:46Z",
+          "tree_id": "372edc338b9e3d4fafd40ec39c74a41eeaf13c54",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1cf713fbe242f4fc54398423d450a93eafc54e07"
+        },
+        "date": 1753547690114,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013717697841726618,
             "unit": "Mgas/s"
           }
         ]
