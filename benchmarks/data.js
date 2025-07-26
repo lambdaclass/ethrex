@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753553627878,
+  "lastUpdate": 1753554383009,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13457,6 +13457,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013633626149131767,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "633e5346bf7ec7e39f4dd42620572cc52b4e5ced",
+          "message": "perf(levm): enable lto codegen (#3830)\n\n**Motivation**\n\nLto seems to improve perfomance in some benches without regressions.\n\nA question would be, do we add it as another profile that we use\nexplicitly for releases or keep it as default for --release. I ask this\nquestion because the --release flag is used in lot of testing code and\nit would slow compile times of those\n\n<img width=\"2560\" height=\"2235\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/e79fbb09-237f-4e91-a843-5f91e9d4ecbb\"\n/>",
+          "timestamp": "2025-07-25T18:22:41Z",
+          "tree_id": "0666b30b7eaad4e54f37a5c82bbbda4dd1c7fc12",
+          "url": "https://github.com/lambdaclass/ethrex/commit/633e5346bf7ec7e39f4dd42620572cc52b4e5ced"
+        },
+        "date": 1753554382336,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007415177777777778,
             "unit": "Mgas/s"
           }
         ]
