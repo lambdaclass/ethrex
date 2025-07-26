@@ -83,6 +83,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError>;
 
+    async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
+
     /// Stores the sequencer signature for a given block hash.
     async fn store_signature_by_block(
         &self,
