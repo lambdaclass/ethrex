@@ -279,14 +279,19 @@ pub enum Subcommand {
         genesis_path: PathBuf,
     },
     #[command(subcommand)]
-    L2(l2::Command),
+    L2Tools(l2::Command),
+    #[command(name = "l2", about = "Initialize an ethrex L2 node")]
+    L2 {
+        #[command(flatten)]
+        options: l2::options::Options,
+    },
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
-            Self::L2(_) => {}
+            Self::L2 { options: _ } | Self::L2Tools(_) => {}
             _ => init_tracing(opts),
         }
         match self {
@@ -315,7 +320,10 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
-            Subcommand::L2(command) => command.run().await?,
+            Subcommand::L2Tools(command) => command.run().await?,
+            Subcommand::L2 { options: l2_opts } => {
+                l2::init_l2(l2_opts).await?;
+            }
         }
         Ok(())
     }
