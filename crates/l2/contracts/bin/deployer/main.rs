@@ -291,14 +291,23 @@ fn read_tdx_deployment_address(name: &str) -> Address {
 }
 
 fn read_vk(path: &str) -> Bytes {
-    std::fs::read(path)
-    .unwrap_or_else(|_| {
+    let Ok(str) = std::fs::read_to_string(path) else {
         warn!(
             ?path,
             "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
         );
-        vec![0u8; 32]
-    }).into()
+        return Bytes::from(vec![0u8; 32]);
+    };
+
+    let cleaned = str.trim().strip_prefix("0x").unwrap_or(&str);
+
+    hex::decode(cleaned).map(Bytes::from).unwrap_or_else(|e| {
+        warn!(
+            ?path,
+            "Failed to decode hex string, will use 0x00..00, this is expected in dev mode: {}", e
+        );
+        Bytes::from(vec![0u8; 32])
+    })
 }
 
 async fn initialize_contracts(
