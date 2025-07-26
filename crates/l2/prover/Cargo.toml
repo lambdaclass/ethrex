@@ -57,6 +57,7 @@ default = ["l2"]
 # prover backends
 risc0 = ["zkvm_interface/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
 sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
+profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [

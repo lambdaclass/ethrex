@@ -44,6 +44,7 @@
   - [L2](./developers/l2/README.md)
     - [load-tests](./developers/l2/load_tests.md)
   - [Replay](./ethrex_replay/ethrex_replay.md)
+      - [Profiling](./ethrex_replay/profiling.md)
 - [CLI reference]()
 - [Troubleshooting]()
 

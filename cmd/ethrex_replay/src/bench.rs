@@ -1,5 +1,6 @@
 use serde_json::json;
 use std::fs::File;
+use tracing::info;
 
 pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
     let rate = gas_used / 1e6 / elapsed;
@@ -33,11 +34,13 @@ pub async fn run_and_measure(
     run: impl Future<Output = eyre::Result<f64>>,
     write_to_file: bool,
 ) -> eyre::Result<()> {
+    info!("Starting prover program");
     let now = std::time::Instant::now();
     let gas_used = run.await?;
     let elapsed = now.elapsed().as_secs();
     if write_to_file {
         write_benchmark_file(gas_used, elapsed as f64);
     }
+    info!("Total gas from block/s: {gas_used}");
     Ok(())
 }
