@@ -23,15 +23,15 @@
 .endm
 
 .macro  blake2b_diag
-    vpermq      ymm1,   ymm1,   0x39
-    vpermq      ymm3,   ymm3,   0x93
-    vperm2i128  ymm2,   ymm2,   ymm2,   0x01
+    vpermq      ymm0,   ymm0,   0x93
+    vpermq      ymm2,   ymm2,   0x39
+    vperm2i128  ymm3,   ymm3,   ymm3,   0x01
 .endm
 
 .macro  blake2b_undiag
-    vpermq      ymm1,   ymm1,   0x93
-    vpermq      ymm3,   ymm3,   0x39
-    vperm2i128  ymm2,   ymm2,   ymm2,   0x01
+    vpermq      ymm0,   ymm0,   0x39
+    vpermq      ymm2,   ymm2,   0x93
+    vperm2i128  ymm3,   ymm3,   ymm3,   0x01
 .endm
 
 
@@ -70,8 +70,8 @@ _blake2b_f:
     pxor    xmm3,   [rcx]
 
     # Skip every round if `r == 0`.
-    cmp     rdi,    0x00
-    jz      1f
+    sub     rdi,    0x01
+    jc      1f
 
     #
     # First iteration and message shuffling.
@@ -151,8 +151,8 @@ _blake2b_f:
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x0100], ymm12
     blake2b_mix0    ymm12
-    vpalignr        ymm12,  ymm10,  ymm9,   0x08
-    vpunpckhqdq     ymm13,  ymm6,   ymm11
+    vpunpcklqdq     ymm12,  ymm8,   ymm4
+    vpblendd        ymm13,  ymm5,   ymm10,  0xCC
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x0120], ymm12
     blake2b_mix1    ymm12
@@ -210,7 +210,7 @@ _blake2b_f:
     vmovdqa         [rsp + 0x0200], ymm12
     blake2b_mix0    ymm12
     vpblendd        ymm12,  ymm4,   ymm7,   0xCC
-    vpblendd        ymm13,  ymm6,   ymm9,   0xCC
+    vpblendd        ymm13,  ymm6,   ymm11,  0xCC
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x0220], ymm12
     blake2b_mix1    ymm12
@@ -355,13 +355,13 @@ _blake2b_f:
     vmovdqa         [rsp + 0x0480], ymm12
     blake2b_mix0    ymm12
     vpunpcklqdq     ymm12,  ymm5,   ymm6
-    vpblendd        ymm13,  ymm7,   ymm6,   0xC0
+    vpblendd        ymm13,  ymm7,   ymm6,   0xCC
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x04A0], ymm12
     blake2b_mix1    ymm12
     blake2b_diag
     vpunpckhqdq     ymm12,  ymm10,  ymm11
-    vpunpcklqdq     ymm13,  ymm8,   ymm5
+    vpunpckhqdq     ymm13,  ymm8,   ymm5
     vpblendd        ymm12,  ymm12,  ymm13,  0xF0
     vmovdqa         [rsp + 0x04C0], ymm12
     blake2b_mix0    ymm12
@@ -373,9 +373,9 @@ _blake2b_f:
     blake2b_undiag
 
     sub     rdi,    0x01
-    jnc     1f
+    jc     1f
 
-    # TODO: Iteration loop.
+    # Iteration loop.
   0:
     # Round #0:
     blake2b_mix0    [rsp + 0x0000]
@@ -491,10 +491,10 @@ _blake2b_f:
     # Merge local work vector.
     vpxor   ymm0,   ymm0,   ymm2
     vpxor   ymm1,   ymm1,   ymm3
-    vpxor   ymm0,   ymm0,   [rsp + 0x00]
-    vpxor   ymm1,   ymm1,   [rsp + 0x20]
-    vmovdqu [rsp + 0x00],   ymm0
-    vmovdqu [rsp + 0x20],   ymm1
+    vpxor   ymm0,   ymm0,   [rsi + 0x00]
+    vpxor   ymm1,   ymm1,   [rsi + 0x20]
+    vmovdqu [rsi + 0x00],   ymm0
+    vmovdqu [rsi + 0x20],   ymm1
 
     # Restore original stack pointer.
     mov     rsp,    r9
