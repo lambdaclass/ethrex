@@ -652,6 +652,7 @@ async fn try_execute_payload(
                     .ok_or(RpcErr::Internal(
                         "Missing header download checkpoint".to_owned(),
                     ))?;
+
                 let local_head_block_number = context
                     .storage
                     .get_block_number(local_head_block_hash)
@@ -666,7 +667,8 @@ async fn try_execute_payload(
                     .cast(coordinator::CastMessage::SyncToHead {
                         from_block_number: local_head_block_number,
                         to_block_head: block_hash,
-                    });
+                    })
+                    .await;
             } else {
                 context.syncer.sync_to_head(block_hash);
             }

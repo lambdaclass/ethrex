@@ -214,18 +214,18 @@ async fn handle_forkchoice(
         let local_head_block_hash = if let Some(local_head_block_hash) =
             context.storage.get_header_download_checkpoint().await?
         {
-            Ok(local_head_block_hash)
+            local_head_block_hash
         } else {
             context
                 .storage
                 .get_latest_canonical_block_hash()
                 .await?
-                .ok_or(SyncError::NoLatestCanonical)
+                .unwrap()
         };
 
         let local_head_block_number = context
             .storage
-            .get_block_number(current_head)
+            .get_block_number(local_head_block_hash)
             .await
             .unwrap()
             .unwrap();
@@ -236,7 +236,8 @@ async fn handle_forkchoice(
             .cast(coordinator::CastMessage::SyncToHead {
                 from_block_number: local_head_block_number,
                 to_block_head: fork_choice_state.head_block_hash,
-            });
+            })
+            .await;
 
         return Ok((None, PayloadStatus::syncing().into()));
     }
@@ -291,27 +292,33 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     if context.syncer.sync_mode() == SyncMode::Snap {
-                        let local_head_block_hash = context
-                            .storage
-                            .get_header_download_checkpoint()
-                            .await?
-                            .ok_or(RpcErr::Internal(
-                                "Missing header download checkpoint".to_owned(),
-                            ))?;
+                        let local_head_block_hash = if let Some(local_head_block_hash) =
+                            context.storage.get_header_download_checkpoint().await?
+                        {
+                            local_head_block_hash
+                        } else {
+                            context
+                                .storage
+                                .get_latest_canonical_block_hash()
+                                .await?
+                                .unwrap()
+                        };
+
                         let local_head_block_number = context
                             .storage
                             .get_block_number(local_head_block_hash)
-                            .await?
-                            .ok_or(RpcErr::Internal(
-                                "Missing local head block number".to_owned(),
-                            ))?;
+                            .await
+                            .unwrap()
+                            .unwrap();
 
-                        context.sync_coordinator.clone().cast(
-                            coordinator::CastMessage::SyncToHead {
+                        context
+                            .sync_coordinator
+                            .clone()
+                            .cast(coordinator::CastMessage::SyncToHead {
                                 from_block_number: local_head_block_number,
                                 to_block_head: fork_choice_state.head_block_hash,
-                            },
-                        );
+                            })
+                            .await;
                     } else {
                         context
                             .syncer

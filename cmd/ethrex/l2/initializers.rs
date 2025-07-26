@@ -5,6 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::snap_sync::coordinator::Coordinator;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
@@ -34,7 +35,9 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table.clone());
+
+    let sync_coordinator = Coordinator::spawn(peer_table);
 
     // Create SyncManager
     let syncer = SyncManager::new(
@@ -54,6 +57,7 @@ pub async fn init_rpc_api(
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
+        sync_coordinator,
         syncer,
         peer_handler,
         get_client_version(),

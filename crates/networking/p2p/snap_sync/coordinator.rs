@@ -6,10 +6,11 @@ use std::{
 };
 
 use ethrex_common::{H256, types::BlockHeader};
+use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after, send_interval},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
@@ -20,6 +21,7 @@ use crate::{
     rlpx::{
         self, Message,
         eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
+        p2p::SUPPORTED_ETH_CAPABILITIES,
     },
     snap_sync::downloader::{Downloader, DownloaderError},
 };
@@ -45,10 +47,10 @@ pub enum CoordinatorState {
     Syncing {
         sync_head_number: Arc<Mutex<u64>>,
         start_block_number: u64,
-        downloaders: Arc<Mutex<BTreeMap<H256, bool>>>,
+        downloaders: BTreeMap<H256, bool>,
 
-        pending_header_downloads: Arc<Mutex<VecDeque<Message>>>,
-        downloaded_headers: Arc<Mutex<Vec<BlockHeader>>>,
+        pending_header_downloads: VecDeque<(u64, u64)>,
+        downloaded_headers: Vec<BlockHeader>,
 
         kademlia: Kademlia,
     },
@@ -60,31 +62,6 @@ impl CoordinatorState {
         Self::Asleep(kademlia)
     }
 
-    // pub async fn new(kademlia: Kademlia) -> Self {
-    //     info!("Creating CoordinatorState");
-
-    //     let peers_table = kademlia.peers.clone();
-    //     let peers_table = peers_table.lock().await;
-
-    //     let current_peers = peers_table.keys().map(|peer_id| (*peer_id, true));
-
-    //     let initial_downloaders = BTreeMap::from_iter(current_peers);
-
-    //     *METRICS.total_header_downloaders.lock().await = initial_downloaders.len() as u64;
-    //     *METRICS.free_header_downloaders.lock().await = initial_downloaders.len() as u64;
-
-    //     info!("Initial downloaders: {:?}", initial_downloaders.len());
-
-    //     Self {
-    //         downloaders: Arc::new(Mutex::new(initial_downloaders)),
-    //         pending_header_downloads: Arc::new(Mutex::new(VecDeque::new())),
-    //         downloaded_headers: Arc::new(Mutex::new(Vec::new())),
-    //         kademlia,
-    //         sync_head_number: Arc::new(Mutex::new(0)),
-    //         start_block_number: Arc::new(Mutex::new(1)),
-    //     }
-    // }
-
     async fn get_sync_head_block_number(&mut self, sync_head_hash: H256) {
         match self {
             CoordinatorState::Syncing {
@@ -95,7 +72,7 @@ impl CoordinatorState {
                 downloaded_headers: _,
                 kademlia,
             } => {
-                info!("Retrieving sync head block number from peers");
+                debug!("Retrieving sync head block number from peers");
 
                 let peers_table = kademlia.peers.clone();
                 let peers_table = peers_table.lock().await;
@@ -174,8 +151,6 @@ impl CoordinatorState {
 
                 *METRICS.time_to_retrieve_sync_head_block.lock().await =
                     Some(sync_head_number_retrieval_elapsed);
-                *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await;
-                *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
                 *METRICS.sync_head_hash.lock().await = sync_head_hash;
             }
             CoordinatorState::Asleep(..) => {}
@@ -203,43 +178,21 @@ impl CoordinatorState {
 
                 let chunk_limit = block_count / chunk_count as u64;
 
-                // Build headers request
-                let mut headers_requests = (start_block..=sync_head_block)
-                    .step_by(chunk_limit as usize)
-                    .map(|start_block| {
-                        rlpx::Message::GetBlockHeaders(GetBlockHeaders {
-                            id: rand::random(),
-                            startblock: HashOrNumber::Number(start_block),
-                            limit: min(sync_head_block - start_block, chunk_limit),
-                            skip: 0,
-                            reverse: false,
-                        })
-                    })
-                    .collect::<VecDeque<_>>();
+                let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
-                // Push the remainder
-                if block_count % chunk_limit != 0 {
-                    headers_requests.push_back(rlpx::Message::GetBlockHeaders(GetBlockHeaders {
-                        id: rand::random(),
-                        startblock: HashOrNumber::Number(
-                            sync_head_block - (block_count % chunk_limit) + 1,
-                        ),
-                        limit: block_count % chunk_limit,
-                        skip: 0,
-                        reverse: false,
-                    }));
+                for i in 0..(chunk_count as u64) {
+                    tasks_queue_not_started.push_back((i * chunk_limit + start_block, chunk_limit));
                 }
 
-                *METRICS.header_downloads_tasks_queued.lock().await +=
-                    headers_requests.len() as u64;
-
-                // Add headers request to pending downloads
-                for headers_request in headers_requests {
-                    pending_header_downloads
-                        .lock()
-                        .await
-                        .push_back(headers_request.clone());
+                // Push the reminder
+                if block_count % chunk_count as u64 != 0 {
+                    tasks_queue_not_started.push_back((
+                        chunk_count as u64 * chunk_limit + start_block,
+                        block_count % chunk_count as u64,
+                    ));
                 }
+
+                *pending_header_downloads = tasks_queue_not_started;
             }
             CoordinatorState::Asleep(..) => {}
         }
@@ -253,7 +206,8 @@ impl CoordinatorState {
         &mut self,
         peer_id: H256,
         new_downloaded_headers: Vec<BlockHeader>,
-        download_request: rlpx::Message,
+        assigned_start_block: u64,
+        assigned_chunk_limit: u64,
         download_error: Option<DownloaderError>, // TODO: Use this error
     ) -> Result<(), CoordinatorError> {
         match self {
@@ -265,77 +219,36 @@ impl CoordinatorState {
                 downloaded_headers,
                 kademlia: _,
             } => {
-                // Mark the downloader as free
-                downloaders
-                    .lock()
-                    .await
-                    .entry(peer_id)
-                    .and_modify(|free| *free = true);
+                debug!(
+                    "Received {} headers from peer {peer_id}",
+                    new_downloaded_headers.len(),
+                );
 
-                *METRICS.free_header_downloaders.lock().await += 1;
+                // Mark the downloader as free
+                downloaders.entry(peer_id).and_modify(|free| *free = true);
 
                 // Check if we downloaded any headers
                 if new_downloaded_headers.is_empty() {
                     // If no headers were downloaded, we requeue the request.
                     pending_header_downloads
-                        .lock()
-                        .await
-                        .push_back(download_request);
-
-                    *METRICS.header_downloads_tasks_queued.lock().await += 1;
+                        .push_back((assigned_start_block, assigned_chunk_limit));
 
                     return Ok(()); // TODO: Maybe an error here?
                 }
-
-                // Extract data from the download request
-                let (start_block, assigned_chunk_limit) = {
-                    let rlpx::Message::GetBlockHeaders(GetBlockHeaders {
-                        id: _,
-                        startblock: start_block,
-                        limit: assigned_chunk_limit,
-                        ..
-                    }) = download_request
-                    else {
-                        return Err(CoordinatorError::InternalError(
-                            InternalError::InvalidDownloaderRequest,
-                        ));
-                    };
-
-                    let HashOrNumber::Number(start_block) = start_block else {
-                        return Err(CoordinatorError::InternalError(
-                            InternalError::InvalidDownloaderRequest,
-                        ));
-                    };
-
-                    (start_block, assigned_chunk_limit)
-                };
 
                 // Check if we downloaded fewer headers than requested
                 let new_headers_count = new_downloaded_headers.len() as u64;
                 if new_headers_count < assigned_chunk_limit {
                     // Downloader downloaded fewer headers than requested.
                     // Queue a new request for the missing headers.
-                    pending_header_downloads.lock().await.push_back(
-                        rlpx::Message::GetBlockHeaders(GetBlockHeaders {
-                            id: rand::random(),
-                            startblock: HashOrNumber::Number(start_block + new_headers_count),
-                            limit: assigned_chunk_limit - new_headers_count,
-                            skip: 0,
-                            reverse: false,
-                        }),
-                    );
-
-                    *METRICS.header_downloads_tasks_queued.lock().await += 1;
+                    pending_header_downloads.push_back((
+                        assigned_start_block + new_headers_count,
+                        assigned_chunk_limit - new_headers_count,
+                    ));
                 }
 
                 // Store the downloaded headers
-                downloaded_headers
-                    .lock()
-                    .await
-                    .extend_from_slice(&new_downloaded_headers);
-
-                *METRICS.downloaded_headers.lock().await += new_headers_count;
-                *METRICS.headers_to_download.lock().await -= new_headers_count;
+                downloaded_headers.extend_from_slice(&new_downloaded_headers);
 
                 Ok(())
             }
@@ -355,7 +268,7 @@ impl CoordinatorState {
                 downloaded_headers: _,
                 kademlia,
             } => {
-                let mut downloaders = downloaders.lock().await;
+                debug!("Refreshing downloaders");
 
                 let peers_table = kademlia.peers.clone();
                 let peers_table = peers_table.lock().await;
@@ -367,10 +280,6 @@ impl CoordinatorState {
 
                 // Remove downloaders that are no longer in the peer table
                 downloaders.retain(|peer_id, _| peers_table.contains_key(peer_id));
-
-                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.free_header_downloaders.lock().await =
-                    downloaders.values().filter(|&&free| free).count() as u64;
             }
             CoordinatorState::Asleep(..) => {}
         }
@@ -379,63 +288,132 @@ impl CoordinatorState {
     async fn handle_assign_download_tasks(&mut self, self_handle: GenServerHandle<Coordinator>) {
         match self {
             CoordinatorState::Syncing {
-                sync_head_number: _,
-                start_block_number: _,
+                sync_head_number,
+                start_block_number,
                 downloaders,
                 pending_header_downloads,
-                downloaded_headers: _,
+                downloaded_headers,
                 kademlia,
             } => {
-                let mut downloaders = downloaders.lock().await;
+                let peer_channels = kademlia
+                    .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                    .await;
 
-                for (free_peer_id, free) in downloaders.iter_mut().filter(|&(_, &mut free)| free) {
-                    if let Some(free_peer_data) = kademlia.peers.lock().await.get(free_peer_id) {
-                        // Assign tasks to the downloader
-                        let Some(task) = pending_header_downloads.lock().await.pop_front() else {
-                            // TODO: Handle case where no tasks are available
-                            return;
-                        };
-
-                        let _ = Downloader::spawn_as_headers_downloader(
-                            free_peer_data.clone(),
-                            self_handle.clone(),
-                            task,
-                        );
-
-                        *free = false; // Mark the downloader as busy
-
-                        *METRICS.free_header_downloaders.lock().await -= 1;
-
-                        info!("Assigned task to peer: {free_peer_id}");
+                for (peer_id, _peer_channels) in &peer_channels {
+                    if downloaders.contains_key(peer_id) {
+                        // Peer is already in the downloaders list, skip it
+                        continue;
                     }
+
+                    downloaders.insert(*peer_id, true);
+
+                    debug!("{peer_id} added as downloader");
+                }
+
+                let mut free_downloaders = downloaders
+                    .clone()
+                    .into_iter()
+                    .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                    .collect::<Vec<_>>();
+
+                if free_downloaders.is_empty() {
+                    return;
+                }
+
+                free_downloaders.shuffle(&mut rand::rngs::OsRng);
+
+                for (free_peer_id, _) in free_downloaders {
+                    let Some(free_downloader_channels) =
+                        peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+                            peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+                        })
+                    else {
+                        // The free downloader is not a peer of us anymore.
+                        debug!(
+                            "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+                        );
+                        downloaders.remove(&free_peer_id);
+                        continue;
+                    };
+
+                    let Some((start_block, chunk_limit)) = pending_header_downloads.pop_front()
+                    else {
+                        if downloaded_headers.len() as u64
+                            >= (*sync_head_number.lock().await - *start_block_number)
+                        {
+                            info!("All headers downloaded successfully");
+                            break;
+                        }
+
+                        continue;
+                    };
+
+                    let _ = Downloader::spawn_as_headers_downloader(
+                        free_peer_id,
+                        free_downloader_channels,
+                        self_handle.clone(),
+                        start_block,
+                        chunk_limit,
+                    );
+
+                    downloaders
+                        .entry(free_peer_id)
+                        .and_modify(|downloader_is_free| {
+                            *downloader_is_free = false; // mark the downloader as busy
+                        });
                 }
             }
             CoordinatorState::Asleep(..) => {}
         }
     }
+
+    async fn handle_update_metrics(&self) {
+        match self {
+            CoordinatorState::Syncing {
+                sync_head_number,
+                start_block_number,
+                downloaders,
+                pending_header_downloads,
+                downloaded_headers,
+                kademlia,
+            } => {
+                *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await;
+                *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
+                *METRICS.header_downloads_tasks_queued.lock().await =
+                    pending_header_downloads.len() as u64;
+                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.free_header_downloaders.lock().await =
+                    downloaders.values().filter(|&&free| free).count() as u64;
+                *METRICS.downloaded_headers.lock().await = downloaded_headers.len() as u64;
+            }
+            CoordinatorState::Asleep(kademlia) => {}
+        }
+    }
 }
 
-#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum CastMessage {
+    // External
     SyncToHead {
         from_block_number: u64,
         to_block_head: H256,
     },
-
     // Internal
     DownloadHeaders,
     DownloadStateTries,
     DownloadStorageTries,
     AssignDownloadTasks,
-    RefreshDownloaders,
+    // RefreshDownloaders,
     // From Downloader
     HeadersDownloaded {
         peer_id: H256,
         downloaded_headers: Vec<BlockHeader>,
-        download_request: rlpx::Message,
+        assigned_start_block: u64,
+        assigned_chunk_limit: u64,
         download_error: Option<DownloaderError>,
     },
+    // Metrics
+    UpdateMetrics,
 }
 
 #[derive(Debug, Clone)]
@@ -467,22 +445,6 @@ impl GenServer for Coordinator {
         Self {}
     }
 
-    async fn init(
-        &mut self,
-        handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> Result<Self::State, Self::Error> {
-        info!("Initializing Coordinator");
-
-        send_interval(
-            Duration::from_secs(5),
-            handle.clone(),
-            Self::CastMsg::RefreshDownloaders,
-        );
-
-        Ok(state)
-    }
-
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
@@ -494,21 +456,31 @@ impl GenServer for Coordinator {
                 from_block_number,
                 to_block_head,
             } => {
-                info!("Received request to sync to head: {to_block_head}");
-
                 match state {
                     CoordinatorState::Syncing { .. } => {
+                        info!("Received request to sync to head: {to_block_head}");
                         // Coordinator is already syncing, no action needed
-                        info!("Coordinator is already syncing, no action needed");
+                        debug!("Coordinator is already syncing, no action needed");
                     }
                     CoordinatorState::Asleep(kademlia) => {
+                        info!("Received request to sync to head: {to_block_head}");
+
+                        let peers_table = kademlia.peers.clone();
+                        let peers_table = peers_table.lock().await;
+
+                        let current_peers = peers_table.keys().map(|peer_id| (*peer_id, true));
+
+                        let initial_downloaders = BTreeMap::from_iter(current_peers);
+
+                        drop(peers_table);
+
                         // Wake up the coordinator
                         state = CoordinatorState::Syncing {
                             sync_head_number: Arc::new(Mutex::new(0)),
                             start_block_number: from_block_number,
-                            downloaders: Arc::new(Mutex::new(BTreeMap::new())),
-                            pending_header_downloads: Arc::new(Mutex::new(VecDeque::new())),
-                            downloaded_headers: Arc::new(Mutex::new(Vec::new())),
+                            downloaders: initial_downloaders,
+                            pending_header_downloads: VecDeque::new(),
+                            downloaded_headers: Vec::new(),
                             kademlia,
                         };
 
@@ -521,11 +493,33 @@ impl GenServer for Coordinator {
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::DownloadHeaders => {
+                METRICS
+                    .headers_download_start_time
+                    .lock()
+                    .await
+                    .replace(SystemTime::now());
+
                 state.prepare_download_tasks().await;
 
                 let _ = handle
                     .clone()
                     .cast(Self::CastMsg::AssignDownloadTasks)
+                    .await
+                    .inspect_err(|err| {
+                        error!("Failed to self cast AssignTasks after preparing tasks to download headers: {err}");
+                    });
+
+                // let _ = handle
+                //     .clone()
+                //     .cast(Self::CastMsg::RefreshDownloaders)
+                //     .await
+                //     .inspect_err(|err| {
+                //         error!("Failed to self cast AssignTasks after preparing tasks to download headers: {err}");
+                //     });
+
+                let _ = handle
+                    .clone()
+                    .cast(Self::CastMsg::UpdateMetrics)
                     .await
                     .inspect_err(|err| {
                         error!("Failed to self cast AssignTasks after preparing tasks to download headers: {err}");
@@ -546,14 +540,16 @@ impl GenServer for Coordinator {
             Self::CastMsg::HeadersDownloaded {
                 peer_id,
                 downloaded_headers,
-                download_request,
+                assigned_start_block,
+                assigned_chunk_limit,
                 download_error,
             } => {
                 let _ = state
                     .handle_headers_downloaded(
                         peer_id,
                         downloaded_headers,
-                        download_request,
+                        assigned_start_block,
+                        assigned_chunk_limit,
                         download_error,
                     )
                     .await
@@ -561,21 +557,43 @@ impl GenServer for Coordinator {
                         error!("Failed to handle downloaded headers: {err}");
                     });
 
+                let _ = handle
+                    .clone()
+                    .cast(Self::CastMsg::AssignDownloadTasks)
+                    .await;
+
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::AssignDownloadTasks => {
                 state.handle_assign_download_tasks(handle.clone()).await;
 
-                send_after(
-                    Duration::from_millis(100),
-                    handle.clone(),
-                    Self::CastMsg::AssignDownloadTasks,
-                );
+                // send_after(
+                //     Duration::from_millis(0),
+                //     handle.clone(),
+                //     Self::CastMsg::AssignDownloadTasks,
+                // );
 
                 CastResponse::NoReply(state)
             }
-            Self::CastMsg::RefreshDownloaders => {
-                state.handle_refresh_downloaders().await;
+            // Self::CastMsg::RefreshDownloaders => {
+            //     state.handle_refresh_downloaders().await;
+
+            //     send_after(
+            //         Duration::from_secs(0),
+            //         handle.clone(),
+            //         Self::CastMsg::RefreshDownloaders,
+            //     );
+
+            //     CastResponse::NoReply(state)
+            // }
+            Self::CastMsg::UpdateMetrics => {
+                state.handle_update_metrics().await;
+
+                send_after(
+                    Duration::from_secs(1),
+                    handle.clone(),
+                    Self::CastMsg::UpdateMetrics,
+                );
 
                 CastResponse::NoReply(state)
             }

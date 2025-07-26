@@ -12,7 +12,7 @@ use crate::{
     rlpx::{
         self,
         connection::server::CastMessage,
-        eth::blocks::{BlockHeaders, GetBlockHeaders},
+        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
     },
     snap_sync::coordinator::{self, Coordinator},
 };
@@ -42,9 +42,11 @@ pub enum InternalError {
 #[derive(Clone)]
 pub enum DownloaderState {
     HeadersDownloader {
-        peer: PeerData,
+        peer_id: H256,
+        peer_channels: PeerChannels,
         coordinator_handle: GenServerHandle<Coordinator>,
-        download_request: rlpx::Message,
+        assigned_start_block: u64,
+        assigned_chunk_limit: u64,
     },
 }
 
@@ -52,14 +54,18 @@ pub struct Downloader;
 
 impl Downloader {
     pub fn spawn_as_headers_downloader(
-        peer: PeerData,
+        peer_id: H256,
+        peer_channels: PeerChannels,
         coordinator_handle: GenServerHandle<Coordinator>,
-        headers_request: rlpx::Message,
+        assigned_start_block: u64,
+        assigned_chunk_limit: u64,
     ) -> GenServerHandle<Self> {
         let state = DownloaderState::HeadersDownloader {
-            peer,
+            peer_id,
+            peer_channels,
             coordinator_handle,
-            download_request: headers_request,
+            assigned_start_block,
+            assigned_chunk_limit,
         };
 
         Downloader::start(state)
@@ -84,25 +90,30 @@ impl GenServer for Downloader {
     ) -> Result<Self::State, Self::Error> {
         match state.clone() {
             DownloaderState::HeadersDownloader {
-                peer,
+                peer_id,
+                peer_channels,
                 mut coordinator_handle,
-                download_request,
+                assigned_start_block,
+                assigned_chunk_limit,
             } => {
-                let peer_id = peer.node.node_id();
-
-                let (downloaded_headers, download_error) =
-                    match handle_headers_download(peer_id, peer.channels, download_request.clone())
-                        .await
-                    {
-                        Ok(headers) => (headers, None),
-                        Err(err) => (Vec::new(), Some(err)),
-                    };
+                let (downloaded_headers, download_error) = match handle_headers_download(
+                    peer_id,
+                    peer_channels,
+                    assigned_start_block,
+                    assigned_chunk_limit,
+                )
+                .await
+                {
+                    Ok(headers) => (headers, None),
+                    Err(err) => (Vec::new(), Some(err)),
+                };
 
                 let _ = coordinator_handle
                     .cast(coordinator::CastMessage::HeadersDownloaded {
                         peer_id,
                         downloaded_headers,
-                        download_request,
+                        assigned_start_block,
+                        assigned_chunk_limit,
                         download_error,
                     })
                     .await
@@ -118,26 +129,28 @@ impl GenServer for Downloader {
 
 async fn handle_headers_download(
     peer_id: H256,
-    peer_channels: Option<PeerChannels>,
-    headers_request: rlpx::Message,
+    mut peer_channels: PeerChannels,
+    assigned_start_block: u64,
+    assigned_chunk_limit: u64,
 ) -> Result<Vec<BlockHeader>, DownloaderError> {
     debug!("Requesting block headers from peer {peer_id}");
 
-    let rlpx::Message::GetBlockHeaders(GetBlockHeaders { id: request_id, .. }) = headers_request
-    else {
-        return Err(InternalError::InvalidDownloaderRequest)?;
-    };
-
-    let mut peer_channels = peer_channels.ok_or(DownloaderError::InternalError(
-        InternalError::DownloaderHasNoPeerChannels,
-    ))?;
-
     let mut receiver = peer_channels.receiver.lock().await;
+
+    let request_id = rand::random();
 
     // FIXME! modify the cast and wait for a `call` version
     peer_channels
         .connection
-        .cast(CastMessage::BackendMessage(headers_request))
+        .cast(CastMessage::BackendMessage(rlpx::Message::GetBlockHeaders(
+            GetBlockHeaders {
+                id: request_id,
+                startblock: HashOrNumber::Number(assigned_start_block),
+                limit: assigned_chunk_limit,
+                skip: 0,
+                reverse: false,
+            },
+        )))
         .await
         .map_err(|err| DownloaderError::FailedToSendMessageToPeer(peer_id, err.to_string()))?;
 
@@ -158,7 +171,7 @@ async fn handle_headers_download(
     .map_err(|_elapsed| DownloaderError::BlockHeadersRequestTimedOut(peer_id))?
     .ok_or(DownloaderError::NoBlockHeadersReceived(peer_id))?;
 
-    if are_block_headers_chained(&block_headers) {
+    if !are_block_headers_chained(&block_headers) {
         return Err(DownloaderError::BlockHeadersNotChained(peer_id));
     }
 

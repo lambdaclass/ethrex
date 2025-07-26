@@ -7,6 +7,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::snap_sync::coordinator::Coordinator;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -18,6 +19,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use serde_json::Value;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -70,6 +72,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
+    sync_coordinator: GenServerHandle<Coordinator>,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
@@ -85,6 +88,7 @@ pub async fn start_api(
             storage,
             blockchain,
             active_filters: active_filters.clone(),
+            sync_coordinator,
             syncer: Arc::new(syncer),
             peer_handler,
             node_data: NodeData {

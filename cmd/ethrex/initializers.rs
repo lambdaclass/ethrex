@@ -111,9 +111,9 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table.clone());
 
-    let sync_coordinator = Coordinator::spawn(peer_table.clone());
+    let sync_coordinator = Coordinator::spawn(peer_table);
 
     // Create SyncManager
     let syncer = SyncManager::new(

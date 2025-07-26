@@ -4087,6 +4087,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.12",
  "tokio",
  "tower-http 0.6.6",

@@ -319,6 +319,12 @@ pub async fn periodically_show_peer_stats() {
             (*downloaded_bytecodes as f64 / *total_bytecodes_to_download as f64) * 100.0
         };
 
+        // Header downloaders
+
+        let total_header_downloaders = *METRICS.total_header_downloaders.lock().await;
+        let free_header_downloaders = *METRICS.free_header_downloaders.lock().await;
+        let busy_header_downloaders = total_header_downloaders - free_header_downloaders;
+
         info!(
             r#"
 P2P:
@@ -337,7 +343,7 @@ Clients diversity: {peers_by_client:#?}
 
 Snap Sync:
 ==========
-headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers}, elapsed: {headers_download_time})
+headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers}, pending tasks: {header_downloads_tasks_queued}, busy downloaders: {busy_header_downloaders}, free downloaders: {free_header_downloaders}, elapsed: {headers_download_time})
 downloaded account tries: {downloaded_account_tries}, elapsed: {account_tries_download_time}
 storage tries progress: {storage_tries_download_progress} (total: {storage_tries_to_download}, downloaded: {downloaded_storage_tries}, remaining: {remaining_storage_tries}, slots: {downloaded_storage_slots}, tasks: {storage_tries_tasks_queued}, elapsed: {storage_tries_download_time})
 account tries state root: {account_tries_state_root}
@@ -401,6 +407,7 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
                     .unwrap_or_else(|| "-".to_owned()),
             downloaded_storage_slots = *METRICS.downloaded_storage_slots.lock().await,
             storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
+            header_downloads_tasks_queued = *METRICS.header_downloads_tasks_queued.lock().await,
         );
 
         tokio::time::sleep(Duration::from_secs(1)).await;

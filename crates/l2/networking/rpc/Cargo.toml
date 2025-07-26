@@ -31,6 +31,9 @@ hex.workspace = true
 rustc-hex.workspace = true
 url.workspace = true
 
+spawned-concurrency.workspace = true
+spawned-rt.workspace = true
+
 [lib]
 path = "./lib.rs"
 
