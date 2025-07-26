@@ -126,12 +126,12 @@ Running a based stack locally is essentially the same as running an ethrex stack
 ### 1. Deploying L1 Contracts
 
 > [!IMPORTANT]
-> You need to have an L1 running to deploy the contracts. Run `make init-local-l1` to do so (ensure Docker running).
+> You need to have an L1 running to deploy the contracts. Run `make init-local-l1` from `crates/l2` to do so (ensure Docker running).
 
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
 ```bash
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -200,13 +200,19 @@ After running this command, the node will start syncing with the L1 and will be 
 
 > [!NOTE]
 >
-> If you want to run multiple nodes, ensure that the following values are different for each node:
+> The private key `<SEQUENCER_PRIVATE_KEY>` can be sourced from the file `fixtures/keys/private_keys_l1.txt`.
+> An example key is:
+> `0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23`
+
+> [!NOTE]
 >
-> - `--proof-coordinator-listen-port`
+> If you want to run multiple nodes in the same machine, ensure that the following values are different for each node:
+>
+> - `--proof-coordinator.port`
 > - `--http.port`
 > - `--datadir`
-> - `--committer-l1-private-key`
-> - `--proof-coordinator-l1-private-key`
+> - `--committer.l1-private-key`
+> - `--authrpc.port`
 > - `--p2p.port`
 > - `--discovery.port`
 >
@@ -218,22 +224,65 @@ After running this command, the node will start syncing with the L1 and will be 
 
 For nodes to become lead Sequencers they need to register themselves in the `SequencerRegistry` contract. This can be done by calling the `register` method of the contract with the node's address.
 
+First, you need to open a new terminal in `crates/l2` and load the deployed contracts enviroment variables again:
+```bash
+export $(cat .env | xargs)
+``` 
+
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
-rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers REGISTRANT_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
+rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> 
 ```
 
+This command registers `<SEQUENCER_ADDRESS>` as a Sequencer supplying 1 ETH as collateral (the minimum).
+
 > [!IMPORTANT]
-> The `ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
+> The `SEQUENCER_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
 
 Once registered, the node will be able to participate in the Sequencer election process and become the lead Sequencer when its turn comes.
 
 > [!NOTE]
 >
 > 1. Replace `<REGISTRANT_PRIVATE_KEY>` and `<SEQUENCER_ADDRESS>` with the appropriate values.
-> 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
+> 2. The registrant is not necessarily related to the sequencer, one could pay the registration for someone else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
+
+> [!NOTE]
+>
+> If you're using the private key provided in previous step, the account address is:
+> `0x589a698b7b7da0bec545177d3963a2741105c7c9`
+
+### 4. Running a second node as follower
+
+To run a second node as a follower (using BlockFetcher) on the same computer, you need to adjust certain parameters to avoid conflicts with port numbers and datadir directory.
+
+```bash
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
+  --watcher.block-delay 0 \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --committer.l1-private-key <FOLLOWER_PRIVATE_KEY>  \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --network ../../fixtures/genesis/l2.json \
+  --datadir ethrex_l2_b \
+  --proof-coordinator.addr 127.0.0.1 \
+  --proof-coordinator.port 3901 \
+  --http.port 1730 \
+  --state-updater.sequencer-registry $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS \
+  --l1.on-chain-proposer-address $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
+  --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
+  --authrpc.port=8552 \
+  --p2p.port=30305 \
+  --discovery.port=30306 \
+  --based
+```
+
+> [!NOTE]
+>
+> Replace `<FOLLOWER_PRIVATE_KEY>` with an appropriate value. This account doesn't need to be funded to run as a follower node.
+
 
 ## Documentation
 
