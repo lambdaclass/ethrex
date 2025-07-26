@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753513959616,
+  "lastUpdate": 1753544938158,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13345,6 +13345,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007099638297872341,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f354ef47725ad540484be224ffc2a63eb50d19c9",
+          "message": "feat(l2): correctly monitor withdrawal status (#3627)\n\n**Motivation**\n\nWe want to correctly track the status of withdrawals.\n\n**Description**\n\nFetches the message id associated with the withdrawal by looking at the\nreceipts of the transaction.\n\n**How to test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n\nCloses #3513",
+          "timestamp": "2025-07-25T15:10:29Z",
+          "tree_id": "56d3b5ad545aa27b47e3a644190c63832d0a5e76",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f354ef47725ad540484be224ffc2a63eb50d19c9"
+        },
+        "date": 1753544937155,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013441409869083586,
             "unit": "Mgas/s"
           }
         ]
