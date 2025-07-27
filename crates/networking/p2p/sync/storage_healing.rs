@@ -134,7 +134,7 @@ async fn heal_storage_batch(
         .request_storage_trienodes(state_root, batch.clone())
         .await
     {
-        debug!("Received {} storage nodes", nodes.len());
+        debug!("Storage Healing: Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
             let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
@@ -150,9 +150,9 @@ async fn heal_storage_batch(
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
             trie.db().put_batch(
-                nodes
+                trie_nodes
                     .iter()
-                    .filter_map(|node| match node.compute_hash() {
+                    .filter_map(|node: &ethrex_trie::Node| match node.compute_hash() {
                         hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
                         NodeHash::Inline(_) => None,
                     })
@@ -168,5 +168,6 @@ async fn heal_storage_batch(
         return Ok((batch, false));
     }
     // Pivot became stale, lets inform the fetcher
+    debug!("Storage Healing: node return empty data");
     Ok((batch, true))
 }
