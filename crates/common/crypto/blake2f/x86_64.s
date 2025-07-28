@@ -48,7 +48,7 @@ _blake2b_f:
 
     # Allocate space for shuffled message.
     mov     r9,     rsp
-    sub     rsp,    0x0500  # Allocate space for 32b * 4 * 10 rounds.
+    sub     rsp,    0x0500  # Allocate space for 32B * 4 * 10 rounds.
     and     rsp,    -0x20   # Align to 32B boundary.
 
     # Load required constants.
