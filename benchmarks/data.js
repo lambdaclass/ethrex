@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753699553437,
+  "lastUpdate": 1753716838972,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6325,6 +6325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162424611028,
             "range": "± 652401859",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2bfdc178d25b7f78078e4b99ec279c308a180ae4",
+          "message": "feat(l2): prioritize privileged transactions (#3784)\n\n**Motivation**\n\nWe want to prioritize privileged transactions, to prevent the sequencer\nfrom exceeding it's inclusion deadline.\n\n**Description**\n\nAlso ensures privileged transactions are sorted by their nonce, to\nensure (the other case that may cause out-of-order insertion is handled\nin #3776) they're inserted in-order.\n\nCloses #3730",
+          "timestamp": "2025-07-28T14:44:26Z",
+          "tree_id": "c1630d705f79497e51a7c0b645e918cbb6c88f67",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2bfdc178d25b7f78078e4b99ec279c308a180ae4"
+        },
+        "date": 1753716825986,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161715858588,
+            "range": "± 141407989",
             "unit": "ns/iter"
           }
         ]
