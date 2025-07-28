@@ -795,7 +795,7 @@ async fn test_send(
     data: &[Value],
 ) -> RpcReceipt {
     let signer: Signer = LocalSigner::new(*private_key).into();
-    let tx = client
+    let mut tx = client
         .build_eip1559_transaction(
             to,
             signer.address(),
@@ -806,6 +806,7 @@ async fn test_send(
         )
         .await
         .unwrap();
+    tx.gas_limit *= 2;
     let tx_hash = send_eip1559_transaction(client, &tx, &signer)
         .await
         .unwrap();
