@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753721763899,
+  "lastUpdate": 1753723367816,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6415,6 +6415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163403889856,
             "range": "± 318135528",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "67700abf73d48ea46a1f37e1e989cb7aad813d19",
+          "message": "feat(l2): allow setting height of the batch widget (#3690)\n\n**Motivation**\n\nUser might want to customize the UI\n\n**Description**\n\nAdds a CLI flag to set the height of the batch widget.\n\nCloses #3528\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-07-28T16:32:20Z",
+          "tree_id": "5233f78f5d9ec352bb06cd4e33bf96c9088426e0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67700abf73d48ea46a1f37e1e989cb7aad813d19"
+        },
+        "date": 1753723354803,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164357815444,
+            "range": "± 556260898",
             "unit": "ns/iter"
           }
         ]
