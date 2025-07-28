@@ -94,33 +94,39 @@ impl fmt::Display for PostCheckResult {
                     acc_mismatch.address,
                 )?;
                 if let Some(balance_diff) = acc_mismatch.balance_diff {
+                    let (expected_balance, actual_balance) = balance_diff;
+                    let net_difference = if expected_balance > actual_balance { expected_balance - actual_balance} else {actual_balance-expected_balance};
+
                     writeln!(
                         f,
-                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n",
-                        balance_diff.0, balance_diff.1
+                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n     Difference: {:?}\n",
+                        expected_balance, actual_balance, net_difference
                     )?;
                 }
                 if let Some(nonce_diff) = acc_mismatch.nonce_diff {
+                    let (expected_nonce, actual_nonce) = nonce_diff;
                     writeln!(
                         f,
                         "     Expected nonce: {:?}\n     Actual   nonce: {:?}\n",
-                        nonce_diff.0, nonce_diff.1
+                        expected_nonce, actual_nonce
                     )?;
                 }
                 if let Some(code_diff) = acc_mismatch.code_diff {
+                    let (expected_code_hash, actual_code_hash) = code_diff;
                     writeln!(
                         f,
                         "     Expected code hash: 0x{}\n     Actual   code hash: 0x{}\n",
-                        hex::encode(code_diff.0),
-                        hex::encode(code_diff.1)
+                        hex::encode(expected_code_hash),
+                        hex::encode(actual_code_hash)
                     )?;
                 }
 
                 if let Some(storage_diff) = acc_mismatch.storage_diff {
+                    let (expected_storage, actual_storage) = storage_diff;
                     writeln!(
                         f,
                         "     Expected storage: {:?}\n     Actual   storage: {:?}",
-                        storage_diff.0, storage_diff.1
+                        expected_storage, actual_storage
                     )?;
                 }
             }
