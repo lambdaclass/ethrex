@@ -455,7 +455,6 @@ impl Syncer {
             .peers
             .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
             .await
-            .expect("Should always return")
         };
 
         info!("Starting to compute the state root...");

@@ -1335,7 +1335,7 @@ impl PeerHandler {
         &self,
         mut pivot_header: BlockHeader,
         account_storage_roots: Vec<(H256, H256)>,
-    ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
+    ) -> (Vec<Vec<(H256, U256)>>, bool) {
         const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1593,7 +1593,7 @@ impl PeerHandler {
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading storage ranges, total storage slots: {total_slots}");
 
-        Some((all_account_storages, false))
+        (all_account_storages, false)
     }
 
     async fn request_storage_ranges_worker(
