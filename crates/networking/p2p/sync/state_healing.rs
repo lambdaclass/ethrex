@@ -45,6 +45,7 @@ use super::SyncError;
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
+/// This method also stores modified storage roots in the db for heal_storage_trie
 pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,

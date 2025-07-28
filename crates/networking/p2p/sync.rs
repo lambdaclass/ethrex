@@ -591,6 +591,13 @@ impl Syncer {
                computed_state_root_new: {computed_state_root_new},
                root_node new: {root_node:?}, ");
 
+        
+        // TODO: remove when moved to spawned, this is a temp code that fixes an assumption
+        // The healing of storages assumes that we have all of the missing storages as paths in the database.
+        // If the account wasn't stale but the storage download step was skipped becuase
+        // the pivot was stale, we need to add that account storage root to the database manually
+        // State healing won't do it
+
 
         healing_done = false;
         info!("Starting storage healing");
