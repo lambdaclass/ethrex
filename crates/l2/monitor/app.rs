@@ -26,6 +26,7 @@ use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::based::sequencer_state::SequencerState;
+use crate::monitor::utils::SelectableScroller;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::{
     SequencerConfig,
@@ -39,6 +40,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
+
+const SCROLLABLE_WIDGETS: usize = 5;
 #[derive(Clone)]
 pub struct EthrexMonitorWidget {
     pub title: String,
@@ -60,6 +63,7 @@ pub struct EthrexMonitorWidget {
     pub store: Store,
     pub rollup_store: StoreRollup,
     pub last_scroll: Instant,
+    pub overview_selected_widget: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -205,7 +209,9 @@ impl EthrexMonitorWidget {
             store,
             rollup_store,
             last_scroll: Instant::now(),
+            overview_selected_widget: 0,
         };
+        monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
     }
@@ -215,6 +221,19 @@ impl EthrexMonitorWidget {
             frame.render_widget(self, frame.area());
         })?;
         Ok(())
+    }
+
+    fn selected_table(&mut self) -> &mut dyn SelectableScroller {
+        let widgets: [&mut dyn SelectableScroller; SCROLLABLE_WIDGETS] = [
+            &mut self.batches_table,
+            &mut self.blocks_table,
+            &mut self.mempool,
+            &mut self.l1_to_l2_messages,
+            &mut self.l2_to_l1_messages,
+        ];
+        // index always within bounds
+        #[expect(clippy::indexing_slicing)]
+        widgets[self.overview_selected_widget % SCROLLABLE_WIDGETS]
     }
 
     pub fn on_key_event(&mut self, code: KeyCode) {
@@ -234,6 +253,26 @@ impl EthrexMonitorWidget {
             }
             (TabsState::Logs, KeyCode::Char('-')) => {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
+            }
+            (TabsState::Overview, KeyCode::Up) => {
+                self.selected_table().selected(false);
+                self.overview_selected_widget = self
+                    .overview_selected_widget
+                    .wrapping_add(SCROLLABLE_WIDGETS - 1)
+                    % SCROLLABLE_WIDGETS;
+                self.selected_table().selected(true);
+            }
+            (TabsState::Overview, KeyCode::Down) => {
+                self.selected_table().selected(false);
+                self.overview_selected_widget =
+                    self.overview_selected_widget.wrapping_add(1) % SCROLLABLE_WIDGETS;
+                self.selected_table().selected(true);
+            }
+            (TabsState::Overview, KeyCode::Char('w')) => {
+                self.selected_table().scroll_up();
+            }
+            (TabsState::Overview, KeyCode::Char('s')) => {
+                self.selected_table().scroll_down();
             }
             (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
             (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
@@ -384,7 +423,9 @@ impl EthrexMonitorWidget {
                     &mut l2_to_l1_messages_state,
                 );
 
-                let help = Line::raw("tab: switch tab |  Q: quit").centered();
+                let help =
+                    Line::raw("tab: switch tab |  Q: quit | ↑/↓: select table | w/s: scroll table")
+                        .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
             }
