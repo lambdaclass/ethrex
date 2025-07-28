@@ -1,14 +1,20 @@
+use colored::Colorize;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
+
 use ethrex_common::{
     U256,
     types::{EIP1559Transaction, EIP7702Transaction, Transaction, TxKind},
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
-use tokio::fs;
-
 use crate::runner_v2::{
     error::RunnerError,
-    result_check::{check_test_case_results, create_report},
+    report::add_test_to_report,
+    result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
 };
@@ -16,37 +22,83 @@ use crate::runner_v2::{
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
-    let _ = fs::remove_file("./runner_v2/runner_report.txt").await;
+    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let _ = fs::remove_file(&successful_report_path);
+    let _ = fs::remove_file("./runner_v2/failure_report.txt");
+
+    let mut success_report = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(successful_report_path)
+        .unwrap();
+    success_report
+        .write_all("Successful tests: \n".as_bytes())
+        .unwrap();
+    let mut passing_tests = 0;
+    let mut failing_tests = 0;
+    let mut total_run = 0;
 
     for test in tests {
-        run_test(&test).await?;
+        run_test(
+            &test,
+            &mut passing_tests,
+            &mut failing_tests,
+            &mut total_run,
+        )
+        .await?;
     }
     Ok(())
 }
 
 /// Runs each individual test case (combination of <fork, transaction, post-state>) of a specific test.
-pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
-    println!("Running test: {:?}", test.name);
+pub async fn run_test(
+    test: &Test,
+    passing_tests: &mut usize,
+    failing_tests: &mut usize,
+    total_run: &mut usize,
+) -> Result<(), RunnerError> {
+    let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
-        let (mut db, initial_block_hash, storage) = load_initial_state(test).await;
+        // Setup VM for transaction.
+        let (mut db, initial_block_hash, storage, genesis) = load_initial_state(test).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1)
-            .map_err(RunnerError::VMExecutionError)?;
+        let mut vm =
+            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
 
-        let execution_report = vm.execute();
-        let res = check_test_case_results(
+        // Execute transaction with VM.
+        let execution_result = vm.execute();
+
+        // Verify transaction execution results where the ones expected by the test case.
+        let checks_result = check_test_case_results(
             &mut vm,
             initial_block_hash,
             storage,
             test_case,
-            execution_report,
+            execution_result,
+            genesis,
         )
-        .await;
+        .await?;
 
-        create_report(res, test_case, test)?;
+        // If test case did not pass the checks, add it to failing test cases record (for future reporting)
+        if !checks_result.passed {
+            failing_test_cases.push(checks_result);
+            *failing_tests += 1;
+        } else {
+            *passing_tests += 1;
+        }
+        *total_run += 1;
+
+        print!(
+            "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
+            format!("{}", total_run).blue(),
+            format!("{}", passing_tests).green(),
+            format!("{}", failing_tests).red()
+        );
     }
+    add_test_to_report((test, failing_test_cases))?;
+
     Ok(())
 }
 
