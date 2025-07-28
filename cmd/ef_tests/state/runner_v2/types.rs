@@ -447,7 +447,7 @@ pub struct RawPostValue {
 pub struct RawTransaction {
     #[serde(with = "bytes::vec")]
     pub data: Vec<Bytes>,
-    #[serde(deserialize_with = "u64::hex_str::deser_u64_vec")]
+    #[serde(deserialize_with = "u64::hex_str::deser_vec")]
     pub gas_limit: Vec<u64>,
     #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub gas_price: Option<U256>,
