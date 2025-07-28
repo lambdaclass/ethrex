@@ -47,6 +47,9 @@ jobs:
     name: Build docker image
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
@@ -55,7 +58,7 @@ jobs:
           load: true
           outputs: type=docker,dest=/tmp/ethrex_image.tar
           build-args: |
-            BUILD_FLAGS="--features dev"
+            BUILD_FLAGS="--features dev,rollup_storage_sql,metrics"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
