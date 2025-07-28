@@ -58,7 +58,7 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
 
 impl fmt::Display for PostCheckResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Fork: {:?} - vector {:?}\n", self.fork, self.vector)?;
+        writeln!(f, "Fork: {:?} - indexes (data: {}, gas: {}, value: {})\n", self.fork, self.vector.0, self.vector.1, self.vector.2)?;
         if let Some(root_mismatch) = self.root_dif {
             let (expected_root, actual_root) = root_mismatch;
             writeln!(
