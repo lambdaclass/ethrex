@@ -211,6 +211,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             monitor: MonitorConfig {
                 enabled: opts.monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
+                batch_widget_height: opts.monitor_opts.batch_widget_height,
             },
         })
     }
@@ -674,6 +675,8 @@ pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000, help_heading = "Monitor options")]
     tick_rate: u64,
+    #[arg(long)]
+    batch_widget_height: Option<u16>,
 }
 
 #[derive(Parser)]
