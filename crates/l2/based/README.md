@@ -237,5 +237,5 @@ Once registered, the node will be able to participate in the Sequencer election 
 
 ## Documentation
 
-- [Sequencer](docs/sequencer.md)
-- [Contracts](docs/contracts.md)
+- [Sequencer](../../../docs/l2/based/sequencer.md)
+- [Contracts](../../../docs/l2/based/contracts.md)

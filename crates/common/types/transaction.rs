@@ -2384,6 +2384,14 @@ mod mempool {
     // Orders transactions by lowest nonce, if the nonce is equal, orders by highest timestamp
     impl Ord for MempoolTransaction {
         fn cmp(&self, other: &Self) -> Ordering {
+            match (self.tx_type(), other.tx_type()) {
+                (TxType::Privileged, TxType::Privileged) => {
+                    return self.nonce().cmp(&other.nonce());
+                }
+                (TxType::Privileged, _) => return Ordering::Less,
+                (_, TxType::Privileged) => return Ordering::Greater,
+                _ => (),
+            };
             match self.nonce().cmp(&other.nonce()) {
                 Ordering::Equal => other.time().cmp(&self.time()),
                 ordering => ordering,
