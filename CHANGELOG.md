@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-28
+
+- Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
+
 ### 2025-07-24
 
 - Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
