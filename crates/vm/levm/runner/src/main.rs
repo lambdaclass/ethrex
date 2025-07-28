@@ -179,7 +179,7 @@ fn main() {
     }
 
     // Print final stack and memory
-    let callframe = vm.pop_call_frame().unwrap();
+    let callframe = vm.current_call_frame;
     info!(
         "Final Stack (bottom to top): {:?}",
         &callframe.stack.values[callframe.stack.offset..]
