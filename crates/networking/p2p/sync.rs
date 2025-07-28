@@ -457,193 +457,190 @@ impl Syncer {
             .await
         };
 
-        info!("Starting to compute the state root...");
+        if !pivot_is_stale {
+            info!("Pivot isn't stale. Starting to compute the state root...");
 
-        let account_store_start = Instant::now();
-        let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+            let account_store_start = Instant::now();
+            let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-        let known_hash_account = H256::from_str("0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4").expect("Const from_str");
+            let known_hash_account = H256::from_str("0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4").expect("Const from_str");
 
-        let (computed_state_root, bytecode_hashes) = tokio::task::spawn_blocking(move || {
-            let mut bytecode_hashes = vec![];
-            let mut trie = trie;
-            let mut i = 0;
-            let accounts_len = account_hashes.len();
-            for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
-                if account_hash == known_hash_account {
-                    info!("Account: {account_hash} Debug: {account:?}")
-                }
+            let computed_state_root = tokio::task::spawn_blocking(move || {
+                let mut trie = trie;
+                let mut i = 0;
+                let accounts_len = account_hashes.len();
+                for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
+                    if account_hash == known_hash_account {
+                        info!("Account: {account_hash} Debug: {account:?}")
+                    }
 
-                // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
-                if account.code_hash != *EMPTY_KECCACK_HASH {
-                    bytecode_hashes.push(account.code_hash);
-                }
-                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                    .unwrap();
-            }
-            let computed_state_root = trie.hash().unwrap();
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
-            (computed_state_root, bytecode_hashes)
-        })
-        .await
-        .expect("");
-
-        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
-
-        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
-
-
-        info!("Expected state root: {state_root:?}");
-        info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
-
-        let storages_store_start = Instant::now();
-
-        METRICS
-            .storage_tries_state_roots_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        *METRICS.storage_tries_state_roots_to_compute.lock().await =
-            account_storage_roots.len() as u64;
-
-        let store_clone = store.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let store = store_clone;
-            // Store trie in storage
-            for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
-                .into_iter()
-                .zip(storages_key_value_pairs)
-            {
-                let mut storage_trie = store
-                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                    .unwrap();
-
-                for (hashed_key, value) in key_value_pairs {
-                    storage_trie
-                        .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
                         .unwrap();
-                    if let Err(err) =
-                        storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                    {
+                }
+                trie.hash().unwrap()
+            })
+            .await
+            .expect("");
+
+            *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+
+            let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+
+
+            info!("Expected state root: {state_root:?}");
+            info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+            let storages_store_start = Instant::now();
+
+            METRICS
+                .storage_tries_state_roots_start_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+
+            *METRICS.storage_tries_state_roots_to_compute.lock().await =
+                account_storage_roots.len() as u64;
+
+            let store_clone = store.clone();
+
+            tokio::task::spawn_blocking(move || {
+                let store = store_clone;
+                // Store trie in storage
+                for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                    .into_iter()
+                    .zip(storages_key_value_pairs)
+                {
+                    let mut storage_trie = store
+                        .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                        .unwrap();
+
+                    for (hashed_key, value) in key_value_pairs {
+                        storage_trie
+                            .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                            .unwrap();
+                        if let Err(err) =
+                            storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                        {
+                            error!(
+                                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                            );
+                            continue;
+                        };
+                    }
+
+                    let Ok(computed_state_root) = storage_trie.hash() else {
                         error!(
-                            "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                            "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
                         );
                         continue;
                     };
-                }
 
-                let Ok(computed_state_root) = storage_trie.hash() else {
-                    error!(
-                        "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
-                    );
-                    continue;
-                };
+                    METRICS.storage_tries_state_roots_computed.inc();
 
-                METRICS.storage_tries_state_roots_computed.inc();
-
-                if computed_state_root != storage_root {
-                    error!(
-                        "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                    );
-                }
-            }
-        }).await.expect("");
-
-        METRICS
-            .storage_tries_state_roots_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
-        info!("Finished storing storage tries in: {storages_store_time:?}");
-
-        let pivot_idx = pivot_idx + 1;
-        let mut pivot_header = store
-            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-            .ok_or(SyncError::CorruptDB)?;
-        let state_root_new = pivot_header.state_root;
-        info!("new state root: {state_root_new:?}");
-
-        let mut healing_done = false;
-        info!("Starting state healing");
-        while !healing_done {
-            healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
-        }
-        info!("Finished state healing");
-
-        let trie = store.open_state_trie(state_root_new).expect("This should open");
-        let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
-        let computed_state_root_new = Trie::compute_hash_from_unsorted_iter(
-            store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts")
-            .map(|(hash, state)| (
-                hash.0.to_vec(),
-                state.encode_to_vec(),
-            ))
-        );
-        info!("state_root old: {state_root},
-               computed_state_root old: {computed_state_root}, 
-               state_root_new: {state_root_new},
-               computed_state_root_new: {computed_state_root_new},
-               root_node new: {root_node:?}, ");
-
-        
-        // TODO: remove when moved to spawned, this is a temp code that fixes an assumption
-        // The healing of storages assumes that we have all of the missing storages as paths in the database.
-        // If the account wasn't stale but the storage download step was skipped becuase
-        // the pivot was stale, we need to add that account storage root to the database manually
-        // State healing won't do it
-
-
-        healing_done = false;
-        info!("Starting storage healing");
-        while !healing_done {
-            healing_done = heal_storage_trie(
-                state_root_new, 
-                self.peers.clone(),
-                store.clone(), 
-                CancellationToken::new(),
-                Arc::new(AtomicBool::new(true))
-            ).await?;
-        }
-        info!("Finished storage healing");
-
-        for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
-            if account_state.storage_root == *EMPTY_TRIE_HASH {
-                continue;
-            }
-            let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
-            
-            match storage_trie.root_node() {
-                Ok(node_op) => {
-                    if node_op.is_none() {
-                        error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
-                        error!("missing storage_trie.root_node()");
+                    if computed_state_root != storage_root {
+                        error!(
+                            "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
+                        );
                     }
-                },
-                Err(err) => {
-                    error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
-                    error!("storage_trie.root_node() {err:?}");
-                },
+                }
+            }).await.expect("");
+
+            METRICS
+                .storage_tries_state_roots_end_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+
+            let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
+            info!("Finished storing storage tries in: {storages_store_time:?}");
+        } else {
+            info!("pivot is stale, starting healing process");
+            let pivot_idx = pivot_idx + 1;
+            let mut pivot_header = store
+                .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+                .ok_or(SyncError::CorruptDB)?;
+            let state_root_new = pivot_header.state_root;
+            info!("new state root: {state_root_new:?}");
+
+            let mut healing_done = false;
+            info!("Starting state healing");
+            while !healing_done {
+                healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
             }
+            info!("Finished state healing");
 
-            let computed_storage_root_new = Trie::compute_hash_from_unsorted_iter(
-                store.iter_storage(state_root_new, account_hash)
-                    .expect("we couldn't iterate over storage")
-                    .expect("we couldn't iterate over storage")
-                    .map(|(hash, storage)|(
-                        hash.0.to_vec(), storage.encode_to_vec()
-                    ))
+            let trie = store.open_state_trie(state_root_new).expect("This should open");
+            let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
+            let computed_state_root_new = Trie::compute_hash_from_unsorted_iter(
+                store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts")
+                .map(|(hash, state)| (
+                    hash.0.to_vec(),
+                    state.encode_to_vec(),
+                ))
             );
+            info!("state_root old: {state_root},
+                state_root_new: {state_root_new},
+                computed_state_root_new: {computed_state_root_new},
+                root_node new: {root_node:?}, ");
 
-            if account_state.storage_root != computed_storage_root_new {
-                error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_storage_root_new}")
+            
+            // TODO: remove when moved to spawned, this is a temp code that fixes an assumption
+            // The healing of storages assumes that we have all of the missing storages as paths in the database.
+            // If the account wasn't stale but the storage download step was skipped becuase
+            // the pivot was stale, we need to add that account storage root to the database manually
+            // State healing won't do it
+
+
+            healing_done = false;
+            info!("Starting storage healing");
+            while !healing_done {
+                healing_done = heal_storage_trie(
+                    state_root_new, 
+                    self.peers.clone(),
+                    store.clone(), 
+                    CancellationToken::new(),
+                    Arc::new(AtomicBool::new(true))
+                ).await?;
+            }
+            info!("Finished storage healing");
+
+            for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+                if account_state.storage_root == *EMPTY_TRIE_HASH {
+                    continue;
+                }
+                let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
+                
+                match storage_trie.root_node() {
+                    Ok(node_op) => {
+                        if node_op.is_none() {
+                            error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
+                            error!("missing storage_trie.root_node()");
+                        }
+                    },
+                    Err(err) => {
+                        error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
+                        error!("storage_trie.root_node() {err:?}");
+                    },
+                }
+
+                let computed_storage_root_new = Trie::compute_hash_from_unsorted_iter(
+                    store.iter_storage(state_root_new, account_hash)
+                        .expect("we couldn't iterate over storage")
+                        .expect("we couldn't iterate over storage")
+                        .map(|(hash, storage)|(
+                            hash.0.to_vec(), storage.encode_to_vec()
+                        ))
+                );
+
+                if account_state.storage_root != computed_storage_root_new {
+                    error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_storage_root_new}")
+                }
             }
         }
 
+        // TODO: actually search bytecode hashes
+        let bytecode_hashes: Vec<H256> = Vec::new();
+        
         // Download bytecodes
         info!(
             "Starting bytecode download of {} hashes",
