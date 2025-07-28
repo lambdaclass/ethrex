@@ -870,7 +870,7 @@ impl EthClient {
             let gas_limit = self
                 .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
                 .await?;
-            tx.gas_limit = gas_limit;
+            tx.gas_limit = gas_limit * 2;
             println!("l1_gas_limit (estimated): {gas_limit}");
         }
 
