@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
         ) = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 callee,
@@ -66,7 +66,7 @@ impl<'a> VM<'a> {
         };
 
         // VALIDATIONS
-        if self.current_call_frame()?.is_static && !value.is_zero() {
+        if self.current_call_frame.is_static && !value.is_zero() {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
@@ -95,7 +95,7 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
@@ -142,7 +142,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
         ) = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -202,7 +202,7 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
@@ -239,7 +239,7 @@ impl<'a> VM<'a> {
 
     // RETURN operation
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
         let size = size
             .try_into()
@@ -277,7 +277,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
         ) = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -334,7 +334,7 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
@@ -382,7 +382,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
         ) = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -439,7 +439,7 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
@@ -477,7 +477,7 @@ impl<'a> VM<'a> {
     // CREATE operation
     pub fn op_create(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         let [
             value_in_wei_to_send,
             code_offset_in_memory,
@@ -511,7 +511,7 @@ impl<'a> VM<'a> {
     // CREATE2 operation
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         let [
             value_in_wei_to_send,
             code_offset_in_memory,
@@ -549,7 +549,7 @@ impl<'a> VM<'a> {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
 
         let [offset, size] = *current_call_frame.stack.pop()?;
 
@@ -592,7 +592,7 @@ impl<'a> VM<'a> {
         //      If context is Static, return error.
         //      If executed in the same transaction a contract was created, the current account is registered to be destroyed
         let (beneficiary, to) = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let current_call_frame = &mut self.current_call_frame;
             if current_call_frame.is_static {
                 return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
@@ -607,7 +607,7 @@ impl<'a> VM<'a> {
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
 
-        self.current_call_frame_mut()?
+        self.current_call_frame
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
                 target_account_is_empty,
@@ -654,7 +654,7 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         // 2. CREATE can't be called in a static context
         if current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -669,13 +669,13 @@ impl<'a> VM<'a> {
 
         // Load code from memory
         let code = Bytes::from(
-            self.current_call_frame_mut()?
+            self.current_call_frame
                 .memory
                 .load_range(code_offset_in_memory, code_size_in_memory)?,
         );
 
         // Get account info of deployer
-        let deployer = self.current_call_frame()?.to;
+        let deployer = self.current_call_frame.to;
         let (deployer_balance, deployer_nonce) = {
             let deployer_account = self.db.get_account(deployer)?;
             (deployer_account.info.balance, deployer_account.info.nonce)
@@ -699,7 +699,7 @@ impl<'a> VM<'a> {
             .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         let new_depth = self
-            .current_call_frame_mut()?
+            .current_call_frame
             .depth
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
@@ -726,7 +726,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
-            self.current_call_frame_mut()?.stack.push1(FAIL)?;
+            self.current_call_frame.stack.push1(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
@@ -735,7 +735,7 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
-        let next_memory = self.current_call_frame()?.memory.next_memory();
+        let next_memory = self.current_call_frame.memory.next_memory();
 
         let new_call_frame = CallFrame::new(
             deployer,
@@ -754,7 +754,7 @@ impl<'a> VM<'a> {
             stack,
             next_memory,
         );
-        self.call_frames.push(new_call_frame);
+        self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
@@ -791,7 +791,7 @@ impl<'a> VM<'a> {
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
-        self.current_call_frame_mut()?.sub_return_data.clear();
+        self.current_call_frame.sub_return_data.clear();
 
         // Validate sender has enough value
         if should_transfer_value && !value.is_zero() {
@@ -804,7 +804,7 @@ impl<'a> VM<'a> {
 
         // Validate max depth has not been reached yet.
         let new_depth = self
-            .current_call_frame()?
+            .current_call_frame
             .depth
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
@@ -823,7 +823,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
             )?;
 
-            let call_frame = self.current_call_frame_mut()?;
+            let call_frame = &mut self.current_call_frame;
 
             // Return gas left from subcontext
             if ctx_result.is_success() {
@@ -870,7 +870,7 @@ impl<'a> VM<'a> {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
-            let next_memory = self.current_call_frame_mut()?.memory.next_memory();
+            let next_memory = self.current_call_frame.memory.next_memory();
 
             let new_call_frame = CallFrame::new(
                 msg_sender,
@@ -889,7 +889,7 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
-            self.call_frames.push(new_call_frame);
+            self.add_callframe(new_call_frame);
 
             // Transfer value from caller to callee.
             if should_transfer_value {
@@ -948,7 +948,7 @@ impl<'a> VM<'a> {
 
         old_callframe_memory.clean_from_base();
 
-        let parent_call_frame = self.current_call_frame_mut()?;
+        let parent_call_frame = &mut self.current_call_frame;
 
         // Return gas left from subcontext
         let child_unused_gas = gas_limit
@@ -977,11 +977,11 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match &ctx_result.result {
             TxResult::Success => {
-                self.current_call_frame_mut()?.stack.push1(SUCCESS)?;
+                self.current_call_frame.stack.push1(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                self.current_call_frame_mut()?.stack.push1(FAIL)?;
+                self.current_call_frame.stack.push1(FAIL)?;
             }
         };
 
@@ -1009,7 +1009,7 @@ impl<'a> VM<'a> {
 
         old_callframe_memory.clean_from_base();
 
-        let parent_call_frame = self.current_call_frame_mut()?;
+        let parent_call_frame = &mut self.current_call_frame;
 
         // Return unused gas
         let unused_gas = gas_limit
@@ -1066,7 +1066,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
         // Calculate remaining gas after EIP7702 consumption
         let gas_left = self
-            .current_call_frame()?
+            .current_call_frame
             .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
@@ -1081,14 +1081,12 @@ impl<'a> VM<'a> {
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         Ok(Bytes::from(
-            self.current_call_frame_mut()?
-                .memory
-                .load_range(offset, size)?,
+            self.current_call_frame.memory.load_range(offset, size)?,
         ))
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
 
         // Return gas_limit to callframe.
         callframe.gas_remaining = callframe
