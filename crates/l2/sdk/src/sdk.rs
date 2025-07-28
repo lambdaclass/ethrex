@@ -313,7 +313,7 @@ pub async fn deposit_erc20(
             },
         )
         .await?;
-    deposit_tx.gas_limit *= 2;
+    deposit_tx.gas_limit *= 2; // tx reverts in some cases otherwise
 
     send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await
 }

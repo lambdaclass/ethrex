@@ -806,7 +806,7 @@ async fn test_send(
         )
         .await
         .unwrap();
-    tx.gas_limit *= 2;
+    tx.gas_limit *= 2; // tx reverts in some cases otherwise
     let tx_hash = send_eip1559_transaction(client, &tx, &signer)
         .await
         .unwrap();
