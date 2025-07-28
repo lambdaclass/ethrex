@@ -39,6 +39,8 @@ const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
+const SNAP_LIMIT: u64 = 128;
+
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -555,21 +557,22 @@ impl Syncer {
             info!("Finished storing storage tries in: {storages_store_time:?}");
         } else {
             info!("pivot is stale, starting healing process");
-            let pivot_idx = pivot_idx + 1;
-            let mut pivot_header = store
-                .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-                .ok_or(SyncError::CorruptDB)?;
-            let state_root_new = pivot_header.state_root;
-            info!("new state root: {state_root_new:?}");
 
+            
             let mut healing_done = false;
-            info!("Starting state healing");
+            let mut time_limit = 0;
+            info!("Starting storage healing");
             while !healing_done {
-                healing_done = heal_state_trie(state_root_new, store.clone(), self.peers.clone()).await?;
+                (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
+                healing_done = heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit).await?;
+                if !healing_done {
+                    continue;
+                }
+                healing_done = heal_storage_trie_wrap(state_root, store.clone(), &self.peers,time_limit).await?;
             }
-            info!("Finished state healing");
+            info!("Finished storage healing");
 
-            let trie = store.open_state_trie(state_root_new).expect("This should open");
+/*             let trie = store.open_state_trie(state_root_new).expect("This should open");
             let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
             let computed_state_root_new = Trie::compute_hash_from_unsorted_iter(
                 store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts")
@@ -581,7 +584,7 @@ impl Syncer {
             info!("state_root old: {state_root},
                 state_root_new: {state_root_new},
                 computed_state_root_new: {computed_state_root_new},
-                root_node new: {root_node:?}, ");
+                root_node new: {root_node:?}, "); */
 
             
             // TODO: remove when moved to spawned, this is a temp code that fixes an assumption
@@ -591,20 +594,8 @@ impl Syncer {
             // State healing won't do it
 
 
-            healing_done = false;
-            info!("Starting storage healing");
-            while !healing_done {
-                healing_done = heal_storage_trie(
-                    state_root_new, 
-                    self.peers.clone(),
-                    store.clone(), 
-                    CancellationToken::new(),
-                    Arc::new(AtomicBool::new(true))
-                ).await?;
-            }
-            info!("Finished storage healing");
 
-            for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+/*             for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
                 if account_state.storage_root == *EMPTY_TRIE_HASH {
                     continue;
                 }
@@ -635,7 +626,7 @@ impl Syncer {
                 if account_state.storage_root != computed_storage_root_new {
                     error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_storage_root_new}")
                 }
-            }
+            } */
         }
 
         // TODO: actually search bytecode hashes
@@ -1005,6 +996,53 @@ impl SnapBlockSyncState {
         })
     }
 }
+
+async fn heal_state_trie_wrap(state_root: H256, store: Store, peers: &PeerHandler, time_limit: u64) -> Result<bool, SyncError> {
+    let mut healing_done = false;
+    info!("Starting state healing");
+    while !healing_done {
+        healing_done = heal_state_trie(state_root, store.clone(), peers.clone()).await?;
+        if current_unix_time() > time_limit{
+            info!("Stopped state healing due to staleness");
+            break
+        }
+    }
+    Ok(healing_done)
+}
+
+async fn heal_storage_trie_wrap(state_root: H256, store: Store, peers: &PeerHandler, time_limit: u64) -> Result<bool, SyncError> {
+    let mut healing_done = false;
+    info!("Starting state healing");
+    while !healing_done {
+        healing_done = heal_storage_trie(
+            state_root, 
+            peers.clone(),
+            store.clone(), 
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(true))
+        ).await?;
+        if current_unix_time() > time_limit{
+            info!("Stopped state healing due to staleness");
+            break
+        }
+    }
+    Ok(healing_done)
+}
+
+async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
+    loop {
+        info!("Trying to update pivot");
+        let new_pivot_block_number = block_number + SNAP_LIMIT;
+        let scores = peers.peer_scores.lock().await;
+        let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
+            warn!("Received None pivot. Retrying");
+            continue;
+        };
+        info!("Succesfully updated pivot");
+        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
+    }
+}
+
 
 #[derive(thiserror::Error, Debug)]
 enum SyncError {
