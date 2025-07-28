@@ -673,8 +673,8 @@ impl Syncer {
                     ))
             );
 
-            if account_state.storage_root != computed_state_root_new {
-                error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_state_root_new}")
+            if account_state.storage_root != computed_storage_root_new {
+                error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_storage_root_new}")
             }
         }
 
