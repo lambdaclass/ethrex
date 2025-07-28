@@ -77,11 +77,15 @@ jobs:
       - name: Setup Hive
         run: make setup-hive
 
+      # Set custom args defined in Dockerfile to pin execution-spec-tests versions
+      # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
+      # We use the `main` branch for now since it's working, but we can pin it to a specific release if necessary
       - name: Set custom hive flags
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
-            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
+            EEST_BRANCH=main
+            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
           fi
 
       - name: Run Hive Simulation
