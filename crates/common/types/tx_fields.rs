@@ -5,6 +5,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 /// A list of addresses and storage keys that the transaction plans to access.
 /// See [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930)
@@ -24,9 +25,9 @@ pub type AuthorizationList = Vec<AuthorizationTuple>;
     Ord,
     Serialize,
     Deserialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    RSerialize,
+    RDeserialize,
+    Archive,
 )]
 #[serde(rename_all = "camelCase")]
 /// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
