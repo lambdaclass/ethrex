@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753716838972,
+  "lastUpdate": 1753721455319,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6355,6 +6355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161715858588,
             "range": "± 141407989",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "42c2f5780b805674700e4304e42ce9e9f7cac874",
+          "message": "refactor(levm): rewrite of EF state tests runner second iteration (#3666)\n\n**Description**\n\nFor the EF State Tests runner (started in #3642), this second iteration\nincludes:\n- post state checks (post state root hash, hashed logs, post state\naccounts, expected exceptions).\n- creation of two reports, one that enumerates the successful tests and\nthe other that details information about failing test cases.\n- the exclusion of the tests that are from pre-Merge forks. \n\n**Consideration** \nTo run the new runner from `ethrex/cmd/ef_tests/state` you can execute \n`make run-new-runner` and it will by default run everything in the\n`./vectors` directory. To specify a path include `TESTS_PATH=<path>`.",
+          "timestamp": "2025-07-28T16:02:03Z",
+          "tree_id": "c22e6ff9b68e105e8323e599821a2b8327f9d78e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/42c2f5780b805674700e4304e42ce9e9f7cac874"
+        },
+        "date": 1753721442574,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163231204591,
+            "range": "± 199705877",
             "unit": "ns/iter"
           }
         ]
