@@ -28,6 +28,7 @@ use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, Tui
 use crate::based::sequencer_state::SequencerState;
 use crate::monitor::utils::SelectableScroller;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use crate::sequencer::configs::MonitorConfig;
 use crate::{
     SequencerConfig,
     monitor::widget::{
@@ -47,7 +48,7 @@ pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
-    pub tick_rate: u64,
+    pub cfg: MonitorConfig,
 
     pub logger: Arc<TuiWidgetState>,
     pub node_status: NodeStatusTable,
@@ -111,7 +112,7 @@ impl GenServer for EthrexMonitor {
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(self.widget.tick_rate),
+            Duration::from_millis(self.widget.cfg.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
@@ -193,7 +194,7 @@ impl EthrexMonitorWidget {
             },
             should_quit: false,
             tabs: TabsState::default(),
-            tick_rate: cfg.monitor.tick_rate,
+            cfg: cfg.monitor.clone(),
             global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: Arc::new(
                 TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
@@ -343,7 +344,11 @@ impl EthrexMonitorWidget {
             TabsState::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    Constraint::Fill(1),
+                    if let Some(height) = self.cfg.batch_widget_height {
+                        Constraint::Length(height)
+                    } else {
+                        Constraint::Fill(1)
+                    },
                     Constraint::Fill(1),
                     Constraint::Fill(1),
                     Constraint::Fill(1),
