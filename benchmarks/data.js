@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753699369078,
+  "lastUpdate": 1753699553437,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6295,6 +6295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163445892442,
             "range": "± 683244780",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a3d334732590b8aa886f4dfe10aa1654e3db7ee6",
+          "message": "fix(l1): change `ethrex/tooling/sync/readme.MD` to `README.md` (#3841)\n\n**Motivation**\nThe readme file at ethrex/tooling/sync is called `readme.MD` instead of\nthe usual `README.md`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Change `readme.MD` filename to `README.md`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-28T09:50:13Z",
+          "tree_id": "8c6dfd8ebc41611bf92e907fd3ed52662717b1d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a3d334732590b8aa886f4dfe10aa1654e3db7ee6"
+        },
+        "date": 1753699539904,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162424611028,
+            "range": "± 652401859",
             "unit": "ns/iter"
           }
         ]
