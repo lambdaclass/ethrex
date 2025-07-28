@@ -136,15 +136,7 @@ impl LEVM {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
-        let execution_report = vm.execute().map_err(VMError::from)?;
-        if let TxResult::Revert(reason) = &execution_report.result {
-            println!(
-                "Transaction reverted with reason: {:?} and hash: 0x{}",
-                reason,
-                hex::encode(tx.compute_hash().as_bytes())
-            );
-        }
-        Ok(execution_report)
+        vm.execute().map_err(VMError::into)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
