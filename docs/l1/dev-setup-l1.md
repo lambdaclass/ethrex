@@ -334,11 +334,11 @@ Make sure you have your docker daemon running.
    ```bash
    # Navigate to tooling/sync directory
    cd tooling/sync
-   
-   # Run target for hoodi 
+
+   # Run target for hoodi
    make start-hoodi-metrics-docker
 
-    # Run target for holesky 
+    # Run target for holesky
    make start-holesky-metrics-docker
    ```
 
@@ -358,9 +358,9 @@ To run the execution node on any network with metrics, the next steps should be 
 3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `crates/blockchain/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml`
 4. Run the docker containers:
 
-   ```bash
-   # Navigate to crates/blockchain/metrics directory
-   cd crates/blockchain/metrics
+    ```bash
+    # Navigate to metrics directory
+    cd metrics
 
     docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
     ```
