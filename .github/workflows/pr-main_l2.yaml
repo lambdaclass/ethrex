@@ -183,7 +183,7 @@ jobs:
 
       - name: Register sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
 

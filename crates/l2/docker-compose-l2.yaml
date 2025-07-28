@@ -14,7 +14,7 @@ services:
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
-      - ./.env:${CI_ETHREX_WORKDIR}/.env
+      - ../../cmd/.env:${CI_ETHREX_WORKDIR}/.env
       - ../../fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
@@ -78,7 +78,7 @@ services:
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
-      - ./.env:/.env:ro
+      - ../../cmd/.env:/.env:ro
       - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
