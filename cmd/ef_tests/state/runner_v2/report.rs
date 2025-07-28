@@ -18,10 +18,7 @@ pub fn write_passing_test_to_report(test: &Test) {
         .create(true)
         .open(successful_report_path)
         .unwrap();
-    let content = format!(
-        "Test {:?} in path {:?} was SUCCESSFUL for all forks.\n",
-        test.name, test.path
-    );
+    let content = format!("Test {:?} - Path {:?}\n", test.name, test.path);
     report.write_all(content.as_bytes()).unwrap()
 }
 pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostCheckResult>) {
@@ -58,7 +55,11 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
 
 impl fmt::Display for PostCheckResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Fork: {:?} - indexes (data: {}, gas: {}, value: {})\n", self.fork, self.vector.0, self.vector.1, self.vector.2)?;
+        writeln!(
+            f,
+            "Fork: {:?} - indexes (data: {}, gas: {}, value: {})\n",
+            self.fork, self.vector.0, self.vector.1, self.vector.2
+        )?;
         if let Some(root_mismatch) = self.root_dif {
             let (expected_root, actual_root) = root_mismatch;
             writeln!(
@@ -95,12 +96,16 @@ impl fmt::Display for PostCheckResult {
                 )?;
                 if let Some(balance_diff) = acc_mismatch.balance_diff {
                     let (expected_balance, actual_balance) = balance_diff;
-                    let net_difference = if expected_balance > actual_balance { expected_balance - actual_balance} else {actual_balance-expected_balance};
-
+                    let net_difference = expected_balance.abs_diff(actual_balance);
+                    let difference_sign = if expected_balance > actual_balance {
+                        "-"
+                    } else {
+                        "+"
+                    };
                     writeln!(
                         f,
-                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n     Difference: {:?}\n",
-                        expected_balance, actual_balance, net_difference
+                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n     Difference: {}{:?}\n",
+                        expected_balance, actual_balance, difference_sign, net_difference
                     )?;
                 }
                 if let Some(nonce_diff) = acc_mismatch.nonce_diff {

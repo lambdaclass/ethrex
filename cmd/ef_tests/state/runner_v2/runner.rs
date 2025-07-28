@@ -1,5 +1,9 @@
 use colored::Colorize;
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
 
 use ethrex_common::{
     U256,
@@ -18,8 +22,18 @@ use crate::runner_v2::{
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
-    let _ = fs::remove_file("./runner_v2/success_report.txt");
+    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let _ = fs::remove_file(&successful_report_path);
     let _ = fs::remove_file("./runner_v2/failure_report.txt");
+
+    let mut success_report = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(successful_report_path)
+        .unwrap();
+    success_report
+        .write_all("Successful tests: \n".as_bytes())
+        .unwrap();
     let mut passing_tests = 0;
     let mut failing_tests = 0;
     let mut total_run = 0;
