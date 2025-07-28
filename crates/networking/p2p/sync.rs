@@ -1038,11 +1038,13 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
     loop {
         info!("Trying to update pivot");
         let new_pivot_block_number = block_number + SNAP_LIMIT;
+        info!("we are asking for block {new_pivot_block_number}");
         let scores = peers.peer_scores.lock().await;
         let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
             warn!("Received None pivot. Retrying");
             continue;
         };
+        info!("we got {}", pivot.number);
         
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
