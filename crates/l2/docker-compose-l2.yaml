@@ -10,7 +10,7 @@ services:
       context: ../../
       args:
         - BUILDPLATFORM=linux/amd64
-      dockerfile: ./crates/l2/contracts/Dockerfile
+      dockerfile: ./crates/l2/Dockerfile
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
@@ -49,6 +49,9 @@ services:
       - COMPILE_CONTRACTS=true
     depends_on:
       - ethrex
+    command: >
+      l2-tools 
+      deploy-l1
 
   ethrex_l2:
     restart: always

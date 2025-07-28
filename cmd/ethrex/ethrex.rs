@@ -5,10 +5,6 @@ use ethrex::{
     utils::{NodeConfigFile, store_node_config_file},
 };
 use ethrex_p2p::{kademlia::KademliaTable, types::NodeRecord};
-#[cfg(feature = "sync-test")]
-use ethrex_storage::Store;
-#[cfg(feature = "sync-test")]
-use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -16,28 +12,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-
-#[cfg(feature = "sync-test")]
-async fn set_sync_block(store: &Store) {
-    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
-        let block_number = block_number
-            .parse()
-            .expect("Block number provided by environment is not numeric");
-        let block_hash = store
-            .get_canonical_block_hash(block_number)
-            .await
-            .expect("Could not get hash for block number provided by env variable")
-            .expect("Could not get hash for block number provided by env variable");
-        store
-            .update_latest_block_number(block_number)
-            .await
-            .expect("Failed to update latest block number");
-        store
-            .set_canonical_block(block_number, block_hash)
-            .await
-            .expect("Failed to set latest canonical block");
-    }
-}
 
 async fn server_shutdown(
     data_dir: String,

@@ -21,6 +21,8 @@ use ethrex_vm::EvmEngine;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
@@ -351,6 +353,28 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+#[cfg(feature = "sync-test")]
+async fn set_sync_block(store: &Store) {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
+        let block_number = block_number
+            .parse()
+            .expect("Block number provided by environment is not numeric");
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .expect("Could not get hash for block number provided by env variable")
+            .expect("Could not get hash for block number provided by env variable");
+        store
+            .update_latest_block_number(block_number)
+            .await
+            .expect("Failed to update latest block number");
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .expect("Failed to set latest canonical block");
+    }
 }
 
 pub async fn init_l1(
