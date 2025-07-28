@@ -10,9 +10,6 @@
 **/.DS_Store
 **/.vscode
 
-# Git
-.git/
-
 # CI/CD
 .github/
 
