@@ -1,10 +1,10 @@
 use crate::runner_v2::types::{
     AccessListItem, AuthorizationListTuple, RawPostValue, TransactionExpectedException,
 };
-use bytes::Bytes;
-use ethrex_common::{H256, U256, types::Fork};
+
+use ethrex_common::{U256, types::Fork};
 use serde::{Deserialize, Deserializer};
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 pub fn deserialize_transaction_expected_exception<'de, D>(
     deserializer: D,
@@ -90,90 +90,6 @@ where
     Ok(indexes)
 }
 
-pub fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    Ok(Bytes::from(
-        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-            serde::de::Error::custom(format!(
-                "error decoding hex data when deserializing bytes: {err}"
-            ))
-        })?,
-    ))
-}
-
-pub fn deserialize_hex_bytes_vec<'de, D>(deserializer: D) -> Result<Vec<Bytes>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = Vec::<String>::deserialize(deserializer)?;
-    let mut ret = Vec::new();
-    for s in s {
-        ret.push(Bytes::from(
-            hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error decoding hex data when deserializing bytes vec: {err}"
-                ))
-            })?,
-        ));
-    }
-    Ok(ret)
-}
-
-pub fn deserialize_u256_safe<'de, D>(deserializer: D) -> Result<U256, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    U256::from_str(String::deserialize(deserializer)?.trim_start_matches("0x:bigint ")).map_err(
-        |err| {
-            serde::de::Error::custom(format!(
-                "error parsing U256 when deserializing U256 safely: {err}"
-            ))
-        },
-    )
-}
-
-/// This serializes a hexadecimal string to u64
-pub fn deserialize_u64_safe<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    u64::from_str_radix(
-        String::deserialize(deserializer)?.trim_start_matches("0x"),
-        16,
-    )
-    .map_err(|err| {
-        serde::de::Error::custom(format!(
-            "error parsing U64 when deserializing U64 safely: {err}"
-        ))
-    })
-}
-
-pub fn deserialize_h256_vec_optional_safe<'de, D>(
-    deserializer: D,
-) -> Result<Option<Vec<H256>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = Option::<Vec<String>>::deserialize(deserializer)?;
-    match s {
-        Some(s) => {
-            let mut ret = Vec::new();
-            for s in s {
-                ret.push(H256::from_str(s.trim_start_matches("0x")).map_err(|err| {
-                    serde::de::Error::custom(format!(
-                        "error parsing H256 when deserializing H256 vec optional: {err}"
-                    ))
-                })?);
-            }
-            Ok(Some(ret))
-        }
-        None => Ok(None),
-    }
-}
-
 pub fn deserialize_access_lists<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<Vec<AccessListItem>>>, D::Error>
@@ -205,78 +121,6 @@ where
         Option::<Vec<AuthorizationListTuple>>::deserialize(deserializer)?;
 
     Ok(authorization_list)
-}
-
-pub fn deserialize_u256_optional_safe<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(deserializer)?;
-    match s {
-        Some(s) => U256::from_str(s.trim_start_matches("0x:bigint "))
-            .map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error parsing U256 when deserializing U256 safely: {err}"
-                ))
-            })
-            .map(Some),
-        None => Ok(None),
-    }
-}
-
-pub fn deserialize_u256_vec_safe<'de, D>(deserializer: D) -> Result<Vec<U256>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Vec::<String>::deserialize(deserializer)?
-        .iter()
-        .map(|s| {
-            U256::from_str(s.trim_start_matches("0x:bigint ")).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error parsing U256 when deserializing U256 vector safely: {err}"
-                ))
-            })
-        })
-        .collect()
-}
-pub fn deserialize_u64_vec_safe<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Vec::<String>::deserialize(deserializer)?
-        .iter()
-        .map(|s| {
-            u64::from_str_radix(s.trim_start_matches("0x"), 16).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error parsing u64 when deserializing u64 vector safely: {err}"
-                ))
-            })
-        })
-        .collect()
-}
-
-pub fn deserialize_u256_valued_hashmap_safe<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<U256, U256>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    HashMap::<String, String>::deserialize(deserializer)?
-        .iter()
-        .map(|(key, value)| {
-            let key = U256::from_str(key.trim_start_matches("0x:bigint ")).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "(key) error parsing U256 when deserializing U256 valued hashmap safely: {err}"
-                ))
-            })?;
-            let value = U256::from_str(value.trim_start_matches("0x:bigint ")).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "(value) error parsing U256 when deserializing U256 valued hashmap safely: {err}"
-                ))
-            })?;
-            Ok((key, value))
-        })
-        .collect()
 }
 
 pub fn deserialize_post<'de, D>(
