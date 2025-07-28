@@ -35,6 +35,7 @@ const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
 #[derive(Debug)]
 pub struct Tests(pub Vec<Test>);
 
+/// Custom deserialize function for a `.json file`.
 impl<'de> Deserialize<'de> for Tests {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -48,7 +49,7 @@ impl<'de> Deserialize<'de> for Tests {
         let test_file: HashMap<String, HashMap<String, serde_json::Value>> =
             HashMap::deserialize(deserializer)?;
 
-        // Every test object that appears (marked with a String key, its name) will end up represented
+        // Every test object that appears (identified with a String key, its name) will end up represented
         // by a `Test`.
         for test_name in test_file.keys() {
             let test_data = test_file
@@ -85,6 +86,7 @@ impl<'de> Deserialize<'de> for Tests {
             // One fork can be used to execute more than one transaction, that will be given by the
             // different combinations of data, value and gas limit.
             for fork in post.forks.keys() {
+                // We make sure we parse only the forks Ethrex allows (post merge).
                 if !DEFAULT_FORKS.contains(&(*fork).into()) {
                     continue;
                 }
@@ -109,6 +111,8 @@ impl<'de> Deserialize<'de> for Tests {
 }
 
 impl Tests {
+    /// Returns a `Test` structure from the `.json` parsed data and the previously built
+    /// test cases (<fork, transaction>).
     fn build_test(
         test_name: &str,
         test_data: &HashMap<String, Value>,
@@ -159,6 +163,7 @@ impl Tests {
         Ok(test)
     }
 
+    /// Builds a `TestCase` struct from previously parsed `.json` data.
     fn build_test_case(
         raw_tx: &RawTransaction,
         fork: &Fork,
@@ -247,6 +252,7 @@ impl From<&Test> for Genesis {
     }
 }
 
+/// General information about the test. Matches the `_info` field in the `.json` file.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Info {
     #[serde(default)]
@@ -284,6 +290,8 @@ pub struct Info {
     pub reference_spec_version: Option<String>,
 }
 
+/// Block enviroment previous to the execution of the transaction. Matches the `env` field in the
+/// `.json` file.
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct Env {
@@ -303,7 +311,7 @@ pub struct Env {
     pub current_timestamp: U256,
 }
 
-/// This structure represents a specific test case under general test conditions (Test struct). It is mainly
+/// This structure represents a specific test case under general test conditions (`Test` struct). It is mainly
 /// composed of a particular transaction combined with a particular fork. It includes the expected post state
 /// after the transaction is executed.
 #[derive(Deserialize, Debug, Clone)]
@@ -334,14 +342,16 @@ impl TestCase {
     }
 }
 
+/// Indicates the expected post state that should be obtained after executing a test case.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Post {
-    pub hash: H256,
-    pub logs: H256,
-    pub state: Option<HashMap<Address, AccountState>>,
-    pub expected_exceptions: Option<Vec<TransactionExpectedException>>,
+    pub hash: H256, // Expected post root hash.
+    pub logs: H256, // Expected output logs.
+    pub state: Option<HashMap<Address, AccountState>>, // For new tests, the state field indicates the expected state of the involved accounts after executing the transaction.
+    pub expected_exceptions: Option<Vec<TransactionExpectedException>>, // Expected exceptions. The output exception should match one of these.
 }
 
+/// The state an involved account is expected to have after executing the test case transaction. 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AccountState {
     #[serde(deserialize_with = "deserialize_u256")]

@@ -2,6 +2,7 @@ use std::{fmt, fs::OpenOptions, io::Write, path::PathBuf};
 
 use crate::runner_v2::{error::RunnerError, result_check::PostCheckResult, types::Test};
 
+/// Adds the result of running a Test to the report.
 pub fn add_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
     let test = test_result.0;
     let failed_test_cases = test_result.1;
@@ -12,6 +13,8 @@ pub fn add_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), R
     }
     Ok(())
 }
+
+/// Writes a specific test passed.
 pub fn write_passing_tests_to_report(test: &Test) {
     let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
     let mut report = OpenOptions::new()
@@ -25,6 +28,8 @@ pub fn write_passing_tests_to_report(test: &Test) {
     );
     report.write_all(content.as_bytes()).unwrap()
 }
+
+/// Writes for a failing tests the details of its differences with the expected post state.
 pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<PostCheckResult>) {
     let failing_report_path = PathBuf::from("./runner_v2/failure_report.txt");
     let mut report = OpenOptions::new()
@@ -60,7 +65,7 @@ pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<PostChe
 impl fmt::Display for PostCheckResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Fork: {:?} - vector {:?}\n", self.fork, self.vector)?;
-        if let Some(root_mismatch) = self.root_dif {
+        if let Some(root_mismatch) = self.root_diff {
             writeln!(
                 f,
                 "  ERR - ROOT MISMATCH:\n    Expected root: {:?}\n    Actual   root: {:?}",

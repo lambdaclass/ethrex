@@ -16,7 +16,7 @@ pub async fn main() -> Result<(), RunnerError> {
     println!("\nFinished parsing. Executing tests...");
     run_tests(tests).await?;
     println!(
-        "\nTests finalized running.
+        "\nTests finished running.
     Find successful tests (if any) report at: './runner_v2/success_report.txt'.
     Find failing    tests (if any) report at: './runner_v2/failure_report.txt'.
     "

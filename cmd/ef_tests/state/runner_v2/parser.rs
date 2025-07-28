@@ -5,9 +5,10 @@ use crate::runner_v2::{
 
 use clap::Parser;
 
+/// Command line flags for runner execution.
 #[derive(Parser, Debug)]
 pub struct RunnerOptions {
-    /// For running tests in a specific file (could be either a directory or a .json)
+    /// For running tests in a specific path (could be either a directory or a .json)
     #[arg(
         short,
         long,
@@ -64,10 +65,13 @@ pub fn parse_dir(path: &String, skipped: &Vec<String>) -> Result<Vec<Test>, Runn
             let dir_tests = parse_dir(&String::from(entry.path().to_str().unwrap()), skipped)?;
             tests.push(dir_tests);
         } else {
+            // Verify it is a `.json` file, ignore files with different extensions.
             let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
+            // Verify it is not supposed to be ignored.
             let is_not_skipped = !skipped.contains(&String::from(
                 entry.path().file_name().unwrap().to_str().unwrap(),
             ));
+            // Parse if it meets requirements.
             if is_json_file && is_not_skipped {
                 let file_tests = parse_file(&String::from(entry.path().to_str().unwrap()))?;
                 tests.push(file_tests);
@@ -79,11 +83,14 @@ pub fn parse_dir(path: &String, skipped: &Vec<String>) -> Result<Vec<Test>, Runn
     Ok(tests.concat())
 }
 
+/// Initiates the parser with the corresponding option flags.
 pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError> {
     let mut tests = Vec::new();
     let mut skipped: Vec<String> = IGNORED_TESTS.iter().map(|test| test.to_string()).collect();
+    // Append always ignored tests with user's desired ignored tests.
     skipped.append(&mut options.skip_files);
 
+    // If the user selected specific `.json` files to be executed, parse only those files.
     if !options.json_files.is_empty() {
         for file in &options.json_files {
             if skipped.contains(file) {
@@ -92,7 +99,10 @@ pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError
             let file_tests = parse_file(file)?;
             tests.push(file_tests);
         }
-    } else if options.path.ends_with(".json") {
+    }
+    // If no files were specified, use the path set in the `path` field as the starting
+    // point. When user sets nothing it will be the "./vectors" directory by default. 
+    else if options.path.ends_with(".json") {
         let file_tests = parse_file(&options.path)?;
         tests.push(file_tests);
     } else {
