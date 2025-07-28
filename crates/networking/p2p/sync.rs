@@ -429,12 +429,13 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        let pivot_number = pivot_header.number;
+
         let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
         while current_unix_time() > time_limit{
-            (pivot_header, time_limit) = update_pivot(pivot_number, &self.peers).await;
-            info!("New pivot heade, {pivot_header:?}, new time limit, {time_limit}");
+            (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
         }
+
+        let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
         info!("Selected block {pivot_number} as pivot for snap sync");
 
@@ -1038,13 +1039,11 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
     loop {
         info!("Trying to update pivot");
         let new_pivot_block_number = block_number + SNAP_LIMIT;
-        info!("we are asking for block {new_pivot_block_number}");
         let scores = peers.peer_scores.lock().await;
         let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
             warn!("Received None pivot. Retrying");
             continue;
         };
-        info!("we got {}", pivot.number);
         
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
