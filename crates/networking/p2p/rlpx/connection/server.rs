@@ -624,6 +624,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
+            state.table.peers.lock().await.remove(&state.node.node_id());
+
             // TODO handle the disconnection request
 
             return Err(RLPxError::DisconnectReceived(reason));
