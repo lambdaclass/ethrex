@@ -26,15 +26,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -56,24 +51,28 @@ jobs:
         include:
           - name: "Validium"
             validium: true
+            web3signer: false
+            compose_targets: [docker-compose-l2.yaml]
           - name: "Vanilla"
             validium: false
+            web3signer: false
+            compose_targets: [docker-compose-l2.yaml]
+          - name: "Vanilla with Web3signer"
+            validium: false
+            web3signer: true
+            compose_targets:
+              [docker-compose-l2.yaml, docker-compose-l2-web3signer.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -85,6 +84,12 @@ jobs:
       - name: Build test
         run: |
           cargo test l2 --no-run --release
+
+      - name: Start Web3Signer
+        if: matrix.web3signer
+        run: |
+          cd crates/l2
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach web3signer
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
@@ -112,7 +117,7 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach ethrex_l2
 
       - name: Run test
         run: |
@@ -129,20 +134,15 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
-          
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
@@ -168,6 +168,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
+          COMPILE_CONTRACTS=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Install rex
@@ -177,6 +178,7 @@ jobs:
           rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
+          git checkout 21763774e29e4566ccb831ea8154e94aa2ff7c0e
           make cli
           echo "rex install successfully at $(which rex)"
 
@@ -190,8 +192,8 @@ jobs:
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
+          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 
+          rex call "$SEQUENCER_REGISTRY" "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
@@ -220,14 +222,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
@@ -238,9 +234,10 @@ jobs:
           push: false
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum
-          sudo apt-get update && sudo apt-get -y install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -251,6 +248,7 @@ jobs:
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          COMPILE_CONTRACTS=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests
@@ -261,7 +259,8 @@ jobs:
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+    # TODO: change name back to "Integration Test" after fixing https://github.com/lambdaclass/ethrex/issues/3828
+    name: not an Integration Test
     runs-on: ubuntu-latest
     needs: [integration-test, state-diff-test, integration-test-based]
     # Make sure this job runs even if the previous jobs failed or were skipped

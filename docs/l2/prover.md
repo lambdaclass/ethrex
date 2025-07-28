@@ -36,7 +36,7 @@ sequenceDiagram
   2. `rzup install cargo-risczero 1.2.0`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
-  2. `sp1up --version 5.0.0`
+  2. `sp1up --version 5.0.8`
 - [SOLC](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
@@ -66,7 +66,7 @@ make init-prover T="prover_type (risc0,sp1) G=true"
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-4. In a new terminal &rarr; `make init-prover T=(sp1,risc0)`.
+4. In a new terminal &rarr; `make init-prover T="(sp1,risc0)"`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 

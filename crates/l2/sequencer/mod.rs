@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
+use crate::monitor::EthrexMonitor;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -14,7 +15,7 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
@@ -37,9 +38,10 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
-) {
-    let initial_status = if cfg.based.based {
+) -> Result<(), errors::SequencerError> {
+    let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
         SequencerStatus::Sequencing
@@ -55,15 +57,15 @@ pub async fn start_l2(
         cfg.l1_committer.on_chain_proposer_address,
     )
     .await
-    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
-        return;
+    .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
+        return Ok(());
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
         error!(
             "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
         );
-        return;
+        return Ok(());
     }
 
     let _ = L1Watcher::spawn(
@@ -127,18 +129,19 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
         });
+    let mut verifier_handle = None;
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+        verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
-        ));
+        )));
     }
-    if cfg.based.based {
+    if cfg.based.enabled {
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
+            blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )
@@ -147,26 +150,43 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(&cfg, store, rollup_store, blockchain, shared_state)
-            .await
-            .inspect_err(|err| {
-                error!("Error starting Block Fetcher: {err}");
-            });
+        let _ = BlockFetcher::spawn(
+            &cfg,
+            store.clone(),
+            rollup_store.clone(),
+            blockchain,
+            shared_state.clone(),
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Fetcher: {err}");
+        });
     }
 
-    while let Some(res) = task_set.join_next().await {
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-                task_set.abort_all();
-                break;
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-                task_set.abort_all();
-                break;
-            }
-        };
+    if cfg.monitor.enabled {
+        EthrexMonitor::spawn(
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+            &cfg,
+            cancellation_token.clone(),
+        )
+        .await?;
     }
+
+    let Some(handle) = verifier_handle else {
+        return Ok(());
+    };
+
+    match handle.await {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            error!("Error running verifier: {err}");
+        }
+        Err(err) => {
+            error!("Task error: {err}");
+        }
+    };
+
+    Ok(())
 }

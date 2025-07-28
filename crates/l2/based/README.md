@@ -131,6 +131,7 @@ Running a based stack locally is essentially the same as running an ethrex stack
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
 ```bash
+COMPILE_CONTRACTS=true \ 
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -155,7 +156,8 @@ This command will:
 2. Deposit funds in the accounts from `../../fixtures/keys/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
-> [!NOTE]
+> [!NOTE]  
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
 After deploying the contracts, a `.env` file will be created, containing the addresses of the new contracts. These have to be loaded with the following command:
@@ -176,6 +178,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --committer.l1-private-key <SEQUENCER_PRIVATE_KEY> \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --network ../../fixtures/genesis/l2.json \
   --datadir ethrex_l2 \
   --proof-coordinator.addr 127.0.0.1 \
@@ -184,7 +187,10 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
   --state-updater.sequencer-registry $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS \
   --l1.on-chain-proposer-address $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
   --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
-  --based
+  --based \
+  --p2p.enabled \
+  --p2p.port 30303 \
+  --discovery.port 30303
 ```
 
 After running this command, the node will start syncing with the L1 and will be able to follow the lead Sequencer.
@@ -201,6 +207,12 @@ After running this command, the node will start syncing with the L1 and will be 
 > - `--datadir`
 > - `--committer-l1-private-key`
 > - `--proof-coordinator-l1-private-key`
+> - `--p2p.port`
+> - `--discovery.port`
+>
+> Also, once a node has booted you can add it to the newer nodes for the P2P communication with:
+>
+> `--bootnodes <[ENODES]>`
 
 ### 3. Becoming a Sequencer
 
@@ -225,5 +237,5 @@ Once registered, the node will be able to participate in the Sequencer election 
 
 ## Documentation
 
-- [Sequencer](docs/sequencer.md)
-- [Contracts](docs/contracts.md)
+- [Sequencer](../../../docs/l2/based/sequencer.md)
+- [Contracts](../../../docs/l2/based/contracts.md)
