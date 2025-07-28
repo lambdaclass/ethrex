@@ -433,6 +433,7 @@ impl Syncer {
         let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
         while current_unix_time() > time_limit{
             (pivot_header, time_limit) = update_pivot(pivot_number, &self.peers).await;
+            info!("New pivot heade, {pivot_header:?}, new time limit, {time_limit}");
         }
         let pivot_hash = pivot_header.hash();
         info!("Selected block {pivot_number} as pivot for snap sync");
