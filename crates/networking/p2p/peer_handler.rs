@@ -1263,15 +1263,7 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        #[derive(Debug)]
-        struct Task {
-            start_index: usize,
-            end_index: usize,
-            start_hash: H256,
-            // end_hash is None if the task is for the first big storage request
-            end_hash: Option<H256>,
-        }
-        let mut tasks_queue_not_started = VecDeque::<Task>::new();
+        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
@@ -1478,14 +1470,6 @@ impl PeerHandler {
                     .take((size).min(MAX_STORAGE_REQUEST_SIZE))
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
-
-            if task_count - completed_tasks < 30 {
-                info!(
-                    "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
-                    chunk_account_hashes.first().unwrap_or(&H256::zero()),
-                    chunk_storage_roots.first().unwrap_or(&H256::zero()),
-                );
-            }
 
             tokio::spawn(async move {
                 debug!(
