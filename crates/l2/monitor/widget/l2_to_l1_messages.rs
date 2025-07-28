@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::{calldata::Value, l1_messages::L1MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
 use keccak_hash::keccak;
@@ -21,6 +21,35 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+/*
+event WithdrawalInitiated(
+    address indexed senderOnL2,   => topic 1
+    address indexed receiverOnL1, => topic 2
+    uint256 indexed amount        => topic 3
+);
+*/
+const WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX: usize = 2;
+const WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX: usize = 3;
+/*
+event ERC20WithdrawalInitiated(
+    address indexed tokenL1,      => topic 1
+    address indexed tokenL2,      => topic 2
+    address indexed receiverOnL1, => topic 3
+    uint256 amount                => data 0..32
+);
+*/
+const WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX: usize = 1;
+const WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX: usize = 2;
+const WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX: usize = 3;
+/*
+event L1Message(
+    address indexed senderOnL2,   => topic 1
+    bytes32 indexed data,         => topic 2
+    uint256 indexed messageId     => topic 3
+);
+*/
+const L1MESSAGE_MESSAGE_ID_TOPIC_IDX: usize = 3;
+
 #[derive(Debug, Clone)]
 pub enum L2ToL1MessageStatus {
     WithdrawalInitiated,
@@ -33,16 +62,31 @@ impl L2ToL1MessageStatus {
     pub async fn for_tx(
         l2_tx_hash: H256,
         common_bridge_address: Address,
-        eth_client: &EthClient,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
     ) -> Result<Self, MonitorError> {
+        let tx_receipt = l2_client
+            .get_transaction_receipt(l2_tx_hash)
+            .await?
+            .ok_or(MonitorError::ReceiptError)?;
+        let l1message_log = tx_receipt
+            .logs
+            .iter()
+            .find(|log| log.log.address == L1MESSENGER_ADDRESS)
+            .ok_or(MonitorError::NoLogs)?;
+        let msg_id = l1message_log
+            .log
+            .topics
+            .get(L1MESSAGE_MESSAGE_ID_TOPIC_IDX)
+            .ok_or(MonitorError::LogsTopics(L1MESSAGE_MESSAGE_ID_TOPIC_IDX))?;
         let withdrawal_is_claimed = {
             let calldata = encode_calldata(
-                "claimedWithdrawals(bytes32)",
-                &[Value::FixedBytes(l2_tx_hash.as_bytes().to_vec().into())],
+                "claimedWithdrawalIDs(uint256)",
+                &[Value::FixedBytes(msg_id.as_bytes().to_vec().into())],
             )
             .map_err(MonitorError::CalldataEncodeError)?;
 
-            let raw_withdrawal_is_claimed: H256 = eth_client
+            let raw_withdrawal_is_claimed: H256 = l1_client
                 .call(common_bridge_address, calldata.into(), Overrides::default())
                 .await
                 .map_err(MonitorError::EthClientError)?
@@ -130,18 +174,26 @@ impl L2ToL1MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client).await?;
+        self.refresh_items(eth_client, rollup_client).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
 
         Ok(())
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient) -> Result<(), MonitorError> {
+    async fn refresh_items(
+        &mut self,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
+    ) -> Result<(), MonitorError> {
         for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
-            *status =
-                L2ToL1MessageStatus::for_tx(*l2_tx_hash, self.common_bridge_address, eth_client)
-                    .await?;
+            *status = L2ToL1MessageStatus::for_tx(
+                *l2_tx_hash,
+                self.common_bridge_address,
+                l1_client,
+                l2_client,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -159,13 +211,14 @@ impl L2ToL1MessagesTable {
             rollup_client,
         )
         .await?;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
+        Self::process_logs(&logs, common_bridge_address, eth_client, rollup_client).await
     }
 
     async fn process_logs(
         logs: &[RpcLog],
         common_bridge_address: Address,
-        eth_client: &EthClient,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
     ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
@@ -177,7 +230,8 @@ impl L2ToL1MessagesTable {
             let withdrawal_status = L2ToL1MessageStatus::for_tx(
                 log.transaction_hash,
                 common_bridge_address,
-                eth_client,
+                l1_client,
+                l2_client,
             )
             .await?;
             let start = log.log.data.len().saturating_sub(32);
@@ -189,15 +243,15 @@ impl L2ToL1MessagesTable {
                         Address::from_slice(
                             &log.log
                                 .topics
-                                .get(1)
-                                .ok_or(MonitorError::LogsTopics(1))?
+                                .get(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
                         U256::from_big_endian(
                             log.log
                                 .topics
-                                .get(2)
-                                .ok_or(MonitorError::LogsTopics(2))?
+                                .get(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX))?
                                 .as_fixed_bytes(),
                         ),
                         Address::default(),
@@ -212,8 +266,10 @@ impl L2ToL1MessagesTable {
                         Address::from_slice(
                             &log.log
                                 .topics
-                                .get(3)
-                                .ok_or(MonitorError::LogsTopics(3))?
+                                .get(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         U256::from_big_endian(
@@ -226,14 +282,18 @@ impl L2ToL1MessagesTable {
                             &log.log
                                 .topics
                                 .get(1)
-                                .ok_or(MonitorError::LogsTopics(1))?
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         Address::from_slice(
                             &log.log
                                 .topics
                                 .get(2)
-                                .ok_or(MonitorError::LogsTopics(2))?
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         log.transaction_hash,
