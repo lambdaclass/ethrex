@@ -145,7 +145,7 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
           build-args: |
-            BUILD_FLAGS="--features dev,rollup_storage_sql,metrics"
+            BUILD_FLAGS=--features dev,rollup_storage_sql,metrics
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:

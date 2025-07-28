@@ -72,7 +72,7 @@ jobs:
           tags: ethrex:dev
           push: false
           build-args: |
-            BUILD_FLAGS="--features dev"
+            BUILD_FLAGS=--features dev
 
       - name: Start L1 & Deploy contracts
         run: |

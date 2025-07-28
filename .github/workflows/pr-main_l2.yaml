@@ -61,7 +61,7 @@ jobs:
           load: true
           outputs: type=docker,dest=/tmp/ethrex_image.tar
           build-args: |
-            BUILD_FLAGS="--features dev,rollup_storage_sql,metrics"
+            BUILD_FLAGS=--features dev,rollup_storage_sql,metrics
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
