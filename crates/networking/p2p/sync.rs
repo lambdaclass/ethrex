@@ -432,50 +432,11 @@ impl Syncer {
         debug!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
-
-        let (account_hashes, account_states, continues) = self
+        
+        let (account_hashes, account_states, pivot_is_stale) = self
             .peers
             .request_account_range(pivot_header.clone(), H256::zero(), H256::repeat_byte(0xff))
-            .await
-            .unwrap();
-
-        assert!(
-            !continues,
-            "since we downloaded the whole trie, the range should not continue"
-        );
-
-        // TODO: remove this
-        let scores = {
-            let scores = self.peers.peer_scores.lock().await;
-            scores.clone()
-        };
-
-        // let mut healing_done = false;
-        // while !healing_done {
-        //     info!("started healing pivot movement");
-        //     const SNAP_LIMIT: u64 = 128;
-        //     let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
-        //     while current_unix_time() > time_limit {
-        //         info!("We are stale, updating pivot");
-        //         let Some(header) = self
-        //             .peers
-        //             .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores)
-        //             .await
-        //         else {
-        //             info!("Received None pivot_header");
-        //             continue;
-        //         };
-        //         pivot_header = header;
-        //         info!(
-        //             "New pivot block number: {}, header: {:?}",
-        //             pivot_header.number, pivot_header
-        //         );
-        //         time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-        //     }
-        //     let state_root = pivot_header.state_root;
-        //     healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-        //     info!("healing_done: {healing_done}");
-        // }
+            .await;
 
         let empty = *EMPTY_TRIE_HASH;
 
@@ -487,16 +448,15 @@ impl Syncer {
             })
             .collect();
 
-         let (storages_key_value_pairs, should_continue) = self
+        let (storages_key_value_pairs, pivot_is_stale) = if pivot_is_stale {
+            (vec![], true)
+        } else { 
+            self
             .peers
             .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
             .await
-            .unwrap(); 
-
-        assert!(
-            !should_continue,
-            "since we downloaded the whole trie, the storage ranges should not continue"
-        ); 
+            .expect("Should always return")
+        };
 
         info!("Starting to compute the state root...");
 
