@@ -431,7 +431,7 @@ impl Syncer {
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        info!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
         
@@ -560,8 +560,7 @@ impl Syncer {
 
             
             let mut healing_done = false;
-            let mut time_limit = 0;
-            info!("Starting storage healing");
+            let mut time_limit: u64 = 0;
             while !healing_done {
                 (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
                 healing_done = heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit).await?;
@@ -570,7 +569,7 @@ impl Syncer {
                 }
                 healing_done = heal_storage_trie_wrap(state_root, store.clone(), &self.peers,time_limit).await?;
             }
-            info!("Finished storage healing");
+            info!("Finished healing");
 
 /*             let trie = store.open_state_trie(state_root_new).expect("This should open");
             let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
@@ -1007,12 +1006,13 @@ async fn heal_state_trie_wrap(state_root: H256, store: Store, peers: &PeerHandle
             break
         }
     }
+    info!("Stopped state healing");
     Ok(healing_done)
 }
 
 async fn heal_storage_trie_wrap(state_root: H256, store: Store, peers: &PeerHandler, time_limit: u64) -> Result<bool, SyncError> {
     let mut healing_done = false;
-    info!("Starting state healing");
+    info!("Starting storage healing");
     while !healing_done {
         healing_done = heal_storage_trie(
             state_root, 
@@ -1022,10 +1022,11 @@ async fn heal_storage_trie_wrap(state_root: H256, store: Store, peers: &PeerHand
             Arc::new(AtomicBool::new(true))
         ).await?;
         if current_unix_time() > time_limit{
-            info!("Stopped state healing due to staleness");
+            info!("Stopped storage healing due to staleness");
             break
         }
     }
+    info!("Stopped storage healing");
     Ok(healing_done)
 }
 
