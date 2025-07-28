@@ -4,7 +4,7 @@ use crate::{
     memory::calculate_memory_size,
     vm::VM,
 };
-use bytes::Bytes;
+use bytes::BytesMut;
 use ethrex_common::{H256, U256, types::Log};
 
 // Logging Operations (5)
@@ -43,7 +43,11 @@ impl<'a> VM<'a> {
         let log = Log {
             address: current_call_frame.to,
             topics: topics.to_vec(),
-            data: Bytes::from(current_call_frame.memory.load_range(offset, size)?),
+            data: {
+                let mut buffer = BytesMut::zeroed(size);
+                current_call_frame.memory.read(offset, buffer.as_mut());
+                buffer.freeze()
+            },
         };
 
         self.tracer.log(&log)?;

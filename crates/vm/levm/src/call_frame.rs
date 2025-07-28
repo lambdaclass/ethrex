@@ -194,7 +194,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.

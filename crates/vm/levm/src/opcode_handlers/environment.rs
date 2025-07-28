@@ -177,7 +177,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        current_call_frame.memory.write(dest_offset, &data);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -235,9 +235,7 @@ impl<'a> VM<'a> {
                         .bytecode
                         .get_unchecked(code_offset..code_offset_end)
                 };
-                current_call_frame
-                    .memory
-                    .store_data(destination_offset, slice)?;
+                current_call_frame.memory.write(destination_offset, slice);
 
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
@@ -256,9 +254,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        current_call_frame
-            .memory
-            .store_data(destination_offset, &data)?;
+        current_call_frame.memory.write(destination_offset, &data);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -337,9 +333,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.current_call_frame
-            .memory
-            .store_data(dest_offset, &data)?;
+        self.current_call_frame.memory.write(dest_offset, &data);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -410,7 +404,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        current_call_frame.memory.write(dest_offset, &data);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
