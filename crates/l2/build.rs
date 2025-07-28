@@ -9,7 +9,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     // When building tdx image with nix the commit version is stored as an env var
     if let Ok(sha) = std::env::var("VERGEN_GIT_SHA") {
         println!("cargo:rustc-env=VERGEN_GIT_SHA={}", sha.trim());
-
         return Ok(());
     }
     let git2 = Git2Builder::default().sha(true).build()?;
