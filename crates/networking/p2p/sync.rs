@@ -636,10 +636,8 @@ impl Syncer {
         let mut all_account_hashes: HashSet<H256> = HashSet::new();
 
         for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
-            let _ = all_account_hashes.get(&account_hash).is_some_and(|hash| {
-                error!("Hash repeated!: {hash}");
-                false
-            });
+            let _ = all_account_hashes.get(&account_hash)
+                .inspect(|hash| error!("Hash repeated!: {hash}"));
             all_account_hashes.insert(account_hash);
             if account_state.storage_root == *EMPTY_TRIE_HASH {
                 continue;
@@ -648,12 +646,9 @@ impl Syncer {
             
             match storage_trie.root_node() {
                 Ok(node_op) => {
-                    match node_op {
-                        Some(_) => {},
-                        None => {                   
-                            error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
-                            error!("missing storage_trie.root_node()");
-                        },
+                    if node_op.is_none() {
+                        error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
+                        error!("missing storage_trie.root_node()");
                     }
                 },
                 Err(err) => {
