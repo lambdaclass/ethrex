@@ -864,12 +864,14 @@ impl EthClient {
 
         if let Some(overrides_gas_limit) = overrides.gas_limit {
             tx.gas_limit = overrides_gas_limit;
+            println!("l1_gas_limit (override): {overrides_gas_limit}");
         } else {
             let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
             let gas_limit = self
                 .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
                 .await?;
             tx.gas_limit = gas_limit;
+            println!("l1_gas_limit (estimated): {gas_limit}");
         }
 
         Ok(tx)

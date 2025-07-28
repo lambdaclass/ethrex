@@ -71,6 +71,8 @@ pub async fn send_l1_to_l2_tx(
 ) -> Result<H256, EthClientError> {
     let l1_calldata = l1_to_l2_tx_data.to_calldata()?;
 
+    println!("l2_gas_limit={}", l1_to_l2_tx_data.gas_limit);
+
     let l1_tx_overrides = Overrides {
         value: l1_value.map(Into::into),
         from: Some(l1_from),
