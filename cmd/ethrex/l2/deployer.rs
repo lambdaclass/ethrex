@@ -979,7 +979,7 @@ fn write_contract_addresses_to_env(
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
     let env_file_path =
-        env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/crates/l2/.env
+        env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/cmd/.env
 
     if !env_file_path.exists() {
         File::create(&env_file_path).map_err(|err| {
