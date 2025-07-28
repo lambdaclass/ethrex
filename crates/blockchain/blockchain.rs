@@ -772,9 +772,15 @@ impl Blockchain {
     }
 
     /// Marks the node's chain as up to date with the current chain
-    /// Once the initial sync has taken place, the node will be consireded as sync
+    /// Once the initial sync has taken place, the node will be considered as sync
     pub fn set_synced(&self) {
         self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Marks the node's chain as not up to date with the current chain.
+    /// This will be used when the node is one batch or more behind the current chain.
+    pub fn set_not_synced(&self) {
+        self.is_synced.store(false, Ordering::Relaxed);
     }
 
     /// Returns whether the node's chain is up to date with the current chain
@@ -807,8 +813,13 @@ impl Blockchain {
                 })
             }
             Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
+            // Exclude privileged transactions as they are only created
+            // by the lead sequencer. In the future, they might get gossiped
+            // like the rest.
+            Transaction::PrivilegedL2Transaction(_) => {
+                return Err(StoreError::Custom(
+                    "Privileged Transactions are not supported in P2P".to_string(),
+                ));
             }
         };
 
