@@ -886,10 +886,6 @@ impl PeerHandler {
                     *downloader_is_free = false;
                 });
             debug!("Downloader {free_peer_id} is now busy");
-
-            const SNAP_LIMIT: u64 = 3;
-            let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
-            let scores_cloned = scores.clone();
             
             // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
             //  while current_unix_time() > time_limit {
@@ -1341,6 +1337,9 @@ impl PeerHandler {
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
+        // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
+        let time_limit = pivot_header.timestamp + (128 * 12);
+
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
@@ -1572,6 +1571,9 @@ impl PeerHandler {
             //    );
             //}
 
+            if current_unix_time() > time_limit {
+                break;
+            }
             tokio::spawn(PeerHandler::request_storage_ranges_worker(free_peer_id, start, end, state_root, start_hash, chunk_account_hashes, chunk_storage_roots, free_downloader_channels_clone, tx));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -1593,7 +1595,9 @@ impl PeerHandler {
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading storage ranges, total storage slots: {total_slots}");
 
-        (all_account_storages, false)
+        let pivot_is_stale = current_unix_time() > time_limit;
+
+        (all_account_storages, pivot_is_stale)
     }
 
     async fn request_storage_ranges_worker(
