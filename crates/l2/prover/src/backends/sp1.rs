@@ -58,11 +58,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
-    use std::time::Instant;
-    let now = Instant::now();
+
     setup.client.execute(PROGRAM_ELF, &stdin).run()?;
-    let elapsed = now.elapsed();
-    println!("Successfully executed SP1 program  in {:.2?}", elapsed);
+
     info!("Successfully executed SP1 program.");
     Ok(())
 }
@@ -81,12 +79,7 @@ pub fn prove(
     let proof = if aligned_mode {
         setup.client.prove(&setup.pk, &stdin).compressed().run()?
     } else {
-        use std::time::Instant;
-        let now = Instant::now();
-        let p = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
-        let elapsed = now.elapsed();
-        println!("Successfully executed SP1 program  in {:.2?}", elapsed);
-        p
+        setup.client.prove(&setup.pk, &stdin).groth16().run()?
     };
 
     info!("Successfully generated SP1Proof.");

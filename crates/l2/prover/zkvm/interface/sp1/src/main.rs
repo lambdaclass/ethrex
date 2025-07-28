@@ -9,5 +9,6 @@ pub fn main() {
     let input = sp1_zkvm::io::read_vec();
     let input = unsafe { rkyv::from_bytes_unchecked::<ProgramInput, Error>(&input).unwrap() };
     let output = execution_program(input).unwrap();
+
     sp1_zkvm::io::commit(&output.encode());
 }
