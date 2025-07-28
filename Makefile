@@ -21,13 +21,13 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex . --build-arg BUILD_FLAGS="--features metrics"
+	docker build -t ethrex:dev --build-arg BUILD_FLAGS="--features dev,rollup_storage_sql,metrics" .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:dev --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex --features dev -- \

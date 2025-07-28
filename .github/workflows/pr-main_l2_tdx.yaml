@@ -70,8 +70,9 @@ jobs:
         with:
           context: .
           tags: ethrex:dev
-          build-args: --features dev,rollup_storage_sql,metrics
           push: false
+          build-args: |
+            BUILD_FLAGS="--features dev,rollup_storage_sql,metrics"
 
       - name: Start L1 & Deploy contracts
         run: |
