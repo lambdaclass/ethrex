@@ -51,15 +51,15 @@ refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
-		time cargo test --quiet --test all --release -- $(flags) --summary;\
+		time cargo test --quiet --test all --profile release-with-debug -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
 		time cargo test --test all -- $(flags);\
 	else \
-		time cargo test --test all --release -- $(flags);\
+		time cargo test --test all --profile release-with-debug -- $(flags);\
 	fi
 
 run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
-	time cargo test -p ef_tests-state --test all --release -- --summary
+	time cargo test -p ef_tests-state --test all --profile release-with-debug -- --summary
 
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
@@ -101,14 +101,14 @@ samply-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 		-o levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
-		cargo test --release -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
+		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
 	done
 
 samply-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 		-o levm_perfgraphs/samply/ef_tests/state/prof_$$dir.json \
-		cargo test --release -p ef_tests-state --test all -- --summary --tests $$dir;\
+		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --tests $$dir;\
 	done
 
 ################
@@ -129,11 +129,11 @@ define run_samply
 	# revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_$(1).json \
-	cargo run --release -p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
+	cargo run --profile release-with-debug -p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
 	# levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_$(1).json \
-	cargo run --release -p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
+	cargo run --profile release-with-debug -p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
 endef
 
 FLAMEGRAPH_DIR := levm_perfgraphs/flamegraph/bench
@@ -163,4 +163,4 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 ## New EF state tests runner
 TESTS_PATH := ./vectors
 run-new-runner:
-	cargo test --package ef_tests-state --test new_runner --release -- $(TESTS_PATH)
+	cargo test --package ef_tests-state --test new_runner --profile release-with-debug -- $(TESTS_PATH)

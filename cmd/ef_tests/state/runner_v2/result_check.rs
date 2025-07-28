@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate, Fork, Genesis},
+    types::{Account, AccountUpdate, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -42,17 +41,14 @@ impl Default for PostCheckResult {
         }
     }
 }
-#[derive(Debug, Clone)]
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccountMismatch {
     pub address: Address,
-    pub expected_balance: U256,
-    pub actual_balance: U256,
-    pub expected_nonce: u64,
-    pub actual_nonce: u64,
-    pub expected_code: Bytes,
-    pub actual_code: Bytes,
-    pub expected_storage: HashMap<U256, U256>,
-    pub actual_storage: BTreeMap<H256, U256>,
+    pub balance_diff: Option<(U256, U256)>,
+    pub nonce_diff: Option<(u64, u64)>,
+    pub code_diff: Option<(H256, H256)>,
+    pub storage_diff: Option<(BTreeMap<H256, U256>, BTreeMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -71,13 +67,9 @@ pub async fn check_test_case_results(
         ..Default::default()
     };
 
-    if test_case.expects_exception() {
+    if let Some(expected_exceptions) = test_case.post.expected_exceptions.clone() {
         // Verify in case an exception was expected.
-        check_exception(
-            test_case.post.expected_exceptions.clone().unwrap(),
-            execution_result,
-            &mut checks_result,
-        );
+        check_exception(expected_exceptions, execution_result, &mut checks_result);
         Ok(checks_result)
     } else {
         // Verify expected root hash.
@@ -253,12 +245,10 @@ pub fn check_accounts_state(
     genesis: Genesis,
 ) {
     // In this case, the test in the .json file does not have post account details to verify.
-    if test_case.post.state.is_none() {
+    let Some(expected_accounts_state) = test_case.post.state.clone() else {
         return;
-    }
-
+    };
     let mut accounts_diff: Vec<AccountMismatch> = Vec::new();
-    let expected_accounts_state = test_case.post.state.clone().unwrap();
 
     // For every account in the test case expected post state, compare it to the actual state.
     for (addr, expected_account) in expected_accounts_state {
@@ -304,35 +294,39 @@ fn verify_matching_accounts(
     actual_account: &Account,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
+    let mut formatted_expected_storage = BTreeMap::new();
+    for (key, value) in &expected_account.storage {
+        let formatted_key = H256::from(key.to_big_endian());
+        formatted_expected_storage.insert(formatted_key, *value);
+    }
+    let mut account_mismatch = AccountMismatch::default();
     let code_matches = actual_account.code == expected_account.code;
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
-    let mut storage_matches = true;
+    let storage_matches = formatted_expected_storage == actual_account.storage;
 
-    for (storage_key, content) in &expected_account.storage {
-        let key = &H256::from(storage_key.to_big_endian());
-        if actual_account.storage.contains_key(key) {
-            if actual_account.storage.get(key).unwrap() != content {
-                storage_matches = false;
-            }
-        } else {
-            storage_matches = false;
-        }
+    if !code_matches {
+        account_mismatch.code_diff = Some((
+            code_hash(&expected_account.code),
+            actual_account.info.code_hash,
+        ));
+    }
+    if !balance_matches {
+        account_mismatch.balance_diff =
+            Some((expected_account.balance, actual_account.info.balance));
+    }
+    if !nonce_matches {
+        account_mismatch.nonce_diff = Some((expected_account.nonce, actual_account.info.nonce));
+    }
+    if !storage_matches {
+        account_mismatch.storage_diff =
+            Some((formatted_expected_storage, actual_account.storage.clone()));
     }
 
-    if !(code_matches && balance_matches && nonce_matches && storage_matches) {
-        let account_mismatch = AccountMismatch {
-            address: addr,
-            expected_balance: expected_account.balance,
-            actual_balance: actual_account.info.balance,
-            expected_nonce: expected_account.nonce,
-            actual_nonce: actual_account.info.nonce,
-            expected_code: expected_account.code.clone(),
-            actual_code: actual_account.code.clone(),
-            expected_storage: expected_account.storage.clone(),
-            actual_storage: actual_account.storage.clone(),
-        };
-        return Some(account_mismatch);
+    if account_mismatch != AccountMismatch::default() {
+        account_mismatch.address = addr;
+        Some(account_mismatch)
+    } else {
+        None
     }
-    None
 }

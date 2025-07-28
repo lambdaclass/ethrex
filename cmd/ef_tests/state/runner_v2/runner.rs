@@ -1,5 +1,9 @@
 use colored::Colorize;
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
 
 use ethrex_common::{
     U256,
@@ -9,7 +13,7 @@ use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::V
 
 use crate::runner_v2::{
     error::RunnerError,
-    report::add_to_report,
+    report::add_test_to_report,
     result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
@@ -18,8 +22,18 @@ use crate::runner_v2::{
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
-    let _ = fs::remove_file("./runner_v2/success_report.txt");
+    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let _ = fs::remove_file(&successful_report_path);
     let _ = fs::remove_file("./runner_v2/failure_report.txt");
+
+    let mut success_report = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(successful_report_path)
+        .unwrap();
+    success_report
+        .write_all("Successful tests: \n".as_bytes())
+        .unwrap();
     let mut passing_tests = 0;
     let mut failing_tests = 0;
     let mut total_run = 0;
@@ -77,13 +91,13 @@ pub async fn run_test(
         *total_run += 1;
 
         print!(
-            "\rTotal run tests: {} - Total passed: {} - Total failed: {}",
+            "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
             format!("{}", total_run).blue(),
             format!("{}", passing_tests).green(),
             format!("{}", failing_tests).red()
         );
     }
-    add_to_report((test, failing_test_cases))?;
+    add_test_to_report((test, failing_test_cases))?;
 
     Ok(())
 }
