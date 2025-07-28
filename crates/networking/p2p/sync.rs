@@ -18,6 +18,7 @@ use ethrex_common::{
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
 use std::{
@@ -632,7 +633,14 @@ impl Syncer {
         }
         info!("Finished storage healing");
 
+        let mut all_account_hashes: HashSet<H256> = HashSet::new();
+
         for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+            let _ = all_account_hashes.get(&account_hash).is_some_and(|hash| {
+                error!("Hash repeated!: {hash}");
+                false
+            });
+            all_account_hashes.insert(account_hash);
             if account_state.storage_root == *EMPTY_TRIE_HASH {
                 continue;
             }
