@@ -243,6 +243,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 fn inner(
     a: &mut uint64x2x2_t,
     b: &mut uint64x2x2_t,
@@ -291,45 +292,5 @@ fn inner(
         *b = uint64x2x2_t(vextq_u64::<1>(a.1, a.0), vextq_u64::<1>(a.0, a.1));
         *c = uint64x2x2_t(c.1, c.0);
         *d = uint64x2x2_t(vextq_u64::<1>(d.0, d.1), vextq_u64::<1>(d.1, d.0));
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn asdf() {
-        let mut h = [
-            BLAKE2B_IV[0],
-            BLAKE2B_IV[1],
-            BLAKE2B_IV[2],
-            BLAKE2B_IV[3],
-            BLAKE2B_IV[4],
-            BLAKE2B_IV[5],
-            BLAKE2B_IV[6],
-            BLAKE2B_IV[7],
-        ];
-        let m = [
-            0x0000000000000000,
-            0x0000000000000001,
-            0x0000000000000002,
-            0x0000000000000003,
-            0x0000000000000004,
-            0x0000000000000005,
-            0x0000000000000006,
-            0x0000000000000007,
-            0x0000000000000008,
-            0x0000000000000009,
-            0x000000000000000A,
-            0x000000000000000B,
-            0x000000000000000C,
-            0x000000000000000D,
-            0x000000000000000E,
-            0x000000000000000F,
-        ];
-        let t = [0x0000000000000000, 0x0000000000000000];
-
-        blake2b_f(9, &mut h, &m, &t, true);
     }
 }
