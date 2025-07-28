@@ -102,13 +102,17 @@ pub fn calculate_create2_address(
 /// # Filter for jump target offsets.
 ///
 /// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
-/// addresses of bytes `0x5B` (`JUMPDEST`) within push constants.
+/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
 #[derive(Debug)]
 pub struct JumpTargetFilter {
+    /// The list of invalid jump target offsets.
     filter: Vec<usize>,
+    /// The last processed offset, plus one.
     offset: usize,
 
+    /// Program bytecode iterator.
     iter: Enumerate<IntoIter<Bytes>>,
+    /// Number of bytes remaining to process from the last push instruction.
     partial: usize,
 }
 
