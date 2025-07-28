@@ -430,6 +430,10 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         let pivot_number = pivot_header.number;
+        let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        while current_unix_time() > time_limit{
+            (pivot_header, time_limit) = update_pivot(pivot_number, &self.peers).await;
+        }
         let pivot_hash = pivot_header.hash();
         info!("Selected block {pivot_number} as pivot for snap sync");
 
@@ -560,7 +564,6 @@ impl Syncer {
 
             
             let mut healing_done = false;
-            let mut time_limit: u64 = 0;
             while !healing_done {
                 (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
                 healing_done = heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit).await?;
@@ -1039,6 +1042,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             warn!("Received None pivot. Retrying");
             continue;
         };
+        
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
     }
