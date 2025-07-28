@@ -318,6 +318,9 @@ fn visit_child_node(
                 if let Node::Leaf(node) = &node {
                     partial_path.extend(&node.partial);
                 }
+                if right_bound.compare_prefix(&partial_path).is_lt() {
+                    external_refs.push((partial_path.clone(), hash.clone()));
+                }
 
                 stack.push_back((partial_path, node));
             }
