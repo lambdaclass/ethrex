@@ -71,7 +71,7 @@ pub async fn send_l1_to_l2_tx(
 ) -> Result<H256, EthClientError> {
     let l1_calldata = l1_to_l2_tx_data.to_calldata()?;
 
-    // if no gas limit specified, we'll pass 0 and estimate it manually to add a margin
+    // if no gas limit specified, we'll pass 0 and estimate it manually to double it
     let l1_tx_overrides = Overrides {
         value: l1_value.map(Into::into),
         from: Some(l1_from),
@@ -82,8 +82,8 @@ pub async fn send_l1_to_l2_tx(
     let mut l1_to_l2_tx = eth_client
         .build_eip1559_transaction(bridge_address, l1_from, l1_calldata.into(), l1_tx_overrides)
         .await?;
-    let gas_limit = eth_client.estimate_gas(l1_to_l2_tx.clone().into()).await? * 6 / 5; // +20%
-    l1_to_l2_tx.gas_limit = gas_limit;
+    let gas_limit = eth_client.estimate_gas(l1_to_l2_tx.clone().into()).await? * 2;
+    l1_to_l2_tx.gas_limit = gas_limit * 2; // tx should not revert because of gas limit exceeded
 
     let signer = LocalSigner::new(*sender_private_key).into();
 
