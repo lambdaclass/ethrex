@@ -175,7 +175,6 @@ mod tests {
         message::RLPxMessage,
         p2p::Capability,
     };
-    use bytes::Bytes;
     use ethrex_common::types::transaction::TxType;
     use ethrex_common::types::{BlockHash, Receipt};
 
@@ -226,10 +225,10 @@ mod tests {
     #[test]
     fn receipts_check_bloom() {
         let receipts = vec![vec![
-            Receipt::new(TxType::EIP7702, true, 210000, vec![], Bytes::new()),
-            Receipt::new(TxType::EIP7702, true, 210000, vec![], Bytes::new()),
-            Receipt::new(TxType::EIP7702, true, 210000, vec![], Bytes::new()),
-            Receipt::new(TxType::EIP7702, true, 210000, vec![], Bytes::new()),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
         ]];
         let receipts68 = Receipts::new(255, receipts.clone(), &Capability::eth(68)).unwrap();
         let receipts69 = Receipts::new(255, receipts, &Capability::eth(69)).unwrap();

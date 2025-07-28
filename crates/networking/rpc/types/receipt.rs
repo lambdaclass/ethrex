@@ -56,7 +56,6 @@ pub struct RpcReceiptInfo {
     #[serde(with = "serde_utils::u64::hex_str")]
     pub cumulative_gas_used: u64,
     pub logs_bloom: Bloom,
-    pub output: Bytes,
 }
 
 impl From<Receipt> for RpcReceiptInfo {
@@ -66,7 +65,6 @@ impl From<Receipt> for RpcReceiptInfo {
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs_bloom: bloom_from_logs(&receipt.logs),
-            output: receipt.output,
         }
     }
 }
@@ -226,7 +224,6 @@ mod tests {
                     topics: vec![],
                     data: Bytes::from_static(b"strawberry"),
                 }],
-                output: Bytes::new(),
             },
             RpcReceiptTxInfo {
                 transaction_hash: H256::zero(),

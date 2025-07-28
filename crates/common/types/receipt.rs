@@ -18,23 +18,15 @@ pub struct Receipt {
     pub succeeded: bool,
     pub cumulative_gas_used: u64,
     pub logs: Vec<Log>,
-    pub output: Bytes,
 }
 
 impl Receipt {
-    pub fn new(
-        tx_type: TxType,
-        succeeded: bool,
-        cumulative_gas_used: u64,
-        logs: Vec<Log>,
-        output: Bytes,
-    ) -> Self {
+    pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
         Self {
             tx_type,
             succeeded,
             cumulative_gas_used,
             logs,
-            output,
         }
     }
 
@@ -95,7 +87,6 @@ impl RLPDecode for Receipt {
         let (succeeded, decoder) = decoder.decode_field("succeeded")?;
         let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
-        let (output, decoder) = decoder.decode_field("output")?;
 
         let Some(tx_type) = TxType::from_u8(tx_type) else {
             return Err(RLPDecodeError::Custom(
@@ -109,7 +100,6 @@ impl RLPDecode for Receipt {
                 succeeded,
                 cumulative_gas_used,
                 logs,
-                output,
             },
             decoder.finish()?,
         ))
@@ -295,7 +285,6 @@ impl From<&ReceiptWithBloom> for Receipt {
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs: receipt.logs.clone(),
-            output: Bytes::new(),
         }
     }
 }
@@ -348,7 +337,6 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"foo"),
             }],
-            output: Bytes::new(),
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
@@ -365,7 +353,6 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"bar"),
             }],
-            output: Bytes::new(),
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())

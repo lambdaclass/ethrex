@@ -1784,7 +1784,6 @@ mod tests {
             succeeded: true,
             cumulative_gas_used: u64::MAX,
             logs,
-            output: Bytes::new(),
         }
     }
 }

@@ -157,7 +157,6 @@ impl Evm {
                     execution_result.is_success(),
                     block_header.gas_limit - *remaining_gas,
                     execution_result.logs(),
-                    execution_result.output(),
                 );
 
                 Ok((receipt, execution_result.gas_used()))
@@ -172,7 +171,6 @@ impl Evm {
                     execution_report.is_success(),
                     block_header.gas_limit - *remaining_gas,
                     execution_report.logs.clone(),
-                    execution_report.output.clone(),
                 );
 
                 Ok((receipt, execution_report.gas_used))
