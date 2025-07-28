@@ -20,7 +20,10 @@ use std::{
     },
     time::SystemTime,
 };
-use tokio::{sync::mpsc::error::SendError, time::Instant};
+use tokio::{
+    sync::{Mutex, mpsc::error::SendError},
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -821,7 +824,9 @@ impl Syncer {
 
         let store_clone = store.clone();
 
-        tokio::task::spawn_blocking(move || {
+        let mut storage_trie_node_changes = Vec::new();
+
+        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
             let store = store_clone;
             // Store trie in storage
             for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
@@ -845,12 +850,10 @@ impl Syncer {
                         continue;
                     };
                 }
-                let Ok(computed_state_root) = storage_trie.hash() else {
-                    error!(
-                        "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
-                    );
-                    continue;
-                };
+
+                let (computed_state_root, changes) = storage_trie.collect_changes_since_last_hash();
+
+                storage_trie_node_changes.push((account_hash, changes));
 
                 METRICS.storage_tries_state_roots_computed.inc();
 
@@ -860,7 +863,13 @@ impl Syncer {
                     );
                 }
             }
-        }).await.unwrap();
+
+            storage_trie_node_changes
+        }).await.expect("");
+
+        store
+            .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            .await?;
 
         METRICS
             .storage_tries_state_roots_end_time
@@ -882,14 +891,9 @@ impl Syncer {
             .await
             .unwrap();
 
-        for (code_hash, bytecode) in bytecode_hashes.into_iter().zip(bytecodes) {
-            let _ = store
-                .add_account_code(code_hash, bytecode)
-                .await
-                .inspect_err(|e| {
-                    error!("Failed to store bytecode for code hash {code_hash:?}, err={e:?}")
-                });
-        }
+        store
+            .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+            .await?;
 
         store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone())
             .await
