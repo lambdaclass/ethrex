@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753559401019,
+  "lastUpdate": 1753699369078,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13573,6 +13573,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007456603351955308,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a3d334732590b8aa886f4dfe10aa1654e3db7ee6",
+          "message": "fix(l1): change `ethrex/tooling/sync/readme.MD` to `README.md` (#3841)\n\n**Motivation**\nThe readme file at ethrex/tooling/sync is called `readme.MD` instead of\nthe usual `README.md`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Change `readme.MD` filename to `README.md`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-28T09:50:13Z",
+          "tree_id": "8c6dfd8ebc41611bf92e907fd3ed52662717b1d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a3d334732590b8aa886f4dfe10aa1654e3db7ee6"
+        },
+        "date": 1753699354664,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001332067864271457,
             "unit": "Mgas/s"
           }
         ]
