@@ -9,7 +9,7 @@ use crate::{
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
@@ -43,6 +43,25 @@ use std::{
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info};
+
+#[derive(Parser)]
+pub struct CommandL2 {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+impl CommandL2 {
+    pub async fn run(self) -> eyre::Result<()> {
+        match self.command {
+            Some(cmd) => cmd.run().await,
+            None => {
+                let args: Vec<String> = std::env::args().collect();
+                let init_options = Options::parse_from(&args);
+                Command::Init { opts: init_options }.run().await
+            }
+        }
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
