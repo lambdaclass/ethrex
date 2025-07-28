@@ -129,10 +129,29 @@ jobs:
           name: ethrex-contracts.tar.gz
           path: ethrex-contracts.tar.gz
 
+  build-docker:
+    name: "Build and publish ethrex docker image"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Format name
+        run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+
+      # Pushes to ghcr.io/ethrex
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          build-args: |
+            BUILD_FLAGS="--features dev,rollup_storage_sql,metrics"
+
   # Creates a draft release on GitHub with the binaries
   finalize-release:
     needs:
       - build-ethrex
+      - build-docker
       - package-contracts
     runs-on: ubuntu-latest
     steps:
@@ -146,9 +165,6 @@ jobs:
         with:
           path: ./bin
           pattern: "ethrex*"
-
-      - name: Format name
-        run: echo "RELEASE_NAME=$(echo ${{ github.ref_name }} | cut -d_ -f2)" >> $GITHUB_ENV
 
       - name: Get previous tag
         run: |
@@ -174,5 +190,5 @@ jobs:
           draft: false
           prerelease: false
           tag_name: ${{ github.ref_name }}
-          name: "ethrex: ${{ env.RELEASE_NAME }}"
+          name: "ethrex: ${{ github.ref_name }}"
           body: ${{ steps.changelog.outputs.changes }}
