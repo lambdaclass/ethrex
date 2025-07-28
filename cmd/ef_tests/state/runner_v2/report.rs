@@ -60,26 +60,29 @@ impl fmt::Display for PostCheckResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Fork: {:?} - vector {:?}\n", self.fork, self.vector)?;
         if let Some(root_mismatch) = self.root_dif {
+            let (expected_root, actual_root) = root_mismatch;
             writeln!(
                 f,
                 "  ERR - ROOT MISMATCH:\n    Expected root: {:?}\n    Actual   root: {:?}",
-                root_mismatch.0, root_mismatch.1
+                expected_root, actual_root
             )?;
         }
 
         if let Some(exception_diff) = self.exception_diff.clone() {
+            let (expected_exception, actual_exception) = exception_diff;
             writeln!(
                 f,
                 "  ERR - EXCEPTION MISMATCH:\n    Expected exception: {:?}\n    Actual   exception: {:?}",
-                exception_diff.0, exception_diff.1
+                expected_exception, actual_exception
             )?;
         }
 
         if let Some(logs_mismatch) = self.logs_diff {
+            let (expected_log_hash, actual_log_hash) = logs_mismatch;
             writeln!(
                 f,
                 "  ERR - LOGS MISMATCH:\n    Expected logs hash: {:?}\n    Actual   logs hash: {:?}",
-                logs_mismatch.0, logs_mismatch.1
+                expected_log_hash, actual_log_hash
             )?;
         }
 
