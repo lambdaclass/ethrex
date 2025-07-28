@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753721455319,
+  "lastUpdate": 1753721763899,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6385,6 +6385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163231204591,
             "range": "± 199705877",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bd052c4cde32e98b27bf69c6d4890fc4f558a5a4",
+          "message": "feat(l2): implement scrolling in monitor tables (#3717)\n\n**Motivation**\n\nSince not many rows fit on the screen, we want to be able to scroll each\ntable.\n\n**Description**\n\nSince stateful tables support scrolling, we just have to wire that. Also\nwe change the color of the box depending on the selected element to show\nthe user which table is selected for scrolling.\n\nCloses #3520, closes #3521, closes #3522, closes #3523, closes #3524,\ncloses #3525",
+          "timestamp": "2025-07-28T16:06:11Z",
+          "tree_id": "5d635e0898d771d1628fda173d43fc025c83e2c1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bd052c4cde32e98b27bf69c6d4890fc4f558a5a4"
+        },
+        "date": 1753721750179,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163403889856,
+            "range": "± 318135528",
             "unit": "ns/iter"
           }
         ]
