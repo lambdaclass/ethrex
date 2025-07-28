@@ -155,7 +155,8 @@ fn process_proof_nodes(
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
         Nibbles::from_bytes(&bounds.0.0),
-        bounds.1.map(|x| Nibbles::from_bytes(&x.0)),
+        // In case there's no right bound, we use the left bound as the right bound.
+        Nibbles::from_bytes(&bounds.1.unwrap_or(bounds.0).0),
     );
     let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
 
@@ -193,9 +194,9 @@ fn process_proof_nodes(
     let mut process_child =
         |stack: &mut VecDeque<_>, mut partial_path: Nibbles, child| -> Result<(), TrieError> {
             let cmp_l = bounds.0.compare_prefix(&partial_path);
-            let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
+            let cmp_r = bounds.1.compare_prefix(&partial_path);
 
-            if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
+            if cmp_l != Ordering::Less || cmp_r != Ordering::Greater {
                 let NodeRef::Hash(hash) = child else {
                     // This is unreachable because the nodes have just been decoded, therefore only
                     // having hash references.
@@ -232,12 +233,15 @@ fn process_proof_nodes(
                             if let Node::Leaf(node) = &node {
                                 partial_path.extend(&node.partial);
                             }
+                            if bounds.1.compare_prefix(&partial_path).is_lt() {
+                                external_refs.push((partial_path.clone(), hash.clone()));
+                            }
 
                             stack.push_back((partial_path, node));
                         }
                     }
                     None => {
-                        if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
+                        if cmp_l == Ordering::Equal || cmp_r == Ordering::Equal {
                             return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
                         }
 
@@ -246,7 +250,7 @@ fn process_proof_nodes(
                 }
 
                 // Increment right-reference counter.
-                if cmp_l == Ordering::Less && cmp_r.is_none_or(|x| x == Ordering::Less) {
+                if cmp_l == Ordering::Less && cmp_r == Ordering::Less {
                     num_right_refs += 1;
                 }
             }
@@ -281,7 +285,7 @@ fn process_proof_nodes(
             if current_path == bounds.0 {
                 left_value = value.clone();
             }
-            if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
+            if current_path == bounds.1 {
                 right_value = value.clone();
             }
         }
