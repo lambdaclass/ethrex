@@ -69,7 +69,8 @@ jobs:
         if: ${{ inputs.job_type == 'main' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:dev
-          docker tag ghcr.io/lambdaclass/ethrex:dev ethrex:dev
+          # Tests use ethrex:latest so we retag it
+          docker tag ghcr.io/lambdaclass/ethrex:dev ethrex:latest
 
       - name: Setup Go
         uses: actions/setup-go@v5

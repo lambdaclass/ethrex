@@ -46,6 +46,8 @@ ARG BUILD_FLAGS=""
 RUN cargo build --release $BUILD_FLAGS
 
 # --- Final Image ---
+# Copy the ethrex binary into a minimalist image to reduce bloat size.
+# This image must have glibc and libssl
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /usr/local/bin
 
