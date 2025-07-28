@@ -17,7 +17,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
@@ -618,7 +618,19 @@ impl Syncer {
 
         let trie = store.open_state_trie(state_root_new).expect("This should open");
         let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
-        info!("root_node: {root_node:?}, Computed state root: {computed_state_root}, state_root: {state_root} state_root_new: {state_root_new}");
+        let computed_state_root_new = Trie::compute_hash_from_unsorted_iter(
+            store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts")
+            .map(|(hash, state)| (
+                hash.0.to_vec(),
+                state.encode_to_vec(),
+            ))
+        );
+        info!("state_root old: {state_root},
+               computed_state_root old: {computed_state_root}, 
+               state_root_new: {state_root_new},
+               computed_state_root_new: {computed_state_root_new},
+               root_node new: {root_node:?}, ");
+
 
         healing_done = false;
         info!("Starting storage healing");
@@ -633,12 +645,7 @@ impl Syncer {
         }
         info!("Finished storage healing");
 
-        let mut all_account_hashes: HashSet<H256> = HashSet::new();
-
         for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
-            let _ = all_account_hashes.get(&account_hash)
-                .inspect(|hash| error!("Hash repeated!: {hash}"));
-            all_account_hashes.insert(account_hash);
             if account_state.storage_root == *EMPTY_TRIE_HASH {
                 continue;
             }
@@ -655,6 +662,19 @@ impl Syncer {
                     error!("account_hash {account_hash:?} account_state.storage_root {}", account_state.storage_root);
                     error!("storage_trie.root_node() {err:?}");
                 },
+            }
+
+            let computed_storage_root_new = Trie::compute_hash_from_unsorted_iter(
+                store.iter_storage(state_root_new, account_hash)
+                    .expect("we couldn't iterate over storage")
+                    .expect("we couldn't iterate over storage")
+                    .map(|(hash, storage)|(
+                        hash.0.to_vec(), storage.encode_to_vec()
+                    ))
+            );
+
+            if account_state.storage_root != computed_state_root_new {
+                error!("Storage Healing failed! Wrong hash {account_hash}, {account_state:?}, {computed_state_root_new}")
             }
         }
 
