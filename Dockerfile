@@ -30,6 +30,7 @@ ARG BUILD_FLAGS=""
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
+COPY tooling ./tooling
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
