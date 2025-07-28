@@ -22,7 +22,6 @@ const IGNORED_TESTS: [&str; 12] = [
 
 /// Parse a `.json` file of tests into a Vec<Test>.
 pub fn parse_file(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
-    println!("Parsing test file: {:?}", path);
     let test_file = std::fs::File::open(path.clone()).unwrap();
     let mut tests: Tests = serde_json::from_reader(test_file).unwrap();
     for test in tests.0.iter_mut() {
@@ -33,6 +32,7 @@ pub fn parse_file(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
 
 /// Parse a directory of tests into a Vec<Test>.
 pub fn parse_dir(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
+    println!("Parsing test directory: {:?}", path);
     let mut tests = Vec::new();
     let dir_entries = std::fs::read_dir(path.clone()).unwrap().flatten();
 
