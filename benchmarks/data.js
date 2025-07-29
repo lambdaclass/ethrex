@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753809789648,
+  "lastUpdate": 1753812000264,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14124,6 +14124,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007498494382022472,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c12cd30278592ba93f6a2df33bee57e5486d6c7b",
+          "message": "feat(l2): show peer count in monitor when in based mode (#3668)\n\n**Motivation**\n\nCurrently peer count is a placeholder ('NaN') so we want an actual\nimplementations.\n\nThe peer count of the L2 should only be shown in based bode, because in\nother (non-based) modes peers aren't _needed_ and having more isn't\nnecessarily better.\n\n**Description**\n\nAdds a EthClient method to query net_peerCount, and uses it to get the\npeer count from the local node. Only displays the value if based mode is\nenabled.\n\nCloses #3516\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-07-29T14:51:01Z",
+          "tree_id": "64c0045938e3bd46fda7dbaa08589a9c72205512",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c12cd30278592ba93f6a2df33bee57e5486d6c7b"
+        },
+        "date": 1753811999586,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013454959677419356,
             "unit": "Mgas/s"
           }
         ]
