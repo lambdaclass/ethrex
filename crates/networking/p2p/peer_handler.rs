@@ -13,6 +13,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
+use secp256k1::Message;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -886,7 +887,7 @@ impl PeerHandler {
                     *downloader_is_free = false;
                 });
             debug!("Downloader {free_peer_id} is now busy");
-            
+
             // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
             //  while current_unix_time() > time_limit {
             //      info!("We are stale, updating pivot");
@@ -904,8 +905,8 @@ impl PeerHandler {
             //      );
             //      time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             //  }
-             // TODO: not remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
-            
+            // TODO: not remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
+
             // after our time limit, the block is stale. Stop downloading blocks
             if current_unix_time() > time_limit {
                 break;
@@ -913,7 +914,14 @@ impl PeerHandler {
             let state_root = pivot_header.state_root;
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            tokio::spawn(PeerHandler::request_account_range_worker(free_peer_id, chunk_start, chunk_end, state_root, free_downloader_channels_clone, tx));
+            tokio::spawn(PeerHandler::request_account_range_worker(
+                free_peer_id,
+                chunk_start,
+                chunk_end,
+                state_root,
+                free_downloader_channels_clone,
+                tx,
+            ));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -945,7 +953,7 @@ impl PeerHandler {
     }
 
     pub async fn request_account_range_worker(
-        free_peer_id: H256, 
+        free_peer_id: H256,
         chunk_start: H256,
         chunk_end: H256,
         state_root: H256,
@@ -975,23 +983,22 @@ impl PeerHandler {
                 .ok();
             return;
         }
-        if let Some((accounts, proof)) =
-            tokio::time::timeout(Duration::from_secs(2), async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::AccountRange(AccountRange {
-                            id,
-                            accounts,
-                            proof,
-                        })) if id == request_id => return Some((accounts, proof)),
-                        Some(_) => continue,
-                        None => return None,
-                    }
+        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::AccountRange(AccountRange {
+                        id,
+                        accounts,
+                        proof,
+                    })) if id == request_id => return Some((accounts, proof)),
+                    Some(_) => continue,
+                    None => return None,
                 }
-            })
-            .await
-            .ok()
-            .flatten()
+            }
+        })
+        .await
+        .ok()
+        .flatten()
         {
             if accounts.is_empty() {
                 tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
@@ -1365,7 +1372,8 @@ impl PeerHandler {
         let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResultStorage>(1000);
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<TaskResultStorage>(1000);
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
@@ -1574,7 +1582,17 @@ impl PeerHandler {
             if current_unix_time() > time_limit {
                 break;
             }
-            tokio::spawn(PeerHandler::request_storage_ranges_worker(free_peer_id, start, end, state_root, start_hash, chunk_account_hashes, chunk_storage_roots, free_downloader_channels_clone, tx));
+            tokio::spawn(PeerHandler::request_storage_ranges_worker(
+                free_peer_id,
+                start,
+                end,
+                state_root,
+                start_hash,
+                chunk_account_hashes,
+                chunk_storage_roots,
+                free_downloader_channels_clone,
+                tx,
+            ));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -1601,7 +1619,7 @@ impl PeerHandler {
     }
 
     async fn request_storage_ranges_worker(
-        free_peer_id: H256, 
+        free_peer_id: H256,
         start: usize,
         end: usize,
         state_root: H256,
@@ -1610,10 +1628,8 @@ impl PeerHandler {
         chunk_storage_roots: Vec<H256>,
         mut free_downloader_channels_clone: PeerChannels,
         tx: tokio::sync::mpsc::Sender<TaskResultStorage>,
-    ){
-        debug!(
-            "Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}"
-        );
+    ) {
+        debug!("Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}");
         let empty_task_result = TaskResultStorage {
             start_index: start,
             account_storages: Vec::new(),
@@ -1643,11 +1659,11 @@ impl PeerHandler {
         let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
             loop {
                 match receiver.recv().await {
-                    Some(RLPxMessage::StorageRanges(StorageRanges {
-                        id,
-                        slots,
-                        proof,
-                    })) if id == request_id => return Some((slots, proof)),
+                    Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
+                        if id == request_id =>
+                    {
+                        return Some((slots, proof));
+                    }
                     Some(_) => continue,
                     None => return None,
                 }
@@ -1691,8 +1707,7 @@ impl PeerHandler {
                 .iter()
                 .map(|slot| slot.data.encode_to_vec())
                 .collect::<Vec<_>>();
-            let hashed_keys: Vec<_> =
-                next_account_slots.iter().map(|slot| slot.hash).collect();
+            let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
 
             let storage_root = storage_roots.next().unwrap();
 
@@ -1823,6 +1838,38 @@ impl PeerHandler {
         }
         info!("we tried all these nodes {peer_ids:?} and none answered");
         None
+    }
+
+    pub async fn request_state_trienodes_without_retries(
+        &self,
+        peer_channel: &mut PeerChannels,
+        state_root: H256,
+        paths: Vec<Nibbles>,
+    ) -> Option<Vec<Node>> {
+        let expected_nodes = paths.len();
+        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
+        // This is so we avoid penalizing peers due to requesting stale data
+
+        let request_id = rand::random();
+        let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+            id: request_id,
+            root_hash: state_root,
+            // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
+            paths: paths
+                .iter()
+                .map(|vec| vec![Bytes::from(vec.encode_compact())])
+                .collect(),
+            bytes: MAX_RESPONSE_BYTES,
+        });
+        let nodes =
+            super::utils::send_message_and_wait_for_response(peer_channel, request, request_id)
+                .await?;
+
+        if nodes.is_empty() || nodes.len() > expected_nodes {
+            return None;
+        }
+
+        Some(nodes)
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and

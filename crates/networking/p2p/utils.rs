@@ -4,8 +4,14 @@ use std::{
 };
 
 use ethrex_common::{H256, H512, types::BlockHeader};
+use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
+
+use crate::{
+    kademlia::PeerChannels,
+    rlpx::{Message, connection::server::CastMessage, message::RLPxMessage, snap::TrieNodes},
+};
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
@@ -62,4 +68,45 @@ pub fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
+}
+
+pub async fn send_message_and_wait_for_response(
+    peer_channel: &mut PeerChannels,
+    message: Message,
+    request_id: u64,
+) -> Option<Vec<Node>> {
+    let mut receiver = peer_channel.receiver.lock().await;
+    if let Err(err) = peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(message))
+        .await
+    {
+        return None;
+    }
+    let response = tokio::time::timeout(Duration::from_secs(7), async move {
+        loop {
+            let Some(resp) = receiver.recv().await else {
+                return None;
+            };
+            match resp {
+                Message::TrieNodes(TrieNodes { id, nodes }) if id == request_id => {
+                    return Some(nodes);
+                }
+                // Ignore replies that don't match the expected id (such as late responses)
+                _ => continue,
+            }
+        }
+    })
+    .await;
+    // TODO: add error handling
+    let Ok(Some(nodes)) = response else {
+        return None;
+    };
+
+    let nodes = nodes
+        .iter()
+        .map(|node| Node::decode_raw(node))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    Some(nodes)
 }
