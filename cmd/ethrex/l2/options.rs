@@ -723,6 +723,9 @@ pub struct MonitorOptions {
 
 impl Default for MonitorOptions {
     fn default() -> Self {
-        Self { tick_rate: 1000, batch_widget_height: None}
+        Self {
+            tick_rate: 1000,
+            batch_widget_height: None,
+        }
     }
 }
