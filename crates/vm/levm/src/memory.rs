@@ -216,6 +216,20 @@ impl MemoryAllocator {
             "attempt to grow a memory into another memory's buffer space",
         );
     }
+
+    #[cfg(debug_assertions)]
+    pub fn drop_memory(&self, memory_offset: usize) {
+        let state = unsafe { &mut *self.0.get() };
+
+        // Find the memory offset in the stack.
+        let stack_offset = state
+            .memory_stack
+            .binary_search(&memory_offset)
+            .expect("requested memory not in memory stack");
+
+        // Remove the memory from the tracked list.
+        state.memory_stack.remove(stack_offset);
+    }
 }
 
 impl Default for MemoryAllocator {
@@ -256,10 +270,14 @@ impl Memory {
 
     // TODO: Remove once slices are properly implemented.
     pub fn grow_to(&mut self, len: usize) {
-        self.maybe_grow(len, len);
+        self.maybe_grow(self.range.start + len, self.range.start + len);
     }
 
     pub fn as_slice(&mut self, offset: usize, len: usize) -> &[u8] {
+        if len == 0 {
+            return &[];
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -280,6 +298,10 @@ impl Memory {
     // TODO: try_get_slice_uninit().
 
     pub fn read(&mut self, offset: usize, buffer: &mut [u8]) {
+        if buffer.len() == 0 {
+            return;
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -294,6 +316,10 @@ impl Memory {
     }
 
     pub fn try_read(&self, offset: usize, buffer: &mut [u8]) -> Result<(), ()> {
+        if buffer.len() == 0 {
+            return Ok(());
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -356,6 +382,10 @@ impl Memory {
     }
 
     pub fn write(&mut self, offset: usize, buffer: &[u8]) {
+        if buffer.len() == 0 {
+            return;
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -370,6 +400,10 @@ impl Memory {
     }
 
     pub fn try_write(&mut self, offset: usize, buffer: &[u8]) -> Result<(), ()> {
+        if buffer.len() == 0 {
+            return Ok(());
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -587,6 +621,10 @@ impl Memory {
     }
 
     pub fn fill_zeroes(&mut self, offset: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -601,6 +639,10 @@ impl Memory {
     }
 
     pub fn try_fill_zeroes(&mut self, offset: usize, len: usize) -> Result<(), ()> {
+        if len == 0 {
+            return Ok(());
+        }
+
         // Compute allocator buffer range.
         let range = {
             let offset = self.range.start + offset;
@@ -659,6 +701,13 @@ impl fmt::Debug for Memory {
         f.debug_tuple("Memory")
             .field(&self.allocator.as_slice(self.range.start, self.len()))
             .finish()
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for Memory {
+    fn drop(&mut self) {
+        self.allocator.drop_memory(self.range.start);
     }
 }
 
