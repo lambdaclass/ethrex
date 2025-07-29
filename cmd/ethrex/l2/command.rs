@@ -2,11 +2,11 @@ use crate::{
     DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::init_store,
-    l2::{self},
+    l2::{self, init_l2, options::Options},
     networks::Network,
     utils::{parse_private_key, set_datadir},
 };
-use clap::Subcommand;
+use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -31,6 +31,34 @@ use std::{
     time::Duration,
 };
 use tracing::info;
+
+#[derive(Parser)]
+#[clap(args_conflicts_with_subcommands = true)]
+pub struct L2Command {
+    #[clap(subcommand)]
+    pub command: Option<Command>,
+    #[clap(flatten)]
+    pub opts: Option<Options>,
+}
+
+impl L2Command {
+    pub async fn run(self) -> eyre::Result<()> {
+        if let Some(cmd) = self.command {
+            return cmd.run().await;
+        }
+        let mut app = clap::Command::new("init");
+        app = <Options as clap::Args>::augment_args(app);
+
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let args_with_program = std::iter::once("init".to_string())
+            .chain(args.into_iter())
+            .collect::<Vec<_>>();
+
+        let matches = app.try_get_matches_from(args_with_program)?;
+        let init_options = Options::from_arg_matches(&matches)?;
+        init_l2(init_options).await
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
