@@ -306,7 +306,7 @@ impl L1ProofSender {
         )
         .await;
 
-        if let Err(EthClientError::EstimateGasError(EstimateGasError::Custom(error))) =
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
         {
             error!("Error: {}", error);
