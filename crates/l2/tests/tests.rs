@@ -1701,8 +1701,14 @@ fn get_contract_dependencies(contracts_path: &Path) {
 fn clean_contracts_dir() {
     let lib_path = Path::new("contracts/lib");
     let solc_path = Path::new("contracts/solc_out");
-    std::fs::remove_dir_all(&lib_path).unwrap();
-    std::fs::remove_dir_all(&solc_path).unwrap();
+
+    let _ = std::fs::remove_dir_all(&lib_path).inspect_err(|e| {
+        println!("Failed to remove {}: {}", lib_path.display(), e);
+    });
+    let _ = std::fs::remove_dir_all(&solc_path).inspect_err(|e| {
+        println!("Failed to remove {}: {}", solc_path.display(), e);
+    });
+
     println!(
         "Cleaned up {} and {}",
         lib_path.display(),
