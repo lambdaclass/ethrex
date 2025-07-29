@@ -425,6 +425,24 @@ impl StoreEngineRollup for Store {
         .await
         .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(RollupStoreError::LibmdbxError)?;
+        let key = (batch_number, proof_type.into());
+        let val = tx
+            .get::<BatchProofs>(key)
+            .map_err(RollupStoreError::LibmdbxError)?;
+        tx.delete::<BatchProofs>(key, val)
+            .map_err(RollupStoreError::LibmdbxError)?;
+        Ok(())
+    }
 }
 
 /// Deletes keys above key, assuming they are contiguous

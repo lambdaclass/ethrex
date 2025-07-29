@@ -358,4 +358,14 @@ impl Store {
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
     }
+
+    pub async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
+    }
 }

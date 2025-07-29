@@ -464,6 +464,17 @@ impl StoreEngineRollup for RedBStoreRollup {
         .await
         .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let txn = self.db.begin_write().map_err(Box::new)?;
+        let mut table = tx.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
+        table.remove((batch_number, proof_type.into()))?;
+        Ok(())
+    }
 }
 
 /// Deletes keys above key, assuming they are contiguous

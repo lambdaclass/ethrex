@@ -320,6 +320,16 @@ impl StoreEngineRollup for Store {
         }
         Ok(())
     }
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let mut inner = self.inner()?;
+        inner.batch_proofs.remove(&(proof_type, batch_number));
+        Ok(())
+    }
 }
 
 impl Debug for Store {
