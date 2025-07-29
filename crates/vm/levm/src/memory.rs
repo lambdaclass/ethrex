@@ -412,6 +412,10 @@ impl Memory {
     }
 
     pub fn copy(&mut self, source: usize, target: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         let source = {
             let offset = self.range.start + source;
             offset..offset + len
@@ -448,6 +452,10 @@ impl Memory {
     }
 
     pub fn try_copy(&mut self, source: usize, target: usize, len: usize) -> Result<(), ()> {
+        if len == 0 {
+            return Ok(());
+        }
+
         let source = {
             let offset = self.range.start + source;
             offset..offset + len
@@ -487,6 +495,10 @@ impl Memory {
     }
 
     pub fn copy_nonoverlapping(&mut self, source: usize, target: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         let source = {
             let offset = self.range.start + source;
             offset..offset + len
@@ -530,6 +542,10 @@ impl Memory {
         target: usize,
         len: usize,
     ) -> Result<(), ()> {
+        if len == 0 {
+            return Ok(());
+        }
+
         let source = {
             let offset = self.range.start + source;
             offset..offset + len
