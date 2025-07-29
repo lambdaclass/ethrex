@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753774651872,
+  "lastUpdate": 1753775588658,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13891,6 +13891,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013137125984251968,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "67700abf73d48ea46a1f37e1e989cb7aad813d19",
+          "message": "feat(l2): allow setting height of the batch widget (#3690)\n\n**Motivation**\n\nUser might want to customize the UI\n\n**Description**\n\nAdds a CLI flag to set the height of the batch widget.\n\nCloses #3528\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-07-28T16:32:20Z",
+          "tree_id": "5233f78f5d9ec352bb06cd4e33bf96c9088426e0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67700abf73d48ea46a1f37e1e989cb7aad813d19"
+        },
+        "date": 1753775587965,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007374209944751382,
             "unit": "Mgas/s"
           }
         ]
