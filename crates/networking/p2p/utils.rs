@@ -4,9 +4,11 @@ use std::{
 };
 
 use ethrex_common::{H256, H512, types::BlockHeader};
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::error::GenServerError;
 
 use crate::{
     kademlia::PeerChannels,
@@ -74,39 +76,45 @@ pub async fn send_message_and_wait_for_response(
     peer_channel: &mut PeerChannels,
     message: Message,
     request_id: u64,
-) -> Option<Vec<Node>> {
+) -> Result<Vec<Node>, SendMessageError> {
     let mut receiver = peer_channel.receiver.lock().await;
-    if let Err(err) = peer_channel
+    peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
         .await
-    {
-        return None;
-    }
-    let response = tokio::time::timeout(Duration::from_secs(7), async move {
+        .map_err(SendMessageError::GenServerError)?;
+    let nodes = tokio::time::timeout(Duration::from_secs(7), async move {
         loop {
             let Some(resp) = receiver.recv().await else {
                 return None;
             };
-            match resp {
-                Message::TrieNodes(TrieNodes { id, nodes }) if id == request_id => {
+            if let Message::TrieNodes(TrieNodes { id, nodes }) = resp {
+                if id == request_id {
                     return Some(nodes);
                 }
-                // Ignore replies that don't match the expected id (such as late responses)
-                _ => continue,
             }
         }
     })
-    .await;
-    // TODO: add error handling
-    let Ok(Some(nodes)) = response else {
-        return None;
-    };
+    .await
+    .map_err(|_| SendMessageError::PeerTimeout)?
+    .ok_or_else(|| SendMessageError::PeerDisconnected)?;
 
-    let nodes = nodes
+    nodes
         .iter()
         .map(|node| Node::decode_raw(node))
         .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    Some(nodes)
+        .map_err(SendMessageError::RLPDecodeError)
+}
+
+// TODO: find a better name for this type
+#[derive(thiserror::Error, Debug)]
+pub enum SendMessageError {
+    #[error("Peer timed out")]
+    PeerTimeout,
+    #[error("GenServerError")]
+    GenServerError(GenServerError),
+    #[error("Peer disconnected")]
+    PeerDisconnected,
+    #[error("RLP decode error")]
+    RLPDecodeError(RLPDecodeError),
 }

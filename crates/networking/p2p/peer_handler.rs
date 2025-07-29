@@ -33,7 +33,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::current_unix_time,
+    utils::{SendMessageError, current_unix_time},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -139,7 +139,7 @@ impl PeerHandler {
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
+    pub async fn get_peer_channel_with_retry(
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
@@ -1763,89 +1763,12 @@ impl PeerHandler {
         tx.send(task_result).await.ok();
     }
 
-    /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
-    /// Returns the nodes or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_state_trienodes(
-        &self,
-        state_root: H256,
-        paths: Vec<Nibbles>,
-    ) -> Option<Vec<Node>> {
-        let expected_nodes = paths.len();
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-                id: request_id,
-                root_hash: state_root,
-                // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-                paths: paths
-                    .iter()
-                    .map(|vec| vec![Bytes::from(vec.encode_compact())])
-                    .collect(),
-                bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(nodes) = tokio::time::timeout(Duration::from_secs(7), async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => {
-                            info!("we received noting from a peer");
-                            return None;
-                        }
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                self.record_snap_peer_success(peer_id, peer_ids).await;
-                return Some(nodes);
-            }
-        }
-        info!("we tried all these nodes {peer_ids:?} and none answered");
-        None
-    }
-
-    pub async fn request_state_trienodes_without_retries(
         &self,
         peer_channel: &mut PeerChannels,
         state_root: H256,
-        paths: Vec<Nibbles>,
-    ) -> Option<Vec<Node>> {
+        paths: &Vec<Nibbles>,
+    ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
         let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
@@ -1863,13 +1786,14 @@ impl PeerHandler {
         });
         let nodes =
             super::utils::send_message_and_wait_for_response(peer_channel, request, request_id)
-                .await?;
+                .await
+                .map_err(RequestStateTrieNodesError::SendMessageError)?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
-            return None;
+            return Err(RequestStateTrieNodesError::InvalidData);
         }
 
-        Some(nodes)
+        Ok(nodes)
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and
@@ -2029,4 +1953,12 @@ impl PeerHandler {
         }
         None
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RequestStateTrieNodesError {
+    #[error("Send message error")]
+    SendMessageError(SendMessageError),
+    #[error("Invalid data")]
+    InvalidData,
 }

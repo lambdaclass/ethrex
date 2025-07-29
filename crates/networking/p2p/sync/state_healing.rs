@@ -20,7 +20,10 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
 
-use crate::{peer_handler::PeerHandler, sync::node_missing_children};
+use crate::{
+    kademlia::PeerChannels, peer_handler::PeerHandler, rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    sync::node_missing_children,
+};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -63,6 +66,7 @@ pub(crate) async fn heal_state_trie(
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
     while !paths.is_empty() {
+        let mut stale = false;
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
             info!("State Healing in Progress, pending paths: {}", paths.len());
@@ -70,15 +74,23 @@ pub(crate) async fn heal_state_trie(
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
+            let (peer_id, mut peer_channel) = peers
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .unwrap();
+            // TODO: add retry logic
+            let Ok(nodes) = peers
+                .request_state_trienodes(&mut peer_channel, state_root, &paths)
+                .await
+            else {
+                // If the response is None, assume we are stale
+                stale = true;
+                break;
+            };
             // Spawn fetcher for the batch
             let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            state_tasks.spawn(heal_state_batch(
-                state_root,
-                batch,
-                peers.clone(),
-                store.clone(),
-                //bytecode_sender.clone(),
-            ));
+
+            state_tasks.spawn(heal_state_batch(batch, nodes, store.clone()));
             // End loop if we have no more paths to fetch
             if paths.is_empty() {
                 info!("paths.is_empty()");
@@ -86,10 +98,9 @@ pub(crate) async fn heal_state_trie(
             }
         }
         // Process the results of each batch
-        let mut stale = false;
         for res in state_tasks.join_all().await {
-            let (return_paths, is_stale) = res?;
-            stale |= is_stale;
+            let return_paths = res?;
+            // stale |= is_stale;
             paths.extend(return_paths);
         }
         if stale {
@@ -111,79 +122,68 @@ pub(crate) async fn heal_state_trie(
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
 /// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
-/// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_state_batch(
-    state_root: H256,
     mut batch: Vec<Nibbles>,
-    peers: PeerHandler,
+    nodes: Vec<Node>,
     store: Store,
-    //bytecode_sender: Sender<Vec<H256>>,
-) -> Result<(Vec<Nibbles>, bool), SyncError> {
-    if let Some(nodes) = peers
-        .request_state_trienodes(state_root, batch.clone())
-        .await
+) -> Result<Vec<Nibbles>, SyncError> {
+    let mut hashed_addresses = vec![];
+    let mut code_hashes = vec![];
+    // For each node:
+    // - Add its children to the queue (if we don't have them already)
+    // - If it is a leaf, request its bytecode & storage
+    // - If it is a leaf, add its path & value to the trie
     {
-        debug!("Received {} state nodes", nodes.len());
-        let mut hashed_addresses = vec![];
-        let mut code_hashes = vec![];
-        // For each fetched node:
-        // - Add its children to the queue (if we don't have them already)
-        // - If it is a leaf, request its bytecode & storage
-        // - If it is a leaf, add its path & value to the trie
-        {
-            let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
-            for node in nodes.iter() {
-                let path = batch.remove(0);
-                batch.extend(node_missing_children(node, &path, trie.db())?);
-                if let Node::Leaf(node) = &node {
-                    // Fetch bytecode & storage
-                    let account = AccountState::decode(&node.value)?;
-                    // By now we should have the full path = account hash
-                    let path = &path.concat(node.partial.clone()).to_bytes();
-                    if path.len() != 32 {
-                        // Something went wrong
-                        return Err(SyncError::CorruptPath);
-                    }
-                    let account_hash = H256::from_slice(path);
-                    if account.storage_root != *EMPTY_TRIE_HASH
-                        && !store.contains_storage_node(account_hash, account.storage_root)?
-                    {
-                        hashed_addresses.push(account_hash);
-                    }
-                    if account.code_hash != *EMPTY_KECCACK_HASH
-                        && store.get_account_code(account.code_hash)?.is_none()
-                    {
-                        code_hashes.push(account.code_hash);
-                    }
+        let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+        for node in nodes.iter() {
+            let path = batch.remove(0);
+            batch.extend(node_missing_children(node, &path, trie.db())?);
+            if let Node::Leaf(node) = &node {
+                // Fetch bytecode & storage
+                let account = AccountState::decode(&node.value)?;
+                // By now we should have the full path = account hash
+                let path = &path.concat(node.partial.clone()).to_bytes();
+                if path.len() != 32 {
+                    // Something went wrong
+                    return Err(SyncError::CorruptPath);
+                }
+                let account_hash = H256::from_slice(path);
+                if account.storage_root != *EMPTY_TRIE_HASH
+                    && !store.contains_storage_node(account_hash, account.storage_root)?
+                {
+                    hashed_addresses.push(account_hash);
+                }
+                if account.code_hash != *EMPTY_KECCACK_HASH
+                    && store.get_account_code(account.code_hash)?.is_none()
+                {
+                    code_hashes.push(account.code_hash);
                 }
             }
-            // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
         }
-        // Send storage & bytecode requests
-        if !hashed_addresses.is_empty() {
-            store
-                .set_storage_heal_paths(
-                    hashed_addresses
-                        .into_iter()
-                        .map(|hash| (hash, vec![Nibbles::default()]))
-                        .collect(),
-                )
-                .await?;
-        }
-        if !code_hashes.is_empty() {
-            //bytecode_sender.send(code_hashes).await?;
-        }
-        Ok((batch, false))
-    } else {
-        Ok((batch, true))
+        // Write nodes to trie
+        trie.db().put_batch(
+            nodes
+                .into_iter()
+                .filter_map(|node| match node.compute_hash() {
+                    hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                    NodeHash::Inline(_) => None,
+                })
+                .collect(),
+        )?;
     }
+    // Send storage & bytecode requests
+    if !hashed_addresses.is_empty() {
+        store
+            .set_storage_heal_paths(
+                hashed_addresses
+                    .into_iter()
+                    .map(|hash| (hash, vec![Nibbles::default()]))
+                    .collect(),
+            )
+            .await?;
+    }
+    if !code_hashes.is_empty() {
+        //bytecode_sender.send(code_hashes).await?;
+    }
+    Ok(batch)
 }
