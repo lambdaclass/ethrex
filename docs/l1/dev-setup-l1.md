@@ -158,7 +158,7 @@ Commands:
   import              Import blocks to the database
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
-  l2
+  l2                  Initialize an ethrex L2 node
   help                Print this message or the help of the given subcommand(s)
 
 Options:

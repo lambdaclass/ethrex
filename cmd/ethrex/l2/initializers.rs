@@ -168,7 +168,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn init_rpc_api(
+async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
@@ -211,7 +211,7 @@ pub async fn init_rpc_api(
     tracker.spawn(rpc_api);
 }
 
-pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
+fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
         return Vec::new();
@@ -250,7 +250,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     rollup_store
 }
 
-pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -263,7 +263,7 @@ pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) {
+fn init_tracing(opts: &L2Options) {
     if opts.sequencer_opts.monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");

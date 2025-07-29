@@ -2,7 +2,7 @@ use crate::{
     DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::init_store,
-    l2::{self, initializers::init_l2, options::Options},
+    l2::{self, init_l2, options::Options},
     networks::Network,
     utils::{parse_private_key, set_datadir},
 };
@@ -34,14 +34,14 @@ use tracing::info;
 
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
-pub struct CommandL2 {
+pub struct L2Command {
     #[clap(subcommand)]
     pub command: Option<Command>,
     #[clap(flatten)]
     pub opts: Option<Options>,
 }
 
-impl CommandL2 {
+impl L2Command {
     pub async fn run(self) -> eyre::Result<()> {
         if let Some(cmd) = self.command {
             return cmd.run().await;
