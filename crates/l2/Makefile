@@ -134,7 +134,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
 	l2 \
 	--watcher.block-delay 0 \
-	--network ${L2_GENESIS_FILE_PATH} --monitor \
+	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \

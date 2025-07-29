@@ -361,7 +361,7 @@ impl EthrexMonitorWidget {
                 {
                     let constraints = vec![
                         Constraint::Fill(1),
-                        Constraint::Length(LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS),
+                        Constraint::Length(130),
                     ];
 
                     let chunks = Layout::horizontal(constraints)
