@@ -73,6 +73,8 @@ jobs:
           load: true
           tags: ethrex
           outputs: type=docker,dest=/tmp/ethrex_image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -124,6 +126,7 @@ jobs:
     needs: [docker_build]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: Transaction Check
@@ -155,7 +158,7 @@ jobs:
           enclave_name: ${{ matrix.enclave_name }}
           kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "f3000571b26b4617fcfcb7638a78fc3492f08858"
+          ethereum_package_branch: "1aca78152df16ca3bcd965662634759a43f9b2a4"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
