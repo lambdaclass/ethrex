@@ -237,16 +237,15 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --bin ethrex -- \
+	cargo run --release --manifest-path ../../Cargo.toml --features rollup_storage_sql -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
-	cargo b --manifest-path ../../Cargo.toml --release
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
-	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 
 	cargo test state_reconstruct --release

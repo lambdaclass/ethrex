@@ -61,7 +61,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["libmdbx", "c-kzg", "blst"]
+default = ["libmdbx", "c-kzg", "blst", "rollup_storage_sql"]
 dev = ["dep:ethrex-dev", "debug"]
 c-kzg = [
   "ethrex-vm/c-kzg",
