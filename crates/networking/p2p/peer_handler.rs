@@ -1773,9 +1773,11 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
+            let scores = self.peer_scores.lock().await;
             let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .get_peer_channel_with_highest_score(&SUPPORTED_SNAP_CAPABILITIES, &scores)
                 .await?;
+            drop(scores);
             peer_ids.insert(peer_id);
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel
