@@ -767,7 +767,7 @@ impl PeerHandler {
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (128 * 12);
+        let time_limit = pivot_header.timestamp + (MAX_BLOCK_BODIES_TO_REQUEST as u64 * 12);
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
@@ -1343,7 +1343,7 @@ impl PeerHandler {
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (128 * 12);
+        let time_limit = pivot_header.timestamp + (MAX_BLOCK_BODIES_TO_REQUEST as u64 * 12);
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1837,7 +1837,11 @@ impl PeerHandler {
         }
         info!("we tried all these nodes {peer_ids:?} and none answered");
         for peer_id in peer_ids {
-            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
+            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| {
+                info!("peer {peer_id} score before {}", *score);
+                *score -= 1;
+                info!("peer {peer_id} score after {}", *score);
+            });
         }
         None
     }

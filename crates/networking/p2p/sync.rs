@@ -569,11 +569,11 @@ impl Syncer {
             let mut healing_done = false;
             while !healing_done {
                 (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
-                healing_done = heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit).await?;
+                healing_done = heal_state_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, time_limit).await?;
                 if !healing_done {
                     continue;
                 }
-                healing_done = heal_storage_trie_wrap(state_root, store.clone(), &self.peers,time_limit).await?;
+                healing_done = heal_storage_trie_wrap(pivot_header.state_root, store.clone(), &self.peers,time_limit).await?;
             }
             info!("Finished healing");
 
