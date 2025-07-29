@@ -1,4 +1,4 @@
-.PHONY: help init down restart init-local-l1 down-local-l1 restart-local-l1 \
+.PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 update-system-contracts \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
 	init-prover build-prover clean-tee clean-tee-contract-deps \
@@ -13,11 +13,11 @@
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 update-system-contracts deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-l1-docker update-system-contracts deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
-down: down-local-l1 down-l2 down-metrics ## 🛑 Shuts down the localnet
+down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
 
-restart: restart-local-l1 deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
+restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
 # ==============================================================================
 # Variables
@@ -59,13 +59,13 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 # L1
 # ==============================================================================
 
-init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
+init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
 
-down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
+down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
 
-restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
+restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
