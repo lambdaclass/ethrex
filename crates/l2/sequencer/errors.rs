@@ -127,7 +127,7 @@ pub enum ProofSenderError {
     UnknownError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
-    #[error("Unknown Error: {0}")]
+    #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
