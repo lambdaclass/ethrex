@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -531,6 +533,25 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBlockByHashError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn peer_count(&self) -> Result<U256, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "net_peerCount".to_string(),
+            params: Some(vec![]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetPeerCountError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetPeerCountError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
