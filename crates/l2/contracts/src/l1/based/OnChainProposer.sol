@@ -513,7 +513,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (bool, string memory) {
-        if (publicData.length != 256) {
+        if (publicData.length != 224) {
             return (false, "invalid public data length");
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -553,24 +553,14 @@ contract OnChainProposer is
                 "privileged transactions hash public input does not match with committed transactions"
             );
         }
-        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
-        if (
-            batchCommitments[batchNumber].stateDiffKZGVersionedHash !=
-            blobVersionedHash
-        ) {
-            return (
-                false,
-                "blob versioned hash public input does not match with committed hash"
-            );
-        }
-        bytes32 lastBlockHash = bytes32(publicData[160:192]);
+        bytes32 lastBlockHash = bytes32(publicData[128:160]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
             return (
                 false,
                 "last block hash public inputs don't match with last block hash"
             );
         }
-        uint256 chainId = uint256(bytes32(publicData[192:224]));
+        uint256 chainId = uint256(bytes32(publicData[160:182]));
         if (chainId != CHAIN_ID) {
             return (
                 false,
@@ -578,7 +568,7 @@ contract OnChainProposer is
             );
         }
         uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[224:256])
+            bytes32(publicData[192:224])
         );
         if (
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
