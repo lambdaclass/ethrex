@@ -234,12 +234,10 @@ module.exports = async ({ github, context }) => {
     // Determine new status of the PR.
     let newStatus = null;
 
-    if (isDraftTransition) {
+    if (isDraftTransition || requestedChanges) {
         newStatus = "In Progress";
     } else if (readyForReview || ((action === "opened" || action === "reopened") && !pr.draft)) {
         newStatus = "In Review";
-    } else if (requestedChanges) {
-        newStatus = "Requested Changes";
     }
 
     if (!newStatus) {
