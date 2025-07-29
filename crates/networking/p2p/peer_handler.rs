@@ -1794,8 +1794,8 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
+                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score += 1);
                             return Some(nodes);
-                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
