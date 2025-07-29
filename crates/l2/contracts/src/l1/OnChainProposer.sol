@@ -299,7 +299,12 @@ contract OnChainProposer is
                 risc0Journal
             );
             if (!success) {
-                revert(string.concat("Invalid RISC0 proof: ", reason));
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid RISC0 proof: ",
+                        reason
+                    )
+                );
             }
             try
                 IRiscZeroVerifier(R0VERIFIER).verify(
@@ -308,7 +313,9 @@ contract OnChainProposer is
                     sha256(risc0Journal)
                 )
             {} catch {
-                revert("Invalid RISC0 proof");
+                revert(
+                    "OnChainProposer: Invalid RISC0 proof failed proof verification"
+                );
             }
         }
 
@@ -319,7 +326,12 @@ contract OnChainProposer is
                 sp1PublicValues[8:]
             );
             if (!success) {
-                revert(string.concat("Invalid SP1 proof: ", reason));
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid SP1 proof: ",
+                        reason
+                    )
+                );
             }
             try
                 ISP1Verifier(SP1VERIFIER).verifyProof(
@@ -328,7 +340,9 @@ contract OnChainProposer is
                     sp1ProofBytes
                 )
             {} catch {
-                revert("Invalid SP1 proof");
+                revert(
+                    "OnChainProposer: Invalid SP1 proof failed proof verification"
+                );
             }
         }
 
@@ -339,12 +353,19 @@ contract OnChainProposer is
                 tdxPublicValues
             );
             if (!success) {
-                revert(string.concat("Invalid TDX proof: ", reason));
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid TDX proof: ",
+                        reason
+                    )
+                );
             }
             try
                 ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature)
             {} catch {
-                revert("Invalid TDX proof");
+                revert(
+                    "OnChainProposer: Invalid TDX proof failed proof verification"
+                );
             }
         }
 
