@@ -18,7 +18,7 @@ use tracing::{Level, info, warn};
 use crate::{
     DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
-    l2::{self, SequencerOptions},
+    l2::{self},
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
