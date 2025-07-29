@@ -1038,7 +1038,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         info!("Trying to update pivot");
         let new_pivot_block_number = block_number + MAX_BLOCK_BODIES_TO_REQUEST as u64;
         let scores = peers.peer_scores.lock().await;
-        let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
+        let Some(pivot) = peers.get_block_header(new_pivot_block_number - 1, &scores).await else {
             warn!("Received None pivot. Retrying");
             tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
