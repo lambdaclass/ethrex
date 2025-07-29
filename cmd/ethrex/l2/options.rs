@@ -174,7 +174,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             based: BasedConfig {
-                based: opts.based,
+                enabled: opts.based,
                 state_updater: StateUpdaterConfig {
                     sequencer_registry: opts
                         .based_opts
@@ -200,6 +200,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             },
             monitor: MonitorConfig {
                 tick_rate: opts.monitor_opts.tick_rate,
+                batch_widget_height: opts.monitor_opts.batch_widget_height,
             },
         })
     }
@@ -663,4 +664,6 @@ pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
     tick_rate: u64,
+    #[arg(long)]
+    batch_widget_height: Option<u16>,
 }
