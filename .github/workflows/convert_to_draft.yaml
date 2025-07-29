@@ -1,0 +1,43 @@
+name: Convert PR to Draft
+
+on:
+  pull_request:
+    types:
+      [
+        opened,
+        synchronize,
+        reopened,
+        ready_for_review,
+        review_requested,
+        auto_merge_enabled,
+      ]
+
+# If you want to cancel the previous workflow if a new one is triggered, use the following concurrency setting.
+concurrency:
+  # Group by pull request
+  group: ${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  convert_to_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Convert PR to Draft
+        env:
+          # The GITHUB_TOKEN is automatically provided by GitHub
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The pull request's unique node_id is needed for the GraphQL API
+          PR_ID: ${{ github.event.pull_request.node_id }}
+        run: |
+          gh api graphql -f query='
+            mutation($pr_id:ID!) {
+              convertPullRequestToDraft(input: {pullRequestId: $pr_id}) {
+                pullRequest {
+                  id
+                }
+              }
+            }' -f pr_id=$PR_ID
