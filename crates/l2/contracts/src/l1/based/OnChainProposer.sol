@@ -345,28 +345,79 @@ contract OnChainProposer is
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, risc0Journal);
-            IRiscZeroVerifier(R0VERIFIER).verify(
-                risc0BlockProof,
-                RISC0_VERIFICATION_KEY,
-                sha256(risc0Journal)
+            (bool success, string memory reason) = _verifyPublicData(
+                batchNumber,
+                risc0Journal
             );
+            if (!success) {
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid RISC0 proof: ",
+                        reason
+                    )
+                );
+            }
+            try
+                IRiscZeroVerifier(R0VERIFIER).verify(
+                    risc0BlockProof,
+                    RISC0_VERIFICATION_KEY,
+                    sha256(risc0Journal)
+                )
+            {} catch {
+                revert(
+                    "OnChainProposer: Invalid RISC0 proof failed proof verification"
+                );
+            }
         }
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
-            ISP1Verifier(SP1VERIFIER).verifyProof(
-                SP1_VERIFICATION_KEY,
-                sp1PublicValues,
-                sp1ProofBytes
+            (bool success, string memory reason) = _verifyPublicData(
+                batchNumber,
+                sp1PublicValues[8:]
             );
+            if (!success) {
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid SP1 proof: ",
+                        reason
+                    )
+                );
+            }
+            try
+                ISP1Verifier(SP1VERIFIER).verifyProof(
+                    SP1_VERIFICATION_KEY,
+                    sp1PublicValues,
+                    sp1ProofBytes
+                )
+            {} catch {
+                revert(
+                    "OnChainProposer: Invalid SP1 proof failed proof verification"
+                );
+            }
         }
 
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            (bool success, string memory reason) = _verifyPublicData(
+                batchNumber,
+                tdxPublicValues
+            );
+            if (!success) {
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid TDX proof: ",
+                        reason
+                    )
+                );
+            }
+            try
+                ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature)
+            {} catch {
+                revert(
+                    "OnChainProposer: Invalid TDX proof failed proof verification"
+                );
+            }
         }
 
         lastVerifiedBatch = batchNumber;
@@ -418,8 +469,18 @@ contract OnChainProposer is
             }
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
-
+            (bool success, string memory reason) = _verifyPublicData(
+                batchNumber,
+                alignedPublicInputsList[i][8:]
+            );
+            if (!success) {
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid ALIGNED proof: ",
+                        reason
+                    )
+                );
+            }
             bytes memory callData = abi.encodeWithSignature(
                 "verifyProofInclusion(bytes32[],bytes32,bytes)",
                 alignedMerkleProofsList[i],
@@ -451,53 +512,84 @@ contract OnChainProposer is
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
-    ) internal view {
-        require(
-            publicData.length == 224,
-            "OnChainProposer: invalid public data length"
-        );
+    ) internal view returns (bool, string memory) {
+        if (publicData.length != 256) {
+            return (false, "invalid public data length");
+        }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
-        require(
-            batchCommitments[lastVerifiedBatch].newStateRoot ==
-                initialStateRoot,
-            "OnChainProposer: initial state root public inputs don't match with initial state root"
-        );
+        if (
+            batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
+        ) {
+            return (
+                false,
+                "initial state root public inputs don't match with initial state root"
+            );
+        }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
-        require(
-            batchCommitments[batchNumber].newStateRoot == finalStateRoot,
-            "OnChainProposer: final state root public inputs don't match with final state root"
-        );
+        if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
+            return (
+                false,
+                "final state root public inputs don't match with final state root"
+            );
+        }
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
-        require(
-            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                withdrawalsMerkleRoot,
-            "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
-        );
+        if (
+            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
+            withdrawalsMerkleRoot
+        ) {
+            return (
+                false,
+                "withdrawals public inputs don't match with committed withdrawals"
+            );
+        }
         bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
-        require(
+        if (
             batchCommitments[batchNumber]
-                .processedPrivilegedTransactionsRollingHash ==
-                privilegedTransactionsHash,
-            "OnChainProposer: privileged transaction hash public input does not match with committed transactions"
-        );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
-        require(
-            batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
-            "OnChainProposer: last block hash public inputs don't match with last block hash"
-        );
-        uint256 chainId = uint256(bytes32(publicData[160:192]));
-        require(
-            chainId == CHAIN_ID,
-            "OnChainProposer: given chain id does not correspond to this network"
-        );
+                .processedPrivilegedTransactionsRollingHash !=
+            privilegedTransactionsHash
+        ) {
+            return (
+                false,
+                "privileged transactions hash public input does not match with committed transactions"
+            );
+        }
+        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
+        if (
+            batchCommitments[batchNumber].stateDiffKZGVersionedHash !=
+            blobVersionedHash
+        ) {
+            return (
+                false,
+                "blob versioned hash public input does not match with committed hash"
+            );
+        }
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
+        if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
+            return (
+                false,
+                "last block hash public inputs don't match with last block hash"
+            );
+        }
+        uint256 chainId = uint256(bytes32(publicData[192:224]));
+        if (chainId != CHAIN_ID) {
+            return (
+                false,
+                "given chain id does not correspond to this network"
+            );
+        }
         uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
+            bytes32(publicData[224:256])
         );
-        require(
-            !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
-                nonPrivilegedTransactions == 0,
-            "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
-        );
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            nonPrivilegedTransactions != 0
+        ) {
+            return (
+                false,
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
+            );
+        }
+        return (true, "ok");
     }
 
     /// @notice Allow owner to upgrade the contract.
