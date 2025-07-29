@@ -1,4 +1,10 @@
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd)]
+use crate::{
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    vm::VM,
+};
+use strum::EnumString;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
     STOP = 0x00,
