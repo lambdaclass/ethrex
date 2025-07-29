@@ -97,10 +97,7 @@ pub fn parse_dir(
 
 pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError> {
     let mut tests = Vec::new();
-    let mut skipped: Vec<PathBuf> = IGNORED_TESTS
-        .iter()
-        .map(|test| PathBuf::from(test))
-        .collect();
+    let mut skipped: Vec<PathBuf> = IGNORED_TESTS.iter().map(PathBuf::from).collect();
     skipped.append(&mut options.skip_files);
 
     if !options.json_files.is_empty() {
