@@ -1794,11 +1794,18 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
-                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score += 1);
+                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| 
+                                if *score < 10 {
+                                    *score += 1
+                                }
+                            );
                             return Some(nodes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
+                        Some(_) => {
+                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
+                            continue
+                        },
                         None => {
                             info!("we received noting from a peer");
                             self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
@@ -1826,8 +1833,6 @@ impl PeerHandler {
             }
         }
         info!("we tried all these nodes {peer_ids:?} and none answered");
-        for peer_id in peer_ids {
-        }
         None
     }
 
