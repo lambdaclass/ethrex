@@ -69,20 +69,15 @@ impl DiscoveryServerState {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
             let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
-            if self
-                .udp_socket
-                .peer_addr()
-                .expect("self.udp_socket.peer_addr()")
-                == from
-            {
-                // Ignore packets sent to ourselves
-                continue;
-            }
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
                 continue;
             };
+            if packet.get_node_id() == self.local_node.node_id() {
+                // Ignore packets sent by ourselves
+                continue;
+            }
             let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
             let _ = conn_handle
                 .cast(ConnectionHandlerInMessage::from(packet, from))
