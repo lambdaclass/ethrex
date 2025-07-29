@@ -266,8 +266,8 @@ impl Memory {
             offset..offset + len
         };
 
-        // Grow memory if necessary, zero-filling as needed until `offset`.
-        self.maybe_grow(range.end, range.start);
+        // Grow memory if necessary, zero-filling as needed.
+        self.maybe_grow(range.end, range.end);
 
         self.allocator.as_slice(range.start, len)
     }
@@ -287,7 +287,7 @@ impl Memory {
         };
 
         // Grow memory if necessary, zero-filling as needed until `offset`.
-        self.maybe_grow(range.end, range.start);
+        self.maybe_grow(range.end, range.end);
 
         // Copy the data.
         self.allocator.read(range.start, buffer);
@@ -607,21 +607,27 @@ impl Memory {
     /// Both `len` and `offset` are in global offsets (allocator-relative, not memory-relative).
     fn maybe_grow(&mut self, len: usize, offset: usize) {
         if len > self.range.end {
-            let len = len.next_multiple_of(32);
+            let extended_len = len.next_multiple_of(32);
 
             // Ensure that growing the memory will not overlap with other memories.
             #[cfg(debug_assertions)]
-            self.allocator.check_memory_growth(self.range.start, len);
+            self.allocator
+                .check_memory_growth(self.range.start, extended_len);
 
             // Ensure the buffer has the requested capacity.
-            self.allocator.maybe_grow(len);
+            self.allocator.maybe_grow(extended_len);
 
             // Zero-fill from the current `self.range.end` until `offset`.
             if let Some(delta) = offset.checked_sub(self.range.end) {
                 self.allocator.fill_zeros(self.range.end, delta);
             }
+            // Zero-fill from `offset` until `extended_len`.
+            if extended_len.wrapping_sub(len) > 0 {
+                self.allocator
+                    .fill_zeros(len, extended_len.wrapping_sub(len));
+            }
 
-            self.range.end = len;
+            self.range.end = extended_len;
         }
     }
 }
