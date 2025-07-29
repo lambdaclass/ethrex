@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
+use color_eyre::eyre::bail;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
 use ethrex_common::types::BlockNumber;
@@ -405,7 +406,7 @@ async fn test_erc20_roundtrip(
     let token_l2 = test_deploy(l2_client, &init_code_l2, rich_wallet_private_key).await?;
 
     println!("test_erc20_roundtrip: token l1={token_l1:x}, l2={token_l2:x}");
-    test_send(
+    let res = test_send(
         l1_client,
         rich_wallet_private_key,
         token_l1,
@@ -413,7 +414,7 @@ async fn test_erc20_roundtrip(
         &[],
     )
     .await;
-    test_send(
+    let res = test_send(
         l1_client,
         rich_wallet_private_key,
         token_l1,
@@ -509,7 +510,8 @@ async fn test_erc20_roundtrip(
     )
     .await
     .expect("error while claiming");
-    wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    let res = wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    assert!(res.receipt.status);
     let l1_final_balance = test_balance_of(l1_client, token_l1, rich_address).await;
     let l2_final_balance = test_balance_of(l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
@@ -660,7 +662,8 @@ async fn test_erc20_failed_deposit(
     )
     .await
     .expect("error while claiming");
-    wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    let res = wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    assert!(res.receipt.status);
     let l1_final_balance = test_balance_of(l1_client, token_l1, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
     Ok(())
@@ -760,6 +763,7 @@ async fn test_forced_withdrawal(
     .await
     .expect("error while claiming");
     let res = wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    assert!(res.receipt.status);
     l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
 
     let l1_final_balance = l1_client
@@ -810,9 +814,11 @@ async fn test_send(
     let tx_hash = send_eip1559_transaction(client, &tx, &signer)
         .await
         .unwrap();
-    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
+    let res = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
-        .unwrap()
+        .unwrap();
+    assert!(res.receipt.status);
+    res
 }
 
 async fn test_deposit(
@@ -1282,6 +1288,8 @@ async fn test_n_withdraws(
                 .await
                 .expect("Withdraw tx receipt not found");
 
+        assert!(withdraw_tx_receipt.receipt.status);
+
         receipts.push(withdraw_tx_receipt);
     }
 
@@ -1356,7 +1364,7 @@ async fn test_n_withdraws(
     let mut withdraw_claim_txs_receipts = vec![];
 
     for (x, proof) in proofs.iter().enumerate() {
-        println!("Claiming withdrawal on L1 {x}/{n}");
+        println!("test_n_withdraws: Claiming withdrawal on L1 {x}/{n}");
 
         let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
             withdraw_value,
@@ -1368,6 +1376,7 @@ async fn test_n_withdraws(
         .await?;
         let withdraw_claim_tx_receipt =
             wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+        assert!(withdraw_claim_tx_receipt.receipt.status);
         withdraw_claim_txs_receipts.push(withdraw_claim_tx_receipt);
     }
 
@@ -1475,6 +1484,7 @@ async fn test_deploy(
 
     let deploy_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 5).await?;
+    assert!(deploy_tx_receipt.receipt.status);
 
     let deploy_fees = get_fees_details_l2(deploy_tx_receipt, l2_client).await;
 
@@ -1527,7 +1537,8 @@ async fn test_deploy_l1(
     )
     .await?;
 
-    ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 5).await?;
+    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 5).await?;
+    assert!(receipt.receipt.status);
 
     Ok(contract_address)
 }
@@ -1723,7 +1734,10 @@ async fn wait_for_l2_deposit_receipt(
 
     println!("Waiting for deposit transaction receipt on L2");
 
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 1000).await?)
+    let res =
+        ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 1000).await?;
+    assert!(res.receipt.status);
+    Ok(res)
 }
 
 pub fn read_env_file_by_config() {
