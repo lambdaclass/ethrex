@@ -8,7 +8,7 @@ use ef_tests_state::runner_v2::{
 #[tokio::main]
 pub async fn main() -> Result<(), RunnerError> {
     let mut runner_options = RunnerOptions::parse();
-    println!("Runner options: {:?}", runner_options);
+    println!("Runner options: {:#?}", runner_options);
 
     println!("\nParsing test files...");
     let tests = parse_tests(&mut runner_options)?;
