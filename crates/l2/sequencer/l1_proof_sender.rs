@@ -29,7 +29,10 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    common::{
+        errors,
+        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    },
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -235,15 +238,23 @@ impl L1ProofSender {
 
         debug!("Sending proof to Aligned");
 
-        submit(
+        let algined_verification_result = submit(
             self.network.clone(),
             &verification_data,
             fee_estimation,
             wallet,
             nonce,
         )
-        .await
-        .map_err(|err| {
+        .await;
+
+        if let Err(errors::SubmitError::InvalidProof(_)) = algined_verification_result.as_ref() {
+            info!("Deleting invalid ALIGNED proof");
+            self.rollup_store
+                .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                .await?;
+        }
+
+        algined_verification_result.map_err(|err| {
             ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
         })?;
 

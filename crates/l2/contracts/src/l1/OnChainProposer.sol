@@ -418,7 +418,18 @@ contract OnChainProposer is
             }
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
+            (bool success, string memory reason) = _verifyPublicData(
+                batchNumber,
+                alignedPublicInputsList[i][8:]
+            );
+            if (!success) {
+                revert(
+                    string.concat(
+                        "OnChainProposer: Invalid ALIGNED proof: ",
+                        reason
+                    )
+                );
+            }
 
             bytes memory callData = abi.encodeWithSignature(
                 "verifyProofInclusion(bytes32[],bytes32,bytes)",
@@ -435,7 +446,7 @@ contract OnChainProposer is
             bool proofVerified = abi.decode(response, (bool));
             require(
                 proofVerified,
-                "OnChainProposer: Aligned proof verification failed"
+                "OnChainProposer: Invalid ALIGNED proof failed proof verification"
             );
 
             // Remove previous batch commitment
