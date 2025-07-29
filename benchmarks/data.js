@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753802993646,
+  "lastUpdate": 1753803740541,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13978,6 +13978,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001346853683148335,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ce81363367e07da317033189cb6079eb66d2cfed",
+          "message": "fix(l1,l2): add git commit version to docker image build (#3848)\n\n**Motivation**\n\nThe .git directory was being ignored in the .dockerignore\n\n**Description**\n\n- Remove .git from .dockerignore\n\n\n[Here](https://github.com/lambdaclass/ethrex/actions/runs/16574039300/job/46873667439?pr=3848)\nis a successful run of L2 integration test",
+          "timestamp": "2025-07-28T17:32:04Z",
+          "tree_id": "87abf2d3404eb707e40c3a7af6f14f467fa512bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce81363367e07da317033189cb6079eb66d2cfed"
+        },
+        "date": 1753803724957,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007583704545454545,
             "unit": "Mgas/s"
           }
         ]
