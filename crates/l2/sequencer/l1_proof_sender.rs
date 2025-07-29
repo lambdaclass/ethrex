@@ -7,7 +7,10 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
     messages::Unused,
@@ -295,13 +298,38 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::Custom(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            error!("Error: {}", error);
+            if error.contains("Invalid TDX proof") {
+                info!("Deleting invalid TDX proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
+                    .await?;
+            } else if error.contains("Invalid RISC0 proof") {
+                info!("Deleting invalid RISC0 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
+                    .await?;
+            } else if error.contains("Invalid SP1 proof") {
+                info!("Deleting invalid SP1 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            }
+            return Ok(());
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
