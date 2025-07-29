@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
-use color_eyre::eyre::bail;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
 use ethrex_common::types::BlockNumber;
@@ -406,7 +405,7 @@ async fn test_erc20_roundtrip(
     let token_l2 = test_deploy(l2_client, &init_code_l2, rich_wallet_private_key).await?;
 
     println!("test_erc20_roundtrip: token l1={token_l1:x}, l2={token_l2:x}");
-    let res = test_send(
+    test_send(
         l1_client,
         rich_wallet_private_key,
         token_l1,
@@ -414,7 +413,7 @@ async fn test_erc20_roundtrip(
         &[],
     )
     .await;
-    let res = test_send(
+    test_send(
         l1_client,
         rich_wallet_private_key,
         token_l1,
