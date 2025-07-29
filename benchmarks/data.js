@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753803740541,
+  "lastUpdate": 1753804046843,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6505,6 +6505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160531357429,
             "range": "± 204106459",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c12cd30278592ba93f6a2df33bee57e5486d6c7b",
+          "message": "feat(l2): show peer count in monitor when in based mode (#3668)\n\n**Motivation**\n\nCurrently peer count is a placeholder ('NaN') so we want an actual\nimplementations.\n\nThe peer count of the L2 should only be shown in based bode, because in\nother (non-based) modes peers aren't _needed_ and having more isn't\nnecessarily better.\n\n**Description**\n\nAdds a EthClient method to query net_peerCount, and uses it to get the\npeer count from the local node. Only displays the value if based mode is\nenabled.\n\nCloses #3516\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-07-29T14:51:01Z",
+          "tree_id": "64c0045938e3bd46fda7dbaa08589a9c72205512",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c12cd30278592ba93f6a2df33bee57e5486d6c7b"
+        },
+        "date": 1753804033935,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161854094860,
+            "range": "± 344032908",
             "unit": "ns/iter"
           }
         ]
