@@ -309,7 +309,6 @@ impl L1ProofSender {
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
         {
-            error!("Error: {}", error);
             if error.contains("Invalid TDX proof") {
                 info!("Deleting invalid TDX proof");
                 self.rollup_store
