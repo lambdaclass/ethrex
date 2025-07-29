@@ -34,7 +34,7 @@ Lighthouse must be running for the sync to work. Aditionally, a jwt has to be pr
 
 ## Running flamegraphs
 
-You will first need to install cargo-flamegraph by running:
+You will first need to install flamegraph by running:
 
 ```=bash
 cargo install flamegraph
