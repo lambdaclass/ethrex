@@ -33,15 +33,15 @@ In case you do not want to parse and execute everything in the `vectors/` direct
 
 _Example:_
 
-`make run-new-runner FLAGS="--path ./vectors/GeneralStateTests"`
+`make run-new-runner flags="--path ./vectors/GeneralStateTests"`
 
-`make run-new-runner FLAGS="--path ./vectors/GeneralStateTests/stChainId/chainId.json"`
+`make run-new-runner flags="--path ./vectors/GeneralStateTests/stChainId/chainId.json"`
 
 
 - `json-files`: it can be used to specify the `.json` files of interest (no need for full path). If this flag is set to some value, the `path` flag will be ignored.
 _Example:_
 
-`make run-new-runner FLAGS="--json-files chainId.json,transStorageReset.json"`
+`make run-new-runner flags="--json-files chainId.json,transStorageReset.json"`
 
 > Note that different `.json` files are separated by a comma.
 
@@ -49,5 +49,4 @@ _Example:_
 - `skip-files`: it can be used to skip certaing `.json` files.
 _Example:_
 
-`make run-new-runner FLAGS="--skip-files chainId.json,transStorageReset.json"`
-
+`make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"`
