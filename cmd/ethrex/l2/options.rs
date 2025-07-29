@@ -122,6 +122,14 @@ pub enum SequencerOptionsError {
     RemoteUrlWithoutPubkey,
     #[error("No signer was set up for {0}")]
     NoSigner(String),
+    #[error("No coinbase address was provided")]
+    NoCoinbaseAddress,
+    #[error("No on-chain proposer address was provided")]
+    NoOnChainProposerAddress,
+    #[error("No proof coordinator TDX private key was provided")]
+    NoProofCoorditanoTdxPrivateKey,
+    #[error("No bridge address was provided")]
+    NoBridgeAddress,
 }
 
 impl TryFrom<SequencerOptions> for SequencerConfig {
@@ -143,11 +151,17 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
         Ok(Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.block_producer_opts.block_time_ms,
-                coinbase_address: opts.block_producer_opts.coinbase_address.unwrap(),
+                coinbase_address: opts
+                    .block_producer_opts
+                    .coinbase_address
+                    .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
             },
             l1_committer: CommitterConfig {
-                on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address.unwrap(),
+                on_chain_proposer_address: opts
+                    .committer_opts
+                    .on_chain_proposer_address
+                    .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
@@ -165,7 +179,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .maximum_allowed_max_fee_per_blob_gas,
             },
             l1_watcher: L1WatcherConfig {
-                bridge_address: opts.watcher_opts.bridge_address.unwrap(),
+                bridge_address: opts
+                    .watcher_opts
+                    .bridge_address
+                    .ok_or(SequencerOptionsError::NoBridgeAddress)?,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
@@ -179,7 +196,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 tdx_private_key: opts
                     .proof_coordinator_opts
                     .proof_coordinator_tdx_private_key
-                    .unwrap(),
+                    .ok_or(SequencerOptionsError::NoProofCoorditanoTdxPrivateKey)?,
                 validium: opts.validium,
             },
             based: BasedConfig {
