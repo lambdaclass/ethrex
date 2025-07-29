@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753729956701,
+  "lastUpdate": 1753765195831,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13812,6 +13812,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001332067864271457,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2bfdc178d25b7f78078e4b99ec279c308a180ae4",
+          "message": "feat(l2): prioritize privileged transactions (#3784)\n\n**Motivation**\n\nWe want to prioritize privileged transactions, to prevent the sequencer\nfrom exceeding it's inclusion deadline.\n\n**Description**\n\nAlso ensures privileged transactions are sorted by their nonce, to\nensure (the other case that may cause out-of-order insertion is handled\nin #3776) they're inserted in-order.\n\nCloses #3730",
+          "timestamp": "2025-07-28T14:44:26Z",
+          "tree_id": "c1630d705f79497e51a7c0b645e918cbb6c88f67",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2bfdc178d25b7f78078e4b99ec279c308a180ae4"
+        },
+        "date": 1753765182172,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006988125654450262,
             "unit": "Mgas/s"
           }
         ]
