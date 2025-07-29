@@ -163,14 +163,16 @@ pub async fn start_l2(
         });
     }
 
-    EthrexMonitor::spawn(
-        shared_state.clone(),
-        store.clone(),
-        rollup_store.clone(),
-        &cfg,
-        cancellation_token.clone(),
-    )
-    .await?;
+    if cfg.monitor.enabled {
+        EthrexMonitor::spawn(
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+            &cfg,
+            cancellation_token.clone(),
+        )
+        .await?;
+    }
 
     let Some(handle) = verifier_handle else {
         return Ok(());
