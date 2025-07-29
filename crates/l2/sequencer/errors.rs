@@ -123,8 +123,8 @@ pub enum ProofSenderError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
-    #[error("Unknown Error: {0}")]
-    UnknownError(String),
+    #[error("Unexpected Error: {0}")]
+    UnexpectedError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
     #[error("Internal Error: {0}")]
