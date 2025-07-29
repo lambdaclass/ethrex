@@ -32,7 +32,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser, Debug)]
+#[derive(ClapParser)]
 pub struct Options {
     #[arg(
         long = "network",

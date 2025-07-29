@@ -20,7 +20,7 @@ use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[group(id = "L2Options")]
 pub struct Options {
     #[command(flatten)]
@@ -53,7 +53,7 @@ impl Default for Options {
     }
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct SequencerOptions {
     #[command(flatten)]
     pub eth_opts: EthOptions,
@@ -214,7 +214,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
@@ -289,7 +289,7 @@ impl Default for EthOptions {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct WatcherOptions {
     #[arg(
         long = "l1.bridge-address",
@@ -339,7 +339,7 @@ impl Default for WatcherOptions {
     }
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct BlockProducerOptions {
     #[arg(
         long = "block-producer.block-time",
@@ -367,7 +367,7 @@ pub struct BlockProducerOptions {
     pub elasticity_multiplier: u64,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct CommitterOptions {
     #[arg(
         long = "committer.l1-private-key",
@@ -444,7 +444,7 @@ impl Default for CommitterOptions {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct ProofCoordinatorOptions {
     #[arg(
         long = "proof-coordinator.l1-private-key",
@@ -543,7 +543,7 @@ impl Default for ProofCoordinatorOptions {
         }
     }
 }
-#[derive(Parser, Clone, Debug)]
+#[derive(Parser, Clone)]
 pub struct AlignedOptions {
     #[arg(
         long,
@@ -619,7 +619,7 @@ impl Default for AlignedOptions {
     }
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct BasedOptions {
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
@@ -627,7 +627,7 @@ pub struct BasedOptions {
     pub block_fetcher: BlockFetcherOptions,
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct StateUpdaterOptions {
     #[arg(
         long = "state-updater.sequencer-registry",
@@ -647,7 +647,7 @@ pub struct StateUpdaterOptions {
     pub check_interval_ms: u64,
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct BlockFetcherOptions {
     #[arg(
         long = "block-fetcher.fetch_interval_ms",
@@ -667,7 +667,7 @@ pub struct BlockFetcherOptions {
     pub fetch_block_step: u64,
 }
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default)]
 pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
