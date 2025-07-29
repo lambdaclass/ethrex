@@ -21,7 +21,9 @@ use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
 
 use crate::{
-    kademlia::PeerChannels, peer_handler::PeerHandler, rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    kademlia::PeerChannels,
+    peer_handler::{PeerHandler, RequestStateTrieNodesError},
+    rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::node_missing_children,
 };
 
@@ -65,44 +67,83 @@ pub(crate) async fn heal_state_trie(
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
+
+    // channel to send the tasks to the peers
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+        Result<Vec<Node>, RequestStateTrieNodesError>,
+        Vec<Nibbles>,
+    )>(1000);
+
+    // let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+    //     peers_table
+    //         .iter()
+    //         .map(|(peer_id, _peer_data)| (*peer_id, true)),
+    // );
+    // Contains both nodes and their corresponding paths to heal
+    let mut nodes_to_heal = Vec::new();
     while !paths.is_empty() {
         let mut stale = false;
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-            last_update = Instant::now();
-            info!("State Healing in Progress, pending paths: {}", paths.len());
-        }
-        // Spawn multiple parallel requests
-        let mut state_tasks = tokio::task::JoinSet::new();
-        for _ in 0..MAX_PARALLEL_FETCHES {
-            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            let (peer_id, mut peer_channel) = peers
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await
-                .unwrap();
-            // TODO: add retry logic
-            let Ok(nodes) = peers
-                .request_state_trienodes(&mut peer_channel, state_root, &batch)
-                .await
-            else {
-                // If the response is None, assume we are stale
-                stale = true;
-                break;
-            };
-            // Spawn fetcher for the batch
-
-            state_tasks.spawn(heal_state_batch(batch, nodes, store.clone()));
-            // End loop if we have no more paths to fetch
-            if paths.is_empty() {
-                info!("paths.is_empty()");
-                break;
+        // if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+        //     last_update = Instant::now();
+        //     info!("State Healing in Progress, pending paths: {}", paths.len());
+        // }
+        if let Ok((response, batch)) = task_receiver.try_recv() {
+            match response {
+                // If the peers responded with nodes, add them to the nodes_to_heal vector
+                Ok(nodes) => {
+                    nodes_to_heal.push((nodes, batch));
+                }
+                // If the peers failed to respond, reschedule the task by adding the pending_batch to the paths vector
+                Err(_) => {
+                    paths.extend(batch);
+                }
             }
         }
-        // Process the results of each batch
-        for res in state_tasks.join_all().await {
-            let return_paths = res?;
-            // stale |= is_stale;
-            paths.extend(return_paths);
+
+        // TODO: add scoring
+        let (peer_id, mut peer_channel) = peers
+            .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+            .await
+            .unwrap();
+
+        let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+        let tx = task_sender.clone();
+        let _ = tokio::spawn(async move {
+            // TODO: check errors to determine whether the current block is stale
+            let response =
+                PeerHandler::request_state_trienodes(&mut peer_channel.clone(), state_root, &batch)
+                    .await;
+            tx.send((response, batch)).await;
+        });
+
+        // Spawn fetcher for the batch
+        let _ = tokio::spawn(async move {
+            // TODO: check errors to determine whether the current block is stale
+            let response =
+                PeerHandler::request_state_trienodes(&mut peer_channel.clone(), state_root, &batch)
+                    .await;
+            task_sender.send((response, batch)).await;
+        });
+        if let Some((nodes, batch)) = nodes_to_heal.pop() {
+            // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
+            tokio::spawn(async move {
+                // ❌❌❌❌❌❌ TODO: add the return_paths to the paths vector
+                let return_paths = heal_state_batch(batch, nodes, store.clone()).await;
+            });
         }
+
+        // End loop if we have no more paths to fetch
+        if paths.is_empty() {
+            info!("paths.is_empty()");
+            break;
+        }
+
+        // Process the results of each batch
+        // for res in state_tasks.join_all().await {
+        //     let return_paths = res?;
+        //     // stale |= is_stale;
+        //     paths.extend(return_paths);
+        // }
         if stale {
             info!("state healing is stale");
             break;

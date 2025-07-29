@@ -1764,7 +1764,6 @@ impl PeerHandler {
     }
 
     pub async fn request_state_trienodes(
-        &self,
         peer_channel: &mut PeerChannels,
         state_root: H256,
         paths: &Vec<Nibbles>,
