@@ -1,5 +1,5 @@
 .PHONY: help init down restart init-local-l1 down-local-l1 restart-local-l1 \
-	init-l1 rm-db-l1 deploy-l1 init-l2 update-system-contracts \
+	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 update-system-contracts \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
 	init-prover build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
