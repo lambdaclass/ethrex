@@ -154,6 +154,11 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
+        if tcp_addr == peer_addr {
+            // Ignore connections from self
+            continue;
+        }
+
         let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }

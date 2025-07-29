@@ -69,6 +69,15 @@ impl DiscoveryServerState {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
             let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
+            if self
+                .udp_socket
+                .peer_addr()
+                .expect("self.udp_socket.peer_addr()")
+                == from
+            {
+                // Ignore packets sent to ourselves
+                continue;
+            }
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
@@ -508,7 +517,9 @@ impl GenServer for ConnectionHandler {
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                        if !discarded_contacts.contains(&node_id) {
+                        if !discarded_contacts.contains(&node_id)
+                            && node_id != state.local_node.node_id()
+                        {
                             vacant_entry.insert(Contact::from(node));
                             METRICS.record_new_discovery().await;
                         }
