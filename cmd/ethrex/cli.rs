@@ -32,7 +32,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -278,6 +278,7 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(name = "l2")]
     L2(l2::CommandL2),
 }
 

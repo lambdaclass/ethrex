@@ -9,7 +9,7 @@ use crate::{
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
-use clap::{Parser, Subcommand};
+use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
@@ -45,9 +45,12 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info};
 
 #[derive(Parser)]
+#[clap(args_conflicts_with_subcommands = true)]
 pub struct CommandL2 {
-    #[command(subcommand)]
+    #[clap(subcommand)]
     pub command: Option<Command>,
+    #[clap(flatten)]
+    pub opts: Option<Options>,
 }
 
 impl CommandL2 {
@@ -55,8 +58,16 @@ impl CommandL2 {
         match self.command {
             Some(cmd) => cmd.run().await,
             None => {
-                let args: Vec<String> = std::env::args().collect();
-                let init_options = Options::parse_from(&args);
+                let mut app = clap::Command::new("init");
+                app = <Options as clap::Args>::augment_args(app);
+
+                let args = std::env::args().skip(2).collect::<Vec<_>>();
+                let args_with_program = std::iter::once("init".to_string())
+                    .chain(args.into_iter())
+                    .collect::<Vec<_>>();
+
+                let matches = app.try_get_matches_from(args_with_program)?;
+                let init_options = Options::from_arg_matches(&matches)?;
                 Command::Init { opts: init_options }.run().await
             }
         }
