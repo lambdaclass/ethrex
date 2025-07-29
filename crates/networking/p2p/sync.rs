@@ -464,7 +464,6 @@ impl Syncer {
             .await
         };
 
-        if !pivot_is_stale {
             info!("Pivot isn't stale. Starting to compute the state root...");
 
             let account_store_start = Instant::now();
@@ -560,7 +559,7 @@ impl Syncer {
 
             let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
             info!("Finished storing storage tries in: {storages_store_time:?}");
-        } else {
+        if pivot_is_stale {
             info!("pivot is stale, starting healing process");
 
             
