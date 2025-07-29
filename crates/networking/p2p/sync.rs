@@ -40,8 +40,6 @@ const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
-const SNAP_LIMIT: u64 = 128;
-
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -431,7 +429,7 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
 
-        let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        let mut time_limit = pivot_header.timestamp + (MAX_BLOCK_BODIES_TO_REQUEST as u64 * 12);
         while current_unix_time() > time_limit{
             (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
         }
@@ -1039,7 +1037,7 @@ async fn heal_storage_trie_wrap(state_root: H256, store: Store, peers: &PeerHand
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
     loop {
         info!("Trying to update pivot");
-        let new_pivot_block_number = block_number + SNAP_LIMIT;
+        let new_pivot_block_number = block_number + MAX_BLOCK_BODIES_TO_REQUEST as u64;
         let scores = peers.peer_scores.lock().await;
         let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
             warn!("Received None pivot. Retrying");
@@ -1048,7 +1046,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         };
         
         info!("Succesfully updated pivot");
-        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
+        return (pivot.clone(), pivot.timestamp + (MAX_BLOCK_BODIES_TO_REQUEST as u64 * 12));
     }
 }
 

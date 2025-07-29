@@ -47,7 +47,7 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 //
 // Note: We noticed that while bigger values are supported
 // increasing them may be the cause of peers disconnection
-pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
+pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 20;
 
 struct TaskResultStorage {
     start_index: usize,
