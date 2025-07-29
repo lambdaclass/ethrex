@@ -470,7 +470,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         batch_number: u64,
         proof_type: ProverType,
     ) -> Result<(), RollupStoreError> {
-        let txn = self.db.begin_write().map_err(Box::new)?;
+        let tx = self.db.begin_write().map_err(Box::new)?;
         let mut table = tx.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
         table.remove((batch_number, proof_type.into()))?;
         Ok(())
