@@ -39,7 +39,7 @@ const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
-const SNAP_LIMIT: u64 = 128;
+const SNAP_LIMIT: u64 = 16;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -429,9 +429,8 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-
         let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
-        while current_unix_time() > time_limit{
+        while current_unix_time() > time_limit {
             (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
         }
 
@@ -440,7 +439,7 @@ impl Syncer {
         info!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
-        
+
         let (account_hashes, account_states, pivot_is_stale) = self
             .peers
             .request_account_range(pivot_header.clone(), H256::zero(), H256::repeat_byte(0xff))
@@ -458,11 +457,10 @@ impl Syncer {
 
         let (storages_key_value_pairs, pivot_is_stale) = if pivot_is_stale {
             (vec![], true)
-        } else { 
-            self
-            .peers
-            .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
-            .await
+        } else {
+            self.peers
+                .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone())
+                .await
         };
 
         if !pivot_is_stale {
@@ -471,7 +469,10 @@ impl Syncer {
             let account_store_start = Instant::now();
             let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-            let known_hash_account = H256::from_str("0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4").expect("Const from_str");
+            let known_hash_account = H256::from_str(
+                "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
+            )
+            .expect("Const from_str");
 
             let computed_state_root = tokio::task::spawn_blocking(move || {
                 let mut trie = trie;
@@ -493,7 +494,6 @@ impl Syncer {
             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
 
             let account_store_time = Instant::now().saturating_duration_since(account_store_start);
-
 
             info!("Expected state root: {state_root:?}");
             info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
@@ -559,25 +559,29 @@ impl Syncer {
                 .await
                 .replace(SystemTime::now());
 
-            let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
+            let storages_store_time =
+                Instant::now().saturating_duration_since(storages_store_start);
             info!("Finished storing storage tries in: {storages_store_time:?}");
         } else {
             info!("pivot is stale, starting healing process");
 
-            
             let mut healing_done = false;
             while !healing_done {
                 (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
-                healing_done = heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit).await?;
+                healing_done =
+                    heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                        .await?;
                 if !healing_done {
                     continue;
                 }
-                healing_done = heal_storage_trie_wrap(state_root, store.clone(), &self.peers,time_limit).await?;
+                healing_done =
+                    heal_storage_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                        .await?;
             }
             info!("Finished healing");
 
-/*             let trie = store.open_state_trie(state_root_new).expect("This should open");
-            let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();   
+            /*             let trie = store.open_state_trie(state_root_new).expect("This should open");
+            let root_node = trie.root_node().expect("msg").expect("msg").compute_hash();
             let computed_state_root_new = Trie::compute_hash_from_unsorted_iter(
                 store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts")
                 .map(|(hash, state)| (
@@ -590,21 +594,18 @@ impl Syncer {
                 computed_state_root_new: {computed_state_root_new},
                 root_node new: {root_node:?}, "); */
 
-            
             // TODO: remove when moved to spawned, this is a temp code that fixes an assumption
             // The healing of storages assumes that we have all of the missing storages as paths in the database.
             // If the account wasn't stale but the storage download step was skipped becuase
             // the pivot was stale, we need to add that account storage root to the database manually
             // State healing won't do it
 
-
-
-/*             for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
+            /*             for (account_hash, account_state) in store.iter_accounts(state_root_new).expect("we couldn't iterate over accounts") {
                 if account_state.storage_root == *EMPTY_TRIE_HASH {
                     continue;
                 }
                 let storage_trie = store.open_storage_trie(account_hash, account_state.storage_root).expect("should have the storage trie");
-                
+
                 match storage_trie.root_node() {
                     Ok(node_op) => {
                         if node_op.is_none() {
@@ -635,7 +636,7 @@ impl Syncer {
 
         // TODO: actually search bytecode hashes
         let bytecode_hashes: Vec<H256> = Vec::new();
-        
+
         // Download bytecodes
         info!(
             "Starting bytecode download of {} hashes",
@@ -1001,34 +1002,45 @@ impl SnapBlockSyncState {
     }
 }
 
-async fn heal_state_trie_wrap(state_root: H256, store: Store, peers: &PeerHandler, time_limit: u64) -> Result<bool, SyncError> {
+async fn heal_state_trie_wrap(
+    state_root: H256,
+    store: Store,
+    peers: &PeerHandler,
+    time_limit: u64,
+) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
     while !healing_done {
         healing_done = heal_state_trie(state_root, store.clone(), peers.clone()).await?;
-        if current_unix_time() > time_limit{
+        if current_unix_time() > time_limit {
             info!("Stopped state healing due to staleness");
-            break
+            break;
         }
     }
     info!("Stopped state healing");
     Ok(healing_done)
 }
 
-async fn heal_storage_trie_wrap(state_root: H256, store: Store, peers: &PeerHandler, time_limit: u64) -> Result<bool, SyncError> {
+async fn heal_storage_trie_wrap(
+    state_root: H256,
+    store: Store,
+    peers: &PeerHandler,
+    time_limit: u64,
+) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting storage healing");
     while !healing_done {
         healing_done = heal_storage_trie(
-            state_root, 
+            state_root,
             peers.clone(),
-            store.clone(), 
+            store.clone(),
             CancellationToken::new(),
-            Arc::new(AtomicBool::new(true))
-        ).await?;
-        if current_unix_time() > time_limit{
+            Arc::new(AtomicBool::new(true)),
+        )
+        .await?;
+        if current_unix_time() > time_limit {
             info!("Stopped storage healing due to staleness");
-            break
+            break;
         }
     }
     info!("Stopped storage healing");
@@ -1040,16 +1052,18 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         info!("Trying to update pivot");
         let new_pivot_block_number = block_number + SNAP_LIMIT;
         let scores = peers.peer_scores.lock().await;
-        let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
+        let Some(pivot) = peers
+            .get_block_header(new_pivot_block_number, &scores)
+            .await
+        else {
             warn!("Received None pivot. Retrying");
             continue;
         };
-        
+
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
     }
 }
-
 
 #[derive(thiserror::Error, Debug)]
 enum SyncError {
