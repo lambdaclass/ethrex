@@ -41,6 +41,8 @@ aes = "0.8.4"
 ctr = "0.9.2"
 rand = "0.8.5"
 
+rayon = "1.10.0"
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 
