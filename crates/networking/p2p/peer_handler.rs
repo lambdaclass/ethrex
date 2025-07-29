@@ -800,6 +800,9 @@ impl PeerHandler {
                 }
                 let peer_score = scores.entry(peer_id).or_default();
                 *peer_score += 1;
+                if *peer_score < 10 {
+                    *peer_score += 1;
+                }
 
                 downloaded_count += accounts.len() as u64;
 
@@ -1138,7 +1141,9 @@ impl PeerHandler {
                 downloaded_count += bytecodes.len() as u64;
 
                 let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                if *peer_score < 10 {
+                    *peer_score += 1;
+                }
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1794,21 +1799,19 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
-                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| 
-                                if *score < 10 {
-                                    *score += 1
+                            self.peer_scores.lock().await.entry(peer_id).and_modify(|peer_score: &mut i64| 
+                                if *peer_score < 10 {
+                                    *peer_score += 1
                                 }
                             );
                             return Some(nodes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => {
-                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
                             continue
                         },
                         None => {
                             info!("we received noting from a peer");
-                            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
                             return None;
                         }
                     }
@@ -1831,6 +1834,9 @@ impl PeerHandler {
                 self.record_snap_peer_success(peer_id, peer_ids).await;
                 return Some(nodes);
             }
+        }
+        for peer_id in peer_ids {
+            self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
         }
         info!("we tried all these nodes {peer_ids:?} and none answered");
         None
