@@ -763,11 +763,11 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         proof_type: ProverType,
     ) -> Result<(), RollupStoreError> {
-        let prover_type: u32 = prover_type.into();
+        let prover_type: u32 = proof_type.into();
         self.execute_in_tx(
             vec![(
                 "DELETE FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
-                (batch_number, proof_type).into_params()?,
+                (batch_number, prover_type).into_params()?,
             )],
             None,
         )
