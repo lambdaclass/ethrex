@@ -1835,10 +1835,10 @@ impl PeerHandler {
                 return Some(nodes);
             }
         }
+        info!("we tried all these nodes {peer_ids:?} and none answered");
         for peer_id in peer_ids {
             self.peer_scores.lock().await.entry(peer_id).and_modify(|score| *score -= 1);
         }
-        info!("we tried all these nodes {peer_ids:?} and none answered");
         None
     }
 
