@@ -15,7 +15,7 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 init: init-local-l1 update-system-contracts deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
-down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
+down: down-local-l1 down-l2 down-metrics ## 🛑 Shuts down the localnet
 
 restart: restart-local-l1 deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
