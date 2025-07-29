@@ -421,16 +421,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn write_storage_trie_nodes_batch(
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-    ) -> Result<(), StoreError> {
-        // TODO: Returning Ok(()) here is a cheat to avoid needing to implement this method in the other store engines.
-        Ok(())
-    }
+    ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError> {
-        // TODO: Returning Ok(()) here is a cheat to avoid needing to implement this method in the other store engines.
-        Ok(())
-    }
+    ) -> Result<(), StoreError>;
 }
