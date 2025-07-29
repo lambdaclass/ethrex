@@ -125,10 +125,10 @@ pub fn init_tracing(opts: &L2Options) {
         let subscriber = tracing_subscriber::registry()
             .with(TuiTracingSubscriberLayer)
             .with(level_filter);
-        tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
     } else {
         initializers::init_tracing(&opts.node_opts);
     }
 }
-    
