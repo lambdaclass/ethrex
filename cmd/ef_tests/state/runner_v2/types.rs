@@ -332,13 +332,13 @@ pub struct TestCase {
 /// Indicates the expected post state that should be obtained after executing a test case.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Post {
-    pub hash: H256, // Expected post root hash.
-    pub logs: H256, // Expected output logs.
+    pub hash: H256,                                    // Expected post root hash.
+    pub logs: H256,                                    // Expected output logs.
     pub state: Option<HashMap<Address, AccountState>>, // For new tests, the state field indicates the expected state of the involved accounts after executing the transaction.
     pub expected_exceptions: Option<Vec<TransactionExpectedException>>, // Expected exceptions. The output exception should match one of these.
 }
 
-/// The state an involved account is expected to have after executing the test case transaction. 
+/// The state an involved account is expected to have after executing the test case transaction.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AccountState {
     #[serde(deserialize_with = "u256::deser_hex_str")]
