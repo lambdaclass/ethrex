@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753808231655,
+  "lastUpdate": 1753809043356,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14066,6 +14066,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013509433198380567,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ebbb7e3de1fecac5a8d3c5e8a8ab061a80cf4668",
+          "message": "refactor(levm): use common functions to deserialize in EF tests runner (#3806)\n\n**Description**\n\nThe current EF state tests runner has its own implementation for\ndeserializing every value that comes from the tests JSONs. The idea is\nto use already implemented common functions in `common/serde_utils.rs`\nor to update the existing functions to satisfy the runner's requirements\nas well.\n\nCloses #3793",
+          "timestamp": "2025-07-28T18:23:54Z",
+          "tree_id": "e9052f818cf73bf60786a14d73fbee3f7bde7218",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ebbb7e3de1fecac5a8d3c5e8a8ab061a80cf4668"
+        },
+        "date": 1753809042899,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007253978260869565,
             "unit": "Mgas/s"
           }
         ]
