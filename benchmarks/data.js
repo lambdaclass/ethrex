@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753765195831,
+  "lastUpdate": 1753773222580,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13841,6 +13841,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006988125654450262,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "993120aa119e8af4d8c433873f1929a4c127a8e5",
+          "message": "perf(l2): use rkyv instead of bincode for sp1",
+          "timestamp": "2025-07-28T10:06:20Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/3831/commits/993120aa119e8af4d8c433873f1929a4c127a8e5"
+        },
+        "date": 1753773222093,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008781131578947369,
             "unit": "Mgas/s"
           }
         ]
