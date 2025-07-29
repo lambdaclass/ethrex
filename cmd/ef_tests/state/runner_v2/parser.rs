@@ -40,8 +40,10 @@ const IGNORED_TESTS: [&str; 12] = [
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.
-pub fn parse_file(path: &String) -> Result<Vec<Test>, RunnerError> {
-    println!("Parsing file: {:?}", path);
+pub fn parse_file(path: &String, log_parse: bool) -> Result<Vec<Test>, RunnerError> {
+    if log_parse {
+        println!("Parsing file: {:?}", path);
+    }
     let test_file = std::fs::File::open(path.clone()).unwrap();
     let mut tests: Tests = serde_json::from_reader(test_file).unwrap();
     for test in tests.0.iter_mut() {
@@ -51,8 +53,15 @@ pub fn parse_file(path: &String) -> Result<Vec<Test>, RunnerError> {
 }
 
 /// Parse a directory of tests into a Vec<Test>.
-pub fn parse_dir(path: &String, skipped: &Vec<String>) -> Result<Vec<Test>, RunnerError> {
-    println!("Parsing test directory: {:?}", path);
+pub fn parse_dir(
+    path: &String,
+    skipped_files: &Vec<String>,
+    only_files: &Vec<String>,
+    log_parse: bool,
+) -> Result<Vec<Test>, RunnerError> {
+    if log_parse {
+        println!("Parsing test directory: {:?}", path);
+    }
     let mut tests = Vec::new();
     let dir_entries = std::fs::read_dir(path.clone()).unwrap().flatten();
 
@@ -61,15 +70,29 @@ pub fn parse_dir(path: &String, skipped: &Vec<String>) -> Result<Vec<Test>, Runn
         // Check entry type
         let entry_type = entry.file_type().unwrap();
         if entry_type.is_dir() {
-            let dir_tests = parse_dir(&String::from(entry.path().to_str().unwrap()), skipped)?;
+            let dir_tests = parse_dir(
+                &String::from(entry.path().to_str().unwrap()),
+                skipped_files,
+                only_files,
+                log_parse,
+            )?;
             tests.push(dir_tests);
         } else {
             let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
-            let is_not_skipped = !skipped.contains(&String::from(
+            let is_not_skipped = !skipped_files.contains(&String::from(
                 entry.path().file_name().unwrap().to_str().unwrap(),
             ));
+            // If only certain files were supposed to be parsed make sure this file is among them.
+            if !only_files.is_empty()
+                && !only_files.contains(&String::from(
+                    entry.path().file_name().unwrap().to_str().unwrap(),
+                ))
+            {
+                continue;
+            }
+
             if is_json_file && is_not_skipped {
-                let file_tests = parse_file(&String::from(entry.path().to_str().unwrap()))?;
+                let file_tests = parse_file(&String::from(entry.path().to_str().unwrap()), false)?;
                 tests.push(file_tests);
             }
         }
@@ -85,18 +108,13 @@ pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError
     skipped.append(&mut options.skip_files);
 
     if !options.json_files.is_empty() {
-        for file in &options.json_files {
-            if skipped.contains(file) {
-                continue;
-            }
-            let file_tests = parse_file(file)?;
-            tests.push(file_tests);
-        }
+        let file_tests = parse_dir(&options.path, &skipped, &options.json_files, true)?;
+        tests.push(file_tests);
     } else if options.path.ends_with(".json") {
-        let file_tests = parse_file(&options.path)?;
+        let file_tests = parse_file(&options.path, true)?;
         tests.push(file_tests);
     } else {
-        let dir_tests = parse_dir(&options.path, &skipped)?;
+        let dir_tests = parse_dir(&options.path, &skipped, &Vec::new(), true)?;
         tests.push(dir_tests);
     }
     Ok(tests.concat())

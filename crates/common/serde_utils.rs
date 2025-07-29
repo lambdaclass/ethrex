@@ -146,7 +146,7 @@ pub mod u64 {
                 .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
         }
 
-        pub fn deser_u64_vec<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+        pub fn deser_vec<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
         where
             D: Deserializer<'de>,
         {
