@@ -21,6 +21,7 @@ use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
+use std::time::Duration;
 use std::{
     array,
     cmp::min,
@@ -1042,6 +1043,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         let scores = peers.peer_scores.lock().await;
         let Some(pivot) = peers.get_block_header(new_pivot_block_number, &scores).await else {
             warn!("Received None pivot. Retrying");
+            tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
         };
         
