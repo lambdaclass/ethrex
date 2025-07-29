@@ -74,13 +74,14 @@ pub(crate) async fn heal_state_trie(
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
+            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
             let (peer_id, mut peer_channel) = peers
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
                 .unwrap();
             // TODO: add retry logic
             let Ok(nodes) = peers
-                .request_state_trienodes(&mut peer_channel, state_root, &paths)
+                .request_state_trienodes(&mut peer_channel, state_root, &batch)
                 .await
             else {
                 // If the response is None, assume we are stale
@@ -88,7 +89,6 @@ pub(crate) async fn heal_state_trie(
                 break;
             };
             // Spawn fetcher for the batch
-            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
 
             state_tasks.spawn(heal_state_batch(batch, nodes, store.clone()));
             // End loop if we have no more paths to fetch
