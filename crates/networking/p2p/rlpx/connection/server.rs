@@ -732,19 +732,19 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
-            if state.blockchain.is_synced() {
-                let mut valid_txs = vec![];
-                for tx in &txs.transactions {
-                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
-                        continue;
-                    }
-                    valid_txs.push(tx.clone());
-                }
-                if !valid_txs.is_empty() {
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
-                }
-            }
+            // if state.blockchain.is_synced() {
+            //     let mut valid_txs = vec![];
+            //     for tx in &txs.transactions {
+            //         if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
+            //             log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
+            //             continue;
+            //         }
+            //         valid_txs.push(tx.clone());
+            //     }
+            //     if !valid_txs.is_empty() {
+            //         broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
+            //     }
+            // }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
             let response = BlockHeaders {
@@ -784,35 +784,35 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             );
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
-                new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+            // let hashes =
+            //     new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            let request = GetPooledTransactions::new(random(), hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
+            // let request = GetPooledTransactions::new(random(), hashes);
+            // send(state, Message::GetPooledTransactions(request)).await?;
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
-            if state.blockchain.is_synced() {
-                if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
-                    if let Err(error) = msg.validate_requested(requested).await {
-                        log_peer_warn(
-                            &state.node,
-                            &format!("disconnected from peer. Reason: {error}"),
-                        );
-                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
-                            .await;
-                        return Err(RLPxError::DisconnectSent(
-                            DisconnectReason::SubprotocolError,
-                        ));
-                    } else {
-                        state.requested_pooled_txs.remove(&msg.id);
-                    }
-                }
-                msg.handle(&state.node, &state.blockchain).await?;
-            }
+            // if state.blockchain.is_synced() {
+            //     if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
+            //         if let Err(error) = msg.validate_requested(requested).await {
+            //             log_peer_warn(
+            //                 &state.node,
+            //                 &format!("disconnected from peer. Reason: {error}"),
+            //             );
+            //             send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+            //                 .await;
+            //             return Err(RLPxError::DisconnectSent(
+            //                 DisconnectReason::SubprotocolError,
+            //             ));
+            //         } else {
+            //             state.requested_pooled_txs.remove(&msg.id);
+            //         }
+            //     }
+            //     msg.handle(&state.node, &state.blockchain).await?;
+            // }
         }
         Message::GetStorageRanges(req) => {
             let response = process_storage_ranges_request(req, state.storage.clone())?;
