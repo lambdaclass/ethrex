@@ -19,6 +19,28 @@ else
 	DATA_PATH = ~/.local/share
 endif
 
+# Set checkpoint sync url based on network
+NETWORK ?= mainnet
+ifeq ($(NETWORK), mainnet)
+CHECKPOINT_SYNC_URL ?= https://beaconstate.info
+endif
+ifeq ($(NETWORK), sepolia)
+CHECKPOINT_SYNC_URL ?= https://checkpoint-sync.sepolia.ethpandaops.io
+endif
+ifeq ($(NETWORK), holesky)
+CHECKPOINT_SYNC_URL ?= https://checkpoint-sync.holesky.ethpandaops.io
+endif
+ifeq ($(NETWORK), hoodi)
+CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
+endif
+
+# Set bootnodes flag only if we have bootnodes
+ifndef BOOTNODES
+BOOTNODES_FLAG ?=
+else 
+BOOTNODES_FLAG ?= --bootnodes ${BOOTNODES}
+endif
+
 help: ## Display help for the makefile.
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -219,3 +241,42 @@ ifeq ($(OS), Darwin)
 else
 	rsync -ah --info=progress2 $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg
 endif
+
+
+start-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for the given network
+	@echo "Starting L1 docker compose with metrics..."
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	@echo "Starting lighthouse in background..."
+	cd $(ETHREX_DIR)/tooling/sync && nohup make metrics-lighthouse > /dev/null 2>&1 &
+	@echo "Starting ethrex..."
+	cd $(ETHREX_DIR)/tooling/sync && make metrics-ethrex
+
+metrics-lighthouse: ## Start lighthouse for NETWORK.
+	lighthouse bn \
+		--network $(NETWORK) \
+		--execution-endpoint http://localhost:${ENGINE_PORT} \
+		--execution-jwt $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+		--checkpoint-sync-url $(CHECKPOINT_SYNC_URL) \
+		--http \
+		--http-address 0.0.0.0 \
+		--http-allow-origin "*" \
+		--metrics \
+		--metrics-address 0.0.0.0 \
+		--metrics-port 5054 \
+		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
+
+metrics-ethrex: ## Start ethrex for hoodi
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+    		--http.addr 0.0.0.0 \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--metrics \
+    		--metrics.port 3701 \
+    		--discovery.port 30303 \
+    		--network $(NETWORK) \
+    		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
+    		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+    		$(BOOTNODES_FLAG) \
+    		--evm $(EVM)
