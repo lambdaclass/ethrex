@@ -72,6 +72,7 @@ pub fn format_duration(duration: Duration) -> String {
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
 
+/// TODO: make it more generic
 pub async fn send_message_and_wait_for_response(
     peer_channel: &mut PeerChannels,
     message: Message,
