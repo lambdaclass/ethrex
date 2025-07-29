@@ -430,7 +430,7 @@ contract OnChainProposer is
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
-    ) internal view returns (bool, string) {
+    ) internal view returns (bool, string memory) {
         if (publicData.length != 256) {
             return (false, "invalid public data length");
         }
