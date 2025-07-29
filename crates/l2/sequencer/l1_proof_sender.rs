@@ -326,7 +326,6 @@ impl L1ProofSender {
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
                     .await?;
             }
-            return Ok(());
         }
 
         let verify_tx_hash = send_verify_tx_result?;
