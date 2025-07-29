@@ -771,6 +771,7 @@ impl StoreEngineRollup for SQLStore {
             )],
             None,
         )
+        .await
     }
 }
 
