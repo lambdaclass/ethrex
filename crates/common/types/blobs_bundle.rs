@@ -2,7 +2,10 @@ use std::ops::AddAssign;
 
 use crate::kzg::KzgError;
 use crate::serde_utils;
-use crate::{Bytes, H256, types::{constants::VERSIONED_HASH_VERSION_KZG, Fork}};
+use crate::{
+    Bytes, H256,
+    types::{Fork, constants::VERSIONED_HASH_VERSION_KZG},
+};
 
 #[cfg(feature = "c-kzg")]
 use crate::types::EIP4844Transaction;
