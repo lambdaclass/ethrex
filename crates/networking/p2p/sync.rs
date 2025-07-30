@@ -468,106 +468,86 @@ impl Syncer {
                 .await
         };
 
-        if !pivot_is_stale {
-            info!("Pivot isn't stale. Starting to compute the state root...");
+        info!("Starting to save to db the accounts...");
 
-            let account_store_start = Instant::now();
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let account_store_start = Instant::now();
+        let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-            let known_hash_account = H256::from_str(
-                "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
-            )
-            .expect("Const from_str");
+        let known_hash_account = H256::from_str(
+            "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
+        )
+        .expect("Const from_str");
 
-            let computed_state_root = tokio::task::spawn_blocking(move || {
-                let mut trie = trie;
-                let mut i = 0;
-                let accounts_len = account_hashes.len();
-                for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
-                    if account_hash == known_hash_account {
-                        info!("Account: {account_hash} Debug: {account:?}")
-                    }
-
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                        .unwrap();
+        let computed_state_root = tokio::task::spawn_blocking(move || {
+            let mut trie = trie;
+            let mut i = 0;
+            let accounts_len = account_hashes.len();
+            for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
+                if account_hash == known_hash_account {
+                    info!("Account: {account_hash} Debug: {account:?}")
                 }
-                trie.hash().unwrap()
-            })
+
+                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                    .unwrap();
+            }
+            trie.hash().unwrap()
+        })
+        .await
+        .expect("");
+
+        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+
+        let storages_store_start = Instant::now();
+        METRICS
+            .storage_tries_state_roots_start_time
+            .lock()
             .await
-            .expect("");
+            .replace(SystemTime::now());
 
-            *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+        *METRICS.storage_tries_state_roots_to_compute.lock().await =
+            account_storage_roots.len() as u64;
 
-            let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+        let store_clone = store.clone();
 
-            info!("Expected state root: {}", pivot_header.state_root);
-            info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+        tokio::task::spawn_blocking(move || {
+            let store = store_clone;
+            // Store trie in storage
+            for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                .into_iter()
+                .zip(storages_key_value_pairs)
+            {
+                let mut storage_trie = store
+                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .unwrap();
 
-            let storages_store_start = Instant::now();
-
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            *METRICS.storage_tries_state_roots_to_compute.lock().await =
-                account_storage_roots.len() as u64;
-
-            let store_clone = store.clone();
-
-            tokio::task::spawn_blocking(move || {
-                let store = store_clone;
-                // Store trie in storage
-                for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
-                    .into_iter()
-                    .zip(storages_key_value_pairs)
-                {
-                    let mut storage_trie = store
-                        .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                for (hashed_key, value) in key_value_pairs {
+                    storage_trie
+                        .insert(hashed_key.0.to_vec(), value.encode_to_vec())
                         .unwrap();
-
-                    for (hashed_key, value) in key_value_pairs {
-                        storage_trie
-                            .insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                            .unwrap();
-                        if let Err(err) =
-                            storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                        {
-                            error!(
-                                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-                            );
-                            continue;
-                        };
-                    }
-
-                    let Ok(computed_state_root) = storage_trie.hash() else {
+                    if let Err(err) =
+                        storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                    {
                         error!(
-                            "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
+                            "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
                         );
                         continue;
                     };
-
-                    METRICS.storage_tries_state_roots_computed.inc();
-
-                    if computed_state_root != storage_root {
-                        error!(
-                            "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                        );
-                    }
                 }
-            }).await.expect("");
+                METRICS.storage_tries_state_roots_computed.inc();
+            }
+        }).await.expect("");
 
-            METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
+        METRICS
+            .storage_tries_state_roots_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
-            let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start);
-            info!("Finished storing storage tries in: {storages_store_time:?}");
-        } else {
+        let storages_store_time =
+            Instant::now().saturating_duration_since(storages_store_start);
+        info!("Finished storing storage tries in: {storages_store_time:?}");
+        if pivot_is_stale {
             info!("pivot is stale, starting healing process");
 
             let mut healing_done = false;
@@ -1053,7 +1033,7 @@ async fn heal_storage_trie_wrap(
 }
 
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
-    let new_pivot_block_number = block_number + SNAP_LIMIT;
+    let new_pivot_block_number = block_number + SNAP_LIMIT - 3;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
