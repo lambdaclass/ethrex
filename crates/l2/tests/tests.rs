@@ -4,6 +4,8 @@ use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
 use ethrex_common::types::BlockNumber;
+use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
+use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
@@ -366,6 +368,21 @@ async fn test_privileged_tx_with_contract_call_revert(
     Ok(())
 }
 
+async fn find_withdrawal_with_widget(
+    bridge_address: Address,
+    l2tx: H256,
+    l2_client: &EthClient,
+    l1_client: &EthClient,
+) -> Option<L2ToL1MessageRow> {
+    let mut widget = L2ToL1MessagesTable::new(bridge_address);
+    widget.on_tick(l1_client, l2_client).await.unwrap();
+    widget
+        .items
+        .iter()
+        .find(|row| row.l2_tx_hash == l2tx)
+        .cloned()
+}
+
 async fn test_erc20_roundtrip(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -481,8 +498,23 @@ async fn test_erc20_roundtrip(
         ],
     )
     .await;
+    let withdrawal_tx_hash = res.tx_info.transaction_hash;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalInitiated,
+            kind: L2ToL1MessageKind::ERC20Withdraw,
+            receiver: rich_address,
+            token_l1,
+            token_l2,
+            value: token_amount,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
     let proof = l2_client
-        .wait_for_message_proof(res.tx_info.transaction_hash, 1000)
+        .wait_for_message_proof(withdrawal_tx_hash, 1000)
         .await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
@@ -514,6 +546,21 @@ async fn test_erc20_roundtrip(
     .await
     .expect("error while claiming");
     wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalClaimed,
+            kind: L2ToL1MessageKind::ERC20Withdraw,
+            receiver: rich_address,
+            token_l1,
+            token_l2,
+            value: token_amount,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
+
     let l1_final_balance = test_balance_of(l1_client, token_l1, rich_address).await;
     let l2_final_balance = test_balance_of(l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
@@ -726,6 +773,22 @@ async fn test_forced_withdrawal(
     )
     .await?;
 
+    let withdrawal_tx_hash = res.tx_info.transaction_hash;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalInitiated,
+            kind: L2ToL1MessageKind::ETHWithdraw,
+            receiver: rich_address,
+            token_l1: Default::default(),
+            token_l2: Default::default(),
+            value: transfer_value,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
+
     let l2_final_balance = l2_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -765,6 +828,20 @@ async fn test_forced_withdrawal(
     .expect("error while claiming");
     let res = wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
     l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalClaimed,
+            kind: L2ToL1MessageKind::ETHWithdraw,
+            receiver: rich_address,
+            token_l1: Default::default(),
+            token_l2: Default::default(),
+            value: transfer_value,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
 
     let l1_final_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
