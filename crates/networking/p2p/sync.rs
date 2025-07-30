@@ -431,11 +431,11 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        info!(
+/*         info!(
             "Print Debug: all peers: {:?}, all scores: {:?}", 
             self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
             self.peers.peer_scores
-        );
+        ); */
         let mut time_limit: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
         while current_unix_time() > time_limit {
             (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
@@ -1060,7 +1060,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         let mut scores = peers.peer_scores.lock().await;
 
         let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &scores)
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
             .await
             .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
             .expect("Error");

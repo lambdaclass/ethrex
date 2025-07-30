@@ -114,7 +114,7 @@ impl PeerHandler {
     pub async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
-        scores: &HashMap<H256, i64>,
+        scores: &mut HashMap<H256, i64>,
     ) -> Option<(H256, PeerChannels)> {
         let (mut free_peer_id, mut free_peer_channel) = self
             .peer_table
@@ -126,7 +126,7 @@ impl PeerHandler {
 
         let mut max_peer_id_score = i64::MIN;
         for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
-            let peer_id_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            let peer_id_score = scores.entry(*peer_id).or_default();
             if *peer_id_score >= max_peer_id_score {
                 free_peer_id = *peer_id;
                 max_peer_id_score = *peer_id_score;
