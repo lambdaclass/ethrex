@@ -163,7 +163,7 @@ async fn state_sync_segment(
             for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
                 // Build the batch of code hashes to send to the bytecode fetcher
                 // Ignore accounts without code / code we already have stored
-                if account.code_hash != *EMPTY_KECCACK_HASH
+                if account.code_hash != EMPTY_KECCACK_HASH
                     && store.get_account_code(account.code_hash)?.is_none()
                 {
                     code_hashes.push(account.code_hash)

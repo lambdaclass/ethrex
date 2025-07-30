@@ -46,7 +46,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
-        Self::prepare_block(block, db, vm_type.clone())?;
+        Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -54,7 +54,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -413,7 +413,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type.clone())?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
         let access_list = build_access_list(&vm.substate);
@@ -442,7 +442,7 @@ impl LEVM {
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            Self::beacon_root_contract_call(block_header, db, vm_type.clone())?;
+            Self::beacon_root_contract_call(block_header, db, vm_type)?;
         }
 
         if fork >= Fork::Prague {
@@ -537,13 +537,12 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type.clone())?
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
         .output
         .into();
-    let consolidation_data: Vec<u8> =
-        LEVM::dequeue_consolidation_requests(header, db, vm_type.clone())?
-            .output
-            .into();
+    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
+        .output
+        .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;

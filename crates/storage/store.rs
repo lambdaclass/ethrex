@@ -484,7 +484,7 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.engine.open_state_trie(EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -493,7 +493,7 @@ impl Store {
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
-                .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+                .open_storage_trie(H256::from_slice(&hashed_address), EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -998,7 +998,7 @@ impl Store {
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.engine.open_state_trie(*EMPTY_TRIE_HASH)
+        self.engine.open_state_trie(EMPTY_TRIE_HASH)
     }
 
     // Methods exclusive for trie management during snap-syncing
@@ -1023,7 +1023,7 @@ impl Store {
     pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
         // Root is irrelevant, we only care about the internal state
         Ok(self
-            .open_state_trie(*EMPTY_TRIE_HASH)?
+            .open_state_trie(EMPTY_TRIE_HASH)?
             .db()
             .get(node_hash.into())?
             .is_some())
@@ -1037,7 +1037,7 @@ impl Store {
     ) -> Result<bool, StoreError> {
         // Root is irrelevant, we only care about the internal state
         Ok(self
-            .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?
+            .open_storage_trie(hashed_address, EMPTY_TRIE_HASH)?
             .db()
             .get(node_hash.into())?
             .is_some())
@@ -1449,7 +1449,7 @@ mod tests {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
         let block_body = BlockBody {

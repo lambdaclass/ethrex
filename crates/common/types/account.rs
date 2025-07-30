@@ -43,7 +43,7 @@ pub struct AccountState {
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: EMPTY_KECCACK_HASH,
             balance: Default::default(),
             nonce: Default::default(),
         }
@@ -55,8 +55,8 @@ impl Default for AccountState {
         Self {
             nonce: Default::default(),
             balance: Default::default(),
-            storage_root: *EMPTY_TRIE_HASH,
-            code_hash: *EMPTY_KECCACK_HASH,
+            storage_root: EMPTY_TRIE_HASH,
+            code_hash: EMPTY_KECCACK_HASH,
         }
     }
 }
@@ -175,7 +175,7 @@ impl Account {
     }
 
     pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
+        self.info.code_hash != EMPTY_KECCACK_HASH
     }
 
     pub fn has_code_or_nonce(&self) -> bool {
@@ -185,7 +185,7 @@ impl Account {
     pub fn is_empty(&self) -> bool {
         self.info.balance.is_zero()
             && self.info.nonce == 0
-            && self.info.code_hash == *EMPTY_KECCACK_HASH
+            && self.info.code_hash == EMPTY_KECCACK_HASH
     }
 
     pub fn set_code(&mut self, code: Bytes) {

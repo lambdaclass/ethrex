@@ -149,7 +149,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
 

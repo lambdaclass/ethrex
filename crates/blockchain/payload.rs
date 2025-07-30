@@ -10,7 +10,7 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, bloom_from_logs,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
@@ -99,7 +99,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
 
     let header = BlockHeader {
         parent_hash: args.parent,
-        ommers_hash: *DEFAULT_OMMERS_HASH,
+        ommers_hash: DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
         transactions_root: compute_transactions_root(&[]),
@@ -133,7 +133,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         parent_beacon_block_root: args.beacon_root,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
-            .then_some(*DEFAULT_REQUESTS_HASH),
+            .then_some(DEFAULT_REQUESTS_HASH),
         ..Default::default()
     };
 
@@ -692,6 +692,12 @@ impl TransactionQueue {
 // Orders transactions by highest tip, if tip is equal, orders by lowest timestamp
 impl Ord for HeadTransaction {
     fn cmp(&self, other: &Self) -> Ordering {
+        match (self.tx_type(), other.tx_type()) {
+            (TxType::Privileged, TxType::Privileged) => return self.nonce().cmp(&other.nonce()),
+            (TxType::Privileged, _) => return Ordering::Less,
+            (_, TxType::Privileged) => return Ordering::Greater,
+            _ => (),
+        };
         match other.tip.cmp(&self.tip) {
             Ordering::Equal => self.tx.time().cmp(&other.tx.time()),
             ordering => ordering,
