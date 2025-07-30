@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753883346814,
+  "lastUpdate": 1753883564013,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14183,6 +14183,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013454959677419356,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8e0d04d6d1a78e04deadb99664f237592cd25336",
+          "message": "refactor(levm): add execution flags to EF tests runner (#3843)\n\n**Description**\n\nThis PR adds three types of execution flags to the runner of the EF\ntests:\n- a flag to run the tests in a specific path (could be either a `.json`\nfile or a directory).\n- a flag to skip certain `.json` files from execution. \n- a flag to indicate specific `.json` files to be executed. \n\nThese flags could be improved in a later iteration. \n\nCloses #3792",
+          "timestamp": "2025-07-30T12:59:09Z",
+          "tree_id": "a7d98230efa9a5cc7525e6306ab90a4c9b76d634",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8e0d04d6d1a78e04deadb99664f237592cd25336"
+        },
+        "date": 1753883554405,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012871089681774348,
             "unit": "Mgas/s"
           }
         ]
