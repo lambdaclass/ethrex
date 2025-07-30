@@ -436,16 +436,14 @@ impl Syncer {
             self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
             self.peers.peer_scores
         ); */
-        let mut time_limit: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
-        while current_unix_time() > time_limit {
-            (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
+        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        while current_unix_time() > staleness_timestamp {
+            (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
         }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
         info!("Selected block {pivot_number} as pivot for snap sync");
-
-        let state_root = pivot_header.state_root;
 
         let (account_hashes, account_states, pivot_is_stale) = self
             .peers
@@ -502,7 +500,7 @@ impl Syncer {
 
             let account_store_time = Instant::now().saturating_duration_since(account_store_start);
 
-            info!("Expected state root: {state_root:?}");
+            info!("Expected state root: {}", pivot_header.state_root);
             info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
             let storages_store_start = Instant::now();
@@ -574,15 +572,15 @@ impl Syncer {
 
             let mut healing_done = false;
             while !healing_done {
-                (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
+                (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
                 healing_done =
-                    heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                    heal_state_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
                         .await?;
                 if !healing_done {
                     continue;
                 }
                 healing_done =
-                    heal_storage_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                    heal_storage_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
                         .await?;
             }
             info!("Finished healing");
