@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753896873190,
+  "lastUpdate": 1753897643794,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14418,6 +14418,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013774324045407638,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed7fc008565f5f986b36a4dc84bd5c8956db4d3d",
+          "message": "fix(l2): integration tests (#3851)\n\n**Motivation**\n\nTransactions revert sometimes because of exceeding the estimated gas\nlimit.\n\nThe estimation is done by executing the transaction with different gas\nlimits, binary searching the smallest value to which the tx does not\nrevert. We think this algorithm doesn't work properly when there's a big\nvariance in the execution gas, resulting in a too low estimation.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n- adds logs to tests\n- doubles the gas limit estimation of test calls\n- changes the \"not an Integration Test\" name to make them required again\n- asserts transactions succeeded (receipt.status == true)\n\n\ncloses #3828\n\n---------\n\nCo-authored-by: avilagaston9 <gaston.avila@lambdaclass.com>",
+          "timestamp": "2025-07-30T15:56:34Z",
+          "tree_id": "26372ffb2743b22be247dc054a691ff9642888b5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ed7fc008565f5f986b36a4dc84bd5c8956db4d3d"
+        },
+        "date": 1753897643316,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00762704,
             "unit": "Mgas/s"
           }
         ]
