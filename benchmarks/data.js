@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753902262245,
+  "lastUpdate": 1753902971400,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14564,6 +14564,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013774324045407638,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e7014ac919c88c6da9664070d8b1ec9d3c7ec3de",
+          "message": "test(l2): monitor withdrawal widget integration tests (#3681)\n\n**Motivation**\n\nWe want to test the logic of the withdrawal widget, which is the only\none with significant logic behind it.\n\nAs for the other widgets:\n\n* NodeStatus/Batch are hard to test because they depend on\nout-of-control events, and don't to much beyond calling RPCs.\n* Mempool is hard to test, because we don't have much control (aside\nfrom \"tricks\" such as setting high nonces) over when tranactions are\npulled from the mempool. Also it doesn't have much logic inside. It also\nrelies on being part of the sequencer.\n* Deposits do have a little bit more logic, and can be somewhat\ncontrolled (deposits shouldn't magically disappear if nothing else is\nsending transactions). However, it relies on having access to the\nsequencer store so it's deferred.\n\n**Description**\n\nBoth ETH and ERC20 withdrawals are tested, as part of other integration\ntests.\n\nSome changes are made to make testing easier, and a bug (incorrect topic\nindex) is fixed.\n\nCloses #3526\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-07-30T16:54:54Z",
+          "tree_id": "e99ab800a0060c8fc90f819c5e13f2dddde1eaa8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e7014ac919c88c6da9664070d8b1ec9d3c7ec3de"
+        },
+        "date": 1753902970943,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007415177777777778,
             "unit": "Mgas/s"
           }
         ]
