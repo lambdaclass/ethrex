@@ -40,6 +40,7 @@ COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
 COPY Cargo.* ./
+RUN echo "Building with flags: $BUILD_FLAGS"
 RUN cargo build --release $BUILD_FLAGS
 
 # --- Final Image ---
