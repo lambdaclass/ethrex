@@ -1,4 +1,4 @@
-# LEVM (Lambda EVM)
+# LEVM: Lambda EVM
 
 Implementation of a simple, yet fast, Ethereum Virtual Machine in Rust.
 
@@ -13,7 +13,7 @@ Implementation of a simple, yet fast, Ethereum Virtual Machine in Rust.
 
 ## Trying out LEVM
 
-For running a custom transaction we have a custom runner, start [here](./runner/README.md).
+We have a runner for running custom transactions, for using it start [here](./runner/README.md).
 
 ## Ethereum Foundation Tests (EF Tests)
 

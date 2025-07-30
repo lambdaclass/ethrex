@@ -21,8 +21,9 @@ All tests are first run on levm for the most recent forks (Merge,Shangai,Cancun 
 make download-evm-ef-tests
 ```
 
-## Reloading tests when outdated
+## Refreshing tests when outdated
 
+Sometimes we update the version of tests we run, for removing the old files and downloading the new ones you can use this command:
 ```bash
 make refresh-evm-ef-tests
 ```
@@ -64,42 +65,3 @@ or
 ```bash
 make test-revm
 ```
-## Performance metrics
-
-### To run Flamegraph on the Ethereum Foundation tests
-
-First install Flamegraph
-
-```Shell
-cargo install flamegraph
-```
-
-Run the tests
-
-```Shell
-make flamegraph-run-ef-tests
-```
-
-This will create a folder inside named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
-
-### To run Samply on the Ethereum Foundation tests
-
-First install Samply
-
-```Shell
-cargo install --locked samply
-```
-
-Run the tests
-
-```Shell
-make samply-run-ef-tests
-```
-
-This will create a folder inside named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
-
-```Shell
-samply load <path-to-perf-file.json>
-```
-
-samply will open Firefox with the desired profile file.
