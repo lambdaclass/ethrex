@@ -329,7 +329,7 @@ pub enum MonitorError {
     GetLatestBatch,
     #[error("Failed to get latest verified batch")]
     GetLatestVerifiedBatch,
-    #[error("Failed to get committed batch")]
+    #[error("Failed to get commited batch")]
     GetLatestCommittedBatch,
     #[error("Failed to get last L1 block fetched")]
     GetLastFetchedL1,
@@ -343,6 +343,10 @@ pub enum MonitorError {
     PrivilegedTxParseError,
     #[error("Failure in rpc call: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to get receipt for transaction")]
+    ReceiptError,
+    #[error("Expected transaction to have logs")]
+    NoLogs,
     #[error("Expected items in the table")]
     NoItemsInTable,
     #[error("RPC List can't be empty")]
