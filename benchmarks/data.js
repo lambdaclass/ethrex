@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753908528763,
+  "lastUpdate": 1753909268467,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6685,6 +6685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162452167295,
             "range": "± 369883032",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+Mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "Mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f9a876e6e2fe51c53bc646680b838b8e124a847",
+          "message": "feat(l2): store sp1 & risc0 vk encoded (#3807)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe vk stored in the interface wasn't encoded, so it couldn't be read by\na human\n\n**Description**\n\nAdded encoding when saving vk in file. You can test this by running from\n`crates/l2`\n```bash\n make build-prover PROVER=risc0\n make build-prover PROVER=sp1\n PROVER_CLIENT_ALIGNED=true make build-prover PROVER=sp1\n```\n\nchanged the way the file is read in the contract deployment process.\n\nYou can test it using\n```bash\n COMPILE_CONTRACTS=true cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \\\n  --eth-rpc-url http://localhost:8545 \\\n  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \\\n  --genesis-l1-path ../../fixtures/genesis/l1-dev.json \\\n  --genesis-l2-path ../../fixtures/genesis/l2.json \\\n  --contracts-path contracts \\\n  --sp1.verifier-address 0x00000000000000000000000000000000000000aa \\\n  --risc0.verifier-address 0x00000000000000000000000000000000000000aa \\\n  --tdx.verifier-address 0x00000000000000000000000000000000000000aa \\\n  --aligned.aggregator-address 0x00000000000000000000000000000000000000aa \\\n  --bridge-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \\\n  --on-chain-proposer-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \\\n  --deposit-rich \\\n  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \\\n  --deploy-based-contracts \\\n  --sequencer-registry-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607\n```\n\n(you need to have a l1 running)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-30T20:10:49Z",
+          "tree_id": "f6144b9fde822d5fbe97b5e37800d120de2f7ca2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2f9a876e6e2fe51c53bc646680b838b8e124a847"
+        },
+        "date": 1753909254972,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161273583007,
+            "range": "± 576981516",
             "unit": "ns/iter"
           }
         ]
