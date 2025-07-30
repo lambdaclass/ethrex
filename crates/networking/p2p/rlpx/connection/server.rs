@@ -741,13 +741,19 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
                 for tx in &txs.transactions {
-                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
-                        continue;
+                    match state.blockchain.add_transaction_to_pool(tx.clone()).await {
+                        Err(e) => {
+                            log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
+                            continue;
+                        }
+                        Ok(tx_hash) if tx_hash.is_zero() => continue,
+                        Ok(_) => valid_txs.push(tx.clone()),
                     }
-                    valid_txs.push(tx.clone());
                 }
                 if !valid_txs.is_empty() {
+                    for tx in valid_txs.iter() {
+                        log_peer_warn(&state.node, &format!("Sending tx: {:#x}", tx.compute_hash()));
+                    }
                     broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
