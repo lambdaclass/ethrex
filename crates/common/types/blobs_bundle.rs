@@ -376,7 +376,7 @@ mod tests {
         let blob = blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
         let blobs = std::iter::repeat(blob)
-            .take(MAX_BLOB_COUNT as usize + 1)
+            .take(MAX_BLOB_COUNT_ELECTRA as usize + 1)
             .collect::<Vec<_>>();
 
         let blobs_bundle =
