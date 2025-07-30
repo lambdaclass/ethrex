@@ -407,7 +407,6 @@ pub async fn import_blocks(
                 continue;
             }
 
-
             blockchain
                 .add_block(block)
                 .await
