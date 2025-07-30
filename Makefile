@@ -58,7 +58,7 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
-localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex receives
+localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex exchanges with the consensus client
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
 
