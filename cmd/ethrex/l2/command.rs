@@ -104,7 +104,8 @@ pub enum Command {
         )]
         datadir: String,
     },
-    DeployL1 {
+    #[command(about = "Deploy in L1 all contracts needed by an L2.")]
+    Deploy {
         #[command(flatten)]
         options: DeployerOptions,
     },
@@ -403,7 +404,7 @@ impl Command {
                         .await?;
                 }
             }
-            Command::DeployL1 { options } => {
+            Command::Deploy { options } => {
                 ethrex_l2_l1_deployer(options).await?;
             }
         }
