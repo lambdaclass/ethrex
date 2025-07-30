@@ -172,7 +172,7 @@ impl Store {
         let latest = self
             .latest_block_header
             .read()
-            .expect("poisoned lock")
+            .map_err(|_| StoreError::LockError)?
             .clone();
         if block_number == latest.number {
             return Ok(Some(latest));
@@ -776,7 +776,10 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         {
-            let last = self.latest_block_header.read().expect("poisoned");
+            let last = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
             if last.number == block_number {
                 return Ok(Some(last.hash()));
             }
@@ -786,7 +789,10 @@ impl Store {
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(Some(
-            self.latest_block_header.read().expect("poisoned").hash(),
+            self.latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .hash(),
         ))
     }
 
