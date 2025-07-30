@@ -50,7 +50,7 @@ services:
     depends_on:
       - ethrex
     command: >
-      l2-tools 
+      l2
       deploy
 
   ethrex_l2:

@@ -99,7 +99,7 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2-tools deploy \
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -116,7 +116,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2-tools deploy
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
