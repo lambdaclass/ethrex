@@ -14,13 +14,16 @@ For more information on these tests check [the docs](https://eest.ethereum.org/m
 ## How to run the tests?
 
 First, make sure you have the EF tests downloaded. This can be achieved by running:
-`make download-evm-ef-tests`
-
-> Note: this command will only work if you are in `ethrex/cmd/ef_tests/state`.
+```bash
+cd cmd/ef_tests/state
+make download-evm-ef-tests
+```
 
 After the `vectors/` directory is set up, run:
 
-`make run-new-runner`
+```bash
+make run-new-runner
+```
 
 This will parse and execute everything in the `./vectors` directory by default.
 
@@ -33,15 +36,21 @@ In case you do not want to parse and execute everything in the `vectors/` direct
 
 _Example:_
 
-`make run-new-runner flags="--path ./vectors/GeneralStateTests"`
+```bash
+make run-new-runner flags="--path ./vectors/GeneralStateTests"
+```
 
-`make run-new-runner flags="--path ./vectors/GeneralStateTests/stChainId/chainId.json"`
+```bash
+make run-new-runner flags="--path ./vectors/GeneralStateTests/stChainId/chainId.json"
+```
 
 
 - `json-files`: it can be used to specify the `.json` files of interest (no need for full path). If this flag is set to some value, the `path` flag will be ignored.
 _Example:_
 
-`make run-new-runner flags="--json-files chainId.json,transStorageReset.json"`
+```bash
+make run-new-runner flags="--json-files chainId.json,transStorageReset.json"
+```
 
 > Note that different `.json` files are separated by a comma.
 
@@ -49,4 +58,6 @@ _Example:_
 - `skip-files`: it can be used to skip certaing `.json` files.
 _Example:_
 
-`make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"`
+```bash
+make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"
+```
