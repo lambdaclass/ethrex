@@ -61,3 +61,12 @@ _Example:_
 ```bash
 make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"
 ```
+
+## Reports
+For tests that succeded, a report can be found at:
+`cmd/ef_tests/state/runner_v2/success_report.txt`
+
+For tests that failed, a report can be found at:
+`cmd/ef_tests/state/runner_v2/failure_report.txt`
+
+If none of the tests failed the report will not get generated at all. In case any of the tests did fail, the report will show the differences with the expected post state for each failing test case.
