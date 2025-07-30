@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753898974488,
+  "lastUpdate": 1753899690666,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14506,6 +14506,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013441409869083586,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6967cf487bf8b4c261f7cdc2a33097e74c64f4ac",
+          "message": "feat(l2): add privileged transaction cap (#3776)\n\n**Motivation**\n\nIf the l2 batches include too many privileged transactions, it may\nhappen that the gas cost of `getPendingTransactionsVersionedHash(uint16\nn)` becomes so high it's impossible to commit batches.\n\n**Description**\n\nTo prevent this, we record the privileged transaction count of the batch\nbeing built and ensure no more than a fixed amount (300 for now) is\nadded.\n\nWe add a spammer (that makes 1800 privileged transactions) as a\nregression test.\n\nAdditionally, this allows enforcing intra-batch ordering of privileged\ntransactions. This prevents the following scenario from happening:\n* A sends two deposits with gas values 1 (deposit 1) and 10M (deposit 2)\n* B then sends a deposit with gas value 1 (deposit 3)\n* The sequencer includes A's first deposit, but not the second because\nit's too big for the block. Deposit 3 is included because it's small.\n* The resulting inclusion order is 1, 3. This out-of-order and therefore\nthe batch is invalid.",
+          "timestamp": "2025-07-30T16:17:44Z",
+          "tree_id": "383642db8f5f7fa6e5c3bd21f0025ea3e141148f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6967cf487bf8b4c261f7cdc2a33097e74c64f4ac"
+        },
+        "date": 1753899689980,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007583704545454545,
             "unit": "Mgas/s"
           }
         ]
