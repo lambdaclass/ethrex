@@ -155,7 +155,7 @@ jobs:
           enclave_name: ${{ matrix.enclave_name }}
           kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "test_entrypoint"
+          ethereum_package_branch: "478e84f5a3b2a4c8225200ea104b8bfdf70b9ffe"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
