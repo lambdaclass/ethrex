@@ -302,7 +302,7 @@ pub async fn deposit_erc20(
 
     let deposit_data = encode_calldata(DEPOSIT_ERC20_SIGNATURE, &calldata_values)?;
 
-    let deposit_tx = eth_client
+    let mut deposit_tx = eth_client
         .build_eip1559_transaction(
             bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
             from,
@@ -313,6 +313,7 @@ pub async fn deposit_erc20(
             },
         )
         .await?;
+    deposit_tx.gas_limit *= 2; // tx reverts in some cases otherwise
 
     send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await
 }

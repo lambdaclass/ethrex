@@ -192,7 +192,7 @@ jobs:
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 
+          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
           rex call "$SEQUENCER_REGISTRY" "leaderSequencer()"
 
       - name: Start Sequencer
@@ -259,8 +259,7 @@ jobs:
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
-    # TODO: change name back to "Integration Test" after fixing https://github.com/lambdaclass/ethrex/issues/3828
-    name: not an Integration Test
+    name: Integration Test
     runs-on: ubuntu-latest
     needs: [integration-test, state-diff-test, integration-test-based]
     # Make sure this job runs even if the previous jobs failed or were skipped
