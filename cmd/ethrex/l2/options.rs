@@ -349,11 +349,7 @@ pub struct WatcherOptions {
 impl Default for WatcherOptions {
     fn default() -> Self {
         Self {
-            bridge_address: Some(
-                "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
-                    .parse()
-                    .unwrap(),
-            ),
+            bridge_address: None,
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
@@ -473,11 +469,7 @@ impl Default for CommitterOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .ok(),
-            on_chain_proposer_address: Some(
-                "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
-                    .parse()
-                    .unwrap(),
-            ),
+            on_chain_proposer_address: None,
             commit_time_ms: 60000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
