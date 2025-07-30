@@ -4,10 +4,8 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{
-        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
-    },
-    types::{Receipt, Transaction},
+    constants::{DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB},
+    types::{MIN_BASE_FEE_PER_BLOB_GAS, Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
