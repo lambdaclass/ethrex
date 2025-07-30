@@ -1021,7 +1021,7 @@ async fn test_privileged_spammer(l1_client: &EthClient) -> Result<(), Box<dyn st
             &rich_wallet_private_key,
             caller_l1,
             "spam(address,uint256)",
-            &[Value::Address(bridge_address()?), Value::Uint(15.into())],
+            &[Value::Address(bridge_address()?), Value::Uint(5.into())],
         )
         .await;
     }
