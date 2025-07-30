@@ -62,7 +62,7 @@ struct TaskResultStorage {
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    pub peer_table: Kademlia,
+    peer_table: Kademlia,
     pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 

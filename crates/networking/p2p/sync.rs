@@ -1083,7 +1083,11 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         };
 
         // Reward peer
-        scores.entry(peer_id).and_modify(|score| *score += 1);
+        scores.entry(peer_id).and_modify(|score| {
+            if *score < 10 {
+                *score += 1;
+            }
+        });
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
     }
