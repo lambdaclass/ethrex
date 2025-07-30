@@ -53,9 +53,10 @@ impl L1Watcher {
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
         sequencer_state: SequencerState,
+        l2_url: String,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new_with_multiple_urls(watcher_config.rpc_url.clone())?;
+        let l2_client = EthClient::new(l2_url)?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
@@ -76,6 +77,7 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        l2_url: String,
     ) -> Result<(), L1WatcherError> {
         let state = Self::new(
             store,
@@ -83,6 +85,7 @@ impl L1Watcher {
             &cfg.eth,
             &cfg.l1_watcher,
             sequencer_state,
+            l2_url,
         )?;
         state.start();
         Ok(())

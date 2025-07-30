@@ -73,6 +73,7 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
+        l2_url.clone(),
     )
     .await
     .inspect_err(|err| {

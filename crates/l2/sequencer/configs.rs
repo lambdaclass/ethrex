@@ -47,7 +47,6 @@ pub struct EthConfig {
 
 #[derive(Clone, Debug)]
 pub struct L1WatcherConfig {
-    pub rpc_url: Vec<String>,
     pub bridge_address: Address,
     pub check_interval_ms: u64,
     pub max_block_step: U256,
