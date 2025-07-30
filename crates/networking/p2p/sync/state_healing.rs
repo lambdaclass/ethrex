@@ -109,6 +109,10 @@ pub(crate) async fn heal_state_trie(
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
+                    info!(
+                        "We received nothing, putting these paths back {}",
+                        batch.len()
+                    );
                     paths.extend(batch);
                 }
             }
