@@ -6,7 +6,7 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, SNAP_LIMIT, PeerHandler},
     utils::current_unix_time,
 };
 use aes::cipher::consts::U2;
@@ -40,8 +40,6 @@ use tracing::{debug, error, info, warn};
 const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
-
-const SNAP_LIMIT: u64 = 16;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -1033,6 +1031,8 @@ async fn heal_storage_trie_wrap(
 }
 
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
+    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the 
+    // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT - 3;
     loop {
         let mut scores = peers.peer_scores.lock().await;
