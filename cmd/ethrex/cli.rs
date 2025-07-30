@@ -15,11 +15,10 @@ use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
-    DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, default_datadir, get_client_version, init_datadir},
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -49,14 +48,13 @@ pub struct Options {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value = DEFAULT_DATADIR,
+        default_value = default_datadir("ethrex"),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "force",
         help = "Force remove the database",
@@ -155,7 +153,7 @@ pub struct Options {
         help = "Receives the jwt secret used for authenticated rpc requests.",
         help_heading = "RPC options"
     )]
-    pub authrpc_jwtsecret: String,
+    pub authrpc_jwtsecret: PathBuf,
     #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(
@@ -223,8 +221,8 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir("ethrex"), required = false)]
+        datadir: PathBuf,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -235,7 +233,7 @@ pub enum Subcommand {
             value_name = "FILE_PATH/FOLDER",
             help = "Path to a RLP chain file or a folder containing files with individual Blocks"
         )]
-        path: String,
+        path: PathBuf,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
@@ -291,11 +289,14 @@ impl Subcommand {
         }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
+                let datadir = init_datadir(datadir.clone());
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
+                let datadir = init_datadir(opts.datadir.clone());
+
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&datadir, opts.force);
                 }
 
                 let network = get_network(opts);
@@ -305,10 +306,11 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(&path, &datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                let datadir = init_datadir(opts.datadir.clone());
+                export_blocks(Path::new(&path), &datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -321,13 +323,10 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = set_datadir(datadir);
-    let path = Path::new(&data_dir);
-
-    if path.exists() {
+pub fn remove_db(datadir: &Path, force: bool) {
+    if datadir.exists() {
         if force {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
             info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
@@ -337,32 +336,31 @@ pub fn remove_db(datadir: &str, force: bool) {
             io::stdin().read_line(&mut input).unwrap();
 
             if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
                 println!("Operation canceled.");
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {:?}", datadir);
     }
 }
 
 pub async fn import_blocks(
-    path: &str,
-    data_dir: &str,
+    path: &Path,
+    datadir: &Path,
     genesis: Genesis,
     evm: EvmEngine,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
-    let data_dir = set_datadir(data_dir);
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(datadir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
-        info!("Importing blocks from directory: {path}");
+        info!("Importing blocks from directory: {:?}", path);
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
@@ -374,13 +372,12 @@ pub async fn import_blocks(
         entries
             .iter()
             .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!("Importing blocks from chain file: {path_str}");
-                utils::read_chain_file(path_str)
+                info!("Importing blocks from chain file: {:?}", entry);
+                utils::read_chain_file(entry)
             })
             .collect()
     } else {
-        info!("Importing blocks from chain file: {path}");
+        info!("Importing blocks from chain file: {:?}", path);
         vec![utils::read_chain_file(path)]
     };
 
@@ -435,13 +432,12 @@ pub async fn import_blocks(
 }
 
 pub async fn export_blocks(
-    path: &str,
-    data_dir: &str,
+    path: &Path,
+    datadir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let store = open_store(datadir);
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
@@ -485,5 +481,5 @@ pub async fn export_blocks(
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!("Exported {} blocks to file {path}", end - start);
+    info!("Exported {} blocks to file {:?}", end - start, path);
 }

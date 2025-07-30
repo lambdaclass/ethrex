@@ -178,7 +178,7 @@ Node options:
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
           [env: ETHREX_DATADIR=]
-          [default: ethrex]
+          [default: /home/runner/.local/share/ethrex]
 
       --force
           Delete the database without confirmation.
