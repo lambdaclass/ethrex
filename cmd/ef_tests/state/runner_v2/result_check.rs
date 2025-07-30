@@ -288,9 +288,10 @@ pub fn check_accounts_state(
         }
     }
 
-    // If any of the accounts comparison produced a mismatch, marked the test as failing.
+    // If any of the accounts comparisons produced a mismatch, register it in the checks result.
+    // If we got to this point, root did not match, therefore the test has already been registered
+    // as failing, we do not need to set it again and just add the account diff.
     if !accounts_diff.is_empty() {
-        check_result.passed = false;
         check_result.accounts_diff = Some(accounts_diff);
     }
 }
