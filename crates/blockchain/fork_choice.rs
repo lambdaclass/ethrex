@@ -23,7 +23,7 @@ pub async fn apply_fork_choice(
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
-) -> Result<BlockHeader, InvalidForkChoice> {
+) -> Result<(BlockHeader, Vec<(BlockNumber, BlockHash)>), InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
@@ -101,8 +101,8 @@ pub async fn apply_fork_choice(
     // Finished all validations.
 
     // Make all ancestors to head canonical.
-    for (number, hash) in new_canonical_blocks {
-        store.set_canonical_block(number, hash).await?;
+    for (number, hash) in &new_canonical_blocks {
+        store.set_canonical_block(*number, *hash).await?;
     }
 
     // Remove anything after the head from the canonical chain.
@@ -122,7 +122,7 @@ pub async fn apply_fork_choice(
     }
     store.update_latest_block_number(head.number).await?;
 
-    Ok(head)
+    Ok((head, new_canonical_blocks))
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.

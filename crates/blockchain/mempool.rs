@@ -19,6 +19,8 @@ use ethrex_storage::error::StoreError;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
+    // SAFETY: if you need to take two or more of these locks simultaneously,
+    // you MUST take them in declaration order to avoid deadlocks.
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
@@ -34,14 +36,15 @@ impl Mempool {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        self.txs_by_sender_nonce
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert((transaction.sender(), transaction.nonce()), hash);
+        let (sender, nonce) = (transaction.sender(), transaction.nonce());
         self.transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert(hash, transaction);
+        self.txs_by_sender_nonce
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert((sender, nonce), hash);
 
         Ok(())
     }
@@ -90,6 +93,37 @@ impl Mempool {
             tx_pool.remove(hash);
         };
 
+        Ok(())
+    }
+
+    pub fn remove_stale_transactions(
+        &self,
+        sender_nonce: &BTreeMap<H160, u64>,
+    ) -> Result<(), StoreError> {
+        let mut tx_pool = self
+            .transaction_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut blob_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut sender_nonce_index = self
+            .txs_by_sender_nonce
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        for (sender, target_nonce) in sender_nonce {
+            // Collect to a vec to avoid borrow-checker issues.
+            let nonce_hash: Vec<_> = sender_nonce_index
+                .range((*sender, 0)..=(*sender, *target_nonce))
+                .map(|((_sender, nonce), hash)| (*nonce, *hash))
+                .collect();
+            for (nonce, hash) in nonce_hash {
+                sender_nonce_index.remove(&(*sender, nonce));
+                tx_pool.remove(&hash);
+                blob_pool.remove(&hash);
+            }
+        }
         Ok(())
     }
 

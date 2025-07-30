@@ -22,7 +22,7 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
@@ -30,7 +30,7 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -650,6 +650,13 @@ impl Blockchain {
     /// Remove a transaction from the mempool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
+    }
+
+    pub fn remove_stale_transactions_from_mempool(
+        &self,
+        sender_nonce: &BTreeMap<H160, u64>,
+    ) -> Result<(), StoreError> {
+        self.mempool.remove_stale_transactions(sender_nonce)
     }
 
     /*
