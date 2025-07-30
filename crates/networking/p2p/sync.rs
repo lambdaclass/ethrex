@@ -1059,7 +1059,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
             .expect("Error");
 
-        let peer_score = scores.get(&peer_id).unwrap();
+        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1069,7 +1069,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         else {
             // Penalize peer
             scores.entry(peer_id).and_modify(|score| *score -= 1);
-            let peer_score = scores.get(&peer_id).unwrap();
+            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
