@@ -105,7 +105,7 @@ pub(crate) async fn heal_state_trie(
                     // If the node didn't have the data, it could be missing
                     paths.extend(batch);
                     // or the pivot might be stale
-                    if start.elapsed().as_secs() > SNAP_LIMIT * 12 {
+                    if start.elapsed().as_secs() as usize > SNAP_LIMIT * 12 {
                         stale = true;
                     }   
                 }
