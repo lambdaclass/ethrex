@@ -10,13 +10,14 @@ use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::EMPTY_KECCACK_HASH,
     types::{AccountState, Block},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
+use ethrex_trie::EMPTY_TRIE_HASH;
 use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};

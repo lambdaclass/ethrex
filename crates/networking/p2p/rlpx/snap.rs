@@ -3,17 +3,14 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethrex_common::{
-    H256, U256,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::AccountState,
-};
+use ethrex_common::{H256, U256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use ethrex_trie::EMPTY_TRIE_HASH;
 
 // Snap Capability Messages
 

@@ -170,7 +170,7 @@ async fn state_sync_segment(
                 }
                 // Build the batch of hashes and roots to send to the storage fetcher
                 // Ignore accounts without storage and account's which storage hasn't changed from our current stored state
-                if account.storage_root != *EMPTY_TRIE_HASH
+                if account.storage_root != EMPTY_TRIE_HASH
                     && !store.contains_storage_node(*account_hash, account.storage_root)?
                 {
                     account_hashes_and_storage_roots.push((*account_hash, account.storage_root));

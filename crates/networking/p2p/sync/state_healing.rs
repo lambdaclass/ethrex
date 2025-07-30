@@ -112,7 +112,7 @@ async fn heal_state_batch(
         // - If it is a leaf, request its bytecode & storage
         // - If it is a leaf, add its path & value to the trie
         {
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+            let trie = store.open_state_trie(EMPTY_TRIE_HASH)?;
             for node in nodes.iter() {
                 let path = batch.remove(0);
                 batch.extend(node_missing_children(node, &path, trie.db())?);
@@ -126,7 +126,7 @@ async fn heal_state_batch(
                         return Err(SyncError::CorruptPath);
                     }
                     let account_hash = H256::from_slice(path);
-                    if account.storage_root != *EMPTY_TRIE_HASH
+                    if account.storage_root != EMPTY_TRIE_HASH
                         && !store.contains_storage_node(account_hash, account.storage_root)?
                     {
                         hashed_addresses.push(account_hash);
