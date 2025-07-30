@@ -1051,7 +1051,6 @@ async fn heal_storage_trie_wrap(
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
     let new_pivot_block_number = block_number + SNAP_LIMIT;
     loop {
-        info!("Trying to update pivot");
         let mut scores = peers.peer_scores.lock().await;
 
         let (peer_id, mut peer_channel) = peers
@@ -1060,13 +1059,14 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
             .expect("Error");
 
+        info!("Trying to update pivot to {new_pivot_block_number} with peer {peer_id}");
         let Some(pivot) = peers
             .get_block_header(&mut peer_channel, new_pivot_block_number)
             .await
         else {
-            warn!("Received None pivot. Retrying");
+            warn!("Received None pivot from peer {peer_id}. Retrying");
             // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 1);
+            scores.entry(peer_id).and_modify(|score| *score -= 10);
             continue;
         };
 
