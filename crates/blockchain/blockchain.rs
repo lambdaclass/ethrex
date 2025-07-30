@@ -11,8 +11,8 @@ use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::MempoolTransaction;
+use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::{MempoolTransaction, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
