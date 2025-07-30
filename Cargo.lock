@@ -13829,6 +13829,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex",
  "risc0-build",
  "risc0-zkvm",
  "serde",
