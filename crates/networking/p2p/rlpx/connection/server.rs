@@ -250,6 +250,7 @@ impl GenServer for RLPxConnection {
                     send(&mut established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
+                    Ok(())
                     //send_new_pooled_tx_hashes(&mut established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
