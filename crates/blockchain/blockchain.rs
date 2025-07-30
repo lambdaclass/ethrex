@@ -836,6 +836,7 @@ impl Blockchain {
         Ok(evm)
     }
 
+    /// Get the current fork of the chain, based on the latest block's timestamp
     pub async fn current_fork(&self) -> Result<Fork, StoreError> {
         let chain_config = self.storage.get_chain_config()?;
         let latest_block_number = self.storage.get_latest_block_number().await?;
