@@ -1766,7 +1766,7 @@ impl PeerHandler {
     pub async fn request_state_trienodes(
         peer_channel: &mut PeerChannels,
         state_root: H256,
-        paths: &Vec<Nibbles>,
+        paths: Vec<Nibbles>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
         let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
