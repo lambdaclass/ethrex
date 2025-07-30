@@ -792,30 +792,21 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
     let gas_cost = u64::from(rounds) * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut h = [0; 8];
-
-    h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| calldata.get_u64_le()));
-
-    let mut m = [0; 16];
-
-    m.copy_from_slice(&std::array::from_fn::<u64, 16, _>(|_| {
-        calldata.get_u64_le()
-    }));
-
-    let mut t = [0; 2];
-    t.copy_from_slice(&std::array::from_fn::<u64, 2, _>(|_| calldata.get_u64_le()));
+    let h = std::array::from_fn(|_| calldata.get_u64_le());
+    let m = std::array::from_fn(|_| calldata.get_u64_le());
+    let t = std::array::from_fn(|_| calldata.get_u64_le());
 
     let f = calldata.get_u8();
-    if f != 0 && f != 1 {
+    if f > 1 {
         return Err(PrecompileError::ParsingInputError.into());
     }
     let f = f == 1;
 
-    #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
+    #[expect(clippy::as_conversions, reason = "safe to convert a u32 to usize")]
     let result = blake2f_compress_f(rounds as usize, &h, &m, &t, f);
 
     // map the result to the output format (from a u64 slice to a u8 one)
-    let output: Vec<u8> = result.iter().flat_map(|num| num.to_le_bytes()).collect();
+    let output = result.map(u64::to_le_bytes).concat();
 
     Ok(Bytes::from(output))
 }
