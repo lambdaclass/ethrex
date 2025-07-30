@@ -250,7 +250,7 @@ impl GenServer for RLPxConnection {
                     send(&mut established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
-                    send_new_pooled_tx_hashes(&mut established_state).await
+                    //send_new_pooled_tx_hashes(&mut established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
@@ -377,7 +377,7 @@ where
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_new_pooled_tx_hashes(state).await?;
+    //send_new_pooled_tx_hashes(state).await?;
 
     // Periodic broadcast check repeated events.
     send_interval(
