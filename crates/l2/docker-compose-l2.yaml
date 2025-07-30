@@ -51,7 +51,7 @@ services:
       - ethrex
     command: >
       l2-tools 
-      deploy-l1
+      deploy
 
   ethrex_l2:
     restart: always
