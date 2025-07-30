@@ -1921,7 +1921,7 @@ impl PeerHandler {
             .inspect_err(|err| error!(err))
             .expect("############### Error peer_channel connection");
 
-        let response = tokio::time::timeout(Duration::from_secs(2), async move {
+        let response = tokio::time::timeout(Duration::from_secs(5), async move {
             let response = receiver.recv().await;
             if response.is_none() {
                 error!("############### Error Message");
