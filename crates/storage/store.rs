@@ -768,7 +768,21 @@ impl Store {
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash).await
+        self.engine.set_canonical_block(number, hash).await?;
+
+        {
+            let mut last = self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            if last.number == number {
+                *last = self.engine.get_block_header(number)?.ok_or_else(|| {
+                    StoreError::Custom("missing canonical block header".to_string())
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn get_canonical_block_hash(
