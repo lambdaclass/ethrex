@@ -121,11 +121,14 @@ pub(crate) async fn heal_state_trie(
         // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
         if let Ok(returned_paths) = returned_paths_receiver.try_recv() {
             inflight_tasks -= 1;
-            longest_path_seen = returned_paths
-                .iter()
-                .map(|nibbles_vec| nibbles_vec.len())
-                .max()
-                .unwrap_or_default();
+            longest_path_seen = usize::max(
+                returned_paths
+                    .iter()
+                    .map(|nibbles_vec| nibbles_vec.len())
+                    .max()
+                    .unwrap_or_default(),
+                longest_path_seen,
+            );
             paths.extend(returned_paths);
         }
 
@@ -141,6 +144,7 @@ pub(crate) async fn heal_state_trie(
             let tx = task_sender.clone();
             inflight_tasks += 1;
             let _ = tokio::spawn(async move {
+                info!("Spawning a task to download");
                 // TODO: check errors to determine whether the current block is stale
                 let response = PeerHandler::request_state_trienodes(
                     &mut peer_channel.clone(),
@@ -173,7 +177,7 @@ pub(crate) async fn heal_state_trie(
             .await;
         }
 
-        info!("Maximum depth reached on loop {longest_path_seen}");
+        info!("Maximum depth reached on loop {longest_path_seen}. Inflight tasks {inflight_tasks}");
 
         // This condition is too weak, it doesn't check that all tasks are completed 💀💀
         // End loop if we have no more paths to fetch nor nodes to heal
