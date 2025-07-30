@@ -19,6 +19,7 @@ use ethrex_common::{
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
+use futures::FutureExt;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
@@ -430,7 +431,12 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        let mut time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        info!(
+            "Print Debug: all peers: {:?}, all scores: {:?}", 
+            self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
+            self.peers.peer_scores
+        );
+        let mut time_limit: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
         while current_unix_time() > time_limit {
             (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
         }
