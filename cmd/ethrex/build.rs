@@ -20,7 +20,7 @@ const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
-    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../../crates/l2/contracts/src");
 
     // Export build OS and rustc version as environment variables
     let rustc = RustcBuilder::default()
