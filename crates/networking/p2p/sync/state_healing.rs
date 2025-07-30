@@ -91,7 +91,7 @@ pub(crate) async fn heal_state_trie(
     // );
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
-    while !paths.is_empty() {
+    loop {
         // if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
         //     last_update = Instant::now();
         //     info!("State Healing in Progress, pending paths: {}", paths.len());

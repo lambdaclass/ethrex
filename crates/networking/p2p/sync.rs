@@ -551,8 +551,8 @@ impl Syncer {
 
             let mut healing_done = false;
             while !healing_done {
-                (pivot_header, staleness_timestamp) =
-                    update_pivot(pivot_header.number, &self.peers).await;
+                // 💀 Remove hardcoded block number
+                (pivot_header, staleness_timestamp) = update_pivot(8877796, &self.peers).await;
                 healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
