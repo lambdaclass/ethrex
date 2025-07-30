@@ -5,7 +5,6 @@ use crate::{
     l2::{
         self, SequencerOptions,
         deployer::{DeployerOptions, ethrex_l2_l1_deployer},
-        init_l2,
         options::Options,
     },
     networks::Network,

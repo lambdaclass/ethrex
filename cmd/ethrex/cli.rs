@@ -16,9 +16,9 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2::{
-        self, SequencerOptions,
+        self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
     networks::Network,
