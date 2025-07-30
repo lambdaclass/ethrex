@@ -24,7 +24,7 @@ use crate::{
     kademlia::PeerChannels,
     peer_handler::{PeerHandler, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::node_missing_children,
+    sync::{node_missing_children, SNAP_LIMIT},
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -57,14 +57,6 @@ pub(crate) async fn heal_state_trie(
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
-    // Spawn a bytecode fetcher for this block
-    // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-    //     bytecode_receiver,
-    //     peers.clone(),
-    //     store.clone(),
-    // ));
-    // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
 
@@ -87,10 +79,10 @@ pub(crate) async fn heal_state_trie(
     let mut nodes_to_heal = Vec::new();
     while !paths.is_empty() {
         let mut stale = false;
-        // if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-        //     last_update = Instant::now();
-        //     info!("State Healing in Progress, pending paths: {}", paths.len());
-        // }
+         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+             last_update = Instant::now();
+             info!("State Healing in Progress, pending paths: {}", paths.len());
+         }
 
         // Attempt to receive a response from one of the peers
         if let Ok((response, batch)) = task_receiver.try_recv() {
@@ -98,6 +90,14 @@ pub(crate) async fn heal_state_trie(
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     nodes_to_heal.push((nodes, batch));
+                }
+                Err(RequestStateTrieNodesError::EmptyResponse) => {
+                    // If the node didn't have the data, it could be missing
+                    paths.extend(batch);
+                    // or the pivot might be stale
+                    if last_update.elapsed().as_secs() > SNAP_LIMIT * 12 {
+                        stale = true;
+                    }   
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -111,14 +111,14 @@ pub(crate) async fn heal_state_trie(
             paths.extend(returned_paths);
         }
 
-        // TODO: add scoring
-        let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+        let (peer_id, peer_channel) = peers
+            .get_peer_channel_with_highest_score(&SUPPORTED_SNAP_CAPABILITIES, &mut *peers.peer_scores.lock().await)
             .await
             .unwrap();
 
         let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
         let tx = task_sender.clone();
+        let peer_scores = peers.peer_scores.clone();
         let _ = tokio::spawn(async move {
             // TODO: check errors to determine whether the current block is stale
             let response = PeerHandler::request_state_trienodes(
@@ -127,6 +127,13 @@ pub(crate) async fn heal_state_trie(
                 batch.clone(),
             )
             .await;
+            let score_delta = match response {
+                | Err(RequestStateTrieNodesError::SendMessageError(_))
+                | Err(RequestStateTrieNodesError::InvalidData) => -3,
+                Err(RequestStateTrieNodesError::EmptyResponse) => -1,
+                Ok(_) => 1
+            };
+            *peer_scores.lock().await.entry(peer_id).or_default() += score_delta;
             // TODO: add error handling
             let _ = tx.send((response, batch)).await.inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")

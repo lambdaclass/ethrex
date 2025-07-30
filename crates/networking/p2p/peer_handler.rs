@@ -717,7 +717,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
         &self,
-        mut pivot_header: BlockHeader,
+        pivot_header: BlockHeader,
         start: H256,
         limit: H256,
     ) -> (Vec<H256>, Vec<AccountState>, bool) {
@@ -1793,7 +1793,10 @@ impl PeerHandler {
                 .await
                 .map_err(RequestStateTrieNodesError::SendMessageError)?;
 
-        if nodes.is_empty() || nodes.len() > expected_nodes {
+        if nodes.is_empty() {
+            return Err(RequestStateTrieNodesError::EmptyResponse);
+        }
+        if nodes.len() > expected_nodes {
             return Err(RequestStateTrieNodesError::InvalidData);
         }
 
@@ -1959,4 +1962,6 @@ pub enum RequestStateTrieNodesError {
     SendMessageError(SendMessageError),
     #[error("Invalid data")]
     InvalidData,
+    #[error("Empty response")]
+    EmptyResponse
 }
