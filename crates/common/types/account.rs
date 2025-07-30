@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_trie::{Trie, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Trie};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
