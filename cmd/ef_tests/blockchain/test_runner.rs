@@ -342,7 +342,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         );
         // Check code
         let code_hash = expected_account.info.code_hash;
-        if code_hash != *EMPTY_KECCACK_HASH {
+        if code_hash != EMPTY_KECCACK_HASH {
             // We don't want to get account code if there's no code.
             let db_account_code = db
                 .get_account_code(code_hash)
