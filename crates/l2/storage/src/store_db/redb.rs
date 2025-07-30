@@ -1,4 +1,4 @@
-use std::{panic::RefUnwindSafe, sync::Arc};
+use std::{ops::Range, panic::RefUnwindSafe, sync::Arc};
 
 use crate::error::RollupStoreError;
 use ethrex_common::{
@@ -25,6 +25,9 @@ const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
 
 const OPERATIONS_COUNTS: TableDefinition<u64, OperationsCountRLP> =
     TableDefinition::new("OperationsCount");
+
+const PRECOMMIT_PRIVILEGED: TableDefinition<u64, Rlp<(u64, u64)>> =
+    TableDefinition::new("PrecommitPrivileged");
 
 const BLOB_BUNDLES: TableDefinition<u64, Rlp<Vec<Blob>>> = TableDefinition::new("BlobBundles");
 
@@ -463,6 +466,29 @@ impl StoreEngineRollup for RedBStoreRollup {
         })
         .await
         .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        Ok(self
+            .read(PRECOMMIT_PRIVILEGED, 0)
+            .await?
+            .map(|b| b.value().to())
+            .map(|(start, end)| start..end))
+    }
+
+    async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        if let Some(range) = range {
+            self.write(PRECOMMIT_PRIVILEGED, 0, (range.start, range.end).into())
+                .await?;
+        } else {
+            let txn = self.db.begin_write().map_err(Box::new)?;
+            txn.open_table(PRECOMMIT_PRIVILEGED)?.remove(0)?;
+            txn.commit()?;
+        }
+        Ok(())
     }
 }
 

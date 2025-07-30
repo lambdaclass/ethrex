@@ -283,3 +283,9 @@ sequenceDiagram
     Sequencer ->> OnChainProposer: Sends batch as usual
     OnChainProposer ->> Sequencer: OK
 ```
+
+## Limitations
+
+Due to the gas cost of computing the rolling hashes, there is a limit to how many deposits can be handled in a single batch.
+
+To prevent creation of invalid batches, we save to the rollup store information about the deposits being included in the current batch.
