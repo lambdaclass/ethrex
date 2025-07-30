@@ -72,6 +72,7 @@ pub(crate) async fn heal_state_trie(
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
     let mut is_stale = false;
+    let mut longest_path_seen = 0;
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -103,6 +104,7 @@ pub(crate) async fn heal_state_trie(
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
+                    info!("We received {} nodes to heal", nodes.len());
                     nodes_to_heal.push((nodes, batch));
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
@@ -115,6 +117,11 @@ pub(crate) async fn heal_state_trie(
         // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
         if let Ok(returned_paths) = returned_paths_receiver.try_recv() {
             inflight_tasks -= 1;
+            longest_path_seen = returned_paths
+                .iter()
+                .map(|nibbles_vec| nibbles_vec.len())
+                .max()
+                .unwrap_or_default();
             paths.extend(returned_paths);
         }
 
@@ -125,6 +132,7 @@ pub(crate) async fn heal_state_trie(
             .unwrap();
 
         let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+        info!("Created the batch of len {}", batch.len());
         if !batch.is_empty() && !is_stale {
             let tx = task_sender.clone();
             inflight_tasks += 1;
@@ -160,6 +168,8 @@ pub(crate) async fn heal_state_trie(
             })
             .await;
         }
+
+        info!("Maximum depth reached on loop {longest_path_seen}");
 
         // This condition is too weak, it doesn't check that all tasks are completed 💀💀
         // End loop if we have no more paths to fetch nor nodes to heal
