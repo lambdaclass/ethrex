@@ -126,6 +126,20 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
 }
 
+impl Established {
+    async fn teardown(&self) {
+        // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
+        // Just logging a debug line if that's the case.
+        let _ = self
+            .sink
+            .lock()
+            .await
+            .close()
+            .await
+            .inspect_err(|err| error!("Could not close the socket: {err}"));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum InnerState {
     HandshakeFailed,
@@ -352,7 +366,7 @@ impl GenServer for RLPxConnection {
                     .lock()
                     .await
                     .replace_peer(established_state.node.node_id());
-                established_state.sink.lock().await.close().await?;
+                established_state.teardown().await;
             }
             _ => {
                 // Nothing to do if the connection was not established
@@ -597,7 +611,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         }
     }
 
-    let _ = state.sink.lock().await.close().await;
+    state.teardown().await;
 }
 
 fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {

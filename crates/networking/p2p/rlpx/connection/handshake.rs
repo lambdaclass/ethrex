@@ -111,7 +111,7 @@ pub(crate) async fn perform(
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()));
         }
-        // Souldn't perform a Handshake on an already failed connection.
+        // Shouldn't perform a Handshake on an already failed connection.
         // Put it here to complete the match arms
         InnerState::HandshakeFailed => {
             return Err(RLPxError::StateError("Handshake Failed".to_string()));
