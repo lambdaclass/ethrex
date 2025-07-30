@@ -124,11 +124,12 @@ impl PeerHandler {
             .unwrap()
             .clone();
 
+        let mut max_peer_id_score = i64::MIN;
         for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
-            let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
-            let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-            if peer_id_score >= max_peer_id_score {
+            let peer_id_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            if *peer_id_score >= max_peer_id_score {
                 free_peer_id = *peer_id;
+                max_peer_id_score = *peer_id_score;
                 free_peer_channel = channel.clone();
             }
         }
