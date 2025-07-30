@@ -17,6 +17,7 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
+use prometheus::core::AtomicU64;
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
 
@@ -25,6 +26,7 @@ use crate::{
     peer_handler::{PeerHandler, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::node_missing_children,
+    utils::current_unix_time,
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -55,6 +57,7 @@ pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
+    staleness_timestamp: u64,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
@@ -67,6 +70,8 @@ pub(crate) async fn heal_state_trie(
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
+    let mut inflight_tasks: u64 = 0;
+    let mut is_stale = false;
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -86,14 +91,15 @@ pub(crate) async fn heal_state_trie(
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     while !paths.is_empty() {
-        let mut stale = false;
         // if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
         //     last_update = Instant::now();
         //     info!("State Healing in Progress, pending paths: {}", paths.len());
         // }
 
         // Attempt to receive a response from one of the peers
+        // TODO: this match response should score the appropiate peers
         if let Ok((response, batch)) = task_receiver.try_recv() {
+            inflight_tasks -= 1;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -108,6 +114,7 @@ pub(crate) async fn heal_state_trie(
 
         // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
         if let Ok(returned_paths) = returned_paths_receiver.try_recv() {
+            inflight_tasks -= 1;
             paths.extend(returned_paths);
         }
 
@@ -118,39 +125,46 @@ pub(crate) async fn heal_state_trie(
             .unwrap();
 
         let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-        let tx = task_sender.clone();
-        let _ = tokio::spawn(async move {
-            // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_state_trienodes(
-                &mut peer_channel.clone(),
-                state_root,
-                batch.clone(),
-            )
+        if !batch.is_empty() && !is_stale {
+            let tx = task_sender.clone();
+            inflight_tasks += 1;
+            let _ = tokio::spawn(async move {
+                // TODO: check errors to determine whether the current block is stale
+                let response = PeerHandler::request_state_trienodes(
+                    &mut peer_channel.clone(),
+                    state_root,
+                    batch.clone(),
+                )
+                .await;
+                // TODO: add error handling
+                let _ = tx.send((response, batch)).await.inspect_err(|err| {
+                    error!("Failed to send state trie nodes response. Error: {err}")
+                });
+            })
             .await;
-            // TODO: add error handling
-            let _ = tx.send((response, batch)).await.inspect_err(|err| {
-                error!("Failed to send state trie nodes response. Error: {err}")
-            });
-        });
+        }
 
         let store_cloned = store.clone();
         let tx = returned_paths_sender.clone();
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
+            inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
-            tokio::spawn(async move {
+            let _ = tokio::spawn(async move {
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
                         .send(return_paths)
                         .await
                         .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
                 }
-            });
+            })
+            .await;
         }
 
+        // This condition is too weak, it doesn't check that all tasks are completed 💀💀
         // End loop if we have no more paths to fetch nor nodes to heal
-        if paths.is_empty() && nodes_to_heal.is_empty() {
-            info!("paths.is_empty()");
+        if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
+            info!("Nothing more to heal found");
             break;
         }
 
@@ -162,8 +176,12 @@ pub(crate) async fn heal_state_trie(
         // }
 
         // TODO: add logic to detect whether we are stale
-        if stale {
+        if current_unix_time() > staleness_timestamp {
             info!("state healing is stale");
+            is_stale = true;
+        }
+
+        if is_stale && inflight_tasks == 0 {
             break;
         }
     }

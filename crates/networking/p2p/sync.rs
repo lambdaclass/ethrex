@@ -6,7 +6,7 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, SNAP_LIMIT, PeerHandler},
+    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler, SNAP_LIMIT},
     utils::current_unix_time,
 };
 use aes::cipher::consts::U2;
@@ -429,14 +429,15 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-/*         info!(
-            "Print Debug: all peers: {:?}, all scores: {:?}", 
+        /*         info!(
+            "Print Debug: all peers: {:?}, all scores: {:?}",
             self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
             self.peers.peer_scores
         ); */
         let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         while current_unix_time() > staleness_timestamp {
-            (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
+            (pivot_header, staleness_timestamp) =
+                update_pivot(pivot_header.number, &self.peers).await;
         }
 
         let pivot_number = pivot_header.number;
@@ -471,10 +472,9 @@ impl Syncer {
         let account_store_start = Instant::now();
         let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-        let known_hash_account = H256::from_str(
-            "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
-        )
-        .expect("Const from_str");
+        let known_hash_account =
+            H256::from_str("0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4")
+                .expect("Const from_str");
 
         let computed_state_root = tokio::task::spawn_blocking(move || {
             let mut trie = trie;
@@ -542,24 +542,32 @@ impl Syncer {
             .await
             .replace(SystemTime::now());
 
-        let storages_store_time =
-            Instant::now().saturating_duration_since(storages_store_start);
+        let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
 
             let mut healing_done = false;
             while !healing_done {
-                (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
-                healing_done =
-                    heal_state_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
-                        .await?;
+                (pivot_header, staleness_timestamp) =
+                    update_pivot(pivot_header.number, &self.peers).await;
+                healing_done = heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
                 if !healing_done {
                     continue;
                 }
-                healing_done =
-                    heal_storage_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
-                        .await?;
+                healing_done = heal_storage_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
             }
             info!("Finished healing");
 
@@ -989,13 +997,19 @@ async fn heal_state_trie_wrap(
     state_root: H256,
     store: Store,
     peers: &PeerHandler,
-    time_limit: u64,
+    staleness_timestamp: u64,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
     while !healing_done {
-        healing_done = heal_state_trie(state_root, store.clone(), peers.clone()).await?;
-        if current_unix_time() > time_limit {
+        healing_done = heal_state_trie(
+            state_root,
+            store.clone(),
+            peers.clone(),
+            staleness_timestamp,
+        )
+        .await?;
+        if current_unix_time() > staleness_timestamp {
             info!("Stopped state healing due to staleness");
             break;
         }
@@ -1031,7 +1045,7 @@ async fn heal_storage_trie_wrap(
 }
 
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
-    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the 
+    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
     loop {
