@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -12,6 +14,8 @@ use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
 // VERGEN_GIT_SHA to get the git commit hash
 
 // This script downloads dependencies and compiles contracts to be embedded as constants in the deployer.
+
+const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
@@ -33,6 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .emit()?;
 
     download_script();
+
+    let out_dir = env::var_os("OUT_DIR").unwrap();
+    update_genesis_file(&PathBuf::from(L2_GENESIS_PATH), &Path::new(&out_dir))?;
 
     Ok(())
 }
@@ -249,4 +256,147 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
     let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
 
     fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
+}
+
+use std::collections::HashMap;
+
+use bytes::Bytes;
+use ethrex_common::types::{Genesis, GenesisAccount};
+use ethrex_common::{Address, H160, U256};
+use ethrex_l2_sdk::{
+    COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, address_to_word, get_erc1967_slot,
+};
+use genesis_tool::genesis::write_genesis_as_json;
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, thiserror::Error)]
+pub enum SystemContractsUpdaterError {
+    #[error("Failed to deploy contract: {0}")]
+    FailedToDecodeRuntimeCode(#[from] hex::FromHexError),
+    #[error("Failed to serialize modified genesis: {0}")]
+    FailedToSerializeModifiedGenesis(#[from] serde_json::Error),
+    #[error("Failed to write modified genesis file: {0}")]
+    FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
+    #[error("Failed to read path: {0}")]
+    InvalidPath(String),
+    #[error(
+        "Contract bytecode not found. Make sure to compile the updater with `COMPILE_CONTRACTS` set."
+    )]
+    BytecodeNotFound,
+}
+
+/// Bytecode of the CommonBridgeL2 contract.
+fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/CommonBridgeL2.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
+/// Bytecode of the L2ToL1Messenger contract.
+fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
+/// Bytecode of the L2Upgradeable contract.
+fn l2_upgradeable_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/UpgradeableSystemContract.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
+/// Address authorized to perform system contract upgrades
+/// 0x000000000000000000000000000000000000f000
+pub const ADMIN_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xf0, 0x00,
+]);
+
+/// Mask used to derive the initial implementation address
+/// 0x0000000000000000000000000000000000001000
+pub const IMPL_MASK: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00,
+]);
+
+fn add_with_proxy(
+    genesis: &mut Genesis,
+    address: Address,
+    code: Vec<u8>,
+    out_dir: &Path,
+) -> Result<(), SystemContractsUpdaterError> {
+    let impl_address = address ^ IMPL_MASK;
+
+    if code.is_empty() {
+        return Err(SystemContractsUpdaterError::BytecodeNotFound);
+    }
+
+    genesis.alloc.insert(
+        impl_address,
+        GenesisAccount {
+            code: Bytes::from(code),
+            storage: HashMap::new(),
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+
+    let mut storage = HashMap::new();
+    storage.insert(
+        get_erc1967_slot("eip1967.proxy.implementation"),
+        address_to_word(impl_address),
+    );
+    storage.insert(
+        get_erc1967_slot("eip1967.proxy.admin"),
+        address_to_word(ADMIN_ADDRESS),
+    );
+    genesis.alloc.insert(
+        address,
+        GenesisAccount {
+            code: Bytes::from(l2_upgradeable_runtime(out_dir)),
+            storage,
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+    Ok(())
+}
+
+pub fn update_genesis_file(
+    l2_genesis_path: &PathBuf,
+    out_dir: &Path,
+) -> Result<(), SystemContractsUpdaterError> {
+    let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
+        SystemContractsUpdaterError::InvalidPath(
+            "Failed to convert l2 genesis path to string".to_string(),
+        ),
+    )?);
+
+    add_with_proxy(
+        &mut genesis,
+        COMMON_BRIDGE_L2_ADDRESS,
+        common_bridge_l2_runtime(out_dir),
+        out_dir,
+    )?;
+
+    add_with_proxy(
+        &mut genesis,
+        L2_TO_L1_MESSENGER_ADDRESS,
+        l2_to_l1_messenger_runtime(out_dir),
+        out_dir,
+    )?;
+
+    write_genesis_as_json(genesis, Path::new(l2_genesis_path)).map_err(std::io::Error::other)?;
+
+    Ok(())
+}
+
+// From cmd/ethrex
+pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
+    let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+    _genesis_file(genesis_file).expect("Failed to decode genesis file")
+}
+
+// From cmd/ethrex/decode.rs
+fn _genesis_file(file: File) -> Result<Genesis, serde_json::Error> {
+    let genesis_reader = BufReader::new(file);
+    serde_json::from_reader(genesis_reader)
 }

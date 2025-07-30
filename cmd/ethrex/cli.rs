@@ -2,7 +2,6 @@ use std::{
     fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
-    str::FromStr,
     time::{Duration, Instant},
 };
 
@@ -25,7 +24,6 @@ use crate::{
 
 const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
-const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -198,9 +196,7 @@ pub struct Options {
 impl Options {
     pub fn default_l1() -> Self {
         Self {
-            network: Some(Network::GenesisPath(
-                PathBuf::from_str("../../fixtures/genesis/l1-dev.json").unwrap(),
-            )),
+            network: Some(Network::LocalDevnet),
             datadir: DB_ETHREX_DEV_L1.to_string(),
             dev: true,
             http_addr: "0.0.0.0".to_string(),
@@ -220,7 +216,7 @@ impl Options {
 
     pub fn default_l2() -> Self {
         Self {
-            network: Some(Network::GenesisPath(L2_GENESIS_PATH.into())),
+            network: Some(Network::LocalDevnetL2),
             datadir: DB_ETHREX_DEV_L2.to_string(),
             metrics_port: "3702".into(),
             metrics_enabled: true,
@@ -381,10 +377,6 @@ impl Subcommand {
                     remove_db(DB_ETHREX_DEV_L2, true);
                     println!("Initializing L1");
                     init_l1(Options::default_l1()).await?;
-                    println!("Updating L2 genesis file...");
-                    l2::system_contracts_updater::update_genesis_file(&PathBuf::from_str(
-                        L2_GENESIS_PATH,
-                    )?)?;
                     println!("Deploying contracts...");
                     let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(
                         l2::deployer::DeployerOptions::default(),

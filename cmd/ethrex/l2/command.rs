@@ -5,7 +5,6 @@ use crate::{
     l2::{
         self,
         deployer::{DeployerOptions, ethrex_l2_l1_deployer},
-        system_contracts_updater::{SystemContractsUpdaterOptions, update_genesis_file},
     },
     networks::Network,
     utils::{parse_private_key, set_datadir},
@@ -104,10 +103,6 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
-    },
-    UpdateSystemContracts {
-        #[command(flatten)]
-        options: SystemContractsUpdaterOptions,
     },
     DeployL1 {
         #[command(flatten)]
@@ -407,9 +402,6 @@ impl Command {
                     call_contract(&client, &private_key, contract_address, "unpause()", vec![])
                         .await?;
                 }
-            }
-            Command::UpdateSystemContracts { options } => {
-                update_genesis_file(&options.l2_genesis_path)?;
             }
             Command::DeployL1 { options } => {
                 ethrex_l2_l1_deployer(options).await?;
