@@ -360,7 +360,7 @@ impl ExecutionWitnessResult {
     }
 
     pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
         match self.codes.get(&code_hash) {

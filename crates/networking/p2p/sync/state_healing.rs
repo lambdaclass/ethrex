@@ -131,7 +131,7 @@ async fn heal_state_batch(
                     {
                         hashed_addresses.push(account_hash);
                     }
-                    if account.code_hash != *EMPTY_KECCACK_HASH
+                    if account.code_hash != EMPTY_KECCACK_HASH
                         && store.get_account_code(account.code_hash)?.is_none()
                     {
                         code_hashes.push(account.code_hash);
