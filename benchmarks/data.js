@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753912242907,
+  "lastUpdate": 1753914358314,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14711,6 +14711,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007498494382022472,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d5a49278a85ec3e7d663b403e53c23d6f1b5cd0",
+          "message": "fix(l2): integration tests hotfix (#3892)\n\n**Motivation**\n\nafter merging #3776 a test was added that spams the bridge with big gas\nlimit transactions. In #3851 we upped the gas limit of all transactions\nby x2 because the estimation was too low. These two contributed to\nexceed the block gas limit.\n\nThis PR lowers the amount of spam txs\n\nthanks @iovoid !",
+          "timestamp": "2025-07-30T21:01:48Z",
+          "tree_id": "26a5877ab68e3eac5b1d233323d327de12e0e04e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0d5a49278a85ec3e7d663b403e53c23d6f1b5cd0"
+        },
+        "date": 1753914344645,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007760069767441861,
             "unit": "Mgas/s"
           }
         ]
