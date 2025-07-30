@@ -6,7 +6,7 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, SNAP_LIMIT, PeerHandler},
     utils::current_unix_time,
 };
 use aes::cipher::consts::U2;
@@ -40,8 +40,6 @@ use tracing::{debug, error, info, warn};
 const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
-
-const SNAP_LIMIT: u64 = 16;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -436,16 +434,14 @@ impl Syncer {
             self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
             self.peers.peer_scores
         ); */
-        let mut time_limit: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
-        while current_unix_time() > time_limit {
-            (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
+        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        while current_unix_time() > staleness_timestamp {
+            (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
         }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
         info!("Selected block {pivot_number} as pivot for snap sync");
-
-        let state_root = pivot_header.state_root;
 
         let (account_hashes, account_states, pivot_is_stale) = self
             .peers
@@ -470,119 +466,99 @@ impl Syncer {
                 .await
         };
 
-        if !pivot_is_stale {
-            info!("Pivot isn't stale. Starting to compute the state root...");
+        info!("Starting to save to db the accounts...");
 
-            let account_store_start = Instant::now();
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let account_store_start = Instant::now();
+        let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-            let known_hash_account = H256::from_str(
-                "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
-            )
-            .expect("Const from_str");
+        let known_hash_account = H256::from_str(
+            "0x320f1afb905652b62099286d7ac0a60c4f275bf0ef997932c12b80ade218d9b4",
+        )
+        .expect("Const from_str");
 
-            let computed_state_root = tokio::task::spawn_blocking(move || {
-                let mut trie = trie;
-                let mut i = 0;
-                let accounts_len = account_hashes.len();
-                for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
-                    if account_hash == known_hash_account {
-                        info!("Account: {account_hash} Debug: {account:?}")
-                    }
-
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                        .unwrap();
+        let computed_state_root = tokio::task::spawn_blocking(move || {
+            let mut trie = trie;
+            let mut i = 0;
+            let accounts_len = account_hashes.len();
+            for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
+                if account_hash == known_hash_account {
+                    info!("Account: {account_hash} Debug: {account:?}")
                 }
-                trie.hash().unwrap()
-            })
+
+                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                    .unwrap();
+            }
+            trie.hash().unwrap()
+        })
+        .await
+        .expect("");
+
+        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+
+        let storages_store_start = Instant::now();
+        METRICS
+            .storage_tries_state_roots_start_time
+            .lock()
             .await
-            .expect("");
+            .replace(SystemTime::now());
 
-            *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+        *METRICS.storage_tries_state_roots_to_compute.lock().await =
+            account_storage_roots.len() as u64;
 
-            let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+        let store_clone = store.clone();
 
-            info!("Expected state root: {state_root:?}");
-            info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+        tokio::task::spawn_blocking(move || {
+            let store = store_clone;
+            // Store trie in storage
+            for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                .into_iter()
+                .zip(storages_key_value_pairs)
+            {
+                let mut storage_trie = store
+                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .unwrap();
 
-            let storages_store_start = Instant::now();
-
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            *METRICS.storage_tries_state_roots_to_compute.lock().await =
-                account_storage_roots.len() as u64;
-
-            let store_clone = store.clone();
-
-            tokio::task::spawn_blocking(move || {
-                let store = store_clone;
-                // Store trie in storage
-                for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
-                    .into_iter()
-                    .zip(storages_key_value_pairs)
-                {
-                    let mut storage_trie = store
-                        .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                for (hashed_key, value) in key_value_pairs {
+                    storage_trie
+                        .insert(hashed_key.0.to_vec(), value.encode_to_vec())
                         .unwrap();
-
-                    for (hashed_key, value) in key_value_pairs {
-                        storage_trie
-                            .insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                            .unwrap();
-                        if let Err(err) =
-                            storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                        {
-                            error!(
-                                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-                            );
-                            continue;
-                        };
-                    }
-
-                    let Ok(computed_state_root) = storage_trie.hash() else {
+                    if let Err(err) =
+                        storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                    {
                         error!(
-                            "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
+                            "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
                         );
                         continue;
                     };
-
-                    METRICS.storage_tries_state_roots_computed.inc();
-
-                    if computed_state_root != storage_root {
-                        error!(
-                            "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                        );
-                    }
                 }
-            }).await.expect("");
+                METRICS.storage_tries_state_roots_computed.inc();
+            }
+        }).await.expect("");
 
-            METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
+        METRICS
+            .storage_tries_state_roots_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
-            let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start);
-            info!("Finished storing storage tries in: {storages_store_time:?}");
-        } else {
+        let storages_store_time =
+            Instant::now().saturating_duration_since(storages_store_start);
+        info!("Finished storing storage tries in: {storages_store_time:?}");
+        if pivot_is_stale {
             info!("pivot is stale, starting healing process");
 
             let mut healing_done = false;
             while !healing_done {
-                (pivot_header, time_limit) = update_pivot(pivot_header.number, &self.peers).await;
+                (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
                 healing_done =
-                    heal_state_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                    heal_state_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
                         .await?;
                 if !healing_done {
                     continue;
                 }
                 healing_done =
-                    heal_storage_trie_wrap(state_root, store.clone(), &self.peers, time_limit)
+                    heal_storage_trie_wrap(pivot_header.state_root, store.clone(), &self.peers, staleness_timestamp)
                         .await?;
             }
             info!("Finished healing");
@@ -1055,7 +1031,9 @@ async fn heal_storage_trie_wrap(
 }
 
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
-    let new_pivot_block_number = block_number + SNAP_LIMIT;
+    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the 
+    // latest one, or a slot was missed
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
@@ -1083,9 +1061,13 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         };
 
         // Reward peer
-        scores.entry(peer_id).and_modify(|score| *score += 1);
+        scores.entry(peer_id).and_modify(|score| {
+            if *score < 10 {
+                *score += 1;
+            }
+        });
         info!("Succesfully updated pivot");
-        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
+        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12));
     }
 }
 

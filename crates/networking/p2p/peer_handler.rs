@@ -50,6 +50,9 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 // increasing them may be the cause of peers disconnection
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
+// How many blocks before snap prunes the blocks. Taken from https://github.com/ethereum/devp2p/blob/master/caps/snap.md
+pub const SNAP_LIMIT: usize = 20;
+
 struct TaskResultStorage {
     start_index: usize,
     account_storages: Vec<Vec<(H256, U256)>>,
@@ -62,7 +65,7 @@ struct TaskResultStorage {
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    pub peer_table: Kademlia,
+    peer_table: Kademlia,
     pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
@@ -769,7 +772,7 @@ impl PeerHandler {
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (128 * 12);
+        let time_limit = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
@@ -1350,7 +1353,7 @@ impl PeerHandler {
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (128 * 12);
+        let time_limit = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
