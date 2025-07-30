@@ -102,7 +102,7 @@ pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError
     let mut skipped: Vec<PathBuf> = IGNORED_TESTS.iter().map(PathBuf::from).collect();
     skipped.append(&mut options.skip_files);
 
-    // If the user selected specific `.json` files to be executed, parse only those files from the starting `path``.
+    // If the user selected specific `.json` files to be executed, parse only those files from the starting `path`.
     if !options.json_files.is_empty() {
         let file_tests = parse_dir(&options.path, &skipped, &options.json_files, false, true)?;
         tests.push(file_tests);
