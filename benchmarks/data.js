@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753888678929,
+  "lastUpdate": 1753890964903,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14271,6 +14271,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006640457711442786,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "104798dbc3c3e5f33940ceb736066fa7604cc9f4",
+          "message": "docs(levm): add README and other docs for new EF tests runner (#3863)\n\n**Description**\n\nThis PR includes missing explanatory comments in the code of the new EF\nstate tests runner and a `README.md` that explains the purpose of the\nmodule and how to run the tests.",
+          "timestamp": "2025-07-30T14:27:44Z",
+          "tree_id": "0aa339dc369766ec8511ceac0b44721f93308358",
+          "url": "https://github.com/lambdaclass/ethrex/commit/104798dbc3c3e5f33940ceb736066fa7604cc9f4"
+        },
+        "date": 1753890950990,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001349577350859454,
             "unit": "Mgas/s"
           }
         ]
