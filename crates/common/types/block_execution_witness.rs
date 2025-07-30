@@ -123,7 +123,7 @@ impl ExecutionWitnessResult {
                 .unwrap_or_else(|| Ok(AccountState::default()))
                 .expect("Failed to get account state");
 
-            if state.storage_root == *EMPTY_TRIE_HASH {
+            if state.storage_root == EMPTY_TRIE_HASH {
                 storage_tries.insert(
                     *addr,
                     Trie::from_nodes(None, nodes).map_err(|e| {
