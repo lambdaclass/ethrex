@@ -280,38 +280,6 @@ pub mod u128 {
     }
 }
 
-pub mod h256 {
-    use super::*;
-
-    pub mod vec {
-        use std::str::FromStr;
-
-        use keccak_hash::H256;
-
-        use super::*;
-        pub fn deser_opt_vec<'de, D>(d: D) -> Result<Option<Vec<H256>>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let s = Option::<Vec<String>>::deserialize(d)?;
-            match s {
-                Some(s) => {
-                    let mut ret = Vec::new();
-                    for s in s {
-                        ret.push(H256::from_str(s.trim_start_matches("0x")).map_err(|err| {
-                            serde::de::Error::custom(format!(
-                                "error parsing H256 when deserializing H256 vec optional: {err}"
-                            ))
-                        })?);
-                    }
-                    Ok(Some(ret))
-                }
-                None => Ok(None),
-            }
-        }
-    }
-}
-
 pub mod vec_u8 {
     use ::bytes::Bytes;
 
