@@ -1,7 +1,7 @@
 services:
   ethrex_l1:
     container_name: ethrex_l1
-    image: "ethrex:dev"
+    image: "ethrex:unstable"
     build:
       context: ../../
       args:
@@ -62,7 +62,7 @@ services:
 
   ethrex_l2:
     container_name: ethrex_l2
-    image: "ethrex:dev"
+    image: "ethrex:unstable"
     build:
       context: ../../
       args:

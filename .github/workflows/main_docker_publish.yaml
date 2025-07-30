@@ -32,13 +32,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Generates the tags and labels based on the image name. The id allows using it in the next step.
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-
       # Pushes to ghcr.io/ethrex
       - name: Build and push Docker image
         id: push
@@ -46,13 +39,13 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:unstable
           build-args: |
             BUILD_FLAGS=--features dev,rollup_storage_sql,metrics
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:unstable
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

@@ -69,7 +69,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          tags: ethrex:dev
+          tags: ethrex:unstable
           push: false
           build-args: |
             BUILD_FLAGS=--features dev

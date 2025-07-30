@@ -57,7 +57,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          tags: ethrex:dev
+          tags: ethrex:unstable
           load: true
           outputs: type=docker,dest=/tmp/ethrex_image.tar
           build-args: |
