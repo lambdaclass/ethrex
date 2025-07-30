@@ -39,7 +39,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := b1070344f54c324724dace7043d88589dc24b7ed
+ETHEREUM_PACKAGE_REVISION := 151a29abab0c463d6aba77517674cdc6acd55a81
 
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
