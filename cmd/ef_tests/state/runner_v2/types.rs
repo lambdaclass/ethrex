@@ -79,7 +79,7 @@ impl<'de> Deserialize<'de> for Tests {
             // One fork can be used to execute more than one transaction, that will be given by the
             // different combinations of data, value and gas limit.
             for fork in post.forks.keys() {
-                // We make sure we parse only the forks Ethrex allows (post merge).
+                // We make sure we parse only the forks Ethrex supports (post Merge).
                 if !DEFAULT_FORKS.contains(&(*fork).into()) {
                     continue;
                 }
