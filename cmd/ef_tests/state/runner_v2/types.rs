@@ -1,17 +1,14 @@
 use crate::runner_v2::{
     deserialize::{
         deserialize_access_lists, deserialize_authorization_lists,
-        deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
-        deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post,
-        deserialize_transaction_expected_exception, deserialize_u64_safe, deserialize_u64_vec_safe,
-        deserialize_u256_optional_safe, deserialize_u256_safe,
-        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_ef_post_value_indexes, deserialize_post,
+        deserialize_transaction_expected_exception,
     },
     error::RunnerError,
 };
 
-use bytes::Bytes;
-
+use ::bytes::Bytes;
+use ethrex_common::serde_utils::{bytes, u64, u256};
 use ethrex_common::{
     Address, H256, U256,
     types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
@@ -20,6 +17,8 @@ use ethrex_common::{
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+
+const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
 
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.
@@ -76,6 +75,9 @@ impl<'de> Deserialize<'de> for Tests {
             // One fork can be used to execute more than one transaction, that will be given by the
             // different combinations of data, value and gas limit.
             for fork in post.forks.keys() {
+                if !DEFAULT_FORKS.contains(&(*fork).into()) {
+                    continue;
+                }
                 let fork_test_cases = post.forks.get(fork).ok_or(serde::de::Error::custom(
                     "Failed to find fork in test post value",
                 ))?;
@@ -157,23 +159,26 @@ impl Tests {
             .get("data")
             .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
             .as_usize();
+        let value_index = raw_post
+            .indexes
+            .get("value")
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
+            .as_usize();
+        let gas_index = raw_post
+            .indexes
+            .get("gas")
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
+            .as_usize();
         let access_list_raw = raw_tx.access_lists.clone().unwrap_or_default();
         let mut access_list = Vec::new();
         if !access_list_raw.is_empty() {
             access_list = access_list_raw[data_index].clone();
         }
         let test_case = TestCase {
+            vector: (data_index, value_index, gas_index),
             data: raw_tx.data[data_index].clone(),
-            value: raw_tx.value[raw_post
-                .indexes
-                .get("value")
-                .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-                .as_usize()],
-            gas: raw_tx.gas_limit[raw_post
-                .indexes
-                .get("gas")
-                .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-                .as_usize()],
+            value: raw_tx.value[value_index],
+            gas: raw_tx.gas_limit[gas_index],
             tx_bytes: raw_post.txbytes.clone(),
             gas_price: raw_tx.gas_price,
             nonce: raw_tx.nonce,
@@ -191,7 +196,7 @@ impl Tests {
                 hash: raw_post.hash,
                 logs: raw_post.logs,
                 state: raw_post.state.clone(),
-                expected_exception: raw_post.expect_exception.clone(),
+                expected_exceptions: raw_post.expect_exception.clone(),
             },
         };
         Ok(test_case)
@@ -272,19 +277,19 @@ pub struct Info {
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct Env {
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub current_base_fee: Option<U256>,
     pub current_coinbase: Address,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_difficulty: U256,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub current_excess_blob_gas: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(with = "u64::hex_str")]
     pub current_gas_limit: u64,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_number: U256,
     pub current_random: Option<H256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_timestamp: U256,
 }
 
@@ -293,6 +298,7 @@ pub struct Env {
 /// after the transaction is executed.
 #[derive(Deserialize, Debug, Clone)]
 pub struct TestCase {
+    pub vector: (usize, usize, usize),
     pub data: Bytes,
     pub gas: u64,
     pub value: U256,
@@ -311,30 +317,24 @@ pub struct TestCase {
     pub access_list: Vec<AccessListItem>,
     pub authorization_list: Option<Vec<AuthorizationListTuple>>,
 }
-impl TestCase {
-    /// Tells whether the execution of the test case should give an exception as a result.
-    pub fn expects_exception(&self) -> bool {
-        self.post.expected_exception.is_some()
-    }
-}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Post {
     pub hash: H256,
     pub logs: H256,
     pub state: Option<HashMap<Address, AccountState>>,
-    pub expected_exception: Option<Vec<TransactionExpectedException>>,
+    pub expected_exceptions: Option<Vec<TransactionExpectedException>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AccountState {
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub balance: U256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(with = "bytes")]
     pub code: Bytes,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(with = "u64::hex_str")]
     pub nonce: u64,
-    #[serde(deserialize_with = "deserialize_u256_valued_hashmap_safe")]
+    #[serde(with = "u256::hashmap")]
     pub storage: HashMap<U256, U256>,
 }
 
@@ -381,16 +381,16 @@ pub struct AccessListItem {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationListTuple {
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub chain_id: U256,
     pub address: Address,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(with = "u64::hex_str")]
     pub nonce: u64,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub v: U256,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub r: U256,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "u256::deser_hex_str")]
     pub s: U256,
     pub signer: Option<Address>,
 }
@@ -431,7 +431,7 @@ pub struct RawPostValue {
     pub indexes: HashMap<String, U256>,
     pub logs: H256,
     // we add the default because some tests don't have this field
-    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
+    #[serde(default, with = "bytes")]
     pub txbytes: Bytes,
     pub state: Option<HashMap<Address, AccountState>>,
 }
@@ -439,26 +439,25 @@ pub struct RawPostValue {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawTransaction {
-    #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
+    #[serde(with = "bytes::vec")]
     pub data: Vec<Bytes>,
-    #[serde(deserialize_with = "deserialize_u64_vec_safe")]
+    #[serde(deserialize_with = "u64::hex_str::deser_vec")]
     pub gas_limit: Vec<u64>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub gas_price: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(with = "u64::hex_str")]
     pub nonce: u64,
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,
-    #[serde(deserialize_with = "deserialize_u256_vec_safe")]
+    #[serde(with = "u256::vec")]
     pub value: Vec<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub max_fee_per_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub max_priority_fee_per_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
     pub max_fee_per_blob_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_h256_vec_optional_safe")]
     pub blob_versioned_hashes: Option<Vec<H256>>,
     #[serde(default, deserialize_with = "deserialize_access_lists")]
     pub access_lists: Option<Vec<Vec<AccessListItem>>>,
