@@ -58,6 +58,7 @@ pub(crate) async fn heal_state_trie(
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     paths.push(Nibbles::default());
+    let start = Instant::now();
     let mut last_update = Instant::now();
 
     // channel to send the tasks to the peers
@@ -95,7 +96,7 @@ pub(crate) async fn heal_state_trie(
                     // If the node didn't have the data, it could be missing
                     paths.extend(batch);
                     // or the pivot might be stale
-                    if last_update.elapsed().as_secs() > SNAP_LIMIT * 12 {
+                    if start.elapsed().as_secs() > SNAP_LIMIT * 12 {
                         stale = true;
                     }   
                 }
