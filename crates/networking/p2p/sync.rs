@@ -2,6 +2,7 @@ mod state_healing;
 mod storage_healing;
 
 use crate::metrics::METRICS;
+use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
@@ -1048,18 +1049,29 @@ async fn heal_storage_trie_wrap(
 }
 
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
+    let new_pivot_block_number = block_number + SNAP_LIMIT;
     loop {
         info!("Trying to update pivot");
-        let new_pivot_block_number = block_number + SNAP_LIMIT;
-        let scores = peers.peer_scores.lock().await;
+        let mut scores = peers.peer_scores.lock().await;
+
+        let (peer_id, mut peer_channel) = peers
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &scores)
+            .await
+            .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
+            .expect("Error");
+
         let Some(pivot) = peers
-            .get_block_header(new_pivot_block_number, &scores)
+            .get_block_header(&mut peer_channel, new_pivot_block_number)
             .await
         else {
             warn!("Received None pivot. Retrying");
+            // Penalize peer
+            scores.entry(peer_id).and_modify(|score| *score -= 1);
             continue;
         };
 
+        // Reward peer
+        scores.entry(peer_id).and_modify(|score| *score += 1);
         info!("Succesfully updated pivot");
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
     }

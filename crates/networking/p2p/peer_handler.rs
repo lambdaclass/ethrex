@@ -111,7 +111,7 @@ impl PeerHandler {
     async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
     /// TODO: docs
-    async fn get_peer_channel_with_highest_score(
+    pub async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
         scores: &HashMap<H256, i64>,
@@ -1899,8 +1899,8 @@ impl PeerHandler {
 
     pub async fn get_block_header(
         &self,
+        peer_channel: &mut PeerChannels,
         block_number: u64,
-        scores: &HashMap<H256, i64>,
     ) -> Option<BlockHeader> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -1910,46 +1910,40 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        let retries = 5;
-        info!("started get_block_header with number {block_number}");
-        for _ in 0..retries {
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, scores)
-                .await
-                .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
-                .expect("############### Error");
-            peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request.clone()))
-                .await
-                .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-                .inspect_err(|err| error!(err))
-                .expect("############### Error peer_channel connection");
+        info!("get_block_header: requesting header with number {block_number}");
 
-            // debug!("(Retry {retries}) Requesting block number {sync_head} to peer {peer_id}");
-            let receiver = peer_channel.receiver.clone();
-            match tokio::time::timeout(Duration::from_secs(2), async move {
-                let foo = receiver.lock().await.recv().await;
-                if foo.is_none() {
-                    error!("############### Error Message");
-                };
-                foo.unwrap()
-            })
+        let mut receiver = peer_channel.receiver.lock().await;
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request.clone()))
             .await
-            {
-                Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
-                    if id == request_id && !block_headers.is_empty() {
-                        return Some(block_headers.last().expect("############### Error").clone());
-                    }
-                }
-                Ok(_other_msgs) => {
-                    info!("Received unexpected message from peer {peer_id}");
-                }
-                Err(_err) => {
-                    info!("Timeout while waiting for sync head from {peer_id}");
+            .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
+            .inspect_err(|err| error!(err))
+            .expect("############### Error peer_channel connection");
+
+        let response = tokio::time::timeout(Duration::from_secs(2), async move {
+            let response = receiver.recv().await;
+            if response.is_none() {
+                error!("############### Error Message");
+            };
+            response.unwrap()
+        })
+        .await;
+
+        match response {
+            Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+                if id == request_id && !block_headers.is_empty() {
+                    return Some(block_headers.last().expect("############### Error").clone());
                 }
             }
+            Ok(_other_msgs) => {
+                info!("Received unexpected message from peer");
+            }
+            Err(_err) => {
+                info!("Timeout while waiting for sync head from peer");
+            }
         }
+
         None
     }
 }
