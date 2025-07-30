@@ -110,12 +110,11 @@ impl BlobsBundle {
 
     #[cfg(feature = "c-kzg")]
     pub fn validate(&self, tx: &EIP4844Transaction, fork: Fork) -> Result<(), BlobsBundleError> {
-
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
         if blob_count > max_blobs as usize {
-            return Err(BlobsBundleError::MaxBlobsExceeded)
+            return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
         // Check if the blob bundle is empty
@@ -194,10 +193,10 @@ impl AddAssign for BlobsBundle {
     }
 }
 
-fn max_blobs_per_block(fork: Fork) -> u64 {
-    const MAX_BLOB_COUNT: u64 = 6;
-    const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
+const MAX_BLOB_COUNT: u64 = 6;
+const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
 
+fn max_blobs_per_block(fork: Fork) -> u64 {
     if fork >= Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
     } else {
@@ -368,6 +367,40 @@ mod tests {
         assert!(matches!(
             blobs_bundle.validate(&tx, Fork::Prague),
             Err(BlobsBundleError::BlobVersionedHashesError)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_too_many_blobs_should_fail() {
+        let blob = blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
+            .expect("Failed to create blob");
+        let blobs = std::iter::repeat(blob)
+            .take(MAX_BLOB_COUNT as usize + 1)
+            .collect::<Vec<_>>();
+
+        let blobs_bundle =
+            BlobsBundle::create_from_blobs(&blobs).expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx: EIP4844Transaction = EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: Address::from_low_u64_be(1), // Normal tx
+            value: U256::zero(),             // Value zero
+            data: Bytes::default(),          // No data
+            access_list: Default::default(), // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            blobs_bundle.validate(&tx, Fork::Prague),
+            Err(BlobsBundleError::MaxBlobsExceeded)
         ));
     }
 }
