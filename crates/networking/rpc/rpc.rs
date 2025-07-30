@@ -453,7 +453,7 @@ mod tests {
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
@@ -532,7 +532,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let genesis = read_execution_api_genesis_file();
         storage
@@ -579,7 +579,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())

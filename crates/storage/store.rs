@@ -20,9 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::RwLock,
+};
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -35,6 +38,8 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    chain_config: ChainConfig,
+    latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 #[allow(dead_code)]
@@ -80,13 +85,19 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
+                chain_config: ChainConfig::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                chain_config: ChainConfig::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                chain_config: ChainConfig::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
         info!("Started store engine");
@@ -103,7 +114,7 @@ impl Store {
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let store = Self::new(store_path, engine_type)?;
+        let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -158,6 +169,14 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .expect("poisoned lock")
+            .clone();
+        if block_number == latest.number {
+            return Ok(Some(latest));
+        }
         self.engine.get_block_header(block_number)
     }
 
@@ -165,6 +184,14 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_hash == latest.hash() {
+            return Ok(Some(latest));
+        }
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -243,6 +270,7 @@ impl Store {
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
         let chain_config = self.get_chain_config()?;
         let genesis_header = self
+            .engine
             .get_block_header(0)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_number = self.get_latest_block_number().await?;
@@ -555,7 +583,7 @@ impl Store {
             .await
     }
 
-    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -567,12 +595,16 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
-        if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.hash() == genesis_hash {
+        match self.engine.get_block_header(genesis_block_number)? {
+            Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
-            } else {
-                panic!("{GENESIS_DIFF_PANIC_MESSAGE}");
+            }
+            Some(_) => panic!("{GENESIS_DIFF_PANIC_MESSAGE}"),
+            None => {
+                self.engine
+                    .add_block_header(genesis_hash, genesis_block.header.clone())
+                    .await?
             }
         }
         // Store genesis accounts
@@ -589,10 +621,9 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.update_latest_block_number(genesis_block_number)
-            .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
-            .await
+            .await?;
+        self.update_latest_block_number(genesis_block_number).await
     }
 
     pub async fn get_transaction_by_hash(
@@ -651,12 +682,13 @@ impl Store {
             .transpose()
     }
 
-    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+    pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.chain_config = *chain_config;
         self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        self.engine.get_chain_config()
+        Ok(self.chain_config)
     }
 
     pub async fn update_earliest_block_number(
@@ -701,14 +733,23 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number).await
+        self.engine.update_latest_block_number(block_number).await?;
+        *self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)? = self
+            .engine
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+        Ok(())
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        self.engine
-            .get_latest_block_number()
-            .await?
-            .ok_or(StoreError::MissingLatestBlockNumber)
+        Ok(self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .number)
     }
 
     pub async fn update_pending_block_number(
@@ -734,15 +775,19 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        {
+            let last = self.latest_block_header.read().expect("poisoned");
+            if last.number == block_number {
+                return Ok(Some(last.hash()));
+            }
+        }
         self.engine.get_canonical_block_hash(block_number).await
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        let latest_block_number = match self.engine.get_latest_block_number().await {
-            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
-            Err(e) => return Err(e),
-        };
-        self.get_canonical_block_hash(latest_block_number).await
+        Ok(Some(
+            self.latest_block_header.read().expect("poisoned").hash(),
+        ))
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.
@@ -1347,7 +1392,7 @@ mod tests {
         run_test(test_genesis_block, engine_type).await;
     }
 
-    async fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(mut store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1611,7 +1656,7 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    async fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(mut store: Store) {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config().unwrap();

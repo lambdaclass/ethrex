@@ -34,7 +34,7 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
 /// Loads the pre state of the test (the initial state of specific accounts) into the Genesis.
 pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = Genesis::from(test);
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     storage.add_initial_state(genesis.clone()).await.unwrap();
 

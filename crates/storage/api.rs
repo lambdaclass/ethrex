@@ -207,9 +207,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Ignores previously stored values if present
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError>;
 
-    /// Returns the stored chain configuration
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError>;
-
     /// Update earliest block number
     async fn update_earliest_block_number(
         &self,
@@ -237,9 +234,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Update latest block number
     async fn update_latest_block_number(&self, block_number: BlockNumber)
     -> Result<(), StoreError>;
-
-    /// Obtain latest block number
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update pending block number
     async fn update_pending_block_number(
