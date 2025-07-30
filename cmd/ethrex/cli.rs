@@ -407,10 +407,15 @@ pub async fn import_blocks(
                 continue;
             }
 
+
             blockchain
                 .add_block(block)
                 .await
-                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
+                .inspect_err(|err| match err {
+                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible genesis file. Are you sure you selected the correct network?"),
+                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                })?;
         }
 
         _ = store
