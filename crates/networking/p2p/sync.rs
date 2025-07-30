@@ -548,11 +548,13 @@ impl Syncer {
         info!("Finished storing storage tries in: {storages_store_time:?}");
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
+            // 💀 Remove hardcoded block number
+            (pivot_header, staleness_timestamp) = update_pivot(8877946, &self.peers).await;
 
             let mut healing_done = false;
             while !healing_done {
-                // 💀 Remove hardcoded block number
-                (pivot_header, staleness_timestamp) = update_pivot(8877796, &self.peers).await;
+                (pivot_header, staleness_timestamp) =
+                    update_pivot(pivot_header.number, &self.peers).await;
                 healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
