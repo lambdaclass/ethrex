@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches samply-run-bench
+.PHONY: all test clippy fmt usage lint eth-tests run-state-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches samply-run-bench
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -11,19 +11,27 @@ test: ## 🧪 Runs all tests except Ethereum tests
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features -- -D warnings
 
-fmt: ## 📄 Runs rustfmt
-	cargo fmt --all
-
 ###### EF Tests ######
-download-evm-ef-tests: ## 📥 Download EF Tests
-	cd ../../../cmd/ef_tests/state && \
-	make download-evm-ef-tests flags="$(flags)"
+EFTEST_DIR := ../../../cmd/ef_tests/state
 
-run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
-	cd ../../../cmd/ef_tests/state && \
-	make run-evm-ef-tests flags="$(flags)"
+download-state-tests: ## 📥 Download EF Tests.
+	cd $(EFTEST_DIR) &&\
+	make download-evm-ef-tests
 
-###### Benchmarks ######
+run-state-tests: ## 🏃‍♂️ Run EF Tests. e.g. make run-state-tests flags="--tests ZeroKnowledge"
+	cd $(EFTEST_DIR) &&\
+	make run-state-tests flags="$(flags)"
+
+flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
+	cd $(EFTEST_DIR) &&\
+	$(MAKE) flamegraph-run-ef-tests
+
+samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
+	cd $(EFTEST_DIR) && \
+	$(MAKE) samply-run-ef-tests
+
+
+###### Benchmarks REVM Comparison ######
 REPETITIONS := 10000
 REPETITIONS_SLOW := 200
 
@@ -135,45 +143,10 @@ build-revm-comparison-debuginfo:
 		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
 		cargo build --release --bin benchmark
 
-###### Build Client with LEVM ######
-EFTEST_DIR := ../../../cmd/ef_tests/state
-VECTORS_DIR := $(EFTEST_DIR)/vectors
-
-STAMP_FILE := ../../../.docker_build_stamp
-$(STAMP_FILE):
-	cd ../../../
-	$(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
-	touch $(STAMP_FILE)
-
-build-image-levm: $(STAMP_FILE) ## 🐳 Build the Docker image
-
-SIM_PARALLELISM := 48
-run-hive-levm: build-image-levm ## 🐝 Run Hive with LEVM and Build report
-	$(MAKE) -C ../../../ setup-hive
-	$(MAKE) -C ../../../ clean-hive-logs
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../ && cargo run --release -p hive_report
-
-download-state-tests: ## 📥 Download and setup state tests fixtures
-	cd $(EFTEST_DIR) &&\
-	$(MAKE) download-evm-ef-tests
-
-flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
-	cd $(EFTEST_DIR) &&\
-	$(MAKE) flamegraph-run-ef-tests
-
-samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
-	cd $(EFTEST_DIR) && \
-	$(MAKE) samply-run-ef-tests
-
 BENCH ?= *
 BENCH_REPS ?= 500
 BENCH_ITERS ?= 57
 
-samply-run-bench: ## ⚡️ Runs the provided bench with samply Pass BENCH=Fibonacci to choose the benchmark.
+samply-run-bench: ## ⚡️ Profile a benchmark with samply (e.g., BENCH=Fibonacci). Optionally adjust reps/iters via BENCH_REPS and BENCH_ITERS.
 	$(MAKE) build-revm-comparison-debuginfo
 	samply record -r 10000 target/release/benchmark levm $(BENCH) $(BENCH_REPS) $(BENCH_ITERS)

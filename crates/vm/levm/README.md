@@ -123,7 +123,7 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 ### How to run EF tests 
 
 ```
-make download-evm-ef-tests run-evm-ef-tests QUIET=true
+make download-evm-ef-tests run-state-tests QUIET=true
 ```
 
 For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).

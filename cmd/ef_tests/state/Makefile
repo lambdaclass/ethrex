@@ -1,4 +1,4 @@
-.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
+.PHONY: download-evm-ef-tests clean-evm-ef-tests run-state-tests test-levm test-revm flamegraph-run-ef-tests samply-run-ef-tests
 
 FIXTURES_FILE := .fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
@@ -49,7 +49,7 @@ clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 
 refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
-run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
+run-state-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		time cargo test --quiet --test all --profile release-with-debug -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
@@ -58,14 +58,14 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-with-debug -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-state-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test -p ef_tests-state --test all --profile release-with-debug -- --summary
 
 test-levm: $(VECTORS_DIR)
-	$(MAKE) run-evm-ef-tests flags="--summary"
+	$(MAKE) run-state-tests flags="--summary"
 
 test-revm: $(VECTORS_DIR)
-	$(MAKE) run-evm-ef-tests flags="--revm"
+	$(MAKE) run-state-tests flags="--revm"
 
 ###### Running Flamegraphs ######
 

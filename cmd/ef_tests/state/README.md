@@ -6,7 +6,7 @@ Some [docs](https://ethereum.github.io/execution-spec-tests/main/consuming_tests
 ## Running the tests
 
 ```bash
-make run-evm-ef-tests flags=<flags>
+make run-state-tests flags=<flags>
 ```
 or
 ```bash
