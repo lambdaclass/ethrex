@@ -161,6 +161,5 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 ## New EF state tests runner
-TESTS_PATH := ./vectors
 run-new-runner:
-	cargo test --package ef_tests-state --test new_runner --profile release-with-debug -- $(TESTS_PATH)
+	cargo test --package ef_tests-state --test new_runner --release -- $(flags)

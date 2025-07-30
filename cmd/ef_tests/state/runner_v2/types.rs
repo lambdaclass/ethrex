@@ -16,7 +16,10 @@ use ethrex_common::{
 
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
 
@@ -140,7 +143,7 @@ impl Tests {
 
         let test = Test {
             name: test_name.to_string(),
-            path: String::default(), // Test file path gets updated afterwards, cannot be known from here.
+            path: PathBuf::default(), // Test file path gets updated afterwards, cannot be known from here.
             _info: test_info,
             env: test_env,
             pre: test_pre,
@@ -207,10 +210,10 @@ impl Tests {
 /// information that is shared among the test cases.
 #[derive(Debug, Clone)]
 pub struct Test {
-    pub name: String, // The name of the test object inside the .json file.
-    pub path: String, // The path of the .json file the Test can be found at.
-    pub _info: Info,  // General information about the test.
-    pub env: Env,     // The block enviroment before the test transaction happens.
+    pub name: String,  // The name of the test object inside the .json file.
+    pub path: PathBuf, // The path of the .json file the Test can be found at.
+    pub _info: Info,   // General information about the test.
+    pub env: Env,      // The block enviroment before the test transaction happens.
     pub pre: HashMap<Address, AccountState>, // The accounts state previous to the test transaction.
     pub test_cases: Vec<TestCase>, // A vector of specific cases to be tested under these conditions (transactions).
 }
