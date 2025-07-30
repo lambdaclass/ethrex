@@ -1,15 +1,26 @@
 use std::fs::read_to_string;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::Address;
+use ethrex_l2::SequencerConfig;
 use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::EvmEngine;
-use tracing::warn;
+use secp256k1::SecretKey;
+use tokio::sync::Mutex;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
@@ -20,17 +31,9 @@ use crate::initializers::{
     get_network, get_signer, init_blockchain, init_network, init_store,
 };
 use crate::l2::L2Options;
-use crate::utils::{NodeConfigFile, store_node_config_file};
-use crate::utils::{get_client_version, read_jwtsecret_file, set_datadir};
-use ethrex_common::Address;
-use ethrex_l2::SequencerConfig;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
-use ethrex_storage::Store;
-use secp256k1::SecretKey;
-use std::{future::IntoFuture, path::PathBuf, time::Duration};
-use tokio::{sync::Mutex, task::JoinSet};
-use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info};
+use crate::utils::{
+    NodeConfigFile, get_client_version, read_jwtsecret_file, set_datadir, store_node_config_file,
+};
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
@@ -270,6 +273,5 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
-
     Ok(())
 }

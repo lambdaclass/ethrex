@@ -17,13 +17,13 @@ use tracing::{Level, info, warn};
 use crate::{
     DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_l1, init_store, init_tracing, open_store},
-    l2::{self, SequencerOptions},
+    l2::{
+        self, SequencerOptions,
+        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
+    },
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
-
-const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -324,20 +324,15 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[command(subcommand)]
-    L2Tools(l2::Command),
-    #[command(name = "l2", about = "Initialize an ethrex L2 node")]
-    L2 {
-        #[command(flatten)]
-        options: l2::options::Options,
-    },
+    #[command(name = "l2")]
+    L2(l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
-            Self::L2 { options: _ } => {}
+            Self::L2(_) => {}
             _ => init_tracing(opts),
         }
         match self {
@@ -366,43 +361,9 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
-            Subcommand::L2Tools(command) => command.run().await?,
-            Subcommand::L2 { options: l2_opts } => {
-                l2::init_tracing(&l2_opts);
-                let mut l2_options = l2_opts;
-
-                if l2_options.node_opts.dev {
-                    println!("Removing L1 and L2 databases...");
-                    remove_db(DB_ETHREX_DEV_L1, true);
-                    remove_db(DB_ETHREX_DEV_L2, true);
-                    println!("Initializing L1");
-                    init_l1(Options::default_l1()).await?;
-                    println!("Deploying contracts...");
-                    let contract_addresses = l2::deployer::ethrex_l2_l1_deployer(
-                        l2::deployer::DeployerOptions::default(),
-                    )
-                    .await?;
-
-                    l2_options = l2::options::Options {
-                        node_opts: Options::default_l2(),
-                        sequencer_opts: SequencerOptions {
-                            monitor: true,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    };
-                    l2_options
-                        .sequencer_opts
-                        .committer_opts
-                        .on_chain_proposer_address =
-                        Some(contract_addresses.on_chain_proposer_address);
-                    l2_options.sequencer_opts.watcher_opts.bridge_address =
-                        Some(contract_addresses.bridge_address);
-                    println!("Initializing L2");
-                }
-                l2::init_l2(l2_options).await?;
-            }
+            Subcommand::L2(command) => command.run().await?,
         }
+
         Ok(())
     }
 }

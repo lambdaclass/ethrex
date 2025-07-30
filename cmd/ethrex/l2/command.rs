@@ -1,15 +1,17 @@
 use crate::{
     DEFAULT_L2_DATADIR,
     cli::remove_db,
-    initializers::init_store,
+    initializers::{init_l1, init_store},
     l2::{
-        self,
+        self, SequencerOptions,
         deployer::{DeployerOptions, ethrex_l2_l1_deployer},
+        init_l2,
+        options::Options,
     },
     networks::Network,
     utils::{parse_private_key, set_datadir},
 };
-use clap::Subcommand;
+use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -34,6 +36,68 @@ use std::{
     time::Duration,
 };
 use tracing::info;
+
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
+
+#[derive(Parser)]
+#[clap(args_conflicts_with_subcommands = true)]
+pub struct L2Command {
+    #[clap(subcommand)]
+    pub command: Option<Command>,
+    #[clap(flatten)]
+    pub opts: Option<Options>,
+}
+
+impl L2Command {
+    pub async fn run(self) -> eyre::Result<()> {
+        if let Some(cmd) = self.command {
+            return cmd.run().await;
+        }
+        let mut app = clap::Command::new("init");
+        app = <Options as clap::Args>::augment_args(app);
+
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let args_with_program = std::iter::once("init".to_string())
+            .chain(args.into_iter())
+            .collect::<Vec<_>>();
+
+        let matches = app.try_get_matches_from(args_with_program)?;
+        let init_options = Options::from_arg_matches(&matches)?;
+        l2::init_tracing(&init_options);
+        let mut l2_options = init_options;
+
+        if l2_options.node_opts.dev {
+            println!("Removing L1 and L2 databases...");
+            remove_db(DB_ETHREX_DEV_L1, true);
+            remove_db(DB_ETHREX_DEV_L2, true);
+            println!("Initializing L1");
+            init_l1(crate::cli::Options::default_l1()).await?;
+            println!("Deploying contracts...");
+            let contract_addresses =
+                l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default())
+                    .await?;
+
+            l2_options = l2::options::Options {
+                node_opts: crate::cli::Options::default_l2(),
+                sequencer_opts: SequencerOptions {
+                    monitor: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            l2_options
+                .sequencer_opts
+                .committer_opts
+                .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
+            l2_options.sequencer_opts.watcher_opts.bridge_address =
+                Some(contract_addresses.bridge_address);
+            println!("Initializing L2");
+        }
+        l2::init_l2(l2_options).await?;
+        Ok(())
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
