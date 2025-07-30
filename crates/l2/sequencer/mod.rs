@@ -39,7 +39,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: String,
+    l2_url: String,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
