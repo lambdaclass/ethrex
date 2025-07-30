@@ -59,10 +59,6 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    // /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    // mapping(address _authorizedAddress => bool)
-    //     public authorizedSequencerAddresses;
-
     address public BRIDGE;
     /// @dev Deprecated variable.
     address public PICOVERIFIER;
@@ -170,10 +166,6 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0)
         );
-
-        // for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-        //             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        //         }
 
         CHAIN_ID = chainId;
 
@@ -327,10 +319,6 @@ contract OnChainProposer is
 
         lastVerifiedBatch = batchNumber;
 
-        // In based we might want to handle multiple verification proofs for a single batch.
-        // Remove previous batch commitment as it is no longer needed.
-        // delete batchCommitments[batchNumber - 1];
-
         emit BatchVerified(lastVerifiedBatch);
     }
 
@@ -462,29 +450,6 @@ contract OnChainProposer is
             "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
     }
-
-    // /// @inheritdoc IOnChainProposer
-    // function revertBatch(
-    //     uint256 batchNumber
-    // ) external override onlySequencer whenPaused {
-    //     require(
-    //         batchNumber >= lastVerifiedBatch,
-    //         "OnChainProposer: can't revert verified batch"
-    //     );
-    //     require(
-    //         batchNumber < lastCommittedBatch,
-    //         "OnChainProposer: no batches are being reverted"
-    //     );
-
-    //     // Remove old batches
-    //     for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
-    //         delete batchCommitments[i + 1];
-    //     }
-
-    //     lastCommittedBatch = batchNumber;
-
-    //     emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
-    // }
 
     /// @notice Allow owner to upgrade the contract.
     /// @param newImplementation the address of the new implementation

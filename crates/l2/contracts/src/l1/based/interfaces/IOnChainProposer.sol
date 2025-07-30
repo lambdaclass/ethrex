@@ -23,10 +23,6 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is verified.
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
-    // /// @notice A batch has been reverted.
-    // /// @dev Event emitted when a batch is reverted.
-    // event BatchReverted(bytes32 indexed newStateRoot);
-
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
     /// and the OnChainProposer need to know the address of the other. This solves
@@ -92,9 +88,6 @@ interface IOnChainProposer {
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
     ) external;
-
-    // /// @notice Allows unverified batches to be reverted
-    // function revertBatch(uint256 batchNumber) external;
 
     /// @notice Allows the owner to pause the contract
     function pause() external;
