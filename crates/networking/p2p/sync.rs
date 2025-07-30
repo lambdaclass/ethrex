@@ -434,7 +434,7 @@ impl Syncer {
             self.peers.peer_table.get_peer_channels(&SUPPORTED_ETH_CAPABILITIES).await.into_iter().map(|peer| peer.0),
             self.peers.peer_scores
         ); */
-        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         while current_unix_time() > staleness_timestamp {
             (pivot_header, staleness_timestamp) = update_pivot(pivot_header.number, &self.peers).await;
         }
@@ -1033,7 +1033,7 @@ async fn heal_storage_trie_wrap(
 async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the 
     // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT - 3;
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
@@ -1067,7 +1067,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             }
         });
         info!("Succesfully updated pivot");
-        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT * 12));
+        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12));
     }
 }
 

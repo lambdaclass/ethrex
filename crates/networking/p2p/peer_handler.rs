@@ -772,7 +772,7 @@ impl PeerHandler {
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        let time_limit = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
@@ -1353,7 +1353,7 @@ impl PeerHandler {
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (SNAP_LIMIT * 12);
+        let time_limit = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
