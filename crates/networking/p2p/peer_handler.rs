@@ -800,7 +800,9 @@ impl PeerHandler {
                     continue;
                 }
                 let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                if *peer_score < 10 {
+                    *peer_score += 1;
+                }
 
                 downloaded_count += accounts.len() as u64;
 
@@ -1145,7 +1147,9 @@ impl PeerHandler {
                 downloaded_count += bytecodes.len() as u64;
 
                 let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                if *peer_score < 10 {
+                    *peer_score += 1;
+                }
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",

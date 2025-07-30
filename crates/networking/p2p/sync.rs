@@ -1066,7 +1066,7 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
         else {
             warn!("Received None pivot from peer {peer_id}. Retrying");
             // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 10);
+            scores.entry(peer_id).and_modify(|score| *score -= 1);
             continue;
         };
 
