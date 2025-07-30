@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // If COMPILE_CONTRACTS is not set, skip
     if env::var_os("COMPILE_CONTRACTS").is_some() {
         let out_dir = env::var_os("OUT_DIR").unwrap();
-        update_genesis_file(&PathBuf::from(L2_GENESIS_PATH), &Path::new(&out_dir))?;
+        update_genesis_file(&PathBuf::from(L2_GENESIS_PATH), Path::new(&out_dir))?;
     }
 
     Ok(())
