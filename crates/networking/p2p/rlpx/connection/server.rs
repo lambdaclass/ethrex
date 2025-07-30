@@ -742,9 +742,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                     valid_txs.push(tx.clone());
                 }
-                if !valid_txs.is_empty() {
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
-                }
+                // if !valid_txs.is_empty() {
+                //     broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
+                // }
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
