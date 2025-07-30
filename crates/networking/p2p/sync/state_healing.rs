@@ -138,26 +138,28 @@ pub(crate) async fn heal_state_trie(
             .await
             .unwrap();
 
-        let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-        info!("Created the batch of len {}", batch.len());
-        if !batch.is_empty() && !is_stale {
-            let tx = task_sender.clone();
-            inflight_tasks += 1;
-            let _ = tokio::spawn(async move {
-                info!("Spawning a task to download");
-                // TODO: check errors to determine whether the current block is stale
-                let response = PeerHandler::request_state_trienodes(
-                    &mut peer_channel.clone(),
-                    state_root,
-                    batch.clone(),
-                )
+        if !is_stale {
+            let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            info!("Created the batch of len {}", batch.len());
+            if !batch.is_empty() {
+                let tx = task_sender.clone();
+                inflight_tasks += 1;
+                let _ = tokio::spawn(async move {
+                    info!("Spawning a task to download");
+                    // TODO: check errors to determine whether the current block is stale
+                    let response = PeerHandler::request_state_trienodes(
+                        &mut peer_channel.clone(),
+                        state_root,
+                        batch.clone(),
+                    )
+                    .await;
+                    // TODO: add error handling
+                    let _ = tx.send((response, batch)).await.inspect_err(|err| {
+                        error!("Failed to send state trie nodes response. Error: {err}")
+                    });
+                })
                 .await;
-                // TODO: add error handling
-                let _ = tx.send((response, batch)).await.inspect_err(|err| {
-                    error!("Failed to send state trie nodes response. Error: {err}")
-                });
-            })
-            .await;
+            }
         }
 
         let store_cloned = store.clone();
