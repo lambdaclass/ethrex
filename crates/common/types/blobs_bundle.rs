@@ -5,7 +5,7 @@ use crate::serde_utils;
 use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
 
 #[cfg(feature = "c-kzg")]
-use crate::types::EIP4844Transaction;
+use crate::types::{EIP4844Transaction, Fork};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -109,8 +109,14 @@ impl BlobsBundle {
     }
 
     #[cfg(feature = "c-kzg")]
-    pub fn validate(&self, tx: &EIP4844Transaction) -> Result<(), BlobsBundleError> {
+    pub fn validate(&self, tx: &EIP4844Transaction, fork: Fork) -> Result<(), BlobsBundleError> {
+
+        let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
+
+        if blob_count > max_blobs as usize {
+            return Err(BlobsBundleError::MaxBlobsExceeded)
+        }
 
         // Check if the blob bundle is empty
         if blob_count == 0 {
@@ -188,6 +194,17 @@ impl AddAssign for BlobsBundle {
     }
 }
 
+fn max_blobs_per_block(fork: Fork) -> u64 {
+    const MAX_BLOB_COUNT: u64 = 6;
+    const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
+
+    if fork >= Fork::Prague {
+        MAX_BLOB_COUNT_ELECTRA
+    } else {
+        MAX_BLOB_COUNT
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BlobsBundleError {
     #[error("Blob data has an invalid length")]
@@ -200,6 +217,8 @@ pub enum BlobsBundleError {
     BlobVersionedHashesError,
     #[error("Blob to commitment and proof generation error")]
     BlobToCommitmentAndProofError,
+    #[error("Max blobs per block exceeded")]
+    MaxBlobsExceeded,
     #[error("KZG related error: {0}")]
     Kzg(#[from] KzgError),
 }
@@ -233,7 +252,7 @@ mod tests {
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
-        let tx = EIP4844Transaction {
+        let tx: EIP4844Transaction = EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
@@ -247,7 +266,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(matches!(blobs_bundle.validate(&tx), Ok(())));
+        assert!(matches!(blobs_bundle.validate(&tx, Fork::Prague), Ok(())));
     }
 
     #[test]
@@ -296,7 +315,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx),
+            blobs_bundle.validate(&tx, Fork::Prague),
             Err(BlobsBundleError::BlobToCommitmentAndProofError)
         ));
     }
@@ -347,7 +366,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx),
+            blobs_bundle.validate(&tx, Fork::Prague),
             Err(BlobsBundleError::BlobVersionedHashesError)
         ));
     }
