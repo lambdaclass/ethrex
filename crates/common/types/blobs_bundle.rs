@@ -2,10 +2,10 @@ use std::ops::AddAssign;
 
 use crate::kzg::KzgError;
 use crate::serde_utils;
-use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
+use crate::{Bytes, H256, types::{constants::VERSIONED_HASH_VERSION_KZG, Fork}};
 
 #[cfg(feature = "c-kzg")]
-use crate::types::{EIP4844Transaction, Fork};
+use crate::types::EIP4844Transaction;
 
 use ethrex_rlp::{
     decode::RLPDecode,
