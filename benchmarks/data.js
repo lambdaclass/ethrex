@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753982492941,
+  "lastUpdate": 1753983868996,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15241,6 +15241,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013647566462167689,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8c89f522390ea3d47e334b78f582ab7181ef6a85",
+          "message": "perf(levm): refactor `JUMPDEST` blacklist into a lazyly generated one (#3812)\n\n**Motivation**\n\nRight now we're generating the full jump target blacklist for each\nprogram.\n\n**Description**\n\n- Avoid generating the full blacklist for the entire program before\nrunning it.\n- Generate only up until the last checked address.\n- Generate only when requested.\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Edgar <git@edgl.dev>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-07-31T13:53:37Z",
+          "tree_id": "a1b01711def3979e1d3045b51351e013e23de9a1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8c89f522390ea3d47e334b78f582ab7181ef6a85"
+        },
+        "date": 1753983855189,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001324138888888889,
             "unit": "Mgas/s"
           }
         ]
