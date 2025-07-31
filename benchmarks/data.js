@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753992744556,
+  "lastUpdate": 1753997455728,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7105,6 +7105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166179628025,
             "range": "± 321243633",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58b93a2b120fb9f1e84bbd3b5ffccc10c38da669",
+          "message": "refactor(l2): remove old dependencies from ethrex replay (#3902)\n\n**Motivation**\n\nIn the `ethrex_replay` crate there are some crates that are leftovers of\nprevious implementations. We want to remove those.\n\n**Description**\n\n- Remove all unused dependencies from the `Cargo.toml`\n- Change `HashMap` to the `std` version\n- Use `let Err(..)` instead of `match`",
+          "timestamp": "2025-07-31T20:41:03Z",
+          "tree_id": "189258e9fb3cea2fa969121db28f06e4eaf79f56",
+          "url": "https://github.com/lambdaclass/ethrex/commit/58b93a2b120fb9f1e84bbd3b5ffccc10c38da669"
+        },
+        "date": 1753997442220,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164124957608,
+            "range": "± 223814911",
             "unit": "ns/iter"
           }
         ]
