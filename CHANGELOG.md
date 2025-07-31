@@ -2,6 +2,11 @@
 
 ## Perf
 
+
+### 2025-07-31
+
+- Optimize NOP-sliding on JUMP, JUMPI (taken only) and JUMPDEST instructions.
+
 ### 2025-07-24
 
 - Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
