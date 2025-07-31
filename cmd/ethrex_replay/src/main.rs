@@ -12,11 +12,8 @@ async fn main() {
         .with_max_level(tracing::Level::ERROR)
         .init();
 
-    match cli::start().await {
-        Ok(_) => {}
-        Err(err) => {
-            tracing::error!("{err:?}");
-            std::process::exit(1);
-        }
+    if let Err(err) = cli::start().await {
+        tracing::error!("{err:?}");
+        std::process::exit(1);
     }
 }
