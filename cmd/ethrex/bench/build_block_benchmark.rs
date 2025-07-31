@@ -10,16 +10,17 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
-    Address, H160, U256,
+    Address, H160,
     types::{
-        Block, EIP1559Transaction, Genesis, GenesisAccount, LegacyTransaction, Signable,
-        Transaction, TxKind, payload::PayloadBundle,
+        Block, EIP1559Transaction, Genesis, GenesisAccount, Transaction, TxKind,
+        payload::PayloadBundle,
     },
 };
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
@@ -65,7 +66,7 @@ impl Measurement for GasMeasurement {
 struct GasMeasurementFormatter;
 impl ValueFormatter for GasMeasurementFormatter {
     fn format_value(&self, value: f64) -> String {
-        format!("{:.2} Ggas/s", value)
+        format!("{value:.2} Ggas/s")
     }
 
     fn format_throughput(&self, throughput: &Throughput, _value: f64) -> String {
@@ -102,7 +103,7 @@ impl ValueFormatter for GasMeasurementFormatter {
 }
 
 fn read_private_keys() -> Vec<SecretKey> {
-    let file = include_str!("../../../test_data/private_keys_l1.txt");
+    let file = include_str!("../../../fixtures/keys/private_keys_l1.txt");
     file.lines()
         .map(|line| {
             let line = line.trim().strip_prefix("0x").unwrap();
@@ -112,19 +113,8 @@ fn read_private_keys() -> Vec<SecretKey> {
 }
 
 fn recover_address_for_sk(sk: &SecretKey) -> Address {
-    let mut tx = Transaction::LegacyTransaction(LegacyTransaction {
-        nonce: 0,
-        gas_price: 1,
-        to: TxKind::Call(H160::random()),
-        value: U256::zero(),
-        data: Bytes::new(),
-        v: U256::one(),
-        r: U256::one(),
-        s: U256::one(),
-        gas: 21000,
-    });
-    tx.sign_inplace(sk).expect("Unreachable error: Digest to sign should be correct size since it's calculated with the keccak algorithm");
-    tx.sender().expect("Failed to recover sender's address")
+    let signer = Signer::Local(LocalSigner::new(*sk));
+    signer.address()
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
@@ -132,7 +122,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
-    let genesis_file = include_bytes!("../../../test_data/genesis-l1-dev.json");
+    let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(
         &storage_path.into_path().display().to_string(),
@@ -171,6 +161,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     let mut txs = vec![];
     for sk in accounts {
+        let signer = Signer::Local(LocalSigner::new(sk));
         for n in 0..1000 {
             let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
                 nonce: n,
@@ -182,7 +173,7 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 to: TxKind::Call(H160::random()),
                 ..Default::default()
             });
-            tx.sign_inplace(&sk).expect("Unreachable error: Digest to sign should be correct size since it's calculated with the keccak algorithm");
+            let _ = tx.sign_inplace(&signer).await;
             txs.push(tx);
         }
     }
@@ -261,7 +252,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                         .collect();
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
-                    let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
+                    let block_chain = Blockchain::new(
+                        EvmEngine::LEVM,
+                        store_with_genesis.clone(),
+                        BlockchainType::L1, // TODO: Should we support L2?
+                    );
                     fill_mempool(&block_chain, accounts).await;
 
                     (block_chain, genesis.get_block(), store_with_genesis)

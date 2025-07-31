@@ -1,32 +1,25 @@
 use crate::{
     DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
-    initializers::{
-        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
-    },
-    l2::options::Options,
+    initializers::init_store,
+    l2::{self, init_l2, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
+    utils::{parse_private_key, set_datadir},
 };
-use clap::Subcommand;
+use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
-use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_l2_sdk::calldata::Value;
-use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    EthClient,
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -34,23 +27,42 @@ use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
-    future::IntoFuture,
     path::PathBuf,
-    sync::Arc,
     time::Duration,
 };
-use tokio::sync::Mutex;
-use tokio_util::task::TaskTracker;
 use tracing::info;
+
+#[derive(Parser)]
+#[clap(args_conflicts_with_subcommands = true)]
+pub struct L2Command {
+    #[clap(subcommand)]
+    pub command: Option<Command>,
+    #[clap(flatten)]
+    pub opts: Option<Options>,
+}
+
+impl L2Command {
+    pub async fn run(self) -> eyre::Result<()> {
+        if let Some(cmd) = self.command {
+            return cmd.run().await;
+        }
+        let mut app = clap::Command::new("init");
+        app = <Options as clap::Args>::augment_args(app);
+
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let args_with_program = std::iter::once("init".to_string())
+            .chain(args.into_iter())
+            .collect::<Vec<_>>();
+
+        let matches = app.try_get_matches_from(args_with_program)?;
+        let init_options = Options::from_arg_matches(&matches)?;
+        init_l2(init_options).await
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {
-    #[command(about = "Initialize an ethrex L2 node", visible_alias = "i")]
-    Init {
-        #[command(flatten)]
-        opts: Options,
-    },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
@@ -103,7 +115,7 @@ pub enum Command {
             long = "network",
             default_value_t = Network::default(),
             value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
         )]
@@ -122,106 +134,6 @@ pub enum Command {
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Command::Init { opts } => {
-                if opts.node_opts.evm == EvmEngine::REVM {
-                    panic!("L2 Doesn't support REVM, use LEVM instead.");
-                }
-
-                let data_dir = set_datadir(&opts.node_opts.datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
-
-                let network = get_network(&opts.node_opts);
-
-                let genesis = network.get_genesis()?;
-                let store = init_store(&data_dir, genesis).await;
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
-
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
-
-                let signer = get_signer(&data_dir);
-
-                let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
-
-                let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-                    &data_dir,
-                    &local_p2p_node,
-                    &signer,
-                )));
-
-                let peer_table = peer_table(local_p2p_node.node_id());
-
-                // TODO: Check every module starts properly.
-                let tracker = TaskTracker::new();
-
-                let cancel_token = tokio_util::sync::CancellationToken::new();
-
-                init_rpc_api(
-                    &opts.node_opts,
-                    &opts,
-                    peer_table.clone(),
-                    local_p2p_node.clone(),
-                    local_node_record.lock().await.clone(),
-                    store.clone(),
-                    blockchain.clone(),
-                    cancel_token.clone(),
-                    tracker.clone(),
-                    rollup_store.clone(),
-                )
-                .await;
-
-                // Initialize metrics if enabled
-                if opts.node_opts.metrics_enabled {
-                    init_metrics(&opts.node_opts, tracker.clone());
-                }
-
-                if opts.node_opts.p2p_enabled {
-                    init_network(
-                        &opts.node_opts,
-                        &network,
-                        &data_dir,
-                        local_p2p_node,
-                        local_node_record.clone(),
-                        signer,
-                        peer_table.clone(),
-                        store.clone(),
-                        tracker.clone(),
-                        blockchain.clone(),
-                    )
-                    .await;
-                } else {
-                    info!("P2P is disabled");
-                }
-
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
-
-                let l2_sequencer = ethrex_l2::start_l2(
-                    store,
-                    rollup_store,
-                    blockchain,
-                    l2_sequencer_cfg,
-                    #[cfg(feature = "metrics")]
-                    format!(
-                        "http://{}:{}",
-                        opts.node_opts.http_addr, opts.node_opts.http_port
-                    ),
-                )
-                .into_future();
-
-                tracker.spawn(l2_sequencer);
-
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
-                        info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-                        info!("Storing config at {:?}...", node_config_path);
-                        cancel_token.cancel();
-                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                        store_node_config_file(node_config, node_config_path).await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        info!("Server shutting down!");
-                    }
-                }
-            }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
                     ethrex_cli::Subcommand::RemoveDB { datadir, force }
@@ -262,14 +174,14 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            event_signature,
+                            vec![event_signature],
                         )
                         .await?;
 
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
                             .await?;
                         let parent_beacon_hash = block
                             .header
@@ -305,11 +217,11 @@ impl Command {
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
                         {
                             let blob_path =
-                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                                data_dir.join(format!("{target_slot}-{}.blob", blob.index));
                             std::fs::write(blob_path, blob.blob)?;
                         }
 
-                        println!("Saved blobs for slot {}", target_slot);
+                        println!("Saved blobs for slot {target_slot}");
                     }
 
                     current_block += U256::one();
@@ -439,9 +351,11 @@ impl Command {
                                 first_block: first_block_number,
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
-                                deposit_logs_hash: H256::zero(),
+                                privileged_transactions_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage
@@ -487,7 +401,7 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?

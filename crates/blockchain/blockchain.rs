@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -24,14 +24,16 @@ use ethrex_common::types::{
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
-use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_storage::{
+    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{ops::Div, time::Instant};
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -45,6 +47,13 @@ use ethrex_common::types::BlobsBundle;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+#[derive(Debug, Clone, Default)]
+pub enum BlockchainType {
+    #[default]
+    L1,
+    L2,
+}
+
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
@@ -54,6 +63,7 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    pub r#type: BlockchainType,
 }
 
 #[derive(Debug, Clone)]
@@ -61,13 +71,27 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
+
+fn log_batch_progress(batch_size: usize, current_block: usize) {
+    let progress_needed = batch_size > 10;
+    const PERCENT_MARKS: [usize; 4] = [20, 40, 60, 80];
+    if progress_needed {
+        PERCENT_MARKS.iter().for_each(|mark| {
+            if (batch_size * mark) / 100 == current_block {
+                info!("[SYNCING] {mark}% of batch processed");
+            }
+        });
+    }
+}
+
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: blockchain_type,
         }
     }
 
@@ -77,6 +101,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: BlockchainType::default(),
         }
     }
 
@@ -98,7 +123,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db)?;
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -170,7 +195,10 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-            let mut vm = Evm::new_from_db(logger.clone());
+            let mut vm = match self.r#type {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+            };
 
             // Re-execute block with logger
             vm.execute_block(block)?;
@@ -332,30 +360,18 @@ impl Blockchain {
     pub async fn store_block(
         &self,
         block: &Block,
+        account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
-        account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
-        // Apply the account updates over the last block's state and compute the new state root
-        let apply_updates_list = self
-            .storage
-            .apply_account_updates_batch(block.header.parent_hash, account_updates)
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        let new_state_root = apply_updates_list.state_trie_hash;
-        let state_updates = apply_updates_list.state_updates;
-        let accounts_updates = apply_updates_list.storage_updates;
-        let code_updates = apply_updates_list.code_updates;
-
         // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
+        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
+            account_updates: account_updates_list.state_updates,
+            storage_updates: account_updates_list.storage_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
-            code_updates,
+            code_updates: account_updates_list.code_updates,
         };
 
         self.storage
@@ -369,48 +385,65 @@ impl Blockchain {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block(block, res, &updates).await;
+
+        // Apply the account updates over the last block's state and compute the new state root
+        let account_updates_list = self
+            .storage
+            .apply_account_updates_batch(block.header.parent_hash, &updates)
+            .await?
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        let merkleized = Instant::now();
+        let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
-        Self::print_add_block_logs(block, since, executed, stored);
+        Self::print_add_block_logs(block, since, executed, merkleized, stored);
         result
     }
 
-    fn print_add_block_logs(block: &Block, since: Instant, executed: Instant, stored: Instant) {
+    fn print_add_block_logs(
+        block: &Block,
+        since: Instant,
+        executed: Instant,
+        merkleized: Instant,
+        stored: Instant,
+    ) {
         let interval = stored.duration_since(since).as_millis() as f64;
         if interval != 0f64 {
             let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
             let throughput = as_gigas / interval * 1000_f64;
-            let execution_time = executed.duration_since(since).as_millis() as f64;
-            let storage_time = stored.duration_since(executed).as_millis() as f64;
-            let execution_fraction = (execution_time * 100_f64 / interval).round() as u64;
-            let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
-            let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
-            let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+
             metrics!(
                 let _ = METRICS_BLOCKS.set_block_number(block.header.number);
                 METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
+
             let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.2} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.0}%, #Txs: {}.",
+                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
                 block.header.number,
                 throughput,
                 interval,
+                as_gigas,
                 (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
                 block.body.transactions.len()
             );
+
+            fn percentage(init: Instant, end: Instant, total: f64) -> f64 {
+                (end.duration_since(init).as_millis() as f64 / total * 100.0).round()
+            }
+
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
-                    execution_time_per_gigagas,
-                    execution_fraction,
-                    storage_time_per_gigagas,
-                    storage_fraction
+                    " exec: {}% merkle: {}% store: {}%",
+                    percentage(since, executed, interval),
+                    percentage(executed, merkleized, interval),
+                    percentage(merkleized, stored, interval)
                 )
             } else {
                 "".to_string()
             };
+
             info!("{}{}", base_log, extra_log);
         }
     }
@@ -446,7 +479,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -486,12 +519,14 @@ impl Blockchain {
                         }),
                     )
                 })?;
-
-            info!("Processed block {} out of {}", i, blocks.len());
+            debug!("Executed block with hash {}", block.hash());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
+
+            log_batch_progress(blocks_len, i);
+            tokio::task::yield_now().await;
         }
 
         let account_updates = vm
@@ -534,11 +569,11 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
+        let elapsed_seconds = interval.elapsed().as_secs_f64();
         let mut throughput = 0.0;
-        if elapsed_seconds != 0 && total_gas_used != 0 {
-            let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_seconds as f64);
+        if elapsed_seconds > 0.0 && total_gas_used != 0 {
+            let as_gigas = (total_gas_used as f64) / 1e9;
+            throughput = as_gigas / elapsed_seconds;
         }
 
         metrics!(
@@ -738,9 +773,15 @@ impl Blockchain {
     }
 
     /// Marks the node's chain as up to date with the current chain
-    /// Once the initial sync has taken place, the node will be consireded as sync
+    /// Once the initial sync has taken place, the node will be considered as sync
     pub fn set_synced(&self) {
         self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Marks the node's chain as not up to date with the current chain.
+    /// This will be used when the node is one batch or more behind the current chain.
+    pub fn set_not_synced(&self) {
+        self.is_synced.store(false, Ordering::Relaxed);
     }
 
     /// Returns whether the node's chain is up to date with the current chain
@@ -753,8 +794,7 @@ impl Blockchain {
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
-                "Hash {} not found in the mempool",
-                hash
+                "Hash {hash} not found in the mempool",
             )));
         };
         let result = match tx {
@@ -764,8 +804,7 @@ impl Blockchain {
             Transaction::EIP4844Transaction(itx) => {
                 let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
+                        "Blob transaction present without its bundle: hash {hash}",
                     )));
                 };
 
@@ -775,12 +814,25 @@ impl Blockchain {
                 })
             }
             Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
+            // Exclude privileged transactions as they are only created
+            // by the lead sequencer. In the future, they might get gossiped
+            // like the rest.
+            Transaction::PrivilegedL2Transaction(_) => {
+                return Err(StoreError::Custom(
+                    "Privileged Transactions are not supported in P2P".to_string(),
+                ));
             }
         };
 
         Ok(result)
+    }
+
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match self.r#type {
+            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+        };
+        Ok(evm)
     }
 }
 
@@ -907,11 +959,10 @@ pub fn validate_gas_used(
     block_header: &BlockHeader,
 ) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
-        // Note: This is commented because it is still being used in development.
-        // dbg!(last.cumulative_gas_used);
-        // dbg!(block_header.gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
-            return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
+            ));
         }
     }
     Ok(())

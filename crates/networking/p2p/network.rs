@@ -1,27 +1,22 @@
+use crate::discv4::server::{DiscoveryError, Discv4Server};
 use crate::kademlia::{self, KademliaTable};
+use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
+use crate::rlpx::message::Message as RLPxMessage;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
-use crate::rlpx::{
-    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-};
 use crate::types::{Node, NodeRecord};
-use crate::{
-    discv4::server::{DiscoveryError, Discv4Server},
-    rlpx::utils::log_peer_debug,
-};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
-use k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
-};
+use secp256k1::{PublicKey, SecretKey};
+
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
-    net::{TcpListener, TcpSocket, TcpStream},
+    net::{TcpListener, TcpSocket},
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 // Totally arbitrary limit on how
 // many messages the connections can queue,
@@ -41,7 +36,7 @@ pub enum NetworkError {
 #[derive(Clone, Debug)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
-    pub signer: SigningKey,
+    pub signer: SecretKey,
     pub table: Arc<Mutex<KademliaTable>>,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
@@ -49,6 +44,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    pub based_context: Option<P2PBasedContext>,
 }
 
 impl P2PContext {
@@ -57,11 +53,12 @@ impl P2PContext {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
-        signer: SigningKey,
+        signer: SecretKey,
         peer_table: Arc<Mutex<KademliaTable>>,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -78,6 +75,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            based_context,
         }
     }
 
@@ -133,9 +131,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        context
-            .tracker
-            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 
@@ -145,44 +141,10 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let table = context.table.clone();
-    match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table, true).await,
-        Err(e) => {
-            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
-        }
-    }
-}
-
-pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
-    let addr = SocketAddr::new(node.ip, node.tcp_port);
-    let stream = match tcp_stream(addr).await {
-        Ok(result) => result,
-        Err(e) => {
-            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.node_id());
-            return;
-        }
-    };
-    let table = context.table.clone();
-    match handshake::as_initiator(context, node.clone(), stream).await {
-        Ok(mut conn) => conn.start(table, false).await,
-        Err(e) => {
-            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.node_id());
-        }
-    };
-}
-
-async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
-}
-
-pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
+pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
+    let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
+    let encoded = public_key.serialize_uncompressed();
+    H512::from_slice(&encoded[1..])
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval

@@ -1,11 +1,12 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
+    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -19,6 +20,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
+use regex::Regex;
 use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
@@ -44,8 +46,8 @@ pub fn parse_and_execute(
         let result = rt.block_on(run_ef_test(&test_key, &test, evm));
 
         if let Err(e) = result {
-            eprintln!("Test {} failed: {:?}", test_key, e);
-            failures.push(format!("{}: {:?}", test_key, e));
+            eprintln!("Test {test_key} failed: {e:?}");
+            failures.push(format!("{test_key}: {e:?}"));
         }
     }
 
@@ -69,7 +71,10 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::new(evm, store.clone());
+    // Blockchain EF tests are meant for L1.
+    let blockchain_type = BlockchainType::L1;
+
+    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -87,15 +92,13 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
             Err(error) => {
                 if !expects_exception {
                     return Err(format!(
-                        "Transaction execution unexpectedly failed on test: {}, with error {:?}",
-                        test_key, error
+                        "Transaction execution unexpectedly failed on test: {test_key}, with error {error:?}",
                     ));
                 }
                 let expected_exception = block_fixture.expect_exception.clone().unwrap();
                 if !exception_is_expected(expected_exception.clone(), &error) {
                     return Err(format!(
-                        "Returned exception {:?} does not match expected {:?}",
-                        error, expected_exception,
+                        "Returned exception {error:?} does not match expected {expected_exception:?}",
                     ));
                 }
                 break;
@@ -103,8 +106,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
             Ok(_) => {
                 if expects_exception {
                     return Err(format!(
-                        "Expected transaction execution to fail in test: {} with error: {:?}",
-                        test_key,
+                        "Expected transaction execution to fail in test: {test_key} with error: {:?}",
                         block_fixture.expect_exception.clone()
                     ));
                 }
@@ -130,7 +132,8 @@ fn exception_is_expected(
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase());
+                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
+                || match_expected_regex(expected_error_msg, error_msg);
         }
         matches!(
             (exception, &returned_error),
@@ -184,7 +187,7 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
         (msg, expected_msg.as_str()),
         (
             "reject transactions from senders with deployed code",
-            "Sender account shouldn't be a contract"
+            SENDER_NOT_EOA_REGEX
         ) | (
             "call gas cost exceeds the gas limit",
             "Intrinsic gas too low"
@@ -205,11 +208,19 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             )
             | (
                 "priority fee is greater than max fee",
-                "Priority fee is greater than max fee per gas"
+                PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX
             )
             | ("create initcode size limit", "Initcode size exceeded")
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
+
+fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {
+    let Ok(regex) = Regex::new(expected_error_regex) else {
+        return false;
+    };
+    regex.is_match(error_msg)
+}
+
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to

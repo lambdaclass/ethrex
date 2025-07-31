@@ -1,4 +1,6 @@
+use crate::parser::get_test_relative_path;
 use crate::runner::{EFTestRunnerError, InternalError};
+use crate::types::EFTestInfo;
 use colored::Colorize;
 use ethrex_common::{
     Address, H256,
@@ -11,7 +13,7 @@ use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionRe
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{self, Display},
     path::PathBuf,
     time::Duration,
@@ -25,7 +27,7 @@ pub type TestVector = (usize, usize, usize);
 
 pub fn progress(reports: &[EFTestReport], time: Duration) -> String {
     format!(
-        "{}: {} {} {} - {}",
+        "\r{}: {} {} {} - {}",
         "Ethereum Foundation Tests".bold(),
         format!(
             "{} passed",
@@ -200,11 +202,11 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
-            format!("{}", total_passed).green()
+            format!("{total_passed}").green()
         } else if total_passed > 0 {
-            format!("{}", total_passed).yellow()
+            format!("{total_passed}").yellow()
         } else {
-            format!("{}", total_passed).red()
+            format!("{total_passed}").red()
         },
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
@@ -225,11 +227,11 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: Fork) -> String {
         "{}: {}/{fork_tests} ({fork_success_percentage:.2}%)",
         fork_str.bold(),
         if fork_passed_tests == fork_tests {
-            format!("{}", fork_passed_tests).green()
+            format!("{fork_passed_tests}").green()
         } else if fork_passed_tests > 0 {
-            format!("{}", fork_passed_tests).yellow()
+            format!("{fork_passed_tests}").yellow()
         } else {
-            format!("{}", fork_passed_tests).red()
+            format!("{fork_passed_tests}").red()
         },
     )
 }
@@ -278,17 +280,15 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
                 total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
-                "{}: {}/{} ({:.2}%)\n",
-                dir.bold(),
+                "{}: {}/{total_run} ({success_percentage:.2}%)\n",
+                get_test_relative_path(PathBuf::from(dir)).bold(),
                 if total_passed == total_run {
-                    format!("{}", total_passed).green()
+                    format!("{total_passed}").green()
                 } else if total_passed > 0 {
-                    format!("{}", total_passed).yellow()
+                    format!("{total_passed}").yellow()
                 } else {
-                    format!("{}", total_passed).red()
+                    format!("{total_passed}").red()
                 },
-                total_run,
-                success_percentage
             );
             test_dirs_summary.push_str(&test_dir_summary);
         });
@@ -339,13 +339,13 @@ impl Display for EFTestsReport {
             if report.passed() {
                 continue;
             }
-            writeln!(f, "Test: {}", report.name)?;
+            writeln!(f, "{} \n{}", "Test:".bold(), report)?;
             writeln!(f)?;
             for (fork, result) in &report.fork_results {
                 if result.failed_vectors.is_empty() {
                     continue;
                 }
-                writeln!(f, "\tFork: {:?}", fork)?;
+                writeln!(f, "\tFork: {fork:?}")?;
                 for (failed_vector, error) in &result.failed_vectors {
                     writeln!(
                         f,
@@ -391,13 +391,13 @@ impl Display for EFTestsReport {
                                             log.address, log.topics, log.data
                                         ))
                                         .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", levm_log_report)?;
+                                writeln!(f, "{levm_log_report}")?;
                                 writeln!(f, "\t\t\t\tRevm Logs: ")?;
                                 let revm_log_report = revm_logs
                                     .iter()
-                                    .map(|log| format!("\t\t\t\t {:?} \n", log))
+                                    .map(|log| format!("\t\t\t\t {log:?} \n"))
                                     .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", revm_log_report)?;
+                                writeln!(f, "{revm_log_report}")?;
                             }
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
@@ -438,6 +438,9 @@ impl Display for EFTestsReport {
 pub struct EFTestReport {
     pub name: String,
     pub dir: String,
+    pub description: String,
+    pub url: String,
+    pub reference_spec: String,
     pub test_hash: H256,
     pub re_run_report: Option<TestReRunReport>,
     pub fork_results: HashMap<Fork, EFTestReportForkResult>,
@@ -450,10 +453,19 @@ pub struct EFTestReportForkResult {
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256) -> Self {
+    pub fn new(name: String, dir: String, info: EFTestInfo, test_hash: H256) -> Self {
         EFTestReport {
             name,
             dir,
+            description: info
+                .description
+                .unwrap_or("No description provided by this tests".to_string()),
+            url: info
+                .url
+                .unwrap_or("No url provided by this tests".to_string()),
+            reference_spec: info
+                .reference_spec
+                .unwrap_or("No reference spec provided by this tests".to_string()),
             test_hash,
             re_run_report: None,
             fork_results: HashMap::new(),
@@ -476,6 +488,37 @@ impl EFTestReport {
         self.fork_results
             .values()
             .all(|fork_result| fork_result.failed_vectors.is_empty())
+    }
+}
+
+impl Display for EFTestReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut json_name = String::from(""); //In some cases there are more than one tests per file, so the name of the tests and the name of the file are different.
+        if self.name.contains("::") {
+            json_name = self.name.clone().split("::").collect::<Vec<&str>>()[1]
+                .split("[")
+                .collect::<Vec<&str>>()[0]
+                .strip_prefix("test")
+                .unwrap_or("")
+                .to_owned()
+                + ".json";
+        }
+        writeln!(f, "Test name: {}", self.name)?;
+        writeln!(f, "Test path: {}", self.dir.clone() + &json_name)?;
+        writeln!(f)?;
+        writeln!(f, "Test description: {}", self.description)?;
+        writeln!(f)?;
+        writeln!(
+            f,
+            "Note: The following links may help when debugging `ef-tests`:"
+        )?;
+        writeln!(
+            f,
+            "- https://ethereum-tests.readthedocs.io/en/latest/test_types/gstate_tests.html#"
+        )?;
+        writeln!(f, "- Test reference spec: {}", self.reference_spec)?;
+        writeln!(f, "- Test url: {}", self.url)?;
+        Ok(())
     }
 }
 
@@ -525,7 +568,7 @@ impl EFTestReportForkResult {
         transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
-        levm_cache: HashMap<Address, Account>,
+        levm_cache: BTreeMap<Address, Account>,
     ) {
         self.failed_vectors.insert(
             failed_vector,
@@ -687,8 +730,7 @@ impl fmt::Display for ComparisonReport {
                     let initial_value = base_account.storage.get(key).cloned().unwrap_or_default();
                     writeln!(
                         f,
-                        "\t\t\t\t\tStorage slot: {key:#x}: {} -> {}",
-                        initial_value, value
+                        "\t\t\t\t\tStorage slot: {key:#x}: {initial_value} -> {value}",
                     )?;
                 }
             }
@@ -778,8 +820,7 @@ impl fmt::Display for ComparisonReport {
                     if levm_value != revm_value {
                         writeln!(
                             f,
-                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {}, REVM: {}",
-                            levm_value, revm_value
+                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {levm_value}, REVM: {revm_value}",
                         )?;
                     }
                 }

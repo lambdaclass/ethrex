@@ -40,7 +40,6 @@ pub struct Environment {
     pub is_privileged: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// This struct holds special configuration variables specific to the
 /// EVM. In most cases, at least at the time of writing (February
 /// 2025), you want to use the default blob_schedule values for the
@@ -49,6 +48,7 @@ pub struct Environment {
 /// However, that function should NOT be used IF you want to use a
 /// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
 /// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
+#[derive(Debug, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
@@ -90,25 +90,27 @@ impl EVMConfig {
         }
     }
 
-    const fn max_blobs_per_block(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-            Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
-            _ => MAX_BLOB_COUNT,
+    fn max_blobs_per_block(fork: Fork) -> u64 {
+        if fork >= Fork::Prague {
+            MAX_BLOB_COUNT_ELECTRA
+        } else {
+            MAX_BLOB_COUNT
         }
     }
 
-    const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+    fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
+        if fork >= Fork::Prague {
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+        } else {
+            BLOB_BASE_FEE_UPDATE_FRACTION
         }
     }
 
-    const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
-            _ => TARGET_BLOB_GAS_PER_BLOCK,
+    fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
+        if fork >= Fork::Prague {
+            TARGET_BLOB_GAS_PER_BLOCK_PECTRA
+        } else {
+            TARGET_BLOB_GAS_PER_BLOCK
         }
     }
 }

@@ -1,9 +1,8 @@
 # Summary
 
 - [Getting started](./getting-started/README.md)
-  - [Installing ethrex]()
-    - [Build from source]()
-  - [Running a node]()
+  - [Installing ethrex](./getting-started/installing.md)
+  - [Running a node](./getting-started/running.md)
   - [Migrating from another client]()
 
 - [Roadmap](./getting-started/roadmap.md)
@@ -27,6 +26,7 @@
     - [Withdrawing assets](./l2/guides/withdrawing.md)
   - [General overview](./l2/overview.md)
     - [State diffs](./l2/state_diffs.md)
+    - [Deposits](./l2/deposits.md)
     - [Withdrawals](./l2/withdrawals.md)
   - [Smart contracts](./l2/contracts.md)
     - [OnChainOperator]()
@@ -43,7 +43,7 @@
   - [Quickstart](./developers/quickstart.md)
   - [L2](./developers/l2/README.md)
     - [load-tests](./developers/l2/load_tests.md)
-
+  - [Replay](./ethrex_replay/ethrex_replay.md)
 - [CLI reference]()
 - [Troubleshooting]()
 

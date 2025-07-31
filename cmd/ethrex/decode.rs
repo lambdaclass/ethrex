@@ -40,7 +40,8 @@ mod tests {
 
     #[test]
     fn decode_chain_file() {
-        let file = File::open("../../test_data/chain.rlp").expect("Failed to open chain file");
+        let file =
+            File::open("../../fixtures/blockchain/chain.rlp").expect("Failed to open chain file");
         let blocks = chain_file(file).expect("Failed to decode chain file");
         assert_eq!(20, blocks.len(), "There should be 20 blocks in chain file");
         assert_eq!(

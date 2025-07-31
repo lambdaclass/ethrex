@@ -3,93 +3,86 @@ use crate::{
     networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
-use std::time::{SystemTime, UNIX_EPOCH};
+use secp256k1::SecretKey;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
-#[cfg(feature = "l2")]
-use crate::l2::L2Options;
-#[cfg(feature = "l2")]
-use ::{
-    ethrex_common::Address,
-    ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-};
-
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
+        .with_default_directive(
+        // Filters all spawned logs
+        // TODO: revert #3467 when error logs are no longer emitted
+        Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+            .expect("this can't fail"),
+    )
+    .from_env_lossy()
+    .add_directive(Directive::from(opts.log_level));
 
-    if let Some(log_filename) = &opts.log_filename {
-        // Create the log directory if it doesn't exist
-        let log_dir_path = Path::new(&opts.log_dir);
-        if let Err(e) = std::fs::create_dir_all(log_dir_path) {
+let mut subscriber_builder = FmtSubscriber::builder()
+    .with_env_filter(log_filter);
+
+if let Some(log_filename) = &opts.log_filename {
+    // Create the log directory if it doesn't exist
+    let log_dir_path = Path::new(&opts.log_dir);
+    if let Err(e) = std::fs::create_dir_all(log_dir_path) {
+        eprintln!(
+            "Failed to create log directory '{}': {}",
+            log_dir_path.display(),
+            e
+        );
+        std::process::exit(1);
+    }
+
+    // Construct the full log file path
+    let log_file_path = log_dir_path.join(log_filename);
+
+    // Open file for writing
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(file) => file,
+        Err(e) => {
             eprintln!(
-                "Failed to create log directory '{}': {}",
-                log_dir_path.display(),
+                "Failed to open log file '{}': {}",
+                log_file_path.display(),
                 e
             );
             std::process::exit(1);
         }
+    };
 
-        // Construct the full log file path
-        let log_file_path = log_dir_path.join(log_filename);
+    subscriber_builder = subscriber_builder
+        .with_writer(file)
+        .with_ansi(false);
 
-        // Open file for writing
-        let file = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file_path)
-        {
-            Ok(file) => file,
-            Err(e) => {
-                eprintln!(
-                    "Failed to open log file '{}': {}",
-                    log_file_path.display(),
-                    e
-                );
-                std::process::exit(1);
-            }
-        };
-
-        let subscriber = FmtSubscriber::builder()
-            .with_env_filter(log_filter)
-            .with_writer(file)
-            .with_ansi(false)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
-    } else {
-        let subscriber = FmtSubscriber::builder()
-            .with_env_filter(log_filter)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
-    }
+}
+tracing::subscriber::set_global_default(subscriber.finish()).expect("setting default subscriber failed");
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -122,10 +115,10 @@ pub fn open_store(data_dir: &str) -> Store {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
+            if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
+            } else if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
             } else {
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
@@ -135,37 +128,18 @@ pub fn open_store(data_dir: &str) -> Store {
     }
 }
 
-#[cfg(feature = "l2")]
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_sql")] {
-            let engine_type = EngineTypeRollup::SQL;
-        } else if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
-    let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
-    rollup_store
-        .init()
-        .await
-        .expect("Failed to init rollup store");
-    rollup_store
-}
-
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    evm_engine: EvmEngine,
+    store: Store,
+    blockchain_type: BlockchainType,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store).into()
+    Blockchain::new(evm_engine, store, blockchain_type).into()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    #[cfg(feature = "l2")] l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -173,7 +147,6 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
-    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -198,12 +171,6 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
-        #[cfg(feature = "l2")]
-        get_valid_delegation_addresses(l2_opts),
-        #[cfg(feature = "l2")]
-        l2_opts.sponsor_private_key,
-        #[cfg(feature = "l2")]
-        rollup_store,
     );
 
     tracker.spawn(rpc_api);
@@ -217,11 +184,12 @@ pub async fn init_network(
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SigningKey,
+    signer: SecretKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
+    based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -241,6 +209,7 @@ pub async fn init_network(
         store,
         blockchain,
         get_client_version(),
+        based_context,
     );
 
     context.set_fork_id().await.expect("Set fork id");
@@ -286,7 +255,12 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
 }
 
 pub fn get_network(opts: &Options) -> Network {
-    opts.network.clone()
+    let default = if opts.dev {
+        Network::LocalDevnet
+    } else {
+        Network::mainnet()
+    };
+    opts.network.clone().unwrap_or(default)
 }
 
 #[allow(dead_code)]
@@ -329,11 +303,11 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     bootnodes
 }
 
-pub fn get_signer(data_dir: &str) -> SigningKey {
+pub fn get_signer(data_dir: &str) -> SecretKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
     match fs::read(key_path.clone()) {
-        Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
+        Ok(content) => SecretKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
                 "Key file not found, creating a new key and saving to {:?}",
@@ -342,15 +316,15 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
             if let Some(parent) = key_path.parent() {
                 fs::create_dir_all(parent).expect("Key file path could not be created.")
             }
-            let signer = SigningKey::random(&mut OsRng);
-            fs::write(key_path, signer.to_bytes())
+            let signer = SecretKey::new(&mut OsRng);
+            fs::write(key_path, signer.secret_bytes())
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
@@ -384,7 +358,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
 pub fn get_local_node_record(
     data_dir: &str,
     local_p2p_node: &Node,
-    signer: &SigningKey,
+    signer: &SecretKey,
 ) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
@@ -412,23 +386,4 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
-}
-
-#[cfg(feature = "l2")]
-pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
-    let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-        return Vec::new();
-    };
-    let addresses: Vec<Address> = fs::read_to_string(path)
-        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string().parse::<Address>())
-        .filter_map(Result::ok)
-        .collect();
-    if addresses.is_empty() {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-    }
-    addresses
 }

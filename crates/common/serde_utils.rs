@@ -50,6 +50,19 @@ pub mod u256 {
             .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
     }
 
+    pub fn deser_hex_str_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = Option::<String>::deserialize(d)?;
+        match s {
+            Some(s) => U256::from_str_radix(s.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+                .map(Some),
+            None => Ok(None),
+        }
+    }
+
     pub fn deser_hex_or_dec_str<'de, D>(d: D) -> Result<U256, D::Error>
     where
         D: Deserializer<'de>,
@@ -69,9 +82,56 @@ pub mod u256 {
     {
         serializer.serialize_str(&value.to_string())
     }
+
+    pub mod vec {
+        use super::*;
+        use serde::de::IntoDeserializer;
+        use serde::{Deserialize, Deserializer};
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw_vec = Vec::<String>::deserialize(deserializer)?;
+            raw_vec
+                .into_iter()
+                .map(|s| {
+                    let deser = s.into_deserializer();
+                    super::deser_hex_or_dec_str(deser)
+                })
+                .collect()
+        }
+    }
+
+    pub mod hashmap {
+        use super::*;
+        use serde::de::IntoDeserializer;
+        use serde::{Deserialize, Deserializer};
+        use std::collections::HashMap;
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<U256, U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw_map = HashMap::<String, String>::deserialize(deserializer)?;
+            raw_map
+                .into_iter()
+                .map(|(k, v)| {
+                    let key_deser = k.into_deserializer();
+                    let val_deser = v.into_deserializer();
+
+                    let key = super::deser_hex_or_dec_str(key_deser)?;
+                    let value = super::deser_hex_or_dec_str(val_deser)?;
+                    Ok((key, value))
+                })
+                .collect()
+        }
+    }
 }
 
 pub mod u64 {
+    use serde::de::IntoDeserializer;
+
     use super::*;
 
     pub mod hex_str {
@@ -86,11 +146,25 @@ pub mod u64 {
                 .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
         }
 
+        pub fn deser_vec<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw_vec = Vec::<String>::deserialize(deserializer)?;
+            raw_vec
+                .into_iter()
+                .map(|s| {
+                    let deser = s.into_deserializer();
+                    deserialize(deser)
+                })
+                .collect()
+        }
+
         pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#x}", value))
+            serializer.serialize_str(&format!("{value:#x}"))
         }
     }
     pub mod hex_str_padding {
@@ -107,7 +181,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#018x}", value))
+            serializer.serialize_str(&format!("{value:#018x}"))
         }
     }
 
@@ -120,7 +194,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            Option::<String>::serialize(&value.map(|v| format!("{:#x}", v)), serializer)
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
         }
 
         pub fn deserialize<'de, D>(d: D) -> Result<Option<u64>, D::Error>
@@ -145,7 +219,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            Option::<String>::serialize(&value.map(|v| format!("{:#018x}", v)), serializer)
+            Option::<String>::serialize(&value.map(|v| format!("{v:#018x}")), serializer)
         }
 
         pub fn deserialize<'de, D>(d: D) -> Result<Option<u64>, D::Error>
@@ -201,7 +275,7 @@ pub mod u128 {
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#x}", value))
+            serializer.serialize_str(&format!("{value:#x}"))
         }
     }
 }
@@ -249,7 +323,7 @@ pub mod bytes {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{:x}", value))
+        serializer.serialize_str(&format!("0x{value:x}"))
     }
 
     pub mod vec {
@@ -403,7 +477,7 @@ pub mod duration {
     {
         let value = String::deserialize(d)?;
         parse_duration(value.clone())
-            .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {}", value)))
+            .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {value}")))
     }
 
     pub mod opt {
@@ -415,7 +489,7 @@ pub mod duration {
         {
             if let Some(value) = Option::<String>::deserialize(d)? {
                 Ok(Some(parse_duration(value.clone()).ok_or_else(|| {
-                    D::Error::custom(format!("Failed to parse Duration: {}", value))
+                    D::Error::custom(format!("Failed to parse Duration: {value}"))
                 })?))
             } else {
                 Ok(None)

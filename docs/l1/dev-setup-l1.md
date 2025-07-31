@@ -29,7 +29,7 @@ make dev
 ```
 
 - RPC endpoint: localhost:8545
-- Genesis file: ./test_data/genesis-l1.json
+- Genesis file: fixtures/genesis/l1-dev.json
 
 ## Test
 
@@ -122,14 +122,14 @@ make localnet-assertoor-blob
 
 Those are two different set of assertoor checks the details are as follows:
 
-*assertoor-tx*
+_assertoor-tx_
 
 - [eoa-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml)
 
-*assertoor-blob*
+_assertoor-blob_
 
 - [blob-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml)
-- *Custom* [el-stability-check](https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml)
+- _Custom_ [el-stability-check](https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml)
 
 For reference on each individual check see the [assertoor-wiki](https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor)
 
@@ -138,7 +138,7 @@ For reference on each individual check see the [assertoor-wiki](https://github.c
 Example run:
 
 ```bash
-cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+cargo run --bin ethrex -- --network fixtures/genesis/kurtosis.json
 ```
 
 The `network` argument is mandatory, as it defines the parameters of the chain.
@@ -147,16 +147,18 @@ For more information about the different cli arguments check out the next sectio
 ## CLI Commands
 
 <!-- BEGIN_CLI_HELP -->
+
 ```
 ethrex Execution client
 
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb  Remove the database
-  import    Import blocks to the database
-  export    Export blocks in the current chain into a file in rlp encoding
+  removedb            Remove the database
+  import              Import blocks to the database
+  export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
+  l2
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -168,10 +170,9 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
-          [default: mainnet]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
@@ -193,7 +194,7 @@ Node options:
           Enable metrics collection and exposition
 
       --dev
-          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+          If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
@@ -262,6 +263,7 @@ RPC options:
 
           [default: jwt.hex]
 ```
+
 <!-- END_CLI_HELP -->
 
 ## Syncing with Holesky
@@ -315,3 +317,50 @@ If you want to restart the sync from the very start you can do so by wiping the 
 ```bash
 cargo run --bin ethrex -- removedb
 ```
+
+## Ethereum Metrics Exporter
+
+We use the [Ethereum Metrics Exporter](https://github.com/ethpandaops/ethereum-metrics-exporter), a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics. For the syncing to work there must be a consensus node running along with the execution node.
+
+Currently we have two make targets to easily start an execution node and a consensus node on either hoodi or holesky, and display the syncing metrics. In both cases we use a lighthouse consensus node.
+
+### Quickstart guide
+
+Make sure you have your docker daemon running.
+
+- **Code Location**: The targets are defined in `tooling/sync/Makefile`.
+- **How to Run**:
+
+   ```bash
+   # Navigate to tooling/sync directory
+   cd tooling/sync
+
+   # Run target for hoodi
+   make start-hoodi-metrics-docker
+
+    # Run target for holesky
+   make start-holesky-metrics-docker
+   ```
+
+To see the dashboards go to [http://localhost:3001](http://localhost:3001). Use “admin” for user and password. Select the Dashboards menu and go to Ethereum Metrics Exporter (Single) to see the exported metrics.
+
+To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to [http://localhost:9093/metrics](http://localhost:9093/metrics).
+
+### Running the execution node on other networks with metrics enabled
+
+A `docker-compose` is used to bundle prometheus and grafana services, the `*overrides` files define the ports and mounts the prometheus' configuration file.
+If a new dashboard is designed, it can be mounted only in that `*overrides` file.
+A consensus node must be running for the syncing to work.
+
+To run the execution node on any network with metrics, the next steps should be followed:
+1. Build the `ethrex` binary for the network you want (see node options in [CLI Commands](#cli-commands)) with the `metrics` feature enabled.
+2. Enable metrics by using the `--metrics` flag when starting the node.
+3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml`
+4. Run the docker containers:
+
+   ```bash
+   cd metrics
+
+    docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+    ```
+For more details on running a sync go to `tooling/sync/readme.md`.

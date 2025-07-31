@@ -1,44 +1,39 @@
-.PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 \
-		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
-		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
-		init-testnet deploy-l1-testnet restart-testnet
+.PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
+	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 update-system-contracts \
+	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
+	init-prover build-prover clean-tee clean-tee-contract-deps \
+	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
 
-L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
-L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
+# ==============================================================================
+# Top-Level Targets
+# ==============================================================================
 
-# Basic
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 update-system-contracts deploy-l1 init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-l1-docker update-system-contracts deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
-## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
-init-testnet: update-system-contracts deploy-l1-testnet init-l2
+down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
 
-down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
+restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
-clean: clean-contract-deps ## 🧹 Cleans the localnet
-	rm -rf out/
-
-restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
-
-## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
-restart-testnet:
-	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
-
+# ==============================================================================
 # Variables
+# ==============================================================================
+
+L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
+L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1-dev.json
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
 ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
-ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
-ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
+ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics.yaml
+ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
-ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
@@ -55,9 +50,22 @@ ETHREX_PROOF_COORDINATOR_DEV_MODE?=true
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
-# Local L1
-init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+
+PROVER_SRC_FILES := $(shell find prover/src -type f)
+
+# ==============================================================================
+# L1
+# ==============================================================================
+
+init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
+
+down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
+
+restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
@@ -68,73 +76,51 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--dev \
 	--datadir ${ethrex_L1_DEV_LIBMDBX}
 
-init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
-	cargo run --release \
-    --manifest-path ../../Cargo.toml \
-    --bin ethrex \
-    --features "dev" -- \
-    --network ${L1_GENESIS_FILE_PATH} \
-    --http.port ${L1_PORT} \
-    --http.addr ${L1_RPC_ADDRESS} \
-    --authrpc.port ${L1_AUTH_PORT} \
-	--evm levm \
-	--dev \
-    --datadir ${ethrex_L1_DEV_LIBMDBX}
-
-down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
-	docker compose -f docker-compose-l2.yaml down
-
-restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
-
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX} --force
 
-# Contracts
-clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
-	rm -rf contracts/solc_out
-	rm -rf contracts/lib
-	cd tee/contracts; make clean
-
-restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
-
 deploy-l1: ## 📜 Deploys the L1 contracts
+	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--contracts-path contracts \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 
-## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
-deploy-l1-testnet: ## 📜 Deploys the L1 contracts
+## Same as deploy-l1 but deploys the SP1 verifier
+deploy-l1-sp1: ## 📜 Deploys the L1 contracts
+	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--contracts-path contracts
+	--eth-rpc-url ${L1_RPC_URL} \
+	--private-key ${L1_PRIVATE_KEY} \
+	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--sp1.deploy-verifier \
+	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deposit-rich \
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 
-update-system-contracts:
-	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
-	--contracts-path contracts \
-	--l2-genesis-path ../../test_data/genesis-l2.json
-
+# ==============================================================================
 # L2
-init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
+# ==============================================================================
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
-
-init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
+init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_sql,metrics" -- \
-	l2 init \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
+	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
@@ -149,7 +135,13 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
+	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
+	--proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+
+update-system-contracts:
+	COMPILE_CONTRACTS=true \
+	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
+	--l2-genesis-path ../../fixtures/genesis/l2.json
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -157,12 +149,19 @@ init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 down-metrics: ## 🛑 Shuts down the metrics' containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 
+restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
+
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -x ethrex || exit 0
 
+rm-db-l2: ## 🛑 Removes the DB used by the L2
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
+
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-PROVER_SRC_FILES := $(shell find prover/src -type f)
+# ==============================================================================
+# Prover
+# ==============================================================================
 
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
@@ -194,13 +193,24 @@ build-prover:
 	--manifest-path ./prover/Cargo.toml  \
 	--bin ethrex_prover
 
-rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
+# ==============================================================================
+# TEE
+# ==============================================================================
+
+clean-tee: clean-tee-contract-deps ## 🧹 Cleans TEE artifacts
+	rm -rf out/
+
+clean-tee-contract-deps: ## 🧹 Cleans the dependencies for the TEE contracts.
+	cd tee/contracts; make clean
+
+# ==============================================================================
+# Tests
+# ==============================================================================
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2_integration_test --release -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	cargo test l2_integration_test --profile release-with-debug -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
-integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because if the file
+integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
@@ -230,10 +240,10 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
+	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --bin ethrex -- \
 	l2 reconstruct \
-	-g ../../test_data/genesis-l2.json \
-	-b ../../test_data/blobs/ \
+	-g ../../fixtures/genesis/l2.json \
+	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
@@ -243,20 +253,3 @@ state-diff-test:
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release
-
-# Purge L2's state
-UNAME_S:=$(shell uname -s)
-# This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
-PROJECT_NAME:=ethrex_l2_state
-
-ifeq ($(UNAME_S),Linux)
-    PROJECT_PATH := $(HOME)/.local/share/${PROJECT_NAME}
-else ifeq ($(UNAME_S),Darwin)
-    PROJECT_PATH := $(HOME)/Library/Application\ Support/${PROJECT_NAME}
-else
-    $(error Unsupported platform: $(UNAME_S))
-endif
-
-purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
-	rm -rf $(PROJECT_PATH); \
-	echo "Directory deleted."

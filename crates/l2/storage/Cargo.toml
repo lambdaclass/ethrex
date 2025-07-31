@@ -9,6 +9,7 @@ ethrex-common = { workspace = true, features = ["c-kzg"] }
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
+ethrex-l2-common.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true

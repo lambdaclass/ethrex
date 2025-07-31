@@ -49,12 +49,7 @@ impl From<PeerData> for RpcPeer {
         let mut protocols = Protocols::default();
         // Fill protocol data
         for cap in &peer.supported_capabilities {
-            match cap.protocol {
-                "p2p" => {
-                    protocols.p2p = Some(ProtocolData {
-                        version: cap.version,
-                    })
-                }
+            match cap.protocol() {
                 "eth" => {
                     protocols.eth = Some(ProtocolData {
                         version: cap.version,
@@ -97,8 +92,8 @@ pub fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
 #[cfg(test)]
 mod tests {
     use ethrex_p2p::types::{Node, NodeRecord};
-    use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
+    use secp256k1::SecretKey;
 
     use super::*;
 
@@ -106,21 +101,12 @@ mod tests {
     fn test_peer_data_to_serialized_peer() {
         // Test that we can correctly serialize an active Peer
         let node = Node::from_enode_url("enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303").unwrap();
-        let record = NodeRecord::from_node(&node, 17, &SigningKey::random(&mut OsRng)).unwrap();
+        let record = NodeRecord::from_node(&node, 17, &SecretKey::new(&mut OsRng)).unwrap();
         let mut peer = PeerData::new(node, record, true);
         // Set node capabilities and other relevant data
         peer.is_connected = true;
         peer.is_connection_inbound = false;
-        peer.supported_capabilities = vec![
-            Capability {
-                protocol: "eth",
-                version: 68,
-            },
-            Capability {
-                protocol: "snap",
-                version: 1,
-            },
-        ];
+        peer.supported_capabilities = vec![Capability::eth(68), Capability::snap(1)];
         peer.node.version = Some("ethrex/test".to_string());
         // The first serialized peer shown in geth's documentation example: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-admin#admin-peers
         // The fields "localAddress", "static", "trusted" and "name" were removed as we do not have the necessary information to show them

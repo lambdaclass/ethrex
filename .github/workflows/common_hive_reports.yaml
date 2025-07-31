@@ -24,13 +24,21 @@ jobs:
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
             }
-          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
+          - { 
+              name: "Devp2p eth tests",
+              file_name: devp2p,
+              simulation: devp2p
+            }
           - {
               name: "Cancun Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
-          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+          - {
+              name: "Sync tests",
+              file_name: sync,
+              simulation: ethereum/sync
+            }
           - {
               name: "Consume Engine tests",
               file_name: consume-engine,
@@ -69,15 +77,19 @@ jobs:
       - name: Setup Hive
         run: make setup-hive
 
+      # Set custom args defined in Dockerfile to pin execution-spec-tests versions
+      # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
+      # We use the `main` branch for now since it's working, but we can pin it to a specific release if necessary
       - name: Set custom hive flags
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
-            echo "HIVE_FLAGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
+            EEST_BRANCH=main
+            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../test_data/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
+        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
         continue-on-error: true
 
       - name: Upload results
@@ -96,11 +108,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Download all results
         uses: actions/download-artifact@v4
@@ -108,9 +117,6 @@ jobs:
           path: hive/workspace/logs
           pattern: "*_${{ inputs.job_type }}_logs"
           merge-multiple: true
-
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
 
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
