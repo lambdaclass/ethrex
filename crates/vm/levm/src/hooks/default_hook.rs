@@ -146,13 +146,10 @@ impl Hook for DefaultHook {
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     // In a create if Tx was reverted the account won't even exist by this point.
     if !vm.is_create()? {
-        vm.decrease_account_balance(
-            vm.current_call_frame()?.to,
-            vm.current_call_frame()?.msg_value,
-        )?;
+        vm.decrease_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
     }
 
-    vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
+    vm.increase_account_balance(vm.env.origin, vm.current_call_frame.msg_value)?;
 
     Ok(())
 }
@@ -239,7 +236,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
-    let calldata = vm.current_call_frame()?.calldata.clone();
+    let calldata = vm.current_call_frame.calldata.clone();
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     // calldata_cost = tokens_in_calldata * 4
@@ -256,7 +253,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .ok_or(InternalError::Overflow)?;
 
     let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-    if vm.current_call_frame()?.gas_limit < min_gas_limit {
+    if vm.current_call_frame.gas_limit < min_gas_limit {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
@@ -281,7 +278,7 @@ pub fn validate_max_fee_per_blob_gas(
 
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-    let code_size = vm.current_call_frame()?.calldata.len();
+    let code_size = vm.current_call_frame.calldata.len();
     if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
         return Err(TxValidationError::InitcodeSizeExceeded {
             max_size: INIT_CODE_MAX_SIZE,
@@ -404,7 +401,7 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
 
 pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-    let value = vm.current_call_frame()?.msg_value;
+    let value = vm.current_call_frame.msg_value;
 
     // blob gas cost = max fee per blob gas * blob gas used
     // https://eips.ethereum.org/EIPS/eip-4844
@@ -439,7 +436,7 @@ pub fn deduct_caller(
     sender_address: Address,
 ) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-    let value = vm.current_call_frame()?.msg_value;
+    let value = vm.current_call_frame.msg_value;
 
     let blob_gas_cost = get_blob_gas_price(
         &vm.env.tx_blob_hashes,
@@ -467,10 +464,7 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        vm.increase_account_balance(
-            vm.current_call_frame()?.to,
-            vm.current_call_frame()?.msg_value,
-        )?;
+        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
     }
     Ok(())
 }
@@ -480,11 +474,11 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Get bytecode and code_address for assigning those values to the callframe.
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
-        let calldata = std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
-        (calldata, vm.current_call_frame()?.to)
+        let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
+        (calldata, vm.current_call_frame.to)
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
-        let to = vm.current_call_frame()?.to;
+        let to = vm.current_call_frame.to;
         let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
 
@@ -492,8 +486,8 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     };
 
     // Assign code and code_address to callframe
-    vm.current_call_frame_mut()?.code_address = code_address;
-    vm.current_call_frame_mut()?.set_code(bytecode)?;
+    vm.current_call_frame.code_address = code_address;
+    vm.current_call_frame.set_code(bytecode)?;
 
     Ok(())
 }
