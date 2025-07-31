@@ -512,8 +512,8 @@ async fn test_erc20_roundtrip(
             l2_tx_hash: withdrawal_tx_hash
         }
     );
-    
-    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+
+    let proof = wait_for_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("test_erc20_roundtrip: Claiming withdrawal on L1");
 
@@ -661,7 +661,7 @@ async fn test_erc20_failed_deposit(
         .await
         .unwrap();
 
-    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+    let proof = wait_for_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("test_erc20_failed_deposit: Claiming withdrawal on L1");
 
@@ -758,7 +758,7 @@ async fn test_forced_withdrawal(
         .await?;
 
     println!("forced_withdrawal: Waiting for withdrawal proof on L2");
-    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+    let proof = wait_for_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("forced_withdrawal: Claiming withdrawal on L1");
 
@@ -1365,7 +1365,7 @@ async fn test_n_withdraws(
     let mut proofs = vec![];
     for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
         println!("Getting proof for withdrawal {i}/{n} ({tx:x})");
-        proofs.push(obtain_verified_proof(l1_client, l2_client, tx).await);
+        proofs.push(wait_for_verified_proof(l1_client, l2_client, tx).await);
     }
 
     let mut withdraw_claim_txs_receipts = vec![];
@@ -1836,7 +1836,12 @@ fn on_chain_proposer_address() -> Address {
     .unwrap()
 }
 
-async fn obtain_verified_proof(l1_client: &EthClient, l2_client: &EthClient, tx: H256) -> L1MessageProof {
+/// Waits until the batch containing L2->L1 message is verified on L1, and returns the proof for that message
+async fn wait_for_verified_proof(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+    tx: H256,
+) -> L1MessageProof {
     let proof = l2_client.wait_for_message_proof(tx, 1000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
