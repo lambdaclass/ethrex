@@ -14,7 +14,10 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields, validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, GAS_PER_BLOB
+    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
+    GAS_PER_BLOB, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{MIN_BASE_FEE_PER_BLOB_GAS, MempoolTransaction};
