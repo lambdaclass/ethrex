@@ -4159,6 +4159,7 @@ dependencies = [
  "lazy_static",
  "prometheus 0.14.0",
  "rand 0.8.5",
+ "rayon",
  "secp256k1",
  "serde",
  "serde_json",

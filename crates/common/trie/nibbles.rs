@@ -58,11 +58,12 @@ impl Nibbles {
         }
     }
 
+    /// Compares self to another, comparing prefixes only in case of unequal lengths.
     pub fn compare_prefix(&self, prefix: &Nibbles) -> cmp::Ordering {
         if self.len() > prefix.len() {
             self.data[..prefix.len()].cmp(&prefix.data)
         } else {
-            self.data.cmp(&prefix.data)
+            self.data[..].cmp(&prefix.data[..self.len()])
         }
     }
 
@@ -244,6 +245,7 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::cmp::Ordering;
 
     #[test]
     fn skip_prefix_true() {
@@ -296,5 +298,40 @@ mod test {
         let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         let b = Nibbles::from_hex(vec![2, 3, 4, 5, 6]);
         assert_eq!(a.count_prefix(&b), 0);
+    }
+
+    #[test]
+    fn compare_prefix_equal() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_prefix_less() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_prefix_greater() {
+        let a = Nibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Greater);
+    }
+
+    #[test]
+    fn compare_prefix_equal_b_longer() {
+        let a = Nibbles::from_hex(vec![1, 2, 3]);
+        let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_prefix_equal_a_longer() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
     }
 }

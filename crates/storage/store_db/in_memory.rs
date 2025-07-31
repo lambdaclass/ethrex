@@ -782,6 +782,40 @@ impl StoreEngine for Store {
             .insert(bad_block, latest_valid);
         Ok(())
     }
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        for (hashed_address, nodes) in storage_trie_nodes {
+            let mut addr_store = store
+                .storage_trie_nodes
+                .entry(hashed_address)
+                .or_default()
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (node_hash, node_data) in nodes {
+                addr_store.insert(node_hash, node_data);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        for (code_hash, code) in account_codes {
+            store.account_codes.insert(code_hash, code);
+        }
+
+        Ok(())
+    }
 }
 
 impl Debug for Store {

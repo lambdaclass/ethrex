@@ -74,6 +74,10 @@ impl DiscoveryServerState {
             else {
                 continue;
             };
+            if packet.get_node_id() == self.local_node.node_id() {
+                // Ignore packets sent by ourselves
+                continue;
+            }
             let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
             let _ = conn_handle
                 .cast(ConnectionHandlerInMessage::from(packet, from))
@@ -508,7 +512,9 @@ impl GenServer for ConnectionHandler {
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                        if !discarded_contacts.contains(&node_id) {
+                        if !discarded_contacts.contains(&node_id)
+                            && node_id != state.local_node.node_id()
+                        {
                             vacant_entry.insert(Contact::from(node));
                             METRICS.record_new_discovery().await;
                         }
