@@ -126,7 +126,7 @@ jobs:
     needs: [docker_build]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - name: Transaction Check
@@ -156,9 +156,9 @@ jobs:
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
           enclave_name: ${{ matrix.enclave_name }}
-          kurtosis_version: "1.10.2"
-          ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "b00227b751f44348ef0994d4b46fabe86edaa199"
+          kurtosis_version: "2.1.0"
+          ethereum_package_url: "github.com/ethpandaops/ethereum-package"
+          ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
@@ -167,6 +167,7 @@ jobs:
     needs: [docker_build, setup-hive-fork, setup-hive-upstream]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - name: "Rpc Compat tests"
