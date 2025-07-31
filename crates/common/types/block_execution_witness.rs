@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     H160,
+    constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
@@ -123,6 +124,12 @@ pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: Vec<Vec<u8>>) ->
     rebuild_trie(account_state.storage_root, state.clone()).ok()
 }
 
+pub fn get_codehash(address: &H160, trie: &Trie) -> Option<H256> {
+    let account_state_rlp = trie.get(&hash_address(address)).ok()??;
+    let account_state = AccountState::decode(&account_state_rlp).ok()?;
+    Some(account_state.code_hash)
+}
+
 impl ExecutionWitnessResult {
     pub fn rebuild_tries(
         &mut self,
@@ -166,13 +173,25 @@ impl ExecutionWitnessResult {
                 .collect::<Vec<(Address, Trie)>>(),
         );
 
-        self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
-        self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
-
         for code in &self.codes {
             self.code_map
                 .insert(keccak_hash::keccak(code), Bytes::from(code.clone()));
         }
+
+        // Currently LEVM can't read accounts without also reading the code
+        // But in situations where the code is not necessary, it might not be provided
+        // As a workaround, we fill those codehashes with empty code
+        //
+        // This is not ideal, because we could be deceived about the pre-state
+        // By simply hiding code
+        for address in addresses {
+            if let Some(code_hash) = get_codehash(&address, &state_trie) {
+                self.code_map.entry(code_hash).or_default();
+            }
+        }
+
+        self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
+        self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
 
         Ok(())
     }
@@ -216,10 +235,20 @@ impl ExecutionWitnessResult {
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
-                    account_state.code_hash = info.code_hash;
-                    // Store updated code in DB
-                    if let Some(code) = &update.code {
-                        self.codes.push(code.clone().to_vec());
+                    // Skip updating code of accounts with missing codehashes
+                    // The new codehash is the dummy we placed
+                    let should_skip = self
+                        .code_map
+                        .get(&account_state.code_hash)
+                        .unwrap_or(&Bytes::new())
+                        .is_empty()
+                        && account_state.code_hash != *EMPTY_KECCACK_HASH;
+                    if !should_skip {
+                        account_state.code_hash = info.code_hash;
+                        // Store updated code in DB
+                        if let Some(code) = &update.code {
+                            self.codes.push(code.clone().to_vec());
+                        }
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
