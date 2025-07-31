@@ -1,6 +1,7 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
+use tracing::info;
 
 use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 
@@ -11,11 +12,12 @@ pub async fn get_blockdata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
     if let Ok(cache) = load_cache(&file_name) {
+        info!("Getting block data from cache");
         return Ok(cache);
     }
+    info!("Getting block data from RPC");
     let block = eth_client.get_raw_block(block_number.clone()).await?;
 
-    println!("populating rpc db cache");
     let witness = eth_client.get_witness(block_number, None).await?;
     if witness.chain_config.chain_id != chain_config.chain_id {
         return Err(eyre::eyre!(
@@ -69,8 +71,10 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{from}-{to}.json");
     if let Ok(cache) = load_cache(&file_name) {
+        info!("Getting block range data from cache");
         return Ok(cache);
     }
+    info!("Getting block range data from RPC");
     let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
 
     write_cache(&cache, &file_name).expect("failed to write cache");
@@ -85,8 +89,10 @@ pub async fn get_batchdata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_batch_{batch_number}.json");
     if let Ok(cache) = load_cache(&file_name) {
+        info!("Getting batch data from cache");
         return Ok(cache);
     }
+    info!("Getting batch data from RPC");
 
     let rpc_batch = eth_client.get_batch_by_number(batch_number).await?;
 
@@ -98,9 +104,20 @@ pub async fn get_batchdata(
     )
     .await?;
 
+    // If the l2 node is in validium it does not return blobs to prove
     cache.l2_fields = Some(L2Fields {
-        blob_commitment: rpc_batch.batch.blobs_bundle.commitments[0],
-        blob_proof: rpc_batch.batch.blobs_bundle.proofs[0],
+        blob_commitment: *rpc_batch
+            .batch
+            .blobs_bundle
+            .commitments
+            .first()
+            .unwrap_or(&[0_u8; 48]),
+        blob_proof: *rpc_batch
+            .batch
+            .blobs_bundle
+            .proofs
+            .first()
+            .unwrap_or(&[0_u8; 48]),
     });
 
     write_cache(&cache, &file_name).expect("failed to write cache");
