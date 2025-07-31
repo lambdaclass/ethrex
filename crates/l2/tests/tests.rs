@@ -3,6 +3,8 @@
 use bytes::Bytes;
 use ethrex_common::types::BlockNumber;
 use ethrex_common::{Address, H160, H256, U256};
+use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
+use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
@@ -101,6 +103,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         deposit_recipient_address,
     )
     .await?;
+
+    // this test should go before the withdrawal ones
+    // it's failure case is making a batch invalid due to invalid privileged transactions
+    test_privileged_spammer(&l1_client).await?;
 
     test_transfer(
         &l2_client,
@@ -361,6 +367,21 @@ async fn test_privileged_tx_with_contract_call_revert(
     Ok(())
 }
 
+async fn find_withdrawal_with_widget(
+    bridge_address: Address,
+    l2tx: H256,
+    l2_client: &EthClient,
+    l1_client: &EthClient,
+) -> Option<L2ToL1MessageRow> {
+    let mut widget = L2ToL1MessagesTable::new(bridge_address);
+    widget.on_tick(l1_client, l2_client).await.unwrap();
+    widget
+        .items
+        .iter()
+        .find(|row| row.l2_tx_hash == l2tx)
+        .cloned()
+}
+
 async fn test_erc20_roundtrip(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -476,8 +497,23 @@ async fn test_erc20_roundtrip(
         ],
     )
     .await;
-
-    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+    let withdrawal_tx_hash = res.tx_info.transaction_hash;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalInitiated,
+            kind: L2ToL1MessageKind::ERC20Withdraw,
+            receiver: rich_address,
+            token_l1,
+            token_l2,
+            value: token_amount,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
+    
+    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("test_erc20_roundtrip: Claiming withdrawal on L1");
 
@@ -492,6 +528,21 @@ async fn test_erc20_roundtrip(
     .await
     .expect("error while claiming");
     wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalClaimed,
+            kind: L2ToL1MessageKind::ERC20Withdraw,
+            receiver: rich_address,
+            token_l1,
+            token_l2,
+            value: token_amount,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
+
     let l1_final_balance = test_balance_of(l1_client, token_l1, rich_address).await;
     let l2_final_balance = test_balance_of(l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
@@ -610,7 +661,7 @@ async fn test_erc20_failed_deposit(
         .await
         .unwrap();
 
-    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("test_erc20_failed_deposit: Claiming withdrawal on L1");
 
@@ -686,12 +737,28 @@ async fn test_forced_withdrawal(
     )
     .await?;
 
+    let withdrawal_tx_hash = res.tx_info.transaction_hash;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalInitiated,
+            kind: L2ToL1MessageKind::ETHWithdraw,
+            receiver: rich_address,
+            token_l1: Default::default(),
+            token_l2: Default::default(),
+            value: transfer_value,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
+
     let l2_final_balance = l2_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     println!("forced_withdrawal: Waiting for withdrawal proof on L2");
-    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
+    let proof = obtain_verified_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     println!("forced_withdrawal: Claiming withdrawal on L1");
 
@@ -706,6 +773,20 @@ async fn test_forced_withdrawal(
     .expect("error while claiming");
     let res = wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
     l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
+    assert_eq!(
+        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, l2_client, l1_client,)
+            .await
+            .unwrap(),
+        L2ToL1MessageRow {
+            status: L2ToL1MessageStatus::WithdrawalClaimed,
+            kind: L2ToL1MessageKind::ETHWithdraw,
+            receiver: rich_address,
+            token_l1: Default::default(),
+            token_l2: Default::default(),
+            value: transfer_value,
+            l2_tx_hash: withdrawal_tx_hash
+        }
+    );
 
     let l1_final_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -868,6 +949,25 @@ async fn test_deposit(
         "Fee vault balance should not change after deposit"
     );
 
+    Ok(())
+}
+
+async fn test_privileged_spammer(l1_client: &EthClient) -> Result<(), Box<dyn std::error::Error>> {
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
+    let init_code_l1 = hex::decode(std::fs::read(
+        "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
+    )?)?;
+    let caller_l1 = test_deploy_l1(l1_client, &init_code_l1, &rich_wallet_private_key).await?;
+    for _ in 0..10 {
+        test_send(
+            l1_client,
+            &rich_wallet_private_key,
+            caller_l1,
+            "spam(address,uint256)",
+            &[Value::Address(bridge_address()?), Value::Uint(5.into())],
+        )
+        .await;
+    }
     Ok(())
 }
 
@@ -1265,7 +1365,7 @@ async fn test_n_withdraws(
     let mut proofs = vec![];
     for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
         println!("Getting proof for withdrawal {i}/{n} ({tx:x})");
-        proofs.push(get_proof(l1_client, l2_client, tx).await);
+        proofs.push(obtain_verified_proof(l1_client, l2_client, tx).await);
     }
 
     let mut withdraw_claim_txs_receipts = vec![];
@@ -1736,7 +1836,7 @@ fn on_chain_proposer_address() -> Address {
     .unwrap()
 }
 
-async fn get_proof(l1_client: &EthClient, l2_client: &EthClient, tx: H256) -> L1MessageProof {
+async fn obtain_verified_proof(l1_client: &EthClient, l2_client: &EthClient, tx: H256) -> L1MessageProof {
     let proof = l2_client.wait_for_message_proof(tx, 1000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
