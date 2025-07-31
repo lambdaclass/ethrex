@@ -6,7 +6,6 @@ use crate::monitor::EthrexMonitor;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
-use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -60,13 +59,6 @@ pub async fn start_l2(
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
         return Ok(());
     };
-
-    if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!(
-            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
-        );
-        return Ok(());
-    }
 
     let _ = L1Watcher::spawn(
         store.clone(),
@@ -131,10 +123,11 @@ pub async fn start_l2(
         });
     let mut verifier_handle = None;
 
-    if needed_proof_types.contains(&ProverType::Aligned) {
+    if cfg.aligned.aligned_mode {
         verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
+            needed_proof_types.clone(),
         )));
     }
     if cfg.based.enabled {

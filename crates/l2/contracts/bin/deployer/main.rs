@@ -12,7 +12,7 @@ use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
-use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::{calldata::Value, prover::ProverType};
 use ethrex_l2_rpc::{
     clients::send_eip1559_transaction,
     signer::{LocalSigner, Signer},
@@ -67,8 +67,8 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -201,40 +201,61 @@ async fn deploy_contracts(
         Default::default()
     };
 
-    let sp1_verifier_address = if opts.sp1_deploy_verifier {
-        info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, sp1_verifier_address) =
-            deploy_contract_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
+    // if it's a required proof type, but no address has been specified, deploy it.
+    let sp1_verifier_address = match opts.sp1_verifier_address {
+        _ if opts.aligned => Address::zero(),
+        Some(addr) if opts.sp1 => addr,
+        None if opts.sp1 => {
+            info!("Deploying SP1Verifier");
+            let (verifier_deployment_tx_hash, sp1_verifier_address) =
+                deploy_contract_from_bytecode(
+                    &[],
+                    SP1_VERIFIER_BYTECODE,
+                    deployer,
+                    &salt,
+                    eth_client,
+                )
                 .await?;
-
-        info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
-        sp1_verifier_address
-    } else {
-        opts.sp1_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "SP1Verifier address is not set and sp1_deploy_verifier is false".to_string(),
-            ))?
+            info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
+            sp1_verifier_address
+        }
+        _ => Address::zero(),
     };
 
-    // TODO: Add Risc0Verifier deployment
-    let risc0_verifier_address =
-        opts.risc0_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
-            ))?;
+    // we can't deploy the risc0 contract because of uncompatible licenses
+    let risc0_verifier_address = match opts.risc0_verifier_address {
+        _ if opts.aligned => Address::zero(),
+        Some(addr) if opts.risc0 => addr,
+        None if opts.risc0 => {
+            return Err(DeployerError::InternalError(
+                "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
+            ));
+        }
+        _ => Address::zero(),
+    };
 
-    let tdx_verifier_address = if opts.tdx_deploy_verifier {
-        info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-        let tdx_verifier_address =
-            deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+    // if it's a required proof type, but no address has been specified, deploy it.
+    let tdx_verifier_address = match opts.tdx_verifier_address {
+        Some(addr) if opts.tdx => addr,
+        None if opts.tdx => {
+            info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
+            let tdx_verifier_address =
+                deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
 
-        info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
-        tdx_verifier_address
-    } else {
-        opts.tdx_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
-            ))?
+            info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
+            tdx_verifier_address
+        }
+        _ => Address::zero(),
+    };
+
+    // return error if no address was specified but verification with aligned is required.
+    let aligned_aggregator_address = match opts.aligned_aggregator_address {
+        Some(addr) if opts.aligned => addr,
+        None if opts.aligned => return Err(DeployerError::InternalError(
+            "Verification with Aligned Layer is required but no aggregator address was provided"
+                .to_string(),
+        )),
+        _ => Address::zero(),
     };
 
     trace!(
@@ -254,7 +275,7 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
-        aligned_aggregator_address: opts.aligned_aggregator_address,
+        aligned_aggregator_address,
     })
 }
 
@@ -290,24 +311,34 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Bytes {
-    let Ok(str) = std::fs::read_to_string(path) else {
-        warn!(
-            ?path,
-            "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        return Bytes::from(vec![0u8; 32]);
+fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
+    let (required_type, vk_path) = match prover_type {
+        ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
+        ProverType::RISC0 => (opts.risc0, &opts.risc0_vk_path),
+        _ => unimplemented!("{prover_type}"),
     };
 
-    let cleaned = str.trim().strip_prefix("0x").unwrap_or(&str);
+    if !required_type {
+        Ok(Bytes::new())
+    } else if let Some(vk_path) = vk_path {
+        read_vk(vk_path)
+    } else {
+        info!(?prover_type, "Using vk from local repo");
+        prover_type
+            .vk(opts.aligned)?
+            .map(Bytes::from)
+            .ok_or(DeployerError::InternalError(format!(
+                "missing {prover_type} vk"
+            )))
+    }
+}
 
-    hex::decode(cleaned).map(Bytes::from).unwrap_or_else(|e| {
-        warn!(
-            ?path,
-            "Failed to decode hex string, will use 0x00..00, this is expected in dev mode: {}", e
-        );
-        Bytes::from(vec![0u8; 32])
-    })
+fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
+    let string = std::fs::read_to_string(path)?;
+    let trimmed = string.trim_start_matches("0x");
+    let decoded = hex::decode(trimmed)
+        .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
+    Ok(Bytes::from(decoded))
 }
 
 async fn initialize_contracts(
@@ -326,8 +357,8 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path);
-    let risc0_vk = read_vk(&opts.risc0_vk_path);
+    let sp1_vk = get_vk(ProverType::SP1, opts)?;
+    let risc0_vk = get_vk(ProverType::RISC0, opts)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -338,6 +369,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
@@ -392,6 +427,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),

@@ -292,16 +292,13 @@ impl StoreEngineRollup for Store {
             .map(|s| ethereum_types::Signature::from_slice(&s)))
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.read::<LastSentBatchProof>(0)
             .await
             .map(|v| v.unwrap_or(0))
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
 
