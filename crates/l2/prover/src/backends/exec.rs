@@ -1,5 +1,5 @@
-use tracing::warn;
-
+use std::time::Instant;
+use tracing::{info, warn};
 use zkvm_interface::io::{ProgramInput, ProgramOutput};
 
 use ethrex_l2_common::{
@@ -10,7 +10,11 @@ use ethrex_l2_common::{
 pub struct ProveOutput(pub ProgramOutput);
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    let now = Instant::now();
     execution_program(input)?;
+    let elapsed = now.elapsed();
+
+    info!("Successfully executed program in {:.2?}", elapsed);
     Ok(())
 }
 
