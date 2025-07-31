@@ -6,7 +6,7 @@ The targets provided by the makefile aim towards making starting a sync or runni
 
 The commands use a number of environment variables, which can be easily passed alongside the `make` command to provide some settings to the target being run. Many of the commands *will not run* if requisite environment variables aren't set. These variables are:
 
-- `NETWORK`: network on which to sync (at the moment, only mainnet, sepolia holesky and hoodi are supported as options). If this variable is not set `mainnet` will be used by default.
+- `NETWORK`: network on which to sync (at the moment, only mainnet, sepolia, holesky and hoodi are supported as options). If this variable is not set `mainnet` will be used by default.
 
 - `EVM`: the EVM which will be used. `levm` is the default, but it can be set to `revm` as well.
 
