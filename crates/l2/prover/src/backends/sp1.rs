@@ -10,6 +10,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
+use std::time::Instant;
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -43,15 +44,19 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
-    if cfg!(feature = "gpu") {
+    let elapsed = if cfg!(feature = "gpu") {
         let client = ProverClient::builder().cuda().build();
+        let now = Instant::now();
         client.execute(PROGRAM_ELF, &stdin).run()?;
+        now.elapsed();
     } else {
         let client = ProverClient::builder().cpu().build();
+        let now = Instant::now();
         client.execute(PROGRAM_ELF, &stdin).run()?;
+        now.elapsed();
     }
 
-    info!("Successfully executed SP1 program.");
+    info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
 }
 
