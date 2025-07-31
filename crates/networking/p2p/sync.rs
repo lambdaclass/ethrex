@@ -3,7 +3,7 @@ mod storage_healing;
 
 use crate::metrics::METRICS;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-use crate::sync::state_healing::heal_state_trie;
+use crate::sync::state_healing::{heal_state_trie, SHOW_PROGRESS_INTERVAL_DURATION};
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler, SNAP_LIMIT},
@@ -518,8 +518,15 @@ impl Syncer {
                 tokio::task::spawn_blocking(move || {
                     let mut bytecode_hashes = vec![];
                     let mut trie = trie;
+                    let mut counter = 0;
+                    let mut instant = Instant::now();
 
                     for (account_hash, account) in account_state_snapshot {
+                        counter += 1;
+                        if instant.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+                            instant = Instant::now();
+                            info!("We have read and inserted {counter} accounts");
+                        }
                         if account.code_hash != *EMPTY_KECCACK_HASH {
                             bytecode_hashes.push(account.code_hash);
                         }
@@ -527,8 +534,6 @@ impl Syncer {
                             .unwrap();
                     }
                     let current_state_root = trie.hash().unwrap();
-                    bytecode_hashes.sort();
-                    bytecode_hashes.dedup();
                     (current_state_root, bytecode_hashes)
                 })
                 .await
