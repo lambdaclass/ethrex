@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Replay - Ethrex</title>
+        <title>Profiling - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,103 +237,55 @@
 }
 
 </style>
-<h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
-<p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.</p>
-<h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
-<blockquote>
-<p><strong>Note:</strong> All commands must be run from the <code>ethrex/cmd/ethrex_replay</code> directory.</p>
-</blockquote>
+<h1 id="profiling-zkvms-with-ethrex-replay"><a class="header" href="#profiling-zkvms-with-ethrex-replay">Profiling zkvms with ethrex-replay</a></h1>
+<h2 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h2>
+<p>Before reading this document please take a look the general documentation for <a href="./ethrex_replay.html">ethrex-replay</a></p>
 <h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
-<h4 id="risc0"><a class="header" href="#risc0"><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></a></h4>
-<pre><code class="language-sh">curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.1.0
-rzup install rust
+<h4 id="for-sp1"><a class="header" href="#for-sp1">For SP1</a></h4>
+<p>The easiest way is to use cargo but other options are listed in the <a href="https://github.com/mstange/samply">samply repo</a></p>
+<pre><code>cargo install --locked samply
 </code></pre>
-<h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a></a></h4>
-<pre><code class="language-sh">curl -L https://sp1up.succinct.xyz | bash
-sp1up --version 5.0.8
-</code></pre>
-<h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
-<p>Before running any command, set the following environment variables depending on the operation:</p>
-<pre><code class="language-sh">export RPC_URL=&lt;RPC_URL&gt;
-export BLOCK_NUMBER=&lt;BLOCK_NUMBER&gt;
-export BATCH_NUMBER=&lt;BATCH_NUMBER&gt;
-export TX_HASH=&lt;TRANSACTION_HASH&gt;
-export START_BLOCK=&lt;START_BLOCK&gt;
-export END_BLOCK=&lt;END_BLOCK&gt;
-export NETWORK=&lt;mainnet|cancun|holesky|hoodi|sepolia|chainId&gt;
-export L2=true
-</code></pre>
-<h4 id="variable-descriptions"><a class="header" href="#variable-descriptions">Variable Descriptions</a></h4>
-<ul>
-<li><code>RPC_URL</code>: Ethereum JSON-RPC endpoint used to fetch on-chain data.</li>
-<li><code>BLOCK_NUMBER</code>: Block number to replay. If unset, the latest block will be used.</li>
-<li><code>BATCH_NUMBER</code>: L2 batch number to execute or prove.</li>
-<li><code>TX_HASH</code>: Hash of the transaction to replay.</li>
-<li><code>START_BLOCK</code> / <code>END_BLOCK</code>: Defines the block range to analyze and plot.</li>
-<li><code>NETWORK</code>: Logical network name or chain ID. Defaults to <code>mainnet</code>.</li>
-<li><code>L2</code>: Set to <code>true</code> to run transactions in L2 mode.</li>
-</ul>
-<blockquote>
-<p>You only need to set the variables required by the command you're running.</p>
-</blockquote>
-<hr />
-<h2 id="running-examples"><a class="header" href="#running-examples">Running Examples</a></h2>
-<h3 id="execute-a-single-block-no-proving"><a class="header" href="#execute-a-single-block-no-proving">Execute a single block (no proving)</a></h3>
-<p>Required: <code>RPC_URL</code>.
-Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code></p>
-<pre><code class="language-sh">make sp1           # SP1 (CPU)
-make sp1-gpu       # SP1 (GPU)
-make risc0         # RISC0 (CPU)
-make risc0-gpu     # RISC0 (GPU)
-</code></pre>
-<h3 id="prove-a-single-block"><a class="header" href="#prove-a-single-block">Prove a single block</a></h3>
+<h4 id="for-risc0"><a class="header" href="#for-risc0">For risc0</a></h4>
+<p>Install go by following the instructions from <a href="https://go.dev/doc/install">go install page</a></p>
+<h3 id="generate-a-profile"><a class="header" href="#generate-a-profile">Generate a profile</a></h3>
+<h4 id="for-sp1-1"><a class="header" href="#for-sp1-1">For SP1</a></h4>
+<p><strong>Profile a L1 block</strong>:</p>
 <p>Required: <code>RPC_URL</code>.
 Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make prove-sp1
-make prove-sp1-gpu
-make prove-risc0
-make prove-risc0-gpu
+<pre><code class="language-sh">make profile-sp1
 </code></pre>
-<h3 id="execute-an-l2-batch-no-proving"><a class="header" href="#execute-an-l2-batch-no-proving">Execute an L2 batch (no proving)</a></h3>
+<p><strong>Profile a L2 batch</strong>:</p>
 <p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make batch-sp1
-make batch-sp1-gpu
-make batch-risc0
-make batch-risc0-gpu
+<pre><code class="language-sh">make profile-batch-sp1
 </code></pre>
-<h3 id="prove-an-l2-batch"><a class="header" href="#prove-an-l2-batch">Prove an L2 batch</a></h3>
+<p><strong>Open samply profile</strong></p>
+<pre><code class="language-sh">samply load output.json
+</code></pre>
+<p>Then visit http://localhost:8000/ on your browser</p>
+<h4 id="for-risc0-1"><a class="header" href="#for-risc0-1">For risc0</a></h4>
+<p><strong>Profile a L1 block</strong>:</p>
+<p>Required: <code>RPC_URL</code>.
+Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make profile-risc0
+</code></pre>
+<p><strong>Profile a L2 batch</strong>:</p>
 <p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make prove-batch-sp1
-make prove-batch-sp1-gpu
-make prove-batch-risc0
-make prove-batch-risc0-gpu
+<pre><code class="language-sh">make profile-batch-risc0
 </code></pre>
-<h3 id="execute-a-transaction"><a class="header" href="#execute-a-transaction">Execute a transaction</a></h3>
-<p>Required: <code>RPC_URL</code>, <code>TX_HASH</code>, <code>NETWORK</code>.
-Optionally: <code>L2=true</code> (if the transaction is L2-specific)</p>
-<pre><code class="language-sh">make transaction
+<p><strong>Open pprof profile</strong></p>
+<pre><code class="language-sh">go tool pprof -http=127.0.0.1:8000 profile.pb
 </code></pre>
-<h3 id="plot-block-composition"><a class="header" href="#plot-block-composition">Plot block composition</a></h3>
-<p>Required: <code>RPC_URL</code>, <code>START_BLOCK</code>, <code>END_BLOCK</code>.
-Optionally: <code>NETWORK</code></p>
-<pre><code class="language-sh">make plot
-</code></pre>
-<hr />
-<h2 id="check-all-available-commands"><a class="header" href="#check-all-available-commands">Check All Available Commands</a></h2>
-<p>Run:</p>
-<pre><code class="language-sh">make help
-</code></pre>
+<p>Then visit http://localhost:8000/ on your browser</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../developers/l2/load_tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../ethrex_replay/ethrex_replay.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../ethrex_replay/profiling.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -343,11 +295,11 @@ Optionally: <code>NETWORK</code></p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../developers/l2/load_tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../ethrex_replay/ethrex_replay.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../ethrex_replay/profiling.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
