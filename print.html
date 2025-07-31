@@ -2909,7 +2909,7 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 <li>Operating on a configured interval defined by <code>proof_send_interval_ms</code>.</li>
 </ul>
 <h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
-<p>Configuration is done either by CLI flags or through environment variables. Run <code>cargo run --release --bin ethrex -- l2 init --help</code> in the repository's root directory to see the available CLI flags and envs.</p>
+<p>Configuration is done either by CLI flags or through environment variables. Run <code>cargo run --release --bin ethrex -- l2 --help</code> in the repository's root directory to see the available CLI flags and envs.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -3435,7 +3435,7 @@ Save the addresses of the deployed proxy contracts, as you will need them to run
 <h3 id="4-running-a-node"><a class="header" href="#4-running-a-node">4. Running a node</a></h3>
 <p>In a console with <code>ethrex/crates/l2</code> as the current directory, run the following command:</p>
 <pre><code class="language-bash">cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
-	l2 init \
+	l2 \
 	--watcher.block-delay &lt;WATCHER_BLOCK_DELAY&gt; \
 	--network &lt;L2_GENESIS_FILE_PATH&gt; \
 	--http.port &lt;L2_PORT&gt; \
@@ -3576,7 +3576,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
