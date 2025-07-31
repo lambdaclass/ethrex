@@ -320,20 +320,25 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
 
     if !required_type {
         Ok(Bytes::new())
+    } else if let Some(vk_path) = vk_path {
+        read_vk(vk_path)
     } else {
-        vk_path.as_deref().map(read_vk).unwrap_or_else(|| {
-            info!(?prover_type, "Using vk from local repo");
-            prover_type
-                .vk(opts.aligned)?
-                .map(Bytes::from)
-                .ok_or(DeployerError::InternalError(format!(
-                    "missing {prover_type} vk"
-                )))
-        })
+        info!(?prover_type, "Using vk from local repo");
+        prover_type
+            .vk(opts.aligned)?
+            .map(Bytes::from)
+            .ok_or(DeployerError::InternalError(format!(
+                "missing {prover_type} vk"
+            )))
     }
+}
 
-fn read_vk(path: &str) -> Bytes {
-    std::fs::read_to_string(path).and_then(|string| string.trim().strip_prefix("0x")).and_then(hex::decode).map(Bytes::from)
+fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
+    let string = std::fs::read_to_string(path)?;
+    let trimmed = string.trim_start_matches("0x");
+    let decoded = hex::decode(trimmed)
+        .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
+    Ok(Bytes::from(decoded))
 }
 
 async fn initialize_contracts(

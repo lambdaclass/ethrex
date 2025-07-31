@@ -10785,6 +10785,7 @@ dependencies = [
  "chrono",
  "clap 4.5.41",
  "dirs 5.0.1",
+ "sp1-prover",
 ]
 
 [[package]]
