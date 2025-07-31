@@ -2022,6 +2022,7 @@ impl PeerHandler {
 
         let mut is_stale = false;
         if current_unix_time() > staleness_timestamp {
+            info!("We stopped request_storage_ranges because of staleness");
             is_stale = true;
         }
 

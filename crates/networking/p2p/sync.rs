@@ -500,6 +500,7 @@ impl Syncer {
             .expect("Failed to read account_state_snapshots dir")
         {
             let entry = entry.expect("Failed to read dir entry");
+            info!("Started reading account_state_snapshots entry {}", entry.file_name().to_str().expect("we should have a name"));
 
             let snapshot_path = entry.path();
 
