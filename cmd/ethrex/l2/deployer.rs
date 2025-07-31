@@ -313,6 +313,14 @@ pub struct DeployerOptions {
         help = "Deadline in seconds for the sequencer to process a privileged transaction."
     )]
     pub inclusion_max_wait: u64,
+    #[arg(
+        long,
+        default_value = "false",
+        env = "ETHREX_USE_COMPILED_GENESIS",
+        help_heading = "Deployer options",
+        help = "Genesis data is extracted at compile time, used for development"
+    )]
+    pub use_compiled_genesis: bool,
 }
 
 impl Default for DeployerOptions {
@@ -394,6 +402,7 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
+            use_compiled_genesis: true,
         }
     }
 }
@@ -491,9 +500,8 @@ pub struct ContractAddresses {
     pub aligned_aggregator_address: Address,
 }
 
-pub async fn ethrex_l2_l1_deployer(
+pub async fn deploy_l1_contracts(
     opts: DeployerOptions,
-    dev: bool,
 ) -> Result<ContractAddresses, DeployerError> {
     info!("Starting deployer binary");
     let signer: Signer = LocalSigner::new(opts.private_key).into();
@@ -510,10 +518,10 @@ pub async fn ethrex_l2_l1_deployer(
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
-    initialize_contracts(contract_addresses, &eth_client, &opts, &signer, dev).await?;
+    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
-        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts, dev)
+        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
@@ -719,13 +727,12 @@ async fn initialize_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
     initializer: &Signer,
-    dev: bool,
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
-    let genesis: Genesis = if dev {
+    let genesis: Genesis = if opts.use_compiled_genesis {
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
     } else {
         read_genesis_file(
@@ -921,11 +928,10 @@ async fn make_deposits(
     bridge: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
-    dev: bool,
 ) -> Result<(), DeployerError> {
     trace!("Making deposits");
 
-    let genesis: Genesis = if dev {
+    let genesis: Genesis = if opts.use_compiled_genesis {
         serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
     } else {
         read_genesis_file(

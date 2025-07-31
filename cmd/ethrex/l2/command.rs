@@ -4,7 +4,7 @@ use crate::{
     initializers::{init_l1, init_store},
     l2::{
         self, SequencerOptions,
-        deployer::{DeployerOptions, ethrex_l2_l1_deployer},
+        deployer::{DeployerOptions, deploy_l1_contracts},
         options::Options,
     },
     networks::Network,
@@ -74,8 +74,7 @@ impl L2Command {
             init_l1(crate::cli::Options::default_l1()).await?;
             println!("Deploying contracts...");
             let contract_addresses =
-                l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default(), true)
-                    .await?;
+                l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
 
             l2_options = l2::options::Options {
                 node_opts: crate::cli::Options::default_l2(),
@@ -468,7 +467,7 @@ impl Command {
                 }
             }
             Command::Deploy { options } => {
-                ethrex_l2_l1_deployer(options, false).await?;
+                deploy_l1_contracts(options).await?;
             }
         }
         Ok(())
