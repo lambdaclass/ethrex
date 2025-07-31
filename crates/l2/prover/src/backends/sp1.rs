@@ -54,7 +54,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         let now = Instant::now();
         client.execute(PROGRAM_ELF, &stdin).run()?;
         now.elapsed();
-    }
+    };
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
