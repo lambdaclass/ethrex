@@ -2,7 +2,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{get_invalid_jump_destinations, restore_cache_state},
+    utils::{JumpTargetFilter, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
@@ -194,7 +194,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -228,9 +228,9 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub invalid_jump_destinations: Box<[usize]>,
+    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -301,8 +301,6 @@ impl CallFrame {
         stack: Stack,
         memory: Memory,
     ) -> Self {
-        let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
@@ -310,12 +308,12 @@ impl CallFrame {
             msg_sender,
             to,
             code_address,
-            bytecode,
+            bytecode: bytecode.clone(),
             msg_value,
             calldata,
             is_static,
             depth,
-            invalid_jump_destinations,
+            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -354,7 +352,7 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+        self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
         Ok(())
     }
