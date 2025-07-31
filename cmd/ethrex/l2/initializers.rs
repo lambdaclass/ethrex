@@ -119,7 +119,7 @@ pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
 }
 
 pub fn init_tracing(opts: &L2Options) {
-    if opts.sequencer_opts.monitor {
+    if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
         let subscriber = tracing_subscriber::registry()

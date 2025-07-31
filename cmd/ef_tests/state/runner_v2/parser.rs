@@ -7,6 +7,7 @@ use crate::runner_v2::{
 
 use clap::Parser;
 
+/// Command line flags for runner execution.
 #[derive(Parser, Debug)]
 pub struct RunnerOptions {
     /// For running tests in a specific file (could be either a directory or a .json)
@@ -95,11 +96,13 @@ pub fn parse_dir(
     Ok(tests.concat())
 }
 
+/// Initiates the parser with the corresponding option flags.
 pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError> {
     let mut tests = Vec::new();
     let mut skipped: Vec<PathBuf> = IGNORED_TESTS.iter().map(PathBuf::from).collect();
     skipped.append(&mut options.skip_files);
 
+    // If the user selected specific `.json` files to be executed, parse only those files from the starting `path`.
     if !options.json_files.is_empty() {
         let file_tests = parse_dir(&options.path, &skipped, &options.json_files, false, true)?;
         tests.push(file_tests);
