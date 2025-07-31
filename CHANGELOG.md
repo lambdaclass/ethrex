@@ -2,10 +2,10 @@
 
 ## Perf
 
-
 ### 2025-07-31
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
+- Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
 
 ### 2025-07-30
 
