@@ -77,22 +77,26 @@ pub async fn get_needed_proof_types(
 
     let mut needed_proof_types = vec![];
 
-    for pt in ProverType::all() {
-        if let Some(getter) = pt.verifier_getter() {
-            let sig = keccak(getter)[..4].to_vec();
-            let resp = eth_client
-                .call(on_chain_proposer_address, sig.into(), Overrides::default())
+    for prover_type in ProverType::all() {
+        if let Some(getter) = prover_type.verifier_getter() {
+            let calldata = keccak(getter)[..4].to_vec();
+            let response = eth_client
+                .call(
+                    on_chain_proposer_address,
+                    calldata.into(),
+                    Overrides::default(),
+                )
                 .await?;
-            let addr = Address::from_str(&format!("0x{}", &resp[26..])).map_err(|e| {
+            let address = Address::from_str(&format!("0x{}", &response[26..])).map_err(|e| {
                 EthClientError::InternalError(format!(
-                    "Invalid on‑chain response: {:?}, parse error: {}",
-                    resp, e
+                    "Invalid on-chain response: {:?}, parse error: {}",
+                    response, e
                 ))
             })?;
 
-            if addr != DEV_MODE_ADDRESS {
-                info!("{pt} proof needed");
-                needed_proof_types.push(pt);
+            if address != DEV_MODE_ADDRESS {
+                info!("{prover_type} proof needed");
+                needed_proof_types.push(prover_type);
             }
         }
     }
