@@ -23,7 +23,6 @@ use futures::FutureExt;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
-use ethrex_trie::TrieError;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     array,
@@ -439,7 +438,7 @@ impl Syncer {
         let state_root = pivot_header.state_root;
 
         self.peers
-            .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+            .request_account_range(pivot_header, H256::zero(), H256::repeat_byte(0xff))
             .await;
 
         let empty = *EMPTY_TRIE_HASH;
