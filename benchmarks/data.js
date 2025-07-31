@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753986202061,
+  "lastUpdate": 1753989187003,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7015,6 +7015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162640509797,
             "range": "± 676898533",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "525cf45eeabc04d1b78838dceac4ee12ef6063e9",
+          "message": "feat(l2): ethrex replay add metrics & logs (#3785)\n\n**Motivation**\n\nEthrex replay is not showing enough information which might lead users\nto think the program is stuck when it's actually doing things. Also we\nwant to have a way to easily create samply profiles for sp1\n\n**Description**\n\n- Add `profiling` feature to ethrex-replay and ethrex-prover to enable\nthe profiling feature in sp1\n- Add a makefile command to easily generate a samply for an l2 batch or\nan l1 block\n- Set tracing level to INFO for ethrex_replay, disable some sp1 logs\nthat were too spammy, add info! logs to ethrex replay\n- Logs where the data for the prover is coming from (local cache or RPC\nserver)\n   - Logs the amount of time an it took for the execution program to run\n   - Logs the amount of gas that was proven/executed\n- Fixes an issue where getting data for a batch from a validium mode L2\nfailed because when in validium mode the blobs field is empty\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-07-31T18:23:21Z",
+          "tree_id": "5dd7dacba3fc949893496b89abba677f3db4b7c6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/525cf45eeabc04d1b78838dceac4ee12ef6063e9"
+        },
+        "date": 1753989174188,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163645704610,
+            "range": "± 963109753",
             "unit": "ns/iter"
           }
         ]
