@@ -549,7 +549,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
             // 💀 Remove hardcoded block number
-            (pivot_header, staleness_timestamp) = update_pivot(8877946, &self.peers).await;
+            (pivot_header, staleness_timestamp) = update_pivot(8882646, &self.peers).await;
 
             let mut healing_done = false;
             while !healing_done {
