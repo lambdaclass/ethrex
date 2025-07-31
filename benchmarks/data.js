@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753992515231,
+  "lastUpdate": 1753992744556,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7075,6 +7075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165497660810,
             "range": "± 410650660",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bdba6262688d7f8f11fb55da7085303a7fc0f016",
+          "message": "refactor(l2): deduplicate l2 test logic (#3796)\n\n**Motivation**\n\nThe \"wait until withdrawal is verified\" is duplicated four times.\n\nThe imports are disorganized.\n\n**Description**\n\nMoves the duplicate logic into a function, and improves imports.",
+          "timestamp": "2025-07-31T19:22:16Z",
+          "tree_id": "4394890f3773dbafb0b0bceb000a605d70dffd24",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bdba6262688d7f8f11fb55da7085303a7fc0f016"
+        },
+        "date": 1753992729491,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166179628025,
+            "range": "± 321243633",
             "unit": "ns/iter"
           }
         ]
