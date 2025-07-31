@@ -16,7 +16,7 @@ use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_interval, spawn_listener},
 };
 use spawned_rt::tasks::BroadcastStream;
 use tokio::{
@@ -205,7 +205,10 @@ impl GenServer for RLPxConnection {
     type OutMsg = MsgResult;
     type Error = RLPxError;
 
-    async fn init(mut self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(
+        mut self,
+        handle: &GenServerHandle<Self>,
+    ) -> Result<InitResult<Self>, Self::Error> {
         let (mut established_state, stream) = handshake::perform(self.inner_state).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
@@ -220,7 +223,7 @@ impl GenServer for RLPxConnection {
         } else {
             // New state
             self.inner_state = InnerState::Established(established_state);
-            Ok(self)
+            Ok(InitResult::Success(self))
         }
     }
 
