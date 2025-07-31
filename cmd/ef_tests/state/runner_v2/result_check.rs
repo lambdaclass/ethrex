@@ -19,11 +19,13 @@ use crate::runner_v2::{
     types::{AccountState, TestCase, TransactionExpectedException},
 };
 
+/// Keeps record of the post checks results for a test case, including if it passed
+/// and if it did not, the differences from the expected post state.
 pub struct PostCheckResult {
     pub fork: Fork,
     pub vector: (usize, usize, usize),
     pub passed: bool,
-    pub root_dif: Option<(H256, H256)>,
+    pub root_diff: Option<(H256, H256)>,
     pub accounts_diff: Option<Vec<AccountMismatch>>,
     pub logs_diff: Option<(H256, H256)>,
     pub exception_diff: Option<(Vec<TransactionExpectedException>, Option<VMError>)>,
@@ -34,7 +36,7 @@ impl Default for PostCheckResult {
             fork: Fork::Prague,
             vector: (0, 0, 0),
             passed: true,
-            root_dif: None,
+            root_diff: None,
             accounts_diff: None,
             logs_diff: None,
             exception_diff: None,
@@ -105,7 +107,7 @@ pub async fn check_root(
     let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
     if post_state_root != test_case.post.hash {
         check_result.passed = false;
-        check_result.root_dif = Some((test_case.post.hash, post_state_root));
+        check_result.root_diff = Some((test_case.post.hash, post_state_root));
     }
     Ok(())
 }
@@ -224,6 +226,7 @@ fn exception_matches_expected(
     })
 }
 
+/// Verifies the hash of the output logs is the one expected.
 pub fn check_logs(
     test_case: &TestCase,
     execution_report: &ExecutionReport,
@@ -238,6 +241,8 @@ pub fn check_logs(
     }
 }
 
+/// If the test case provides a `state` field in the post section, check account by account
+/// its state is the one expected after the execution of the transaction.
 pub fn check_accounts_state(
     db: &mut GeneralizedDatabase,
     test_case: &TestCase,
@@ -283,12 +288,15 @@ pub fn check_accounts_state(
         }
     }
 
+    // If any of the accounts comparisons produced a mismatch, register it in the checks result.
+    // If we got to this point, root did not match, therefore the test has already been registered
+    // as failing, we do not need to set it again and just add the account diff.
     if !accounts_diff.is_empty() {
-        check_result.passed = false;
         check_result.accounts_diff = Some(accounts_diff);
     }
 }
 
+/// Compare every field of the expected account vs. the actual obtained account state.
 fn verify_matching_accounts(
     addr: Address,
     actual_account: &Account,
