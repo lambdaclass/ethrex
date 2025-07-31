@@ -455,6 +455,7 @@ impl Syncer {
             .expect("Failed to read account_state_snapshots dir")
         {
             if is_stale {
+                info!("Skipping rest of storage downloads due to staleness");
                 break;
             }
             let entry = entry.expect("Failed to read dir entry");

@@ -1499,6 +1499,8 @@ impl PeerHandler {
         let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         let state_root = pivot_header.state_root;
 
+        info!("Started request_storage_ranges");
+
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
