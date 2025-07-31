@@ -250,8 +250,7 @@ impl GenServer for RLPxConnection {
                     send(&mut established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
-                    Ok(())
-                    //send_new_pooled_tx_hashes(&mut established_state).await
+                    send_new_pooled_tx_hashes(&mut established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
@@ -443,18 +442,21 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .collect();
         if !txs.is_empty() {
             let tx_count = txs.len();
+            let mut txs_to_send = vec![];
             for tx in txs {
-                send(
-                    state,
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        vec![(*tx).clone()],
-                        &state.blockchain,
-                    )?),
-                )
-                .await?;
+                txs_to_send.push((*tx).clone());
                 // Possible improvement: the mempool already knows the hash but the filter function does not return it
                 state.broadcasted_txs.insert((*tx).compute_hash());
             }
+
+            send(
+                state,
+                Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                    txs_to_send,
+                    &state.blockchain,
+                )?),
+            )
+            .await?;
             log_peer_debug(
                 &state.node,
                 &format!("Sent {tx_count} transactions to peer"),
