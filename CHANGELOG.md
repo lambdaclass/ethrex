@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-30
+
+- Add a secondary index keyed by sender+nonce to the mempool to avoid linear lookups [#3865](https://github.com/lambdaclass/ethrex/pull/3865)
+
 ### 2025-07-24
 
 - Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
