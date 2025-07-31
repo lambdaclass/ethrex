@@ -278,8 +278,8 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[command(subcommand)]
-    L2(l2::Command),
+    #[command(name = "l2")]
+    L2(l2::L2Command),
 }
 
 impl Subcommand {

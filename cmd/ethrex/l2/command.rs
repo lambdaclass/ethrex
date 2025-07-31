@@ -1,33 +1,25 @@
 use crate::{
     DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
-    initializers::{
-        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_network, init_store,
-    },
-    l2::{self, options::Options},
+    initializers::init_store,
+    l2::{self, init_l2, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
+    utils::{parse_private_key, set_datadir},
 };
-use clap::Subcommand;
-use ethrex_blockchain::BlockchainType;
+use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
-use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -35,23 +27,42 @@ use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
-    future::IntoFuture,
     path::PathBuf,
-    sync::Arc,
     time::Duration,
 };
-use tokio::{sync::Mutex, task::JoinSet};
-use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info};
+use tracing::info;
+
+#[derive(Parser)]
+#[clap(args_conflicts_with_subcommands = true)]
+pub struct L2Command {
+    #[clap(subcommand)]
+    pub command: Option<Command>,
+    #[clap(flatten)]
+    pub opts: Option<Options>,
+}
+
+impl L2Command {
+    pub async fn run(self) -> eyre::Result<()> {
+        if let Some(cmd) = self.command {
+            return cmd.run().await;
+        }
+        let mut app = clap::Command::new("init");
+        app = <Options as clap::Args>::augment_args(app);
+
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let args_with_program = std::iter::once("init".to_string())
+            .chain(args.into_iter())
+            .collect::<Vec<_>>();
+
+        let matches = app.try_get_matches_from(args_with_program)?;
+        let init_options = Options::from_arg_matches(&matches)?;
+        init_l2(init_options).await
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {
-    #[command(about = "Initialize an ethrex L2 node", visible_alias = "i")]
-    Init {
-        #[command(flatten)]
-        opts: Options,
-    },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
@@ -123,134 +134,6 @@ pub enum Command {
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Command::Init { opts } => {
-                if opts.node_opts.evm == EvmEngine::REVM {
-                    panic!("L2 Doesn't support REVM, use LEVM instead.");
-                }
-
-                l2::initializers::init_tracing(&opts);
-
-                let data_dir = set_datadir(&opts.node_opts.datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
-
-                let network = get_network(&opts.node_opts);
-
-                let genesis = network.get_genesis()?;
-                let store = init_store(&data_dir, genesis).await;
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
-
-                let blockchain =
-                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
-
-                let signer = get_signer(&data_dir);
-
-                let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
-
-                let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-                    &data_dir,
-                    &local_p2p_node,
-                    &signer,
-                )));
-
-                let peer_table = peer_table(local_p2p_node.node_id());
-
-                // TODO: Check every module starts properly.
-                let tracker = TaskTracker::new();
-                let mut join_set = JoinSet::new();
-
-                let cancel_token = tokio_util::sync::CancellationToken::new();
-
-                l2::initializers::init_rpc_api(
-                    &opts.node_opts,
-                    &opts,
-                    peer_table.clone(),
-                    local_p2p_node.clone(),
-                    local_node_record.lock().await.clone(),
-                    store.clone(),
-                    blockchain.clone(),
-                    cancel_token.clone(),
-                    tracker.clone(),
-                    rollup_store.clone(),
-                )
-                .await;
-
-                // Initialize metrics if enabled
-                if opts.node_opts.metrics_enabled {
-                    l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
-                }
-
-                let l2_sequencer_cfg =
-                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
-                        error!("{err}");
-                    })?;
-                let cancellation_token = CancellationToken::new();
-
-                // TODO: This should be handled differently, the current problem
-                // with using opts.node_opts.p2p_enabled is that with the removal
-                // of the l2 feature flag, p2p_enabled is set to true by default
-                // prioritizing the L1 UX.
-                if l2_sequencer_cfg.based.enabled {
-                    init_network(
-                        &opts.node_opts,
-                        &network,
-                        &data_dir,
-                        local_p2p_node,
-                        local_node_record.clone(),
-                        signer,
-                        peer_table.clone(),
-                        store.clone(),
-                        tracker,
-                        blockchain.clone(),
-                        Some(P2PBasedContext {
-                            store_rollup: rollup_store.clone(),
-                            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
-                            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
-                            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
-                            // This should be replaced with the Signer enum once the refactor is complete.
-                            committer_key: Arc::new(
-                                SecretKey::from_slice(&hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").expect("Invalid committer key"))
-                                    .expect("Failed to create committer key"),
-                            ),
-                        }),
-                    )
-                    .await;
-                } else {
-                    info!("P2P is disabled");
-                }
-
-                let l2_sequencer = ethrex_l2::start_l2(
-                    store,
-                    rollup_store,
-                    blockchain,
-                    l2_sequencer_cfg,
-                    cancellation_token.clone(),
-                    #[cfg(feature = "metrics")]
-                    format!(
-                        "http://{}:{}",
-                        opts.node_opts.http_addr, opts.node_opts.http_port
-                    ),
-                )
-                .into_future();
-
-                join_set.spawn(l2_sequencer);
-
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
-                        join_set.abort_all();
-                    }
-                    _ = cancellation_token.cancelled() => {
-                    }
-                }
-                info!("Server shut down started...");
-                let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-                info!("Storing config at {:?}...", node_config_path);
-                cancel_token.cancel();
-                let node_config =
-                    NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                store_node_config_file(node_config, node_config_path).await;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                info!("Server shutting down!");
-            }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
                     ethrex_cli::Subcommand::RemoveDB { datadir, force }

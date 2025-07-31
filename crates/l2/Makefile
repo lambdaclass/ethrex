@@ -118,9 +118,9 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
+	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
-	l2 init \
-	--proof-coordinator.dev-mode ${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
+	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
