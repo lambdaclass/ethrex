@@ -144,11 +144,11 @@ pub(crate) async fn heal_state_trie(
             if !batch.is_empty() {
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
+                info!("Spawning a task to download");
                 let _ = tokio::spawn(async move {
-                    info!("Spawning a task to download");
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
-                        &mut peer_channel.clone(),
+                        &mut peer_channel,
                         state_root,
                         batch.clone(),
                     )
@@ -159,6 +159,7 @@ pub(crate) async fn heal_state_trie(
                     });
                 })
                 .await;
+                info!("Download task succesfully spawned");
             }
         }
 
@@ -168,6 +169,7 @@ pub(crate) async fn heal_state_trie(
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
             inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
+            info!("Spawning a task to save to db");
             let _ = tokio::spawn(async move {
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
@@ -177,6 +179,7 @@ pub(crate) async fn heal_state_trie(
                 }
             })
             .await;
+            info!("Save to db task succesfully spawned");
         }
 
         info!("Maximum depth reached on loop {longest_path_seen}. Inflight tasks {inflight_tasks}");
