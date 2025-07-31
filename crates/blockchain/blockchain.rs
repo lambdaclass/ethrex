@@ -526,6 +526,7 @@ impl Blockchain {
             all_receipts.push((block.hash(), receipts));
 
             log_batch_progress(blocks_len, i);
+            tokio::task::yield_now().await;
         }
 
         let account_updates = vm
