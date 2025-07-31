@@ -62,7 +62,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     setup.client.execute(PROGRAM_ELF, &stdin).run()?;
     let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program  in {:.2?}", elapsed);
+    info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
 }
 

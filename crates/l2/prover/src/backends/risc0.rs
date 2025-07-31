@@ -39,7 +39,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
     let elapsed = now.elapsed();
 
-    info!("Successfully generated session info  in {:.2?}", elapsed);
+    info!("Successfully generated session info in {:.2?}", elapsed);
     Ok(())
 }
 
