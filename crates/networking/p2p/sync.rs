@@ -561,6 +561,8 @@ impl Syncer {
                 if !healing_done {
                     continue;
                 }
+                // TODO: 💀💀💀 either remove or change to a debug flag
+                validate_state_root(store.clone(), pivot_header.state_root);
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
@@ -1140,4 +1142,27 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok(paths)
+}
+
+pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+    let computed_state_root = tokio::task::spawn_blocking(move || {
+        Trie::compute_hash_from_unsorted_iter(
+            store
+                .iter_accounts(state_root)
+                .expect("we couldn't iterate over accounts")
+                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+        )
+    })
+    .await
+    .expect("We should be able to create threads");
+
+    let tree_validated = state_root == computed_state_root;
+    if tree_validated {
+        info!("Succesfully validated tree, {state_root} found");
+    } else {
+        error!(
+            "We have failed the validation of the tree {state_root} expected but {computed_state_root} found"
+        );
+    }
+    tree_validated
 }
