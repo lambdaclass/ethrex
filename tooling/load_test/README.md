@@ -82,7 +82,7 @@ For a samply report, run the following:
 
 ```bash
 cargo b --profile release-with-debug --features dev && \
-  ./target/release-with-debug/ethrex removedb --force && \
+ ./target/release-with-debug/ethrex removedb --force && \
  samply record -r 10000 ./target/release-with-debug/ethrex --network fixtures/genesis/load-test.json --dev
 ```
 
