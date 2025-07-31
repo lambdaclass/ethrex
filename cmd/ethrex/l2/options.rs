@@ -127,7 +127,7 @@ pub enum SequencerOptionsError {
     #[error("No on-chain proposer address was provided")]
     NoOnChainProposerAddress,
     #[error("No proof coordinator TDX private key was provided")]
-    NoProofCoorditanoTdxPrivateKey,
+    NoProofCoorditanorTdxPrivateKey,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -196,7 +196,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 tdx_private_key: opts
                     .proof_coordinator_opts
                     .proof_coordinator_tdx_private_key
-                    .ok_or(SequencerOptionsError::NoProofCoorditanoTdxPrivateKey)?,
+                    .ok_or(SequencerOptionsError::NoProofCoorditanorTdxPrivateKey)?,
                 validium: opts.validium,
             },
             based: BasedConfig {
