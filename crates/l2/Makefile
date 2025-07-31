@@ -58,7 +58,7 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 # ==============================================================================
 
 init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
-    docker compose up -d ethrex_l1
+	docker compose up -d ethrex_l1
 
 down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose down ethrex_l1
