@@ -47,7 +47,14 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                let account = self.store.get_account(address)?;
+                let info = self.store.get_account_info(address)?;
+                //TODO: We could fetch the code only when necessary instead of every time we load an account, but this is simpler for now.
+                let code = self.store.get_account_code(info.code_hash)?;
+                let account = Account {
+                    info,
+                    code,
+                    storage: BTreeMap::new(),
+                };
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }
