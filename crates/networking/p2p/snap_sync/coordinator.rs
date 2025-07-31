@@ -488,6 +488,12 @@ impl GenServer for Coordinator {
             handle.clone(),
             CastMessage::AssignDownloadTasks,
         );
+        send_interval(
+            Duration::from_secs(2),
+            handle.clone(),
+            CastMessage::UpdateMetrics,
+        );
+
         Ok(state)
     }
 
@@ -608,13 +614,6 @@ impl GenServer for Coordinator {
             }
             Self::CastMsg::UpdateMetrics => {
                 state.handle_update_metrics().await;
-
-                send_after(
-                    Duration::from_secs(1),
-                    handle.clone(),
-                    Self::CastMsg::UpdateMetrics,
-                );
-
                 CastResponse::NoReply(state)
             }
         }
