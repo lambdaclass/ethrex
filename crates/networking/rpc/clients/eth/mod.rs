@@ -422,7 +422,7 @@ impl EthClient {
         }
     }
 
-    pub async fn get_max_priority_fee(&self) -> Result<u64, EthClientError> {
+    pub async fn get_max_priority_fee(&self) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
@@ -1295,7 +1295,9 @@ impl EthClient {
         }
 
         if let Ok(priority_fee) = self.get_max_priority_fee().await {
-            return Ok(priority_fee);
+            if let Ok(priority_fee_u64) = priority_fee.try_into() {
+                return Ok(priority_fee_u64);
+            }
         }
 
         self.get_fee_from_override_or_get_gas_price(None).await
