@@ -443,8 +443,8 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
 
-        self.peers
-            .request_account_range(pivot_header, H256::zero(), H256::repeat_byte(0xff))
+        let mut is_stale = self.peers
+            .request_account_range(pivot_header.clone(), H256::zero(), H256::repeat_byte(0xff))
             .await;
 
         let empty = *EMPTY_TRIE_HASH;
@@ -454,6 +454,9 @@ impl Syncer {
         for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
             .expect("Failed to read account_state_snapshots dir")
         {
+            if is_stale {
+                break;
+            }
             let entry = entry.expect("Failed to read dir entry");
 
             let snapshot_path = entry.path();
@@ -479,8 +482,8 @@ impl Syncer {
 
             downloaded_account_storages += account_storage_roots.len();
     
-            chunk_index = self.peers
-                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+            (chunk_index, is_stale) = self.peers
+                .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone(), chunk_index)
                 .await;
         }
 

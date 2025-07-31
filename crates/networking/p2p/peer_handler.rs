@@ -1488,13 +1488,16 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        state_root: H256,
+        mut pivot_header: BlockHeader,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
-    ) -> u64 {
+    ) -> (u64, bool) {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
+        // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
+        let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        let state_root = pivot_header.state_root;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1823,6 +1826,10 @@ impl PeerHandler {
                 );
             }
 
+            if current_unix_time() > staleness_timestamp {
+                break;
+            }
+
             tokio::spawn(async move {
                 let start = task.start_index;
                 let end = task.end_index;
@@ -2011,7 +2018,12 @@ impl PeerHandler {
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");
 
-        chunk_index
+        let mut is_stale = false;
+        if current_unix_time() > staleness_timestamp {
+            is_stale = true;
+        }
+
+        (chunk_index, is_stale)
     }
 
     /*
