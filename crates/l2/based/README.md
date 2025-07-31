@@ -126,7 +126,7 @@ Running a based stack locally is essentially the same as running an ethrex stack
 ### 1. Deploying L1 Contracts
 
 > [!IMPORTANT]
-> You need to have an L1 running to deploy the contracts. Run `make init-local-l1` to do so (ensure Docker running).
+> You need to have an L1 running to deploy the contracts. Run `make init-l1-docker` to do so (ensure Docker running).
 
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
