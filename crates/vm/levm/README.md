@@ -9,7 +9,7 @@ Implementation of a simple, yet fast, Ethereum Virtual Machine in Rust.
 | Prague         | ✅     |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
-| Paris (Merge)  | ✅     |                                                                                                        | 🏗️     |
+| Paris (Merge)  | ✅     |
 
 ## Trying out LEVM
 
