@@ -5,9 +5,9 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
+        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, COLD_ADDRESS_ACCESS_COST,
+        CREATE_BASE_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN,
+        WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
     l2_precompiles,
     opcodes::Opcode,
@@ -20,7 +20,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, Transaction, tx_fields::*},
+    types::{Fork, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{
@@ -158,7 +158,7 @@ pub fn get_base_fee_per_blob_gas(
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
         block_excess_blob_gas.unwrap_or_default(),
         base_fee_update_fraction.into(),
     )
@@ -176,7 +176,7 @@ pub fn get_max_blob_gas_price(
         .map_err(|_| InternalError::TypeConversion)?;
 
     let blob_gas_used: u64 = blobhash_amount
-        .checked_mul(BLOB_GAS_PER_BLOB)
+        .checked_mul(GAS_PER_BLOB)
         .unwrap_or_default();
 
     let max_blob_gas_cost = tx_max_fee_per_blob_gas
@@ -198,7 +198,7 @@ pub fn get_blob_gas_price(
         .map_err(|_| InternalError::TypeConversion)?;
 
     let blob_gas_price: u64 = blobhash_amount
-        .checked_mul(BLOB_GAS_PER_BLOB)
+        .checked_mul(GAS_PER_BLOB)
         .unwrap_or_default();
 
     let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;

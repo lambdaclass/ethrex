@@ -43,8 +43,6 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u64 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 
-pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
-
 // WARNING: Do _not_ use the BLOB_BASE_FEE_UPDATE_FRACTION_* family of
 // constants as is. Use the `get_blob_base_fee_update_fraction_value`
 // function instead
