@@ -443,7 +443,7 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
 
-        let mut is_stale = self.peers
+        let mut pivot_is_stale = self.peers
             .request_account_range(pivot_header.clone(), H256::zero(), H256::repeat_byte(0xff))
             .await;
 
@@ -454,7 +454,7 @@ impl Syncer {
         for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
             .expect("Failed to read account_state_snapshots dir")
         {
-            if is_stale {
+            if pivot_is_stale {
                 info!("Skipping rest of storage downloads due to staleness");
                 break;
             }
@@ -483,7 +483,7 @@ impl Syncer {
 
             downloaded_account_storages += account_storage_roots.len();
     
-            (chunk_index, is_stale) = self.peers
+            (chunk_index, pivot_is_stale) = self.peers
                 .request_storage_ranges(pivot_header.clone(), account_storage_roots.clone(), chunk_index)
                 .await;
         }
@@ -647,6 +647,37 @@ impl Syncer {
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
+
+        // If we need to, we star to heal now.
+        if pivot_is_stale {
+            info!("pivot is stale, starting healing process");
+
+            let mut healing_done = false;
+            while !healing_done {
+                (pivot_header, staleness_timestamp) =
+                    update_pivot(pivot_header.number, &self.peers).await;
+                healing_done = heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
+                if !healing_done {
+                    continue;
+                }
+                // TODO: 💀💀💀 either remove or change to a debug flag
+                validate_state_root(store.clone(), pivot_header.state_root).await;
+                healing_done = heal_storage_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
+            }
+            info!("Finished healing");
+        }
 
         // Download bytecodes
         info!(
