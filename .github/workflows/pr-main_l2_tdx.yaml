@@ -6,8 +6,6 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/**"
-      - "crates/l2/tee/**"
-      - "crates/l2/contracts/**"
       - "fixtures/**"
       - ".github/workflows/pr-main_l2_tdx.yaml"
 
