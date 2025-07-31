@@ -94,9 +94,17 @@ pub(crate) async fn heal_state_trie(
     loop {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            info!(
-                "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}",
-            );
+            if is_stale {
+                info!(
+                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}. Paths to go {}",
+                    paths.len()
+                );
+            } else {
+                info!(
+                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}. Paths to go {}",
+                    paths.len()
+                );
+            }
         }
 
         // Attempt to receive a response from one of the peers
@@ -106,15 +114,10 @@ pub(crate) async fn heal_state_trie(
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
-                    info!("We received {} nodes to heal", nodes.len());
                     nodes_to_heal.push((nodes, batch));
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
-                    info!(
-                        "We received nothing, putting these paths back {}",
-                        batch.len()
-                    );
                     paths.extend(batch);
                 }
             }
@@ -195,7 +198,7 @@ pub(crate) async fn heal_state_trie(
         // }
 
         // We check with a clock if we are stale
-        if current_unix_time() > staleness_timestamp {
+        if !is_stale && current_unix_time() > staleness_timestamp {
             info!("state healing is stale");
             is_stale = true;
         }
@@ -205,11 +208,9 @@ pub(crate) async fn heal_state_trie(
         }
     }
     info!("State Healing stopped, signaling storage healer");
-    // Save paths for the next cycle
-    if !paths.is_empty() {
-        info!("Caching {} paths for the next cycle", paths.len());
-        store.set_state_heal_paths(paths.clone()).await?;
-    }
+    // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
+    info!("Caching {} paths for the next cycle", paths.len());
+    store.set_state_heal_paths(paths.clone()).await?;
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
