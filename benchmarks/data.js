@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753974618039,
+  "lastUpdate": 1753976393474,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6925,6 +6925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170235431104,
             "range": "± 527614533",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "86d1c7baca3a8fb1509457c3a128ba1efdc4f7f1",
+          "message": "chore(l2): clean makefile (#3870)\n\n**Motivation**\n\nImprove our Makefile is a tech debt we are already suffering from. It is\noutdated, with unused or broken targets, and it's disorganized, making\nit hard to find useful ones.\nWhile reviewing it, I found it easier to make the changes myself rather\nthan creating issues.\n\n**Description**\n\n- Organizes the file into categories (l1,l2,prover,etc). Inspired in\n#3373.\n- Removes unused targets.\n- Since #3604, we only need `clean-contract-deps`, as our tests still\nclone and compile contracts. This PR removes the target and adds a step\nat the end of the integration tests to clean those directories.\n- Adds `deploy-l1-sp1` target to deploy the `sp1-verifier` contract,\nuseful for running tests on servers with a GPU.\n\nCloses None\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-07-31T14:43:55Z",
+          "tree_id": "6d46736349649032ef8ab796f8f8beaad0463b19",
+          "url": "https://github.com/lambdaclass/ethrex/commit/86d1c7baca3a8fb1509457c3a128ba1efdc4f7f1"
+        },
+        "date": 1753976379313,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171474097606,
+            "range": "± 843656380",
             "unit": "ns/iter"
           }
         ]
