@@ -45,7 +45,7 @@ pub enum InternalError {
 pub enum BlockHeaderState {
     Pending,
     Requested(SystemTime), // Holds time when the request was made
-    Downloaded,
+    Downloaded(BlockHeader),
 }
 
 #[derive(Debug, Clone)]
@@ -236,9 +236,9 @@ impl CoordinatorState {
                     match downloaded_headers[block_number] {
                         BlockHeaderState::Pending | BlockHeaderState::Requested(_) => {
                             downloaded_headers[block_number as usize] =
-                                BlockHeaderState::Downloaded;
+                                BlockHeaderState::Downloaded(header);
                         }
-                        BlockHeaderState::Downloaded => {
+                        BlockHeaderState::Downloaded(_) => {
                             debug!("Received block header, but we already hold it")
                         }
                     }
@@ -278,7 +278,7 @@ impl CoordinatorState {
                             }
                             missing_headers.push(block_number as u64);
                         }
-                        BlockHeaderState::Downloaded => {}
+                        BlockHeaderState::Downloaded(_) => {}
                     }
                 }
 
@@ -361,7 +361,7 @@ impl CoordinatorState {
                     else {
                         if downloaded_headers
                             .iter()
-                            .all(|state| matches!(state, BlockHeaderState::Downloaded))
+                            .all(|state| matches!(state, BlockHeaderState::Downloaded(_)))
                         {
                             info!("All headers downloaded successfully");
                             break;
@@ -406,7 +406,7 @@ impl CoordinatorState {
                         BlockHeaderState::Pending | BlockHeaderState::Requested(_) => {
                             pending_header_downloads += 1
                         }
-                        BlockHeaderState::Downloaded => headers_downloaded += 1,
+                        BlockHeaderState::Downloaded(_) => headers_downloaded += 1,
                     }
                 }
 
