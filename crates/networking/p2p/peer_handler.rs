@@ -723,7 +723,7 @@ impl PeerHandler {
         mut pivot_header: BlockHeader,
         start: H256,
         limit: H256,
-    ) -> (Vec<H256>, Vec<AccountState>, bool) {
+    ) -> bool {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -772,7 +772,7 @@ impl PeerHandler {
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         // TODO: replace 128 and 12 with the proper constants (pruning block limit and time between blocks)
-        let time_limit = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
@@ -923,7 +923,7 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
-            //  while current_unix_time() > time_limit {
+            //  while current_unix_time() > staleness_timestamp {
             //      info!("We are stale, updating pivot");
             //      let Some(header) = self
             //          .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
@@ -937,12 +937,12 @@ impl PeerHandler {
             //          "New pivot block number: {}, header: {:?}",
             //          pivot_header.number, pivot_header
             //      );
-            //      time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+            //      staleness_timestamp = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             //  }
             // TODO: not remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
 
             // after our time limit, the block is stale. Stop downloading blocks
-            if current_unix_time() > time_limit {
+            if current_unix_time() > staleness_timestamp {
                 break;
             }
             let state_root = pivot_header.state_root;
@@ -1088,15 +1088,16 @@ impl PeerHandler {
         *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
-        let mut result_continue = false;
+        let mut is_stale = false;
 
         // We have stopped the execution because the pivot is stale
         // We check this with the timestamp of the pivot header
-        if current_unix_time() > time_limit {
-            result_continue = true;
+        if current_unix_time() > staleness_timestamp {
+            info!("We have exited request_account_range because the pivot is stale");
+            is_stale = true;
         }
 
-        (all_account_hashes, all_accounts_state, result_continue)
+        is_stale
     }
 
     /*
