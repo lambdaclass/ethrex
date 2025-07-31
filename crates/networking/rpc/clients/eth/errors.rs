@@ -22,6 +22,8 @@ pub enum EthClientError {
     GetBlockByHashError(#[from] GetBlockByHashError),
     #[error("eth_getBlockByNumber request error: {0}")]
     GetBlockByNumberError(#[from] GetBlockByNumberError),
+    #[error("net_peerCount request error: {0}")]
+    GetPeerCountError(#[from] GetPeerCountError),
     #[error("debug_getRawBlock request error: {0}")]
     GetRawBlockError(#[from] GetRawBlockError),
     #[error("eth_getLogs request error: {0}")]
@@ -150,6 +152,14 @@ pub enum GetBlockByHashError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetBlockByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetPeerCountError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
