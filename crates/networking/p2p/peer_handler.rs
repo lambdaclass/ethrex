@@ -703,12 +703,7 @@ impl PeerHandler {
     ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_account_range(
-        &self,
-        state_root: H256,
-        start: H256,
-        limit: H256,
-    ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
+    pub async fn request_account_range(&self, state_root: H256, start: H256, limit: H256) {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -759,8 +754,37 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
+        let mut chunk_file = 0;
 
         loop {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+                let current_account_hashes = std::mem::take(&mut all_account_hashes);
+                let current_account_states = std::mem::take(&mut all_accounts_state);
+
+                let account_state_chunk = current_account_hashes
+                    .into_iter()
+                    .zip(current_account_states)
+                    .collect::<Vec<(H256, AccountState)>>()
+                    .encode_to_vec();
+
+                if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                    .expect("Failed")
+                {
+                    std::fs::create_dir_all(
+                        "/home/admin/.local/share/ethrex/account_state_snapshots",
+                    )
+                    .expect("Failed to create accounts_state_snapshot dir");
+                }
+
+                tokio::task::spawn(async move {
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
+                })
+                .await
+                .unwrap();
+
+                chunk_file += 1;
+            }
+
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -844,17 +868,6 @@ impl PeerHandler {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -974,7 +987,7 @@ impl PeerHandler {
                     };
                     tx.send((accounts, free_peer_id, chunk_left)).await.ok();
                 } else {
-                    tracing::error!("Failed to get account range");
+                    tracing::debug!("Failed to get account range");
                     tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                         .await
                         .ok();
@@ -986,25 +999,37 @@ impl PeerHandler {
             }
         }
 
+        // TODO: This is repeated code, consider refactoring
+        {
+            let current_account_hashes = std::mem::take(&mut all_account_hashes);
+            let current_account_states = std::mem::take(&mut all_accounts_state);
+
+            let account_state_chunk = current_account_hashes
+                .into_iter()
+                .zip(current_account_states)
+                .collect::<Vec<(H256, AccountState)>>()
+                .encode_to_vec();
+
+            if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                .expect("Failed")
+            {
+                std::fs::create_dir_all("/home/admin/.local/share/ethrex/account_state_snapshots")
+                    .expect("Failed to create accounts_state_snapshot dir");
+            }
+
+            tokio::task::spawn(async move {
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
+                })
+                .await
+                .unwrap();
+        }
+
         *METRICS.accounts_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_account_tries.lock().await = downloaded_count;
         *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
-
-        info!(
-            "Finished downloading account ranges, total accounts: {}",
-            all_account_hashes.len()
-        );
-
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
-
-        // TODO: proof validation and should_continue aggregation
-        // For now, just return the collected accounts
-        if all_account_hashes.is_empty() || all_accounts_state.is_empty() {
-            return None;
-        }
-        Some((all_account_hashes, all_accounts_state, false))
     }
 
     /// Requests bytecodes for the given code hashes
@@ -1301,7 +1326,7 @@ impl PeerHandler {
         &self,
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
-    ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
+    ) {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
@@ -1370,7 +1395,43 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
+        let mut chunk_file = 0;
+
         loop {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                > 1024 * 1024 * 1024 * 8
+            {
+                let current_account_hashes = account_storage_roots
+                    .iter()
+                    .map(|a| a.0)
+                    .collect::<Vec<_>>();
+                let current_account_storages = std::mem::take(&mut all_account_storages);
+                all_account_storages = vec![vec![]; account_storage_roots.len()];
+
+                let snapshot = current_account_hashes
+                    .into_iter()
+                    .zip(current_account_storages)
+                    .collect::<Vec<_>>()
+                    .encode_to_vec();
+
+                if !std::fs::exists("/home/admin/.local/share/ethrex/account_storages_snapshots")
+                    .expect("Failed")
+                {
+                    std::fs::create_dir_all(
+                        "/home/admin/.local/share/ethrex/account_storages_snapshots",
+                    )
+                    .expect("Failed to create accounts_state_snapshot dir");
+                }
+
+                tokio::task::spawn(async move {
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_file}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_file}"));
+                })
+                .await
+                .expect("");
+
+                chunk_file += 1;
+            }
+
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -1543,14 +1604,6 @@ impl PeerHandler {
                 continue;
             }
 
-            // let Some(free_peer_id) = free_downloaders
-            //     .get(random::<usize>() % free_downloaders.len())
-            //     .map(|(peer_id, _)| *peer_id)
-            // else {
-            //     debug!("No free downloaders available, waiting for a peer to finish, retrying");
-            //     continue;
-            // };
-
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
@@ -1600,7 +1653,7 @@ impl PeerHandler {
                     .unzip();
 
             if task_count - completed_tasks < 30 {
-                info!(
+                debug!(
                     "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
                     chunk_account_hashes.first().unwrap_or(&H256::zero()),
                     chunk_storage_roots.first().unwrap_or(&H256::zero()),
@@ -1655,7 +1708,7 @@ impl PeerHandler {
                 .ok()
                 .flatten();
                 let Some((slots, proof)) = request_result else {
-                    tracing::error!("Failed to get storage range");
+                    tracing::debug!("Failed to get storage range");
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
@@ -1751,6 +1804,36 @@ impl PeerHandler {
             }
         }
 
+        {
+            let current_account_hashes = account_storage_roots
+                .iter()
+                .map(|a| a.0)
+                .collect::<Vec<_>>();
+            let current_account_storages = std::mem::take(&mut all_account_storages);
+            all_account_storages = vec![vec![]; account_storage_roots.len()];
+
+            let snapshot = current_account_hashes
+                .into_iter()
+                .zip(current_account_storages)
+                .collect::<Vec<_>>()
+                .encode_to_vec();
+
+            if !std::fs::exists("/home/admin/.local/share/ethrex/account_storages_snapshots")
+                .expect("Failed")
+            {
+                std::fs::create_dir_all(
+                    "/home/admin/.local/share/ethrex/account_storages_snapshots",
+                )
+                .expect("Failed to create accounts_state_snapshot dir");
+            }
+
+            tokio::task::spawn(async move {
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_file}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_file}"));
+                })
+                .await
+                .expect("");
+        }
+
         *METRICS.storages_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
@@ -1764,8 +1847,6 @@ impl PeerHandler {
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");
-
-        Some((all_account_storages, false))
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)

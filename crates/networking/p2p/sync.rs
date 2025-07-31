@@ -6,17 +6,18 @@ use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainErr
 use ethrex_common::{
     BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHash, BlockHeader},
 };
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::TrieError;
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     array,
     cmp::min,
+    collections::{HashMap, hash_map::Entry},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::SystemTime,
@@ -540,7 +541,6 @@ impl FullBlockSyncState {
     ) -> Result<(), SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
-        dbg!("CHECKPOINT 1");
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
         //     return Ok(());
@@ -552,21 +552,17 @@ impl FullBlockSyncState {
         // Download block bodies
         let headers =
             &self.current_headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
-        dbg!("CHECKPOINT 2");
         let bodies = peers
             .request_and_validate_block_bodies(headers)
             .await
             .ok_or(SyncError::BodiesNotFound)?;
-        dbg!("CHECKPOINT 3");
         debug!("Obtained: {} block bodies", bodies.len());
         let blocks = self
             .current_headers
             .drain(..bodies.len())
             .zip(bodies)
             .map(|(header, body)| Block { header, body });
-        dbg!("CHECKPOINT 4");
         self.current_blocks.extend(blocks);
-        dbg!("CHECKPOINT 5");
         // }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
@@ -581,30 +577,24 @@ impl FullBlockSyncState {
             self.current_blocks.last().unwrap().hash()
         );
         let execution_start = Instant::now();
-        dbg!("CHECKPOINT 6");
         let block_batch: Vec<Block> = self
             .current_blocks
             .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
             .collect();
-        dbg!("CHECKPOINT 7");
         // Copy some values for later
         let blocks_len = block_batch.len();
-        dbg!("CHECKPOINT 8");
         let numbers_and_hashes = block_batch
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
-        dbg!("CHECKPOINT 9");
         let (last_block_number, last_block_hash) = numbers_and_hashes
             .last()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
-        dbg!("CHECKPOINT 10");
         let (first_block_number, first_block_hash) = numbers_and_hashes
             .first()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
-        dbg!("CHECKPOINT 11");
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
@@ -614,9 +604,7 @@ impl FullBlockSyncState {
         )
         .await
         {
-            dbg!("CHECKPOINT 12.a");
             if let Some(batch_failure) = batch_failure {
-                dbg!("CHECKPOINT 13.a");
                 warn!("Failed to add block during FullSync: {err}");
                 self.store
                     .set_latest_valid_ancestor(
@@ -624,26 +612,19 @@ impl FullBlockSyncState {
                         batch_failure.last_valid_hash,
                     )
                     .await?;
-                dbg!("CHECKPOINT 14.a");
             }
-            dbg!("CHECKPOINT 15.a");
             return Err(err.into());
         }
-        dbg!("CHECKPOINT 12.b");
         // Mark chain as canonical & last block as latest
         self.store
             .mark_chain_as_canonical(&numbers_and_hashes)
             .await?;
-        dbg!("CHECKPOINT 13.b");
         self.store
             .update_latest_block_number(last_block_number)
             .await?;
-        dbg!("CHECKPOINT 14.b");
 
         let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-        dbg!("CHECKPOINT 15.b");
         let blocks_per_second = blocks_len as f64 / execution_time;
-        dbg!("CHECKPOINT 16.b");
 
         info!(
             "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
@@ -659,7 +640,6 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        dbg!("CHECKPOINT 17.b");
         Ok(())
     }
 }
@@ -746,18 +726,36 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
 
-        let (account_hashes, account_states, continues) = self
-            .peers
+        self.peers
             .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
-            .await
-            .unwrap();
-
-        assert!(
-            !continues,
-            "since we downloaded the whole trie, the range should not continue"
-        );
+            .await;
 
         let empty = *EMPTY_TRIE_HASH;
+
+        let mut account_hashes: Vec<H256> = Vec::new();
+        let mut account_states: Vec<AccountState> = Vec::new();
+
+        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+            .expect("Failed to read account_state_snapshots dir")
+        {
+            let entry = entry.expect("Failed to read dir entry");
+
+            let snapshot_path = entry.path();
+
+            let snapshot_contents = std::fs::read(&snapshot_path)
+                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+
+            let account_states_snapshot: Vec<(H256, AccountState)> =
+                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                });
+
+            let (current_account_hashes, current_account_states): (Vec<H256>, Vec<AccountState>) =
+                account_states_snapshot.iter().cloned().unzip();
+
+            account_hashes.extend(current_account_hashes);
+            account_states.extend(current_account_states);
+        }
 
         let account_storage_roots: Vec<(H256, H256)> = account_hashes
             .iter()
@@ -767,40 +765,56 @@ impl Syncer {
             })
             .collect();
 
-        let (storages_key_value_pairs, should_continue) = self
-            .peers
+        self.peers
             .request_storage_ranges(state_root, account_storage_roots.clone())
-            .await
-            .unwrap();
-
-        assert!(
-            !should_continue,
-            "since we downloaded the whole trie, the storage ranges should not continue"
-        );
+            .await;
 
         info!("Starting to compute the state root...");
 
         let account_store_start = Instant::now();
-        let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-        let (computed_state_root, bytecode_hashes) = tokio::task::spawn_blocking(move || {
-            let mut bytecode_hashes = vec![];
-            let mut trie = trie;
+        let mut computed_state_root = *EMPTY_TRIE_HASH;
+        let mut bytecode_hashes = Vec::new();
+        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+            .expect("Failed to read account_state_snapshots dir")
+        {
+            let entry = entry.expect("Failed to read dir entry");
 
-            for (account_hash, account) in account_hashes.into_iter().zip(account_states) {
-                if account.code_hash != *EMPTY_KECCACK_HASH {
-                    bytecode_hashes.push(account.code_hash);
-                }
-                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                    .unwrap();
-            }
-            let computed_state_root = trie.hash().unwrap();
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
-            (computed_state_root, bytecode_hashes)
-        })
-        .await
-        .unwrap();
+            let snapshot_path = entry.path();
+
+            let snapshot_contents = std::fs::read(&snapshot_path)
+                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+
+            let account_state_snapshot: Vec<(H256, AccountState)> =
+                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                });
+
+            let trie = store.open_state_trie(computed_state_root).unwrap();
+
+            let (current_state_root, current_bytecode_hashes) =
+                tokio::task::spawn_blocking(move || {
+                    let mut bytecode_hashes = vec![];
+                    let mut trie = trie;
+
+                    for (account_hash, account) in account_state_snapshot {
+                        if account.code_hash != *EMPTY_KECCACK_HASH {
+                            bytecode_hashes.push(account.code_hash);
+                        }
+                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                            .unwrap();
+                    }
+                    let current_state_root = trie.hash().unwrap();
+                    bytecode_hashes.sort();
+                    bytecode_hashes.dedup();
+                    (current_state_root, bytecode_hashes)
+                })
+                .await
+                .expect("");
+
+            computed_state_root = current_state_root;
+            bytecode_hashes.extend(&current_bytecode_hashes);
+        }
 
         *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
 
@@ -820,52 +834,89 @@ impl Syncer {
         *METRICS.storage_tries_state_roots_to_compute.lock().await =
             account_storage_roots.len() as u64;
 
-        let store_clone = store.clone();
+        let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-            let store = store_clone;
+        for entry in
+            std::fs::read_dir("/home/admin/.local/share/ethrex/account_storages_snapshots/")
+                .expect("Failed to read account_storages_snapshots dir")
+        {
+            let entry = entry.expect("Failed to read dir entry");
 
-            let (sender, receiver) = std::sync::mpsc::channel();
+            let snapshot_path = entry.path();
 
-            account_storage_roots
-                .into_par_iter()
-                .zip(storages_key_value_pairs)
-                .for_each_with(sender, |sender, ((account_hash, storage_root), key_value_pairs)| {
-                    let mut storage_trie = store
-                        .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                        .unwrap();
+            let snapshot_contents = std::fs::read(&snapshot_path)
+                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-                    for (hashed_key, value) in key_value_pairs {
-                        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
-                            error!(
-                                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-                            );
-                            continue;
+            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> = RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+            });
+
+            let maybe_big_account_storage_state_roots_clone =
+                maybe_big_account_storage_state_roots.clone();
+            let store_clone = store.clone();
+            let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+                let store: Store = store_clone;
+
+                let (sender, receiver) = std::sync::mpsc::channel();
+
+                // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
+                // We need to fix this issue in request_storage_ranges and remove this filter.
+                account_storages_snapshot
+                    .into_par_iter()
+                    .filter(|(_account_hash, storage)| !storage.is_empty())
+                    .for_each_with(sender, |sender, (account_hash, key_value_pairs)| {
+                        let account_storage_root = match maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").entry(account_hash) {
+                            Entry::Occupied(occupied_entry) => *occupied_entry.get(),
+                            Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
+                        };
+    
+                        let mut storage_trie = store
+                            .open_storage_trie(account_hash, account_storage_root)
+                            .unwrap_or_else(|_| panic!("Failed to open trie storage for account hash {account_hash}"));
+    
+                        for (hashed_key, value) in key_value_pairs {
+                            if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
+                                error!(
+                                    "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                                );
+                                continue;
+                            }
                         }
-                    }
+    
+                        let (computed_state_root, changes) =
+                            storage_trie.collect_changes_since_last_hash();
+    
+                        maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
+    
+                        METRICS.storage_tries_state_roots_computed.inc();
+    
+                        sender.send((account_hash, changes)).expect("Failed to send changes");
+                    });
 
-                    let (computed_state_root, changes) =
-                        storage_trie.collect_changes_since_last_hash();
+                receiver
+                    .iter()
+                    .collect::<Vec<_>>()
+            }).await.expect("");
 
-                    METRICS.storage_tries_state_roots_computed.inc();
+            store
+                .write_storage_trie_nodes_batch(storage_trie_node_changes)
+                .await?;
+        }
 
-                    if computed_state_root != storage_root {
-                        error!(
-                            "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                        );
-                    }
+        for (account_hash, expected_storage_root) in &account_storage_roots {
+            let mut binding = maybe_big_account_storage_state_roots
+                .lock()
+                .expect("Failed to acquire lock");
 
-                    sender.send((account_hash, changes)).unwrap();
-                });
+            let computed_storage_root = binding.entry(*account_hash).or_default();
 
-            receiver
-                .iter()
-                .collect::<Vec<_>>()
-        }).await.expect("");
-
-        store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
-            .await?;
+            if *computed_storage_root != *expected_storage_root {
+                error!(
+                    "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
+                );
+            }
+        }
 
         METRICS
             .storage_tries_state_roots_end_time
