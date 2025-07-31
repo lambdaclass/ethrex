@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753997455728,
+  "lastUpdate": 1754001349616,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15478,6 +15478,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007583704545454545,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "df57b3f3e1669d33370ca8c7689fcf83078f678f",
+          "message": "feat(l2): always use monitor (#3759)\n\n**Motivation**\nOnce all monitor issues are resolved, it should be used by default\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nChange the `--monitor` flag for the `--no-monitor` one, which turns off\nthe monitor\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nIt should only be merged after all other issues are resolved\nhttps://github.com/lambdaclass/ethrex/issues/3513,\nhttps://github.com/lambdaclass/ethrex/issues/3526,\nhttps://github.com/lambdaclass/ethrex/issues/3534,\nhttps://github.com/lambdaclass/ethrex/issues/3516,\nhttps://github.com/lambdaclass/ethrex/issues/3520,\nhttps://github.com/lambdaclass/ethrex/issues/3521,\nhttps://github.com/lambdaclass/ethrex/issues/3522,\nhttps://github.com/lambdaclass/ethrex/issues/3523,\nhttps://github.com/lambdaclass/ethrex/issues/3524,\nhttps://github.com/lambdaclass/ethrex/issues/3525,\nhttps://github.com/lambdaclass/ethrex/issues/3527,\nhttps://github.com/lambdaclass/ethrex/issues/3528,\nhttps://github.com/lambdaclass/ethrex/issues/3529,\nhttps://github.com/lambdaclass/ethrex/issues/3530,\nhttps://github.com/lambdaclass/ethrex/issues/3531,\nhttps://github.com/lambdaclass/ethrex/issues/3532,\nhttps://github.com/lambdaclass/ethrex/issues/3695,\nhttps://github.com/lambdaclass/ethrex/pull/3757,\nhttps://github.com/lambdaclass/ethrex/pull/3736",
+          "timestamp": "2025-07-31T14:19:16Z",
+          "tree_id": "ffac00547d4e94650bcde9ecd21f80c8e2ef06cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df57b3f3e1669d33370ca8c7689fcf83078f678f"
+        },
+        "date": 1754001335596,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013150068965517242,
             "unit": "Mgas/s"
           }
         ]
