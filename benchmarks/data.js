@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753977019179,
+  "lastUpdate": 1753979974560,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6955,6 +6955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171474097606,
             "range": "± 843656380",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15d41ac4d0da0a2fc8c061a91d90b11b03787819",
+          "message": "perf(levm): refactor the implementation of BLAKE2B that uses AVX2 (#3789)\n\n**Motivation**\n\nOur BLAKE2 precompile implementation using is slower than almost any\nother implementation.\n\n**Description**\n\nThis rewrite:\n- Avoids using the AVX2 gather instructions, which are notoriously slow.\n- Uses loop unrolling.\n\nThere was a problem in which the compiler did not inline AVX2 builtins\nand the performance went to the floor. This is the reason why there's an\nassembly file in this PR.\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Edgar <git@edgl.dev>",
+          "timestamp": "2025-07-31T15:49:58Z",
+          "tree_id": "94d1492bee9285e335197f89e56e9134b2d3997a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/15d41ac4d0da0a2fc8c061a91d90b11b03787819"
+        },
+        "date": 1753979960230,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163880587718,
+            "range": "± 284983453",
             "unit": "ns/iter"
           }
         ]
