@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753970324123,
+  "lastUpdate": 1753970461095,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6805,6 +6805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163333814793,
             "range": "± 390541625",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd6a57df800dba6645709518be653286e2c9b41c",
+          "message": "fix(l1): yield in-between blocks during batch execution (#3873)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nRecently, while running full sync on sepolia network it has become a\ncommon occurrence to suddenly lose all connected peers due to a `Broken\nPipe` error. Upon further investigation this seems to be due to block\nexecution being too intensive and leaving p2p unresponsive.\nA quick fix for this was to add yields in-between block executions when\nexecuting blocks in batches. This has solved the problem for sepolia\ntestnet (Over 1 Day without incidents).\nThis could also be improved by further integrating `spawned` into the\nfull sync process.\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n* Add yields inbetween each block execution when executing blocks in\nbatches\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-31T13:09:45Z",
+          "tree_id": "eda29b170beb98147e071897bf35bd473532c6d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cd6a57df800dba6645709518be653286e2c9b41c"
+        },
+        "date": 1753970446730,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162090272446,
+            "range": "± 454071511",
             "unit": "ns/iter"
           }
         ]
