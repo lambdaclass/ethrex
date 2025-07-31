@@ -1,9 +1,9 @@
 use crate::{
     DEFAULT_L2_DATADIR,
     cli::remove_db,
-    initializers::{init_l1, init_store},
+    initializers::{init_l1, init_store, init_tracing},
     l2::{
-        self, SequencerOptions,
+        self,
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::Options,
     },
@@ -78,10 +78,6 @@ impl L2Command {
 
             l2_options = l2::options::Options {
                 node_opts: crate::cli::Options::default_l2(),
-                sequencer_opts: SequencerOptions {
-                    monitor: true,
-                    ..Default::default()
-                },
                 ..Default::default()
             };
             l2_options
@@ -175,6 +171,7 @@ pub enum Command {
 
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
+        init_tracing(&crate::cli::Options::default());
         match self {
             Self::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
