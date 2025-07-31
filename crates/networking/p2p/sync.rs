@@ -439,8 +439,6 @@ impl Syncer {
             (pivot_header, staleness_timestamp) =
                 update_pivot(pivot_header.number, &self.peers).await;
         }
-        // TODO: Remove!!! this is to skip account and storage download and go straight to healing 💀💀💀
-        pivot_header.timestamp = 0;
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
@@ -548,8 +546,6 @@ impl Syncer {
         info!("Finished storing storage tries in: {storages_store_time:?}");
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
-            // 💀 Remove hardcoded block number
-            (pivot_header, staleness_timestamp) = update_pivot(8882646, &self.peers).await;
 
             let mut healing_done = false;
             while !healing_done {
