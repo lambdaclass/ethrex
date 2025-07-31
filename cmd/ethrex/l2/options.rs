@@ -95,7 +95,7 @@ pub struct SequencerOptions {
         env = "ETHREX_MONITOR",
         help_heading = "Sequencer options"
     )]
-    pub monitor: bool,
+    pub no_monitor: bool,
 }
 
 pub fn parse_signer(
@@ -207,8 +207,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 sp1_elf_path: opts.aligned_opts.sp1_elf_path,
             },
             monitor: MonitorConfig {
-                enabled: opts.monitor,
+                enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
+                batch_widget_height: opts.monitor_opts.batch_widget_height,
             },
         })
     }
@@ -685,4 +686,6 @@ pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
     tick_rate: u64,
+    #[arg(long)]
+    batch_widget_height: Option<u16>,
 }

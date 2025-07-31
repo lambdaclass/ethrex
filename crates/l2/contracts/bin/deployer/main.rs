@@ -311,13 +311,6 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
-    info!(?path, "Reading vk");
-    std::fs::read(path)
-        .map(|bytes| bytes.into())
-        .map_err(DeployerError::from)
-}
-
 fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
     let (required_type, vk_path) = match prover_type {
         ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
@@ -338,6 +331,9 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
                 )))
         })
     }
+
+fn read_vk(path: &str) -> Bytes {
+    std::fs::read_to_string(path).and_then(|string| string.trim().strip_prefix("0x")).and_then(hex::decode).map(Bytes::from)
 }
 
 async fn initialize_contracts(

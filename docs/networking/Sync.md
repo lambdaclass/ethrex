@@ -19,10 +19,10 @@ Also, the `storage_healer` will be spawned earlier, during state sync so that it
 
 This diagram illustrates all the processes involved in snap sync:
 
-![SnapSync](/crates/networking/docs/diagrams/SnapSync.drawio.png).
+![SnapSync](./diagrams/SnapSync.drawio.png).
 
 And this diagram shows the interaction between the different processes involved in State Sync, Trie Rebuild and Healing:
-![StateSyncAndHealing](/crates/networking/docs/diagrams/StateSyncAndHealing.drawio.png).
+![StateSyncAndHealing](./diagrams/StateSyncAndHealing.drawio.png).
 
 
 To exemplify how queue-like processes work we will explain how the `bytecode_fetcher` works:
@@ -31,4 +31,4 @@ The `bytecode_fetcher` has its own channel where it receives code hashes from an
 
 This diagram illustrates the process described above:
 
-![snap_sync](/crates/networking/docs/diagrams/bytecode_fetcher.jpg)
+![snap_sync](./diagrams/bytecode_fetcher.jpg)

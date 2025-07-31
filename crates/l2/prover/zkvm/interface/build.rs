@@ -10,6 +10,7 @@ fn main() {
 
 #[cfg(feature = "risc0")]
 fn build_risc0_program() {
+    use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
 
     let features = if cfg!(feature = "l2") {
@@ -37,12 +38,16 @@ fn build_risc0_program() {
     // this errs if the dir already exists, so we don't handle an error.
     let _ = std::fs::create_dir("./risc0/out");
 
-    std::fs::write("./risc0/out/riscv32im-risc0-vk", image_id)
-        .expect("could not write Risc0 vk to file");
+    std::fs::write(
+        "./risc0/out/riscv32im-risc0-vk",
+        format!("0x{}\n", hex::encode(image_id.as_bytes())),
+    )
+    .expect("could not write Risc0 vk to file");
 }
 
 #[cfg(feature = "sp1")]
 fn build_sp1_program() {
+    use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
     let features = if cfg!(feature = "l2") {
@@ -73,12 +78,12 @@ fn build_sp1_program() {
 
     std::fs::write(
         "./sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-        vk.vk.bytes32_raw(),
+        format!("{}\n", hex::encode(vk.vk.bytes32())),
     )
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
         "./sp1/out/riscv32im-succinct-zkvm-vk-u32",
-        vk.vk.hash_bytes(),
+        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
     )
     .expect("could not write SP1 vk-u32 to file");
 }
