@@ -408,7 +408,7 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
             storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
         );
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 
