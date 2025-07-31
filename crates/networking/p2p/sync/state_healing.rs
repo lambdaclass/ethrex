@@ -145,7 +145,7 @@ pub(crate) async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
                 info!("Spawning a task to download");
-                let _ = tokio::spawn(async move {
+                tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
                         &mut peer_channel,
@@ -157,8 +157,7 @@ pub(crate) async fn heal_state_trie(
                     let _ = tx.send((response, batch)).await.inspect_err(|err| {
                         error!("Failed to send state trie nodes response. Error: {err}")
                     });
-                })
-                .await;
+                });
                 info!("Download task succesfully spawned");
             }
         }
@@ -170,15 +169,14 @@ pub(crate) async fn heal_state_trie(
             inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
             info!("Spawning a task to save to db");
-            let _ = tokio::spawn(async move {
+            tokio::spawn(async move {
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
                         .send(return_paths)
                         .await
                         .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
                 }
-            })
-            .await;
+            });
             info!("Save to db task succesfully spawned");
         }
 
