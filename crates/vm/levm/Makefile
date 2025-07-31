@@ -13,7 +13,7 @@ lint: ## 🧹 Linter check
 EFTEST_DIR := ../../../cmd/ef_tests/state
 
 download-state-tests: ## 📥 Download EF Tests.
-	cd $(EFTEST_DIR) &&\
+	cd $(EFTEST_DIR) && \
 	make download-evm-ef-tests
 
 run-state-tests: ## 🏃‍♂️ Run EF Tests. e.g. make run-state-tests flags="--tests ZeroKnowledge"
