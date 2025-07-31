@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753989187003,
+  "lastUpdate": 1753992515231,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7045,6 +7045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163645704610,
             "range": "± 963109753",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a02c142db47b2dddde24be1d75d1e2d1b4b820fa",
+          "message": "fix(l2): update make target to init-l1-docker in tdx (#3910)\n\n**Motivation**\n\nWe have old targets in the TDX workflow. \n\n**Description**\n\n- Update target to initialize the L1 and L2 to the new ones\n- Update condition to run the TDX workflow in every change made under\n`crates/l2`",
+          "timestamp": "2025-07-31T19:18:51Z",
+          "tree_id": "79c8e79afda2c93044da34b9acf0c8facbb4005b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a02c142db47b2dddde24be1d75d1e2d1b4b820fa"
+        },
+        "date": 1753992501670,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165497660810,
+            "range": "± 410650660",
             "unit": "ns/iter"
           }
         ]
