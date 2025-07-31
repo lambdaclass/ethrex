@@ -427,9 +427,15 @@ impl Syncer {
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
-        let pivot_header = store
+        let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
+
+        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        while current_unix_time() > staleness_timestamp {
+            (pivot_header, staleness_timestamp) =
+                update_pivot(pivot_header.number, &self.peers).await;
+        }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
