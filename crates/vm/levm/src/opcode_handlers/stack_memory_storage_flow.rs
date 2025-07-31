@@ -385,7 +385,7 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
+        let call_frame = &mut self.current_call_frame;
 
         #[expect(clippy::arithmetic_side_effects)]
         let pc_delta = 1 + Self::find_address_nop_slide(call_frame.pc + 1, &call_frame.bytecode);
