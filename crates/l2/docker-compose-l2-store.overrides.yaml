@@ -4,12 +4,12 @@ services:
     volumes:
       - ./store:/store
     command: >
-      l2 init 
-      --network /genesis/l2.json
-      --http.addr 0.0.0.0 
-      --http.port 1729 
-      --authrpc.port 8552 
-      --datadir /store 
+      l2
+      --network genesis/l2.json
+      --http.addr 0.0.0.0
+      --http.port 1729
+      --authrpc.port 8552
+      --datadir /store
       --proof-coordinator.addr 0.0.0.0
       --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
       --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
