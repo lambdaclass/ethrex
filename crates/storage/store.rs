@@ -1657,8 +1657,25 @@ mod tests {
         let earliest_block_number = 0;
         let finalized_block_number = 7;
         let safe_block_number = 6;
-        // Latest block number needs a real block.
+        let latest_block_number = 8;
         let pending_block_number = 9;
+
+        let (mut block_header, block_body) = create_block_for_testing();
+        block_header.number = latest_block_number;
+        let hash = block_header.hash();
+
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store
+            .add_block_body(hash, block_body.clone())
+            .await
+            .unwrap();
+        store
+            .set_canonical_block(latest_block_number, hash)
+            .await
+            .unwrap();
 
         store
             .update_earliest_block_number(earliest_block_number)
@@ -1673,6 +1690,10 @@ mod tests {
             .await
             .unwrap();
         store
+            .update_latest_block_number(latest_block_number)
+            .await
+            .unwrap();
+        store
             .update_pending_block_number(pending_block_number)
             .await
             .unwrap();
@@ -1680,12 +1701,14 @@ mod tests {
         let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
         let stored_finalized_block_number =
             store.get_finalized_block_number().await.unwrap().unwrap();
+        let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
         let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
         let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
 
         assert_eq!(earliest_block_number, stored_earliest_block_number);
         assert_eq!(finalized_block_number, stored_finalized_block_number);
         assert_eq!(safe_block_number, stored_safe_block_number);
+        assert_eq!(latest_block_number, stored_latest_block_number);
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
