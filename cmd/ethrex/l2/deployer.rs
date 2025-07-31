@@ -8,7 +8,7 @@ use std::{
 
 use bytes::Bytes;
 use clap::Parser;
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, U256, types::Genesis};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
@@ -34,6 +34,8 @@ use clap::ArgAction;
 use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
+
+use crate::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
@@ -431,6 +433,8 @@ pub enum DeployerError {
         "Contract bytecode not found. Make sure to compile the deployer with `COMPILE_CONTRACTS` set."
     )]
     BytecodeNotFound,
+    #[error("Failed to parse genesis")]
+    Genesis,
 }
 
 /// Bytecode of the OnChainProposer contract.
@@ -489,6 +493,7 @@ pub struct ContractAddresses {
 
 pub async fn ethrex_l2_l1_deployer(
     opts: DeployerOptions,
+    dev: bool,
 ) -> Result<ContractAddresses, DeployerError> {
     info!("Starting deployer binary");
     let signer: Signer = LocalSigner::new(opts.private_key).into();
@@ -505,10 +510,10 @@ pub async fn ethrex_l2_l1_deployer(
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
-    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
+    initialize_contracts(contract_addresses, &eth_client, &opts, &signer, dev).await?;
 
     if opts.deposit_rich {
-        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts, dev)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
@@ -714,16 +719,21 @@ async fn initialize_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
     initializer: &Signer,
+    dev: bool,
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
-    let genesis = read_genesis_file(
-        opts.genesis_l2_path
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-    );
+    let genesis: Genesis = if dev {
+        serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
+    } else {
+        read_genesis_file(
+            opts.genesis_l2_path
+                .to_str()
+                .ok_or(DeployerError::FailedToGetStringFromPath)?,
+        )
+    };
 
     let sp1_vk = read_vk(&opts.sp1_vk_path);
     let risc0_vk = read_vk(&opts.risc0_vk_path);
@@ -911,17 +921,23 @@ async fn make_deposits(
     bridge: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    dev: bool,
 ) -> Result<(), DeployerError> {
     trace!("Making deposits");
-    let genesis = read_genesis_file(
-        opts.genesis_l1_path
-            .clone()
-            .ok_or(DeployerError::ConfigValueNotSet(
-                "--genesis-l1-path".to_string(),
-            ))?
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-    );
+
+    let genesis: Genesis = if dev {
+        serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
+    } else {
+        read_genesis_file(
+            opts.genesis_l1_path
+                .clone()
+                .ok_or(DeployerError::ConfigValueNotSet(
+                    "--genesis-l1-path".to_string(),
+                ))?
+                .to_str()
+                .ok_or(DeployerError::FailedToGetStringFromPath)?,
+        )
+    };
     let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
         DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
     )?)

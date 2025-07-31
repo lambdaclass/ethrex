@@ -74,7 +74,7 @@ impl L2Command {
             init_l1(crate::cli::Options::default_l1()).await?;
             println!("Deploying contracts...");
             let contract_addresses =
-                l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default())
+                l2::deployer::ethrex_l2_l1_deployer(l2::deployer::DeployerOptions::default(), true)
                     .await?;
 
             l2_options = l2::options::Options {
@@ -468,7 +468,7 @@ impl Command {
                 }
             }
             Command::Deploy { options } => {
-                ethrex_l2_l1_deployer(options).await?;
+                ethrex_l2_l1_deployer(options, false).await?;
             }
         }
         Ok(())
