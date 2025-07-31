@@ -44,7 +44,7 @@ const MAX_CHANNEL_MESSAGES: usize = 500;
 /// Maximum amount of messages to read from a channel at once
 const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
-const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
@@ -92,10 +92,12 @@ pub(crate) async fn heal_state_trie(
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     loop {
-        // if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-        //     last_update = Instant::now();
-        //     info!("State Healing in Progress, pending paths: {}", paths.len());
-        // }
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_update = Instant::now();
+            info!(
+                "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}",
+            );
+        }
 
         // Attempt to receive a response from one of the peers
         // TODO: this match response should score the appropiate peers
@@ -140,11 +142,9 @@ pub(crate) async fn heal_state_trie(
 
         if !is_stale {
             let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            info!("Created the batch of len {}", batch.len());
             if !batch.is_empty() {
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
-                info!("Spawning a task to download");
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
@@ -158,7 +158,6 @@ pub(crate) async fn heal_state_trie(
                         error!("Failed to send state trie nodes response. Error: {err}")
                     });
                 });
-                info!("Download task succesfully spawned");
             }
         }
 
@@ -168,7 +167,6 @@ pub(crate) async fn heal_state_trie(
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
             inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
-            info!("Spawning a task to save to db");
             tokio::spawn(async move {
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
@@ -177,13 +175,9 @@ pub(crate) async fn heal_state_trie(
                         .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
                 }
             });
-            info!("Save to db task succesfully spawned");
         }
 
-        info!("Maximum depth reached on loop {longest_path_seen}. Inflight tasks {inflight_tasks}");
-
-        // This condition is too weak, it doesn't check that all tasks are completed 💀💀
-        // End loop if we have no more paths to fetch nor nodes to heal
+        // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Nothing more to heal found");
             break;
@@ -196,7 +190,7 @@ pub(crate) async fn heal_state_trie(
         //     paths.extend(return_paths);
         // }
 
-        // TODO: add logic to detect whether we are stale
+        // We check with a clock if we are stale
         if current_unix_time() > staleness_timestamp {
             info!("state healing is stale");
             is_stale = true;
