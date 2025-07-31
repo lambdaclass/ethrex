@@ -193,7 +193,7 @@ start-hoodi-metrics-docker: ## Start L1 docker compose, lighthouse in background
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 & echo $$! > lighthouse.pid
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make start_ethrex_hoodi > /dev/null 2>&1 & echo $$! > ethrex.pid
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start-ethrex-hoodi > /dev/null 2>&1 & echo $$! > ethrex.pid
 	sleep 10 # Wait for ethrex to start
 	@echo "Tailing logs... (Press Ctrl+C to stop all processes)"
 	@trap 'kill $$(cat lighthouse.pid ethrex.pid 2>/dev/null) 2>/dev/null; rm -f lighthouse.pid ethrex.pid; exit' INT TERM; \

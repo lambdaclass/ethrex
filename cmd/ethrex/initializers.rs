@@ -34,55 +34,53 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(
-        // Filters all spawned logs
-        // TODO: revert #3467 when error logs are no longer emitted
-        Directive::from_str("spawned_concurrency::tasks::gen_server=off")
-            .expect("this can't fail"),
-    )
-    .from_env_lossy()
-    .add_directive(Directive::from(opts.log_level));
+            // Filters all spawned logs
+            // TODO: revert #3467 when error logs are no longer emitted
+            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+                .expect("this can't fail"),
+        )
+        .from_env_lossy()
+        .add_directive(Directive::from(opts.log_level));
 
-let mut subscriber_builder = FmtSubscriber::builder()
-    .with_env_filter(log_filter);
-
-if let Some(log_filename) = &opts.log_filename {
-    // Create the log directory if it doesn't exist
-    let log_dir_path = Path::new(&opts.log_dir);
-    if let Err(e) = std::fs::create_dir_all(log_dir_path) {
-        eprintln!(
-            "Failed to create log directory '{}': {}",
-            log_dir_path.display(),
-            e
-        );
-        std::process::exit(1);
-    }
-
-    // Construct the full log file path
-    let log_file_path = log_dir_path.join(log_filename);
-
-    // Open file for writing
-    let file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(file) => file,
-        Err(e) => {
+    if let Some(log_filename) = &opts.log_filename {
+        // Create the log directory if it doesn't exist
+        let log_dir_path = Path::new(&opts.log_dir);
+        if let Err(e) = std::fs::create_dir_all(log_dir_path) {
             eprintln!(
-                "Failed to open log file '{}': {}",
-                log_file_path.display(),
+                "Failed to create log directory '{}': {}",
+                log_dir_path.display(),
                 e
             );
             std::process::exit(1);
         }
-    };
 
-    subscriber_builder = subscriber_builder
-        .with_writer(file)
-        .with_ansi(false);
+        // Construct the full log file path
+        let log_file_path = log_dir_path.join(log_filename);
 
-}
-tracing::subscriber::set_global_default(subscriber.finish()).expect("setting default subscriber failed");
+        // Open file for writing
+        let file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!(
+                    "Failed to open log file '{}': {}",
+                    log_file_path.display(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        };
+        let subscriber = FmtSubscriber::builder().with_env_filter(log_filter).with_writer(file).with_ansi(false).finish();
+        tracing::subscriber::set_global_default(subscriber)
+        .expect("setting default subscriber failed");
+    } else {
+        let subscriber = FmtSubscriber::builder().with_env_filter(log_filter).finish();
+        tracing::subscriber::set_global_default(subscriber)
+        .expect("setting default subscriber failed");
+    }
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
