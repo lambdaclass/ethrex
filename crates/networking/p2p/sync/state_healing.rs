@@ -121,7 +121,7 @@ pub(crate) async fn heal_state_trie(
         }
 
         // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
-        if let Ok(returned_paths) = returned_paths_receiver.try_recv() {
+        if let Ok(mut returned_paths) = returned_paths_receiver.try_recv() {
             inflight_tasks -= 1;
             longest_path_seen = usize::max(
                 returned_paths
@@ -131,7 +131,11 @@ pub(crate) async fn heal_state_trie(
                     .unwrap_or_default(),
                 longest_path_seen,
             );
-            paths.extend(returned_paths);
+            // We try to extend returned_paths so that the new nodes are the first to be downloaded.
+            // This is so we do depth first search, which should make the algorithm more efficient if we need
+            // to move the pivot. This is for testing.
+            returned_paths.extend(paths);
+            paths = returned_paths;
         }
 
         // TODO: add scoring
