@@ -60,7 +60,7 @@ impl fmt::Display for PostCheckResult {
             "Fork: {:?} - indexes (data: {}, gas: {}, value: {})\n",
             self.fork, self.vector.0, self.vector.1, self.vector.2
         )?;
-        if let Some(root_mismatch) = self.root_dif {
+        if let Some(root_mismatch) = self.root_diff {
             let (expected_root, actual_root) = root_mismatch;
             writeln!(
                 f,
