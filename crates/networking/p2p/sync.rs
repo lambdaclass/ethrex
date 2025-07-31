@@ -534,13 +534,17 @@ impl Syncer {
                             .unwrap();
                     }
                     let current_state_root = trie.hash().unwrap();
+                    // TODO: readd this, potentialy in another place
+                    // bytecode_hashes.sort();
+                    // bytecode_hashes.dedup();
                     (current_state_root, bytecode_hashes)
                 })
                 .await
-                .expect("");
+                .expect("This shouldn't have an error");
 
+            info!("We have finished computing the current state root {current_state_root}");
             computed_state_root = current_state_root;
-            bytecode_hashes.extend(&current_bytecode_hashes);
+            //bytecode_hashes.extend(&current_bytecode_hashes);
         }
 
         *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
