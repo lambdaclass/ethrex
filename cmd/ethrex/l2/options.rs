@@ -95,7 +95,7 @@ pub struct SequencerOptions {
         env = "ETHREX_MONITOR",
         help_heading = "Sequencer options"
     )]
-    pub monitor: bool,
+    pub no_monitor: bool,
 }
 
 pub fn parse_signer(
@@ -207,7 +207,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
-                enabled: opts.monitor,
+                enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
             },
