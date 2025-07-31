@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -105,30 +107,6 @@ impl WrappedTransaction {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum BlockByNumber {
-    Number(u64),
-    Latest,
-    Earliest,
-    Pending,
-}
-
-impl From<BlockByNumber> for Value {
-    fn from(value: BlockByNumber) -> Self {
-        match value {
-            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
-            BlockByNumber::Latest => json!("latest"),
-            BlockByNumber::Earliest => json!("earliest"),
-            BlockByNumber::Pending => json!("pending"),
-        }
-    }
-}
-
-impl From<u64> for BlockByNumber {
-    fn from(value: u64) -> Self {
-        BlockByNumber::Number(value)
-    }
-}
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
 pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
@@ -555,6 +533,25 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBlockByHashError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn peer_count(&self) -> Result<U256, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "net_peerCount".to_string(),
+            params: Some(vec![]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetPeerCountError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetPeerCountError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }

@@ -9,19 +9,16 @@ use bytes::Bytes;
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
-        &mut self,
         precompile_result: Result<Bytes, VMError>,
+        gas_limit: u64,
+        gas_remaining: u64,
     ) -> Result<ContextResult, VMError> {
         match precompile_result {
             Ok(output) => Ok(ContextResult {
                 result: TxResult::Success,
-                gas_used: {
-                    let callframe = self.current_call_frame()?;
-                    callframe
-                        .gas_limit
-                        .checked_sub(callframe.gas_remaining)
-                        .ok_or(InternalError::Underflow)?
-                },
+                gas_used: gas_limit
+                    .checked_sub(gas_remaining)
+                    .ok_or(InternalError::Underflow)?,
                 output,
             }),
             Err(error) => {
@@ -31,7 +28,7 @@ impl<'a> VM<'a> {
 
                 Ok(ContextResult {
                     result: TxResult::Revert(error),
-                    gas_used: self.current_call_frame()?.gas_limit,
+                    gas_used: gas_limit,
                     output: Bytes::new(),
                 })
             }
@@ -50,7 +47,7 @@ impl<'a> VM<'a> {
                 }
 
                 // Consume all gas because error was exceptional.
-                let callframe = self.current_call_frame_mut()?;
+                let callframe = &mut self.current_call_frame;
                 callframe.gas_remaining = 0;
 
                 return Ok(ContextResult {
@@ -64,21 +61,21 @@ impl<'a> VM<'a> {
             }
 
             // Set bytecode to the newly created contract.
-            let contract_address = self.current_call_frame()?.to;
-            let code = self.current_call_frame()?.output.clone();
+            let contract_address = self.current_call_frame.to;
+            let code = self.current_call_frame.output.clone();
             self.update_account_bytecode(contract_address, code)?;
         }
 
         Ok(ContextResult {
             result: TxResult::Success,
             gas_used: {
-                let callframe = self.current_call_frame()?;
+                let callframe = &mut self.current_call_frame;
                 callframe
                     .gas_limit
                     .checked_sub(callframe.gas_remaining)
                     .ok_or(InternalError::Underflow)?
             },
-            output: std::mem::take(&mut self.current_call_frame_mut()?.output),
+            output: std::mem::take(&mut self.current_call_frame.output),
         })
     }
 
@@ -88,7 +85,7 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
 
         // Unless error is caused by Revert Opcode, consume all gas left.
         if !error.is_revert_opcode() {
@@ -107,7 +104,7 @@ impl<'a> VM<'a> {
 
     /// Handles external create transaction.
     pub fn handle_create_transaction(&mut self) -> Result<Option<ContextResult>, VMError> {
-        let new_contract_address = self.current_call_frame()?.to;
+        let new_contract_address = self.current_call_frame.to;
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.has_code_or_nonce() {
@@ -118,7 +115,7 @@ impl<'a> VM<'a> {
             }));
         }
 
-        self.increase_account_balance(new_contract_address, self.current_call_frame()?.msg_value)?;
+        self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
 
         self.increment_account_nonce(new_contract_address)?;
 
@@ -127,7 +124,7 @@ impl<'a> VM<'a> {
 
     /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
     fn validate_contract_creation(&mut self) -> Result<(), VMError> {
-        let callframe = self.current_call_frame_mut()?;
+        let callframe = &mut self.current_call_frame;
         let code = &callframe.output;
 
         let code_length: u64 = code
