@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753983868996,
+  "lastUpdate": 1753985465357,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6985,6 +6985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163880587718,
             "range": "± 284983453",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "52fb1b737fe4e0fa57246a6136a220b1038f96ff",
+          "message": "feat(l2): move ethrex l2 init command to ethrex l2 (#3805)\n\n**Motivation**\nWe want to init an l2 like this `ethrex l2` instead of `ethrex l2 init`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nChange the l2 command to start with `ethrex l2` instead of `ethrex l2\ninit`\nThe rest of the commands that were ran like `ethrex l2 <command>` are\nnow run as `ethrex l2-tools <command>`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-07-31T17:20:48Z",
+          "tree_id": "cafc0c247dadf1db48c5b342cfe4b43426e3097a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/52fb1b737fe4e0fa57246a6136a220b1038f96ff"
+        },
+        "date": 1753985452281,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162640509797,
+            "range": "± 676898533",
             "unit": "ns/iter"
           }
         ]
