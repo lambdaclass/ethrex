@@ -101,8 +101,7 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--evm $(EVM) \
 
 flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
-	@export NETWORK=$*;\
-	make flamegraph-inner
+	$(MAKE) flamegraph-inner NETWORK=$*
 
 backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up. If NETWORK environment variable is not provided, mainnet will be used as default.
 	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
@@ -134,8 +133,7 @@ else
 endif
 
 start-%-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for either mainnet, sepolia, holesky or hoodi network. For example, to run on hoodi, use `start-hoodi-metrics-docker`
-	@export NETWORK=$*;\
-	make start-metrics-docker
+	$(MAKE) start-metrics-docker NETWORK=$*
 
 start-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for the network given by NETWORK.
 	@echo "Starting L1 docker compose with metrics..."
