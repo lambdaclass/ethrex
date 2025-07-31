@@ -77,7 +77,7 @@ jobs:
         run: |
           cd crates/l2
           touch .env
-          make init-local-l1;
+          make init-l1-docker;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
           ETHREX_TDX_DEV_MODE=true \
