@@ -15,6 +15,7 @@ use crate::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
     tracing::LevmCallTracer,
+    utils::JumpTargetFilter,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -69,6 +70,9 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    pub jump_target_filters: BTreeMap<H160, JumpTargetFilter>,
 }
 
 impl<'a> VM<'a> {
@@ -115,6 +119,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
+            jump_target_filters: BTreeMap::default(),
         };
 
         let call_type = if is_create {
@@ -279,6 +284,12 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
+    }
+
+    pub(crate) fn get_current_jump_dest_filter(&mut self) -> &mut JumpTargetFilter {
+        self.jump_target_filters
+            .entry(self.current_call_frame.code_address)
+            .or_insert_with(|| JumpTargetFilter::new(self.current_call_frame.bytecode.clone()))
     }
 }
 

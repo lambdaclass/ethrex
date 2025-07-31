@@ -2,7 +2,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{JumpTargetFilter, restore_cache_state},
+    utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
@@ -228,9 +228,6 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
-    /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -313,7 +310,6 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -352,7 +348,6 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
         Ok(())
     }

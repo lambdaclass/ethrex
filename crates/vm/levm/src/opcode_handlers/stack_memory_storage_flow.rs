@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
@@ -322,7 +321,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
+        self.jump(jump_address)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -331,13 +330,19 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: usize) -> bool {
+    fn target_address_is_valid(&mut self, jump_address: usize) -> bool {
         #[expect(clippy::as_conversions)]
-        call_frame.bytecode.get(jump_address).is_some_and(|value| {
-            // It's a constant, therefore the conversion cannot fail.
-            *value == Opcode::JUMPDEST as u8
-                && !call_frame.jump_target_filter.is_blacklisted(jump_address)
-        })
+        self.current_call_frame
+            .bytecode
+            .get(jump_address)
+            .copied()
+            .is_some_and(|value| {
+                // It's a constant, therefore the conversion cannot fail.
+                value == Opcode::JUMPDEST as u8
+                    && !self
+                        .get_current_jump_dest_filter()
+                        .is_blacklisted(jump_address)
+            })
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -345,13 +350,13 @@ impl<'a> VM<'a> {
     /// This function will change the PC for the specified call frame
     /// to be equal to the specified address. If the address is not a
     /// valid JUMPDEST, it will return an error
-    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
+    pub fn jump(&mut self, jump_address: U256) -> Result<(), VMError> {
         let jump_address_usize = jump_address
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if Self::target_address_is_valid(call_frame, jump_address_usize) {
-            call_frame.pc = jump_address_usize;
+        if self.target_address_is_valid(jump_address_usize) {
+            self.current_call_frame.pc = jump_address_usize;
             Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
@@ -367,7 +372,7 @@ impl<'a> VM<'a> {
 
         let pc_increment = if !condition.is_zero() {
             // Move the PC but don't increment it afterwards
-            Self::jump(current_call_frame, jump_address)?;
+            self.jump(jump_address)?;
             0
         } else {
             1
