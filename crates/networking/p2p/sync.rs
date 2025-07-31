@@ -732,9 +732,8 @@ impl Syncer {
 
         let empty = *EMPTY_TRIE_HASH;
 
-        let mut account_hashes: Vec<H256> = Vec::new();
-        let mut account_states: Vec<AccountState> = Vec::new();
-
+        let mut chunk_index = 0;
+        let mut downloaded_account_storages = 0;
         for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
             .expect("Failed to read account_state_snapshots dir")
         {
@@ -750,24 +749,24 @@ impl Syncer {
                     panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
                 });
 
-            let (current_account_hashes, current_account_states): (Vec<H256>, Vec<AccountState>) =
+            let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                 account_states_snapshot.iter().cloned().unzip();
+            
+            let account_storage_roots: Vec<(H256, H256)> = account_hashes
+                .iter()
+                .zip(account_states.iter())
+                .filter_map(|(hash, state)| {
+                    (state.storage_root != empty).then_some((*hash, state.storage_root))
+                })
+                .collect();
 
-            account_hashes.extend(current_account_hashes);
-            account_states.extend(current_account_states);
+            downloaded_account_storages += account_storage_roots.len();
+    
+            chunk_index = self.peers
+                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+                .await;
         }
 
-        let account_storage_roots: Vec<(H256, H256)> = account_hashes
-            .iter()
-            .zip(account_states.iter())
-            .filter_map(|(hash, state)| {
-                (state.storage_root != empty).then_some((*hash, state.storage_root))
-            })
-            .collect();
-
-        self.peers
-            .request_storage_ranges(state_root, account_storage_roots.clone())
-            .await;
 
         info!("Starting to compute the state root...");
 
@@ -775,6 +774,7 @@ impl Syncer {
 
         let mut computed_state_root = *EMPTY_TRIE_HASH;
         let mut bytecode_hashes = Vec::new();
+
         for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
             .expect("Failed to read account_state_snapshots dir")
         {
@@ -832,7 +832,7 @@ impl Syncer {
             .replace(SystemTime::now());
 
         *METRICS.storage_tries_state_roots_to_compute.lock().await =
-            account_storage_roots.len() as u64;
+            downloaded_account_storages as u64;
 
         let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -904,19 +904,19 @@ impl Syncer {
                 .await?;
         }
 
-        for (account_hash, expected_storage_root) in &account_storage_roots {
-            let mut binding = maybe_big_account_storage_state_roots
-                .lock()
-                .expect("Failed to acquire lock");
+        // for (account_hash, expected_storage_root) in &account_storage_roots {
+        //     let mut binding = maybe_big_account_storage_state_roots
+        //         .lock()
+        //         .expect("Failed to acquire lock");
 
-            let computed_storage_root = binding.entry(*account_hash).or_default();
+        //     let computed_storage_root = binding.entry(*account_hash).or_default();
 
-            if *computed_storage_root != *expected_storage_root {
-                error!(
-                    "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
-                );
-            }
-        }
+        //     if *computed_storage_root != *expected_storage_root {
+        //         error!(
+        //             "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
+        //         );
+        //     }
+        // }
 
         METRICS
             .storage_tries_state_roots_end_time

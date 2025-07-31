@@ -767,7 +767,8 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                tokio::task::spawn(async move {
+                    if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
                     .expect("Failed")
                 {
                     std::fs::create_dir_all(
@@ -775,8 +776,6 @@ impl PeerHandler {
                     )
                     .expect("Failed to create accounts_state_snapshot dir");
                 }
-
-                tokio::task::spawn(async move {
                     std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
                 })
                 .await
@@ -1326,7 +1325,8 @@ impl PeerHandler {
         &self,
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
-    ) {
+        mut chunk_index: u64,
+    ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
@@ -1395,8 +1395,6 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
-        let mut chunk_file = 0;
-
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > 1024 * 1024 * 1024 * 8
@@ -1424,12 +1422,12 @@ impl PeerHandler {
                 }
 
                 tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_file}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_file}"));
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
                 })
                 .await
                 .expect("");
 
-                chunk_file += 1;
+                chunk_index += 1;
             }
 
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -1828,7 +1826,7 @@ impl PeerHandler {
             }
 
             tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_file}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_file}"));
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
                 })
                 .await
                 .expect("");
@@ -1847,6 +1845,8 @@ impl PeerHandler {
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");
+
+        chunk_index
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
