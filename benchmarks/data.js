@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753971392470,
+  "lastUpdate": 1753971463897,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6835,6 +6835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162090272446,
             "range": "± 454071511",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dcf04b3ca9c18a11d62b68073ebe5f05ccaac8f5",
+          "message": "feat(l1): add specific error message when import is used with the wrong network (#3893)\n\n**Motivation**\nWhen using `import` subcommand with a chain.rlp file that doesn't match\nthe network, we issue the regular `Parent Block Not Found` error. We are\nable to distinguish this specific case as it will mean that the parent\nblock of block number 1 (aka the genesis block) is not found. This PR\ntakes advantage of this to issue a specific, more informative warning\nmessage for this specific case\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add a separate warning message when the imported chain file is not\ncompatible with the genesis\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3813",
+          "timestamp": "2025-07-31T13:28:37Z",
+          "tree_id": "6f9eacf993b3d4486ebb70ed0a0a1bc78d1b002a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dcf04b3ca9c18a11d62b68073ebe5f05ccaac8f5"
+        },
+        "date": 1753971450104,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163277192145,
+            "range": "± 310139169",
             "unit": "ns/iter"
           }
         ]
