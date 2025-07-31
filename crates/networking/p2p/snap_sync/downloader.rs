@@ -17,6 +17,8 @@ use crate::{
     snap_sync::coordinator::{self, Coordinator},
 };
 
+const BLOCK_HEADERS_REQUEST_CHUNK_SIZE: u64 = 1024; // Default chunk size for block headers requests
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DownloaderError {
     #[error("Failed to send message to peer {0}: {1}")]
@@ -137,45 +139,59 @@ async fn handle_headers_download(
 
     let mut receiver = peer_channels.receiver.lock().await;
 
-    let request_id = rand::random();
+    let mut cummulative_block_headers: Vec<BlockHeader> = Vec::new();
+    let mut current_start_block = assigned_start_block;
+    let amount_expected = assigned_chunk_limit;
 
-    // FIXME! modify the cast and wait for a `call` version
-    peer_channels
-        .connection
-        .cast(CastMessage::BackendMessage(rlpx::Message::GetBlockHeaders(
-            GetBlockHeaders {
-                id: request_id,
-                startblock: HashOrNumber::Number(assigned_start_block),
-                limit: assigned_chunk_limit,
-                skip: 0,
-                reverse: false,
-            },
-        )))
-        .await
-        .map_err(|err| DownloaderError::FailedToSendMessageToPeer(peer_id, err.to_string()))?;
+    // Our first request is eager, we assume the peer can return all requested headers
+    // in one go, so we set the chunk size to the assigned chunk limit.
+    let mut chunk_size = BLOCK_HEADERS_REQUEST_CHUNK_SIZE;
 
-    let block_headers = tokio::time::timeout(Duration::from_secs(5), async move {
-        loop {
-            match receiver.recv().await {
-                Some(rlpx::Message::BlockHeaders(BlockHeaders {
-                    id: response_id,
-                    block_headers,
-                })) if response_id == request_id => return Some(block_headers),
-                // Ignore replies that don't match the expected id (such as late responses)
-                Some(_) => continue,
-                None => return None, // EOF
-            };
-        }
-    })
-    .await
-    .map_err(|_elapsed| DownloaderError::BlockHeadersRequestTimedOut(peer_id))?
-    .ok_or(DownloaderError::NoBlockHeadersReceived(peer_id))?;
+    while cummulative_block_headers.len() < amount_expected as usize {
+        let request_id = rand::random();
 
-    if !are_block_headers_chained(&block_headers) {
+        // FIXME! modify the cast and wait for a `call` version
+        peer_channels
+            .connection
+            .cast(CastMessage::BackendMessage(rlpx::Message::GetBlockHeaders(
+                GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(current_start_block),
+                    limit: chunk_size,
+                    skip: 0,
+                    reverse: false,
+                },
+            )))
+            .await
+            .map_err(|err| DownloaderError::FailedToSendMessageToPeer(peer_id, err.to_string()))?;
+
+        let block_headers = match receiver.recv().await {
+            Some(rlpx::Message::BlockHeaders(BlockHeaders {
+                id: response_id,
+                block_headers,
+            })) if response_id == request_id => block_headers,
+            // Ignore replies that don't match the expected id (such as late responses)
+            Some(_) => {
+                debug!("Received unexpected BlockHeaders response from peer {peer_id}, ignoring");
+                continue;
+            }
+            None => return Err(DownloaderError::NoBlockHeadersReceived(peer_id)), // EOF
+        };
+
+        let retrieved_amount = block_headers.len() as u64;
+        cummulative_block_headers.extend(block_headers);
+        current_start_block += chunk_size as u64;
+
+        // If we received less headers than the requested chunk size, we assume
+        // the peer is limited in the return size, so we adjust the chunk size
+        chunk_size = retrieved_amount;
+    }
+
+    if !are_block_headers_chained(&cummulative_block_headers) {
         return Err(DownloaderError::BlockHeadersNotChained(peer_id));
     }
 
-    Ok(block_headers)
+    Ok(cummulative_block_headers)
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header

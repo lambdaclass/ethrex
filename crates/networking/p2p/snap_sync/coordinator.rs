@@ -1,5 +1,4 @@
 use std::{
-    cmp::min,
     collections::{BTreeMap, VecDeque},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -10,7 +9,7 @@ use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after, send_interval},
 };
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
@@ -19,7 +18,7 @@ use crate::{
     kademlia::Kademlia,
     metrics::METRICS,
     rlpx::{
-        self, Message,
+        self,
         eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         p2p::SUPPORTED_ETH_CAPABILITIES,
     },
@@ -42,16 +41,20 @@ pub enum InternalError {
     UnexpectedDownloadRequest(H256),
 }
 
+#[derive(Clone, Debug)]
+pub enum BlockHeaderState {
+    Pending,
+    Requested(SystemTime), // Holds time when the request was made
+    Downloaded,
+}
+
 #[derive(Debug, Clone)]
 pub enum CoordinatorState {
     Syncing {
         sync_head_number: Arc<Mutex<u64>>,
         start_block_number: u64,
         downloaders: BTreeMap<H256, bool>,
-
-        pending_header_downloads: VecDeque<(u64, u64)>,
-        downloaded_headers: Vec<BlockHeader>,
-
+        downloaded_headers: Vec<BlockHeaderState>,
         kademlia: Kademlia,
     },
     Asleep(Kademlia),
@@ -68,8 +71,7 @@ impl CoordinatorState {
                 sync_head_number,
                 start_block_number: _,
                 downloaders: _,
-                pending_header_downloads: _,
-                downloaded_headers: _,
+                downloaded_headers,
                 kademlia,
             } => {
                 debug!("Retrieving sync head block number from peers");
@@ -148,6 +150,8 @@ impl CoordinatorState {
                     .expect("Failed to get elapsed time");
 
                 info!("Sync head block number retrieved");
+                *downloaded_headers =
+                    vec![BlockHeaderState::Pending; *sync_head_number.lock().await as usize + 1];
 
                 *METRICS.time_to_retrieve_sync_head_block.lock().await =
                     Some(sync_head_number_retrieval_elapsed);
@@ -163,7 +167,7 @@ impl CoordinatorState {
                 sync_head_number,
                 start_block_number,
                 downloaders: _,
-                pending_header_downloads,
+                // pending_header_downloads,
                 downloaded_headers: _,
                 kademlia: _,
             } => {
@@ -192,7 +196,7 @@ impl CoordinatorState {
                     ));
                 }
 
-                *pending_header_downloads = tasks_queue_not_started;
+                // *pending_header_downloads = tasks_queue_not_started;
             }
             CoordinatorState::Asleep(..) => {}
         }
@@ -215,7 +219,6 @@ impl CoordinatorState {
                 sync_head_number: _,
                 start_block_number: _,
                 downloaders,
-                pending_header_downloads,
                 downloaded_headers,
                 kademlia: _,
             } => {
@@ -227,28 +230,19 @@ impl CoordinatorState {
                 // Mark the downloader as free
                 downloaders.entry(peer_id).and_modify(|free| *free = true);
 
-                // Check if we downloaded any headers
-                if new_downloaded_headers.is_empty() {
-                    // If no headers were downloaded, we requeue the request.
-                    pending_header_downloads
-                        .push_back((assigned_start_block, assigned_chunk_limit));
-
-                    return Ok(()); // TODO: Maybe an error here?
-                }
-
-                // Check if we downloaded fewer headers than requested
-                let new_headers_count = new_downloaded_headers.len() as u64;
-                if new_headers_count < assigned_chunk_limit {
-                    // Downloader downloaded fewer headers than requested.
-                    // Queue a new request for the missing headers.
-                    pending_header_downloads.push_back((
-                        assigned_start_block + new_headers_count,
-                        assigned_chunk_limit - new_headers_count,
-                    ));
-                }
-
                 // Store the downloaded headers
-                downloaded_headers.extend_from_slice(&new_downloaded_headers);
+                for header in new_downloaded_headers {
+                    let block_number = header.number as usize;
+                    match downloaded_headers[block_number] {
+                        BlockHeaderState::Pending | BlockHeaderState::Requested(_) => {
+                            downloaded_headers[block_number as usize] =
+                                BlockHeaderState::Downloaded;
+                        }
+                        BlockHeaderState::Downloaded => {
+                            debug!("Received block header, but we already hold it")
+                        }
+                    }
+                }
 
                 Ok(())
             }
@@ -258,43 +252,41 @@ impl CoordinatorState {
         }
     }
 
-    async fn handle_refresh_downloaders(&mut self) {
-        match self {
-            CoordinatorState::Syncing {
-                sync_head_number: _,
-                start_block_number: _,
-                downloaders,
-                pending_header_downloads: _,
-                downloaded_headers: _,
-                kademlia,
-            } => {
-                debug!("Refreshing downloaders");
-
-                let peers_table = kademlia.peers.clone();
-                let peers_table = peers_table.lock().await;
-
-                // Update downloaders with current peers
-                for peer_id in peers_table.keys().cloned() {
-                    downloaders.entry(peer_id).or_insert(true);
-                }
-
-                // Remove downloaders that are no longer in the peer table
-                downloaders.retain(|peer_id, _| peers_table.contains_key(peer_id));
-            }
-            CoordinatorState::Asleep(..) => {}
-        }
-    }
-
     async fn handle_assign_download_tasks(&mut self, self_handle: GenServerHandle<Coordinator>) {
         match self {
             CoordinatorState::Syncing {
                 sync_head_number,
                 start_block_number,
                 downloaders,
-                pending_header_downloads,
                 downloaded_headers,
                 kademlia,
             } => {
+                // Get pending header downloads
+                let mut missing_headers: Vec<u64> = Vec::new();
+                for block_number in 0..downloaded_headers.len() {
+                    match downloaded_headers[block_number] {
+                        BlockHeaderState::Pending => {
+                            missing_headers.push(block_number as u64);
+                            downloaded_headers[block_number] =
+                                BlockHeaderState::Requested(SystemTime::now());
+                        }
+                        BlockHeaderState::Requested(timestamp) => {
+                            if timestamp.elapsed().unwrap_or_default() > Duration::from_secs(5) {
+                                // If the request is older than 5 seconds, consider it pending again
+                                downloaded_headers[block_number] =
+                                    BlockHeaderState::Requested(SystemTime::now());
+                            }
+                            missing_headers.push(block_number as u64);
+                        }
+                        BlockHeaderState::Downloaded => {}
+                    }
+                }
+
+                if missing_headers.is_empty() {
+                    debug!("All headers are already downloaded, nothing to sync");
+                    return;
+                }
+
                 let peer_channels = kademlia
                     .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                     .await;
@@ -317,10 +309,39 @@ impl CoordinatorState {
                     .collect::<Vec<_>>();
 
                 if free_downloaders.is_empty() {
+                    debug!("No free downloaders available, skipping task assignment");
                     return;
                 }
 
                 free_downloaders.shuffle(&mut rand::rngs::OsRng);
+
+                // Split header downloads into chunks
+                let mut pending_header_downloads = VecDeque::new();
+                let mut current_chunk = (missing_headers[0], 1);
+                let mut last_block_number = 0;
+
+                // We split workload evenly across the free downloaders
+                let chunk_size = 1024 * 8; // TODO: determine optimal chunk size
+
+                for block_number in missing_headers {
+                    // We append the block number to the current chunk
+                    // Unless we either reach the chunk size limit,
+                    // or the block number is not consecutive
+                    if current_chunk.1 < chunk_size
+                        && (last_block_number == 0 || last_block_number + 1 == block_number)
+                    {
+                        current_chunk.1 += 1;
+                    } else {
+                        pending_header_downloads.push_back(current_chunk);
+                        current_chunk = (block_number, 1);
+                    }
+                    last_block_number = block_number;
+                }
+
+                debug!(
+                    "Validated download tasks: {:?} pending",
+                    pending_header_downloads.len()
+                );
 
                 for (free_peer_id, _) in free_downloaders {
                     let Some(free_downloader_channels) =
@@ -338,8 +359,9 @@ impl CoordinatorState {
 
                     let Some((start_block, chunk_limit)) = pending_header_downloads.pop_front()
                     else {
-                        if downloaded_headers.len() as u64
-                            >= (*sync_head_number.lock().await - *start_block_number)
+                        if downloaded_headers
+                            .iter()
+                            .all(|state| matches!(state, BlockHeaderState::Downloaded))
                         {
                             info!("All headers downloaded successfully");
                             break;
@@ -353,7 +375,7 @@ impl CoordinatorState {
                         free_downloader_channels,
                         self_handle.clone(),
                         start_block,
-                        chunk_limit,
+                        chunk_limit as u64,
                     );
 
                     downloaders
@@ -371,22 +393,33 @@ impl CoordinatorState {
         match self {
             CoordinatorState::Syncing {
                 sync_head_number,
-                start_block_number,
+                start_block_number: _,
                 downloaders,
-                pending_header_downloads,
+                // pending_header_downloads,
                 downloaded_headers,
-                kademlia,
+                kademlia: _,
             } => {
+                let mut pending_header_downloads = 0;
+                let mut headers_downloaded = 0;
+                for header_state in downloaded_headers {
+                    match header_state {
+                        BlockHeaderState::Pending | BlockHeaderState::Requested(_) => {
+                            pending_header_downloads += 1
+                        }
+                        BlockHeaderState::Downloaded => headers_downloaded += 1,
+                    }
+                }
+
                 *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await;
                 *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
                 *METRICS.header_downloads_tasks_queued.lock().await =
-                    pending_header_downloads.len() as u64;
+                    pending_header_downloads as u64;
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
                 *METRICS.free_header_downloaders.lock().await =
                     downloaders.values().filter(|&&free| free).count() as u64;
-                *METRICS.downloaded_headers.lock().await = downloaded_headers.len() as u64;
+                *METRICS.downloaded_headers.lock().await = headers_downloaded as u64;
             }
-            CoordinatorState::Asleep(kademlia) => {}
+            CoordinatorState::Asleep(_kademlia) => {}
         }
     }
 }
@@ -445,6 +478,19 @@ impl GenServer for Coordinator {
         Self {}
     }
 
+    async fn init(
+        &mut self,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<Self::State, Self::Error> {
+        send_interval(
+            Duration::from_millis(500),
+            handle.clone(),
+            CastMessage::AssignDownloadTasks,
+        );
+        Ok(state)
+    }
+
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
@@ -479,7 +525,6 @@ impl GenServer for Coordinator {
                             sync_head_number: Arc::new(Mutex::new(0)),
                             start_block_number: from_block_number,
                             downloaders: initial_downloaders,
-                            pending_header_downloads: VecDeque::new(),
                             downloaded_headers: Vec::new(),
                             kademlia,
                         };
@@ -508,14 +553,6 @@ impl GenServer for Coordinator {
                     .inspect_err(|err| {
                         error!("Failed to self cast AssignTasks after preparing tasks to download headers: {err}");
                     });
-
-                // let _ = handle
-                //     .clone()
-                //     .cast(Self::CastMsg::RefreshDownloaders)
-                //     .await
-                //     .inspect_err(|err| {
-                //         error!("Failed to self cast AssignTasks after preparing tasks to download headers: {err}");
-                //     });
 
                 let _ = handle
                     .clone()
@@ -567,25 +604,8 @@ impl GenServer for Coordinator {
             Self::CastMsg::AssignDownloadTasks => {
                 state.handle_assign_download_tasks(handle.clone()).await;
 
-                // send_after(
-                //     Duration::from_millis(0),
-                //     handle.clone(),
-                //     Self::CastMsg::AssignDownloadTasks,
-                // );
-
                 CastResponse::NoReply(state)
             }
-            // Self::CastMsg::RefreshDownloaders => {
-            //     state.handle_refresh_downloaders().await;
-
-            //     send_after(
-            //         Duration::from_secs(0),
-            //         handle.clone(),
-            //         Self::CastMsg::RefreshDownloaders,
-            //     );
-
-            //     CastResponse::NoReply(state)
-            // }
             Self::CastMsg::UpdateMetrics => {
                 state.handle_update_metrics().await;
 
