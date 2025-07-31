@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753971463897,
+  "lastUpdate": 1753972797927,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14976,6 +14976,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007670873563218391,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e02a846f11d5ca1b06099a8129b6a08d014bf786",
+          "message": "fix(l1):  use p2p's `sync-test` feature in crate's `sync-test` feature (#3889)\n\n**Motivation**\n`ethrex-p2p` crate has code gated behind a `sync-test` feature, but this\nfeature is not enabled within the crate's `sync-test` feature, causing\nthis code not to be enabled when running ethrex with `sync-test`\nfeature.\nThis causes issues such as the one reported by #3594 where\n`EXECUTE_BATCH_SIZE` env var is not used.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Include p2p's `sync-test` feature in crate's `sync-test` feature\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3594",
+          "timestamp": "2025-07-31T13:08:05Z",
+          "tree_id": "ac8fea6e38c6d1f0d4acc4a431ae8df16b1bb9d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e02a846f11d5ca1b06099a8129b6a08d014bf786"
+        },
+        "date": 1753972782026,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013774324045407638,
             "unit": "Mgas/s"
           }
         ]
