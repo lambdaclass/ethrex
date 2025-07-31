@@ -2,6 +2,11 @@
 
 ## Perf
 
+
+### 2025-07-31
+
+- Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
+
 ### 2025-07-30
 
 - Add a secondary index keyed by sender+nonce to the mempool to avoid linear lookups [#3865](https://github.com/lambdaclass/ethrex/pull/3865)
