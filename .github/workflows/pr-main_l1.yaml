@@ -73,8 +73,6 @@ jobs:
           load: true
           tags: ethrex
           outputs: type=docker,dest=/tmp/ethrex_image.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
