@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753966954931,
+  "lastUpdate": 1753967605246,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6745,6 +6745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160307952590,
             "range": "± 210568483",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "26416053148bc54d441aa85e529c474c8d8ef820",
+          "message": "perf(l1): add (sender,nonce)=>tx_hash mapping (#3865)\n\nSome mempool operations need to query transactions by their sender and\nnonce. One of those cases is to know which transaction to replace when\nsender and nonce match.\nUntil now, we did that by iterating the whole mempool. This became a\nbottleneck for the mempool, given it's quadratic to the number of txs\nyou want to add.\nThis adds an auxiliary BTreeMap from the (sender, nonce) to the\ntransaction's hash.\nThis also helps for querying the current nonce of an address.\n\nTesting with a load test on ethrex-sync-3 (AMD Ryzen 5 3600 6-Core\nProcessor, 2 threads-per-core, 64GB RAM):\n- Reported time went down from 84\" to 71\";\n- Contribution of `find_tx_to_replace` to `add_transaction_to_pool` went\n  down from 80% to 1.6% according to samply;\n- Max throughput slightly improved, from 0.292Ggas/s to 0.362Ggas/s.\n\nFixes #3867\n\n---------\n\nCo-authored-by: Edgar <git@edgl.dev>",
+          "timestamp": "2025-07-31T12:23:48Z",
+          "tree_id": "24cc4208d8e7be7d98a7f1ea6dae36f54536b5f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/26416053148bc54d441aa85e529c474c8d8ef820"
+        },
+        "date": 1753967592174,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164104277576,
+            "range": "± 344545842",
             "unit": "ns/iter"
           }
         ]
