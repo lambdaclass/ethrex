@@ -1,6 +1,7 @@
-use ethrex_blockchain::error::MempoolError;
+use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
+use ethrex_storage_rollup::RollupStoreError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -49,6 +50,8 @@ pub enum RLPxError {
     RLPEncodeError(#[from] RLPEncodeError),
     #[error(transparent)]
     StoreError(#[from] StoreError),
+    #[error(transparent)]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Error in cryptographic library: {0}")]
     CryptographyError(String),
     #[error("Failed to broadcast msg: {0}")]
@@ -59,14 +62,20 @@ pub enum RLPxError {
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+    #[error("Error when adding a block to the blockchain: {0}")]
+    BlockchainError(#[from] ChainError),
     #[error("Io Error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Failed to decode message due to invalid frame: {0}")]
     InvalidMessageFrame(String),
+    #[error("Failed due to an internal error: {0}")]
+    InternalError(String),
     #[error("Incompatible Protocol")]
     IncompatibleProtocol,
     #[error("Invalid block range")]
     InvalidBlockRange,
+    #[error("An L2 functionality was used but it was not previously negotiated")]
+    L2CapabilityNotNegotiated,
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

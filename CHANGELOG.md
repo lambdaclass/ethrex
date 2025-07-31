@@ -2,11 +2,28 @@
 
 ## Perf
 
+### 2025-07-31
+
+- Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
+- Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
+
+### 2025-07-30
+
+- Add a secondary index keyed by sender+nonce to the mempool to avoid linear lookups [#3865](https://github.com/lambdaclass/ethrex/pull/3865)
+
+### 2025-07-24
+
+- Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
+
+- Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
+
 ### 2025-07-21
 
 - Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
 
 ### 2025-07-18
+
+- Migrate EcAdd and EcMul to Arkworks [#3719](https://github.com/lambdaclass/ethrex/pull/3719)
 
 - Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
 

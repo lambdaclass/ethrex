@@ -4113,6 +4113,9 @@ dependencies = [
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
  "bls12_381 0.8.0",
  "bytes",
  "colored",
@@ -4166,11 +4169,13 @@ dependencies = [
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-trie",
  "futures",
  "hex",
  "hex-literal",
  "hmac",
+ "keccak-hash",
  "lazy_static",
  "rand 0.8.5",
  "secp256k1",
@@ -10728,9 +10733,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-build"
-version = "5.0.5"
+version = "5.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5563b406d74b417ce07c0d7e0d8184b423f3bc3eacd1e98b105691a167f47c8f"
+checksum = "88d96525859507f33edf4389c16470d21f6515d33ae7a2c73d5fb0aea36f5aba"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.18.1",
@@ -11073,9 +11078,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-gnark-ffi"
-version = "5.0.5"
+version = "5.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d40fc06701180ce02d6079370d00ca74b8d86c84d85909a3684eddc8bfd8c1bf"
+checksum = "cb0f48c722ad9319b3bc02ac2e61f5a82f8b8584fcdab5fe60db0b2292972857"
 dependencies = [
  "anyhow",
  "bincode",
@@ -11099,9 +11104,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-sdk"
-version = "5.0.6"
+version = "5.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05114cab7a33f251cf8d470ed85497297dd127a4727569a1a11f759f02136357"
+checksum = "bb6f73c5efb1f55c0b6dca8a9427124eff4e36bd57108a96a7eb5a6034cf61a1"
 dependencies = [
  "alloy-primitives 1.2.1",
  "anyhow",
@@ -11194,9 +11199,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.5"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01bd46fef02d70d06e3e169d89eaddf1a3c8db6cb689a541705463f7a12260d7"
+checksum = "36bfc580e2c0cf6ebb73f7103f315309124cbb85e3484d526088d12a466bd354"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11206,9 +11211,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.5"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7105ceb2a49ea3566f29c57bdc164397d81db934ff6241e1a555df76069b657"
+checksum = "81a7fb722e293601d83f2affdedf3b65b4e26a3bd918ae43320a64190d090edb"
 dependencies = [
  "crossbeam",
  "tokio",
@@ -13824,6 +13829,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex",
  "risc0-build",
  "risc0-zkvm",
  "serde",

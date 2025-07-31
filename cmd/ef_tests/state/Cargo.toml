@@ -49,3 +49,8 @@ blst = ["ethrex-vm/blst"]
 [[test]]
 name = "all"
 harness = false
+
+[[test]]
+name = "new_runner"
+harness = false
+path = "./runner_v2/run.rs"
