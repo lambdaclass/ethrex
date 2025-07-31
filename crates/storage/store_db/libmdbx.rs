@@ -503,6 +503,18 @@ impl StoreEngine for Store {
         .await
     }
 
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
+            None => Ok(None),
+            Some(ref rlp) => RLPDecode::decode(rlp)
+                .map(Some)
+                .map_err(|_| StoreError::DecodeError),
+        }
+    }
+
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::EarliestBlockNumber)

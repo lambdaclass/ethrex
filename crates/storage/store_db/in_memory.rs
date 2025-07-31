@@ -384,6 +384,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner()?.chain_data.latest_block_number)
+    }
+
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner()?.chain_data.earliest_block_number)
     }

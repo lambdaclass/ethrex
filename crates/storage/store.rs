@@ -81,7 +81,7 @@ impl Store {
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
-        let store = match engine_type {
+        let mut store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
@@ -100,6 +100,7 @@ impl Store {
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
+
         info!("Started store engine");
         Ok(store)
     }
@@ -595,6 +596,18 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
+        let mut latest_block_number_set = false;
+        if let Some(number) = self.engine.get_latest_block_number().await? {
+            *self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)? = self
+                .engine
+                .get_block_header(number)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+            latest_block_number_set = true;
+        }
+
         match self.engine.get_block_header(genesis_block_number)? {
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
@@ -623,7 +636,13 @@ impl Store {
             .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
             .await?;
-        self.update_latest_block_number(genesis_block_number).await
+
+        if !latest_block_number_set {
+            self.update_latest_block_number(genesis_block_number)
+                .await?;
+        }
+
+        Ok(())
     }
 
     pub async fn get_transaction_by_hash(

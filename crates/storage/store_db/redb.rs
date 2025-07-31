@@ -790,6 +790,18 @@ impl StoreEngine for RedBStore {
         .await
     }
 
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
+            None => Ok(None),
+            Some(ref rlp) => RLPDecode::decode(&rlp.value())
+                .map(Some)
+                .map_err(|_| StoreError::DecodeError),
+        }
+    }
+
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read(CHAIN_DATA_TABLE, ChainDataIndex::EarliestBlockNumber)
