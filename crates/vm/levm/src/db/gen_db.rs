@@ -64,18 +64,8 @@ impl GeneralizedDatabase {
         self.load_account(address)
     }
 
-    /// Gets account from storage, storing in initial_accounts_state for efficiency when getting AccountUpdates.
-    pub fn get_account_from_database(
-        &mut self,
-        address: Address,
-    ) -> Result<Account, InternalError> {
-        let account = self.store.get_account(address)?;
-        self.initial_accounts_state.insert(address, account.clone());
-        Ok(account)
-    }
-
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
-    pub fn get_value_from_database(
+    fn get_value_from_database(
         &mut self,
         address: Address,
         key: H256,
