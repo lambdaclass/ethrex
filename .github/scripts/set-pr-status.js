@@ -22,11 +22,9 @@ module.exports = async ({ github, context }) => {
     // Find an Issue or PR item for a specific project.
     async function findItemInProject(owner, repo, itemNumber, projectId) {
         const res = await github.graphql(`
-        # Use the 'issueOrPullRequest' field for a more robust query.
         query($owner: String!, $repo: String!, $itemNumber: Int!) {
             repository(owner: $owner, name: $repo) {
                 issueOrPullRequest(number: $itemNumber) {
-                    # Use inline fragments to get projectItems regardless of the type.
                     ... on PullRequest {
                         projectItems(first: 10) {
                             nodes { id project { id } }
@@ -46,7 +44,6 @@ module.exports = async ({ github, context }) => {
             itemNumber
         });
 
-        // The logic is now simpler and safer.
         const projectItems = res.repository?.issueOrPullRequest?.projectItems?.nodes;
 
         if (!projectItems) {
