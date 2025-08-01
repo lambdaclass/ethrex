@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754064123974,
+  "lastUpdate": 1754065564784,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7285,6 +7285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166475765801,
             "range": "± 589557361",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "54416486e60d080baeaa0857bc861642783dc668",
+          "message": "perf(l1): batch new pooled tx hashes (#3912)\n\n**Motivation**\n\nReduce throughput degradation seen in localnet scenarios with more than\none ethrex\n\n**Description**\n\nUp until now we were sending individual messages for each tx we haven't\nshared with the network. We discovered [in this\nbranch](https://github.com/lambdaclass/ethrex/pull/3900) that removing\nthe send of new pooled transactions along with the broadcast of\ntransactions removed the issue.\n\nBatching the new pooled transactions in localnets with two ethrex show\nmetrics similar to previous runs for localnets with only one ethrex.\n\nApart from this a Test have been disable due to being a false positive\npreviously, here is an issue explaining it: #3914",
+          "timestamp": "2025-08-01T15:34:22Z",
+          "tree_id": "fd122bd091da3e034c4d58cbe2dbf86179483390",
+          "url": "https://github.com/lambdaclass/ethrex/commit/54416486e60d080baeaa0857bc861642783dc668"
+        },
+        "date": 1754065550370,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164628837498,
+            "range": "± 616147668",
             "unit": "ns/iter"
           }
         ]
