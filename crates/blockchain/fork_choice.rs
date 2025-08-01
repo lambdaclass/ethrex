@@ -102,12 +102,11 @@ pub async fn apply_fork_choice(
 
     store
         .forkchoice_update(
-            new_canonical_blocks,
+            Some(new_canonical_blocks),
             head.number,
             head_hash,
-            latest,
-            safe_res,
-            finalized_res,
+            safe_res.map(|h| h.number),
+            finalized_res.map(|h| h.number),
         )
         .await?;
 

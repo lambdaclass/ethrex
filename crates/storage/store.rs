@@ -546,15 +546,6 @@ impl Store {
         self.engine.add_blocks(blocks).await
     }
 
-    pub async fn mark_chain_as_canonical(
-        &self,
-        numbers_and_hashes: &[(BlockNumber, BlockHash)],
-    ) -> Result<(), StoreError> {
-        self.engine
-            .mark_chain_as_canonical(numbers_and_hashes)
-            .await
-    }
-
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Storing initial state from genesis");
 
@@ -587,11 +578,9 @@ impl Store {
         );
 
         self.add_block(genesis_block).await?;
+        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+            .await?;
         self.update_earliest_block_number(genesis_block_number)
-            .await?;
-        self.update_latest_block_number(genesis_block_number)
-            .await?;
-        self.set_canonical_block(genesis_block_number, genesis_hash)
             .await
     }
 
@@ -673,35 +662,12 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
-    pub async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .update_finalized_block_number(block_number)
-            .await
-    }
-
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_finalized_block_number().await
     }
 
-    pub async fn update_safe_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.engine.update_safe_block_number(block_number).await
-    }
-
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_safe_block_number().await
-    }
-
-    pub async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number).await
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
@@ -722,14 +688,6 @@ impl Store {
         self.engine.get_pending_block_number().await
     }
 
-    pub async fn set_canonical_block(
-        &self,
-        number: BlockNumber,
-        hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash).await
-    }
-
     pub async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
@@ -745,30 +703,23 @@ impl Store {
         self.get_canonical_block_hash(latest_block_number).await
     }
 
-    /// Marks a block number as not having any canonical blocks associated with it.
-    /// Used for reorgs.
-    /// Note: Should we also remove all others up to the head here?
-    pub async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.unset_canonical_block(number).await
-    }
-
+    /// Updates the forkchoice with the new canonical blocks and head information.
+    /// All actions are performed atomically.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
         head_number: BlockNumber,
         head_hash: BlockHash,
-        latest: BlockNumber,
-        safe_res: Option<BlockHeader>,
-        finalized_res: Option<BlockHeader>,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
         self.engine
             .forkchoice_update(
                 new_canonical_blocks,
                 head_number,
                 head_hash,
-                latest,
-                safe_res,
-                finalized_res,
+                safe,
+                finalized,
             )
             .await
     }
@@ -1416,7 +1367,10 @@ mod tests {
             .add_block_body(hash, block_body.clone())
             .await
             .unwrap();
-        store.set_canonical_block(block_number, hash).await.unwrap();
+        store
+            .forkchoice_update(None, block_number, hash, None, None)
+            .await
+            .unwrap();
 
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
@@ -1508,7 +1462,7 @@ mod tests {
             .unwrap();
 
         store
-            .set_canonical_block(block_number, block_hash)
+            .forkchoice_update(None, block_number, block_hash, None, None)
             .await
             .unwrap();
 
@@ -1533,7 +1487,7 @@ mod tests {
             .unwrap();
 
         store
-            .set_canonical_block(block_number, H256::random())
+            .forkchoice_update(None, block_number, H256::random(), None, None)
             .await
             .unwrap();
 
@@ -1563,7 +1517,7 @@ mod tests {
             .unwrap();
 
         store
-            .set_canonical_block(block_number, block_hash)
+            .forkchoice_update(None, block_number, block_hash, None, None)
             .await
             .unwrap();
 
@@ -1602,19 +1556,17 @@ mod tests {
             .await
             .unwrap();
         store
-            .update_finalized_block_number(finalized_block_number)
-            .await
-            .unwrap();
-        store
-            .update_safe_block_number(safe_block_number)
-            .await
-            .unwrap();
-        store
-            .update_latest_block_number(latest_block_number)
-            .await
-            .unwrap();
-        store
             .update_pending_block_number(pending_block_number)
+            .await
+            .unwrap();
+        store
+            .forkchoice_update(
+                None,
+                latest_block_number,
+                H256::random(),
+                Some(safe_block_number),
+                Some(finalized_block_number),
+            )
             .await
             .unwrap();
 

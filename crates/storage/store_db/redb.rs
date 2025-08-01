@@ -274,23 +274,6 @@ impl RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    // Helper method to delete from a redb table
-    fn delete<'k, 'v, 'a, K, V>(
-        &self,
-        table: TableDefinition<'a, K, V>,
-        key: impl Borrow<K::SelfType<'k>>,
-    ) -> Result<(), StoreError>
-    where
-        K: Key + 'static,
-        V: Value,
-    {
-        let write_txn = self.db.begin_write().map_err(Box::new)?;
-        write_txn.open_table(table)?.remove(key)?;
-        write_txn.commit()?;
-
-        Ok(())
-    }
-
     fn get_block_hash_by_block_number(
         &self,
         number: BlockNumber,
@@ -484,19 +467,6 @@ impl StoreEngine for RedBStore {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn mark_chain_as_canonical(
-        &self,
-        numbers_and_hashes: &[(BlockNumber, BlockHash)],
-    ) -> Result<(), StoreError> {
-        let key_values = numbers_and_hashes
-            .iter()
-            .map(|(n, h)| (*n, <H256 as Into<BlockHashRLP>>::into(*h)))
-            .collect();
-
-        self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)
-            .await
     }
 
     async fn get_block_body(
@@ -814,18 +784,6 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::FinalizedBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read(CHAIN_DATA_TABLE, ChainDataIndex::FinalizedBlockNumber)
@@ -838,15 +796,6 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::SafeBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read(CHAIN_DATA_TABLE, ChainDataIndex::SafeBlockNumber)
@@ -857,18 +806,6 @@ impl StoreEngine for RedBStore {
                 .map(Some)
                 .map_err(|_| StoreError::DecodeError),
         }
-    }
-
-    async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::LatestBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -924,40 +861,25 @@ impl StoreEngine for RedBStore {
         Ok(Trie::open(db, state_root))
     }
 
-    async fn set_canonical_block(
-        &self,
-        number: BlockNumber,
-        hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        self.write(
-            CANONICAL_BLOCK_HASHES_TABLE,
-            number,
-            <H256 as Into<BlockHashRLP>>::into(hash),
-        )
-        .await
-    }
-
-    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.delete(CANONICAL_BLOCK_HASHES_TABLE, number)
-    }
-
     async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
         head_number: BlockNumber,
         head_hash: BlockHash,
-        latest: BlockNumber,
-        safe_res: Option<BlockHeader>,
-        finalized_res: Option<BlockHeader>,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let latest = self.get_latest_block_number().await?.unwrap_or(0);
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write().map_err(Box::new)?;
             {
                 // Make all ancestors to head canonical.
                 let mut canonical_table = write_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?;
-                for (number, hash) in new_canonical_blocks {
-                    canonical_table.insert(number, <H256 as Into<BlockHashRLP>>::into(hash))?;
+                if let Some(new_canonical_blocks) = new_canonical_blocks {
+                    for (number, hash) in new_canonical_blocks {
+                        canonical_table.insert(number, <H256 as Into<BlockHashRLP>>::into(hash))?;
+                    }
                 }
 
                 // Remove anything after the head from the canonical chain.
@@ -971,22 +893,22 @@ impl StoreEngine for RedBStore {
 
                 let mut chain_data_table = write_txn.open_table(CHAIN_DATA_TABLE)?;
 
-                if let Some(finalized_header) = finalized_res {
+                if let Some(finalized) = finalized {
                     chain_data_table.insert(
                         ChainDataIndex::FinalizedBlockNumber,
-                        finalized_header.number.encode_to_vec(),
+                        finalized.encode_to_vec(),
                     )?;
                 }
 
-                if let Some(safe_header) = safe_res {
-                    chain_data_table.insert(
-                        ChainDataIndex::SafeBlockNumber,
-                        safe_header.number.encode_to_vec(),
-                    )?;
+                if let Some(safe) = safe {
+                    chain_data_table
+                        .insert(ChainDataIndex::SafeBlockNumber, safe.encode_to_vec())?;
                 }
 
-                chain_data_table
-                    .insert(ChainDataIndex::LatestBlockNumber, latest.encode_to_vec())?;
+                chain_data_table.insert(
+                    ChainDataIndex::LatestBlockNumber,
+                    head_number.encode_to_vec(),
+                )?;
             }
 
             write_txn.commit()?;
