@@ -234,15 +234,16 @@ pub async fn periodically_show_peer_stats() {
                 .await
                 .unwrap_or(SystemTime::now());
 
-            METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
-                })
+            // METRICS
+            //     .storage_tries_download_start_time
+            //     .lock()
+            //     .await
+            //     .map(|start_time| {
+            //         end_time
+            //             .duration_since(start_time)
+            //             .expect("Failed to get storage tries download time")
+            //     })
+            None
         };
 
         let total_storage_tries_to_download = METRICS.storage_tries_to_download.lock().await;
