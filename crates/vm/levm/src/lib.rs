@@ -14,5 +14,9 @@ pub mod precompiles;
 pub mod tracing;
 pub mod utils;
 pub mod vm;
+use std::sync::Mutex;
+
 pub use environment::*;
 pub mod l2_precompiles;
+
+pub const TX: Mutex<bool> = Mutex::new(false);
