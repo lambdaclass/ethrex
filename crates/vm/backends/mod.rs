@@ -21,6 +21,7 @@ use revm::REVM;
 use revm::db::EvmState;
 use std::fmt;
 use std::sync::Arc;
+use tracing::debug;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
@@ -163,6 +164,15 @@ impl Evm {
             }
             Evm::LEVM { db, vm_type } => {
                 let execution_report = LEVM::execute_tx(tx, sender, block_header, db, *vm_type)?;
+                if !execution_report.is_success() {
+                    debug!(
+                        hash = %tx.compute_hash(),
+                        %remaining_gas,
+                        block_gas_limit = %block_header.gas_limit,
+                        ?execution_report,
+                        "Transaction failed to execute"
+                    );
+                }
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 

@@ -40,6 +40,7 @@ pub fn init_tracing(opts: &Options) {
                 .expect("this can't fail"),
         )
         .from_env_lossy()
+        .add_directive(Directive::from_str("hyper_util=off").unwrap())
         .add_directive(Directive::from(opts.log_level));
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
