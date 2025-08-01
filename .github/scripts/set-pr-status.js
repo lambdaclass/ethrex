@@ -193,12 +193,13 @@ module.exports = async ({ github, context }) => {
 
     const projectNumber = 31;
     const orgLogin = "lambdaclass";
+    const repo = "ethrex";
 
     // Get project and item representing Pull Request. Exiting early if it doesn't belong to the project.
     const project = await getProject(orgLogin, projectNumber);
     const projectId = project.id;
 
-    const prItem = await findItemInProject(orgLogin, 'ethrex', pr.number, projectId);
+    const prItem = await findItemInProject(orgLogin, repo, pr.number, projectId);
     if (!prItem) {
         console.warn(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
         return;
@@ -251,7 +252,7 @@ module.exports = async ({ github, context }) => {
 
     console.log(`Synchronizing linked issues with new PR status.`);
     for (const issueNumber of issueNumbers) {
-        const issueItem = await findItemInProject(orgLogin, 'ethrex', issueNumber, projectId);
+        const issueItem = await findItemInProject(orgLogin, repo, issueNumber, projectId);
 
         if (issueItem) {
             console.log(`Setting status of issue #${issueNumber} to '${newStatus}'.`);
