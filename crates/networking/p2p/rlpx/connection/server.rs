@@ -746,14 +746,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
                     state.broadcasted_txs.insert(tx.compute_hash());
-                    match state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        Err(e) => {
-                            log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
-                            continue;
-                        }
-                        Ok(tx_hash) if tx_hash.is_zero() => continue,
-                        Ok(_) => valid_txs.push(tx),
+                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
+                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
+                        continue;
                     }
+                    valid_txs.push(tx);
                 }
                 // FIXME: we're supposed to send `Transaction` message only to a random
                 // subset and send only the hashes to everyone else.

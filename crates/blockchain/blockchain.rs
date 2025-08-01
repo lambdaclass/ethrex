@@ -611,7 +611,7 @@ impl Blockchain {
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.compute_hash();
         if self.mempool.contains_tx(hash)? {
-            return Ok(H256::zero());
+            return Ok(hash);
         }
         let sender = transaction.sender()?;
 
@@ -638,7 +638,7 @@ impl Blockchain {
         }
         let hash = transaction.compute_hash();
         if self.mempool.contains_tx(hash)? {
-            return Ok(H256::zero());
+            return Ok(hash);
         }
         let sender = transaction.sender()?;
         // Validate transaction
