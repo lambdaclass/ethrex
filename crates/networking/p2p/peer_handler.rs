@@ -1009,6 +1009,13 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
+            if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                .expect("Failed")
+            {
+                std::fs::create_dir_all("/home/admin/.local/share/ethrex/account_state_snapshots")
+                    .expect("Failed to create accounts_state_snapshot dir");
+            }
+
             let path = format!(
                 "/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"
             );

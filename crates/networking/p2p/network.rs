@@ -216,15 +216,16 @@ pub async fn periodically_show_peer_stats() {
                 .await
                 .unwrap_or(SystemTime::now());
 
-            METRICS
-                .account_tries_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get account tries download time")
-                })
+            // METRICS
+            //     .account_tries_download_start_time
+            //     .lock()
+            //     .await
+            //     .map(|start_time| {
+            //         end_time
+            //             .duration_since(start_time)
+            //             .expect("Failed to get account tries download time")
+            //     })
+            None
         };
 
         let time_taken_to_download_storage_tries = {

@@ -1,6 +1,7 @@
 use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    types::Node,
     utils::dump_storage,
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
@@ -899,10 +900,16 @@ impl Syncer {
                             }
                         }
 
-                        let (computed_state_root, changes) =
+                        let (computed_storage_root, changes) =
                             storage_trie.collect_changes_since_last_hash();
 
-                        maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
+                        let path = account_hash.0.to_vec();
+                        let noderlp = store.open_state_trie(computed_state_root).unwrap().get(&path).unwrap().unwrap();
+
+                        let account = AccountState::decode(&noderlp).unwrap();
+                        if account.storage_root != computed_storage_root {
+                            maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_storage_root);
+                        }
 
                         METRICS.storage_tries_state_roots_computed.inc();
 
