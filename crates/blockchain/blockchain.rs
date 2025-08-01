@@ -12,7 +12,6 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
@@ -22,6 +21,7 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
+use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{
@@ -606,7 +606,9 @@ impl Blockchain {
     ) -> Result<H256, MempoolError> {
         // Validate blobs bundle
 
-        blobs_bundle.validate(&transaction)?;
+        let fork = self.current_fork().await?;
+
+        blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let sender = transaction.sender()?;
@@ -833,6 +835,17 @@ impl Blockchain {
             BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
         };
         Ok(evm)
+    }
+
+    /// Get the current fork of the chain, based on the latest block's timestamp
+    pub async fn current_fork(&self) -> Result<Fork, StoreError> {
+        let chain_config = self.storage.get_chain_config()?;
+        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block = self
+            .storage
+            .get_block_header(latest_block_number)?
+            .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
+        Ok(chain_config.fork(latest_block.timestamp))
     }
 }
 
