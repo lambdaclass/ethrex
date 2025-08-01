@@ -39,18 +39,23 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
+ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+ETHEREUM_PACKAGE_DIR := ethereum-package
 
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-ethereum-package:
-	git clone https://github.com/lambdaclass/ethereum-package
-
-checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
-	cd ethereum-package && \
-		git fetch && \
-		git checkout $(ETHEREUM_PACKAGE_REVISION)
+checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
+	@if [ ! -d "$(ETHEREUM_PACKAGE_DIR)" ]; then \
+		echo "Cloning ethereum-package repository..."; \
+		git clone --quiet https://github.com/ethpandaops/ethereum-package $(ETHEREUM_PACKAGE_DIR); \
+	fi
+	@cd $(ETHEREUM_PACKAGE_DIR) && \
+	CURRENT_REV=$$(git rev-parse HEAD) && \
+	if [ "$$CURRENT_REV" != "$(ETHEREUM_PACKAGE_REVISION)" ]; then \
+		echo "Current HEAD ($$CURRENT_REV) is not the target revision. Checking out $(ETHEREUM_PACKAGE_REVISION)..."; \
+		git fetch --quiet && \
+		git checkout --quiet $(ETHEREUM_PACKAGE_REVISION); \
+	else \
+		echo "ethereum-package is already at the correct revision."; \
+	fi
 
 ENCLAVE ?= lambdanet
 
