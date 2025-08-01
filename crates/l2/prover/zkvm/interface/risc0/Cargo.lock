@@ -4825,6 +4825,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex",
  "serde",
  "serde_json",
  "serde_with",
