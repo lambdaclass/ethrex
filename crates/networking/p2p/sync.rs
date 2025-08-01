@@ -1,5 +1,6 @@
 mod state_healing;
 mod storage_healing;
+mod storage_healing_2;
 
 use crate::metrics::METRICS;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
