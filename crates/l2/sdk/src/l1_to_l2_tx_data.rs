@@ -78,9 +78,10 @@ pub async fn send_l1_to_l2_tx(
         ..Overrides::default()
     };
 
-    let l1_to_l2_tx = eth_client
+    let mut l1_to_l2_tx = eth_client
         .build_eip1559_transaction(bridge_address, l1_from, l1_calldata.into(), l1_tx_overrides)
         .await?;
+    l1_to_l2_tx.gas_limit *= 2; // tx reverts in some cases otherwise
 
     let signer = LocalSigner::new(*sender_private_key).into();
 
