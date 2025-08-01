@@ -38,6 +38,7 @@ use revm_primitives::{
     Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256, ruint::Uint,
 };
+use ::tracing::info;
 use std::cmp::min;
 
 #[derive(Debug)]
@@ -71,10 +72,16 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, sender) in block.body.get_transactions_with_sender().map_err(|error| {
+        for (idx, (tx, sender)) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        })?.into_iter().enumerate() {
+            if idx == 60 && block.header.number == 6028633 {
+                info!("Executing tx at idx: {idx}");
+            }
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
+            if idx == 60 && block.header.number == 6028633 {
+                info!("Executed tx at idx: {idx}, {result:?}");
+            }
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
