@@ -1,9 +1,9 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    payload::{BuildPayloadArgs, create_payload},
+    payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, payload::PayloadBundle};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -387,7 +387,30 @@ async fn build_payload(
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload).await?;
+    let PayloadBuildResult {
+        blobs_bundle,
+        block_value,
+        requests,
+        payload: block,
+        ..
+    } = context
+        .blockchain
+        .build_payload(payload)
+        .await
+        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+
+    let new_payload = PayloadBundle {
+        block,
+        block_value,
+        blobs_bundle,
+        requests,
+        completed: true,
+    };
+
+    context
+        .storage
+        .update_payload(payload_id, new_payload)
+        .await?;
 
     Ok(payload_id)
 }
