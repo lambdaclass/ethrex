@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754060785654,
+  "lastUpdate": 1754062635168,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15655,6 +15655,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001249749063670412,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7914b6f359cd68da76c84868648cdbc18695374c",
+          "message": "chore(l2): bump risc0 to 2.3.1 enable risc0 precompiles  (#3741)\n\n**Motivation**\n\nEnable risc0 precompiles to improve performance\n\n**Description**\n- bump risc0 to 2.3.1\n- Tested all patches from https://dev.risczero.com/api/zkvm/precompiles\nto see which ones compile\n- Added\n  - k256\n  - ed25519-dalek\n  - rsa\n  - crypto-bigint\n- Can be tested by running\n```Shell\ncd crates/l2/prover/zkvm/interface/risc0\ncargo tree -p <crate-name>\n```\nreplacing \\<crate-name\\> with one of the above added precompiles\n\n[Here](https://github.com/lambdaclass/ethrex/actions/runs/16422230774/job/46403548180)\nis a run of ethrex replay with the new precompiles",
+          "timestamp": "2025-08-01T13:53:13Z",
+          "tree_id": "9985dc376c358ccb464f2379aafd51cef965b549",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7914b6f359cd68da76c84868648cdbc18695374c"
+        },
+        "date": 1754062619109,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.00123930547818013,
             "unit": "Mgas/s"
           }
         ]
