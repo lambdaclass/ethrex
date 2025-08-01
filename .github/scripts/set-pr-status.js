@@ -19,6 +19,38 @@ module.exports = async ({ github, context }) => {
         return project;
     }
 
+    // Find a PR's item for a specific project with a single API call.
+    async function findPrItemInProject(owner, repo, prNumber, projectId) {
+        const res = await github.graphql(`
+        query($owner: String!, $repo: String!, $prNumber: Int!, $projectId: ID!) {
+            repository(owner: $owner, name: $repo) {
+                pullRequest(number: $prNumber) {
+                    # A PR can be in multiple projects. We'll get the top 10.
+                    projectItems(first: 10) {
+                        nodes {
+                            id
+                            # We need the project ID to find the correct item.
+                            project {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    `, { owner, repo, prNumber, projectId });
+
+        if (!res.repository.pullRequest) {
+            return null;
+        }
+
+        // Find the project item that matches our target project's ID.
+        const projectItems = res.repository.pullRequest.projectItems.nodes;
+        const prItem = projectItems.find(item => item.project.id === projectId);
+
+        return prItem || null;
+    }
+
     // Get all items of a project.
     async function getAllProjectItems(projectId) {
         let hasNextPage = true;
@@ -201,12 +233,18 @@ module.exports = async ({ github, context }) => {
     const project = await getProject(orgLogin, projectNumber);
     const projectId = project.id;
 
-    const allItems = await getAllProjectItems(projectId);
-    const prItem = findItemByNumber(allItems, pr.number);
+    // Usage
+    // You'll need the repo owner and name for this query.
+    const prItem = await findPrItemInProject(orgLogin, 'ethrex', pr.number, projectId);
+    console.log("PR Item:", prItem);
+    // const allItems = await getAllProjectItems(projectId);
+    // // const prItem = findItemByNumber(allItems, pr.number);
     if (!prItem) {
         console.warn(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
         return;
     }
+
+    return;
 
     // Get all fields of the project.
     const fields = await getProjectFields(projectId);
