@@ -188,8 +188,8 @@ pub(crate) async fn heal_state_trie(
 
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
-                info!("Spawning request_state_trienodes task");
                 tokio::spawn(async move {
+                    info!("Spawned request_state_trienodes task");
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
                         &mut peer_channel,
@@ -197,6 +197,7 @@ pub(crate) async fn heal_state_trie(
                         batch.clone(),
                     )
                     .await;
+                    info!("Sending request_state_trienodes response through channel");
                     // TODO: add error handling
                     let _ = tx
                         .send((peer_id, response, batch))
@@ -215,8 +216,8 @@ pub(crate) async fn heal_state_trie(
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
             inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
-            info!("Spawning heal_state_batch task");
             tokio::spawn(async move {
+                info!("Spawned heal_state_batch task");
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
                         .send(return_paths)

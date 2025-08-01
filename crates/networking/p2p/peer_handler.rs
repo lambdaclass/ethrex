@@ -2182,6 +2182,7 @@ impl PeerHandler {
         state_root: H256,
         paths: Vec<Nibbles>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
+        info!("Entered request_state_trienodes");
         let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
