@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754069355204,
+  "lastUpdate": 1754071772141,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15861,6 +15861,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012532694835680751,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a59fc0ba0e2beac421fcb7ce9741e894ad37121c",
+          "message": "fix(l2): gas bump logic  (#3904)\n\n**Motivation**\n\nFix some errors related to the `send_tx_bump_gas_exponential_backoff`\nthat appeared while running in testnet scenarios\n\n**Description**\n- when bumping gas += was being used for max_priority_fee_per_gas\ninstead of = so priority_gas was growing much more than expected\n- Some RPCs returned an error when the transaction could not replace an\nexisting one because the gas of the new tx did not exceed the previous\none, now instead of returning that error we bump the gas and continue\n- The parsing of a hex string in `get_max_priority_fee` was wrong\nbecause u64 does not implement the parsing of hex string now it retruns\na U256 the same way the `get_gas_price` function does and its then\ncasted to u64\n- With the fix of `get_max_priority_fee` a new issue appeared where the\ngas_price in the tx receipt was incorrect, this was fixed by using\n`tx.effective_gas_price()` instead of `tx.gas_price()`",
+          "timestamp": "2025-08-01T14:53:18Z",
+          "tree_id": "d7216c449269ed667df8191f29ac5cfc9fcecce7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a59fc0ba0e2beac421fcb7ce9741e894ad37121c"
+        },
+        "date": 1754071771715,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012639507575757576,
             "unit": "Mgas/s"
           }
         ]
