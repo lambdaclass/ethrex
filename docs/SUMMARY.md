@@ -1,9 +1,8 @@
 # Summary
 
 - [Getting started](./getting-started/README.md)
-  - [Installing ethrex]()
-    - [Build from source]()
-  - [Running a node]()
+  - [Installing ethrex](./getting-started/installing.md)
+  - [Running a node](./getting-started/running.md)
   - [Migrating from another client]()
 
 - [Roadmap](./getting-started/roadmap.md)
@@ -45,6 +44,7 @@
   - [L2](./developers/l2/README.md)
     - [load-tests](./developers/l2/load_tests.md)
   - [Replay](./ethrex_replay/ethrex_replay.md)
+      - [Profiling](./ethrex_replay/profiling.md)
 - [CLI reference]()
 - [Troubleshooting]()
 
