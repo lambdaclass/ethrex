@@ -207,6 +207,7 @@ pub(crate) async fn heal_state_trie(
                             error!("Failed to send state trie nodes response. Error: {err}")
                         })
                 });
+                tokio::task::yield_now().await;
             }
         }
 
@@ -226,6 +227,7 @@ pub(crate) async fn heal_state_trie(
                         .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
                 }
             });
+            tokio::task::yield_now().await;
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
