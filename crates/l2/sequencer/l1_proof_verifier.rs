@@ -189,7 +189,7 @@ impl L1ProofVerifier {
             send_verify_tx_result.as_ref()
         {
             if error.contains("Invalid ALIGNED proof") {
-                info!("Deleting invalid ALIGNED proof");
+                warn!("Deleting invalid ALIGNED proof");
                 for i in 0..aggregated_proofs_count {
                     let batch_number = first_batch_number + i;
                     self.rollup_store

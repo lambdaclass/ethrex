@@ -248,7 +248,7 @@ impl L1ProofSender {
         .await;
 
         if let Err(errors::SubmitError::InvalidProof(_)) = algined_verification_result.as_ref() {
-            info!("Deleting invalid ALIGNED proof");
+            warn!("Deleting invalid ALIGNED proof");
             self.rollup_store
                 .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
                 .await?;
@@ -321,17 +321,17 @@ impl L1ProofSender {
             send_verify_tx_result.as_ref()
         {
             if error.contains("Invalid TDX proof") {
-                info!("Deleting invalid TDX proof");
+                warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
             } else if error.contains("Invalid RISC0 proof") {
-                info!("Deleting invalid RISC0 proof");
+                warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
             } else if error.contains("Invalid SP1 proof") {
-                info!("Deleting invalid SP1 proof");
+                warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
                     .await?;
