@@ -111,14 +111,12 @@ pub(crate) async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, 
-                    Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, inflight_tasks: {inflight_tasks},
-                    Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             }
