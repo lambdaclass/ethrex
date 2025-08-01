@@ -18,7 +18,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
