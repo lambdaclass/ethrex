@@ -23,12 +23,14 @@ ethrex-sdk = { path = "../../sdk", default-features = false }
 ethrex-l2 = { path = "../..", default-features = false }
 ethrex-l2-common = { path = "../../common", default-features = false }
 
-secp256k1 = { workspace = true, default-features = false, features = [
+secp256k1 = { version = "0.29.1", default-features = false, features = [
   "global-context",
   "recovery",
   "rand",
   "std",
 ] }
+
+[workspace]
 
 [features]
 default = ["l2"]

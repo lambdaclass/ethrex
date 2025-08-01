@@ -25,7 +25,6 @@ use ethrex_common::{
         kzg_commitment_to_versioned_hash,
     },
 };
-#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
     privileged_transactions::{
