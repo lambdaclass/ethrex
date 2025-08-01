@@ -19,7 +19,10 @@ use ethrex_rpc::clients::eth::{
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
 use tracing::Level;
 
 #[derive(Parser)]
@@ -690,19 +693,13 @@ pub struct ProverClientOptions {
     )]
     pub backend: Backend,
     #[arg(
-        long = "http.addr",
-        value_name = "IP_ADDRESS",
-        env = "PROVER_CLIENT_PROVER_CLIENT_ADDRESS",
-        help_heading = "Prover client options"
+        long = "proof-coordinator",
+        value_name = "URL",
+        env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
+        help_heading = "Prover client options",
+        help = "URL of the sequencer's proof coordintor"
     )]
-    pub http_addr: String,
-    #[arg(
-        long = "http.port",
-        value_name = "PORT",
-        env = "PROVER_CLIENT_PROVER_CLIENT_PORT",
-        help_heading = "Prover client options"
-    )]
-    pub http_port: u16,
+    pub proof_coordinator_endpoint: Url,
     #[arg(
         long = "proving-time",
         value_name = "PROVING_TIME",
@@ -736,8 +733,7 @@ impl From<ProverClientOptions> for ProverConfig {
     fn from(config: ProverClientOptions) -> Self {
         Self {
             backend: config.backend,
-            http_addr: config.http_addr,
-            http_port: config.http_port,
+            proof_coordinator: config.proof_coordinator_endpoint,
             proving_time_ms: config.proving_time_ms,
             aligned_mode: config.aligned,
         }
@@ -747,8 +743,7 @@ impl From<ProverClientOptions> for ProverConfig {
 impl Default for ProverClientOptions {
     fn default() -> Self {
         Self {
-            http_addr: "127.0.0.1".to_string(),
-            http_port: 3900,
+            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
             proving_time_ms: 5000,
             log_level: Level::INFO,
             aligned: false,

@@ -8,6 +8,7 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
+use url::Url;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
@@ -22,7 +23,7 @@ struct ProverData {
 
 struct Prover {
     backend: Backend,
-    prover_server_endpoint: String,
+    proof_coordinator_endpoint: Url,
     proving_time_ms: u64,
     aligned_mode: bool,
     commit_hash: String,
@@ -32,7 +33,7 @@ impl Prover {
     pub fn new(cfg: ProverConfig) -> Self {
         Self {
             backend: cfg.backend,
-            prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
+            proof_coordinator_endpoint: cfg.proof_coordinator,
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
             commit_hash: get_commit_hash(),
@@ -40,7 +41,7 @@ impl Prover {
     }
 
     pub async fn start(&self) {
-        info!("Prover started on {}", self.prover_server_endpoint);
+        info!("Prover started on {}", self.proof_coordinator_endpoint);
         // Build the prover depending on the prover_type passed as argument.
         loop {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
@@ -77,7 +78,7 @@ impl Prover {
     async fn request_new_input(&self) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
         let request = ProofData::batch_request(self.commit_hash.clone());
-        let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
+        let response = connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
@@ -121,7 +122,7 @@ impl Prover {
         let submit = ProofData::proof_submit(batch_number, batch_proof);
 
         let ProofData::ProofSubmitACK { batch_number } =
-            connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
+            connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &submit)
                 .await
                 .map_err(|e| format!("Failed to get SubmitAck: {e}"))?
         else {
@@ -134,11 +135,11 @@ impl Prover {
 }
 
 async fn connect_to_prover_server_wr(
-    addr: &str,
+    endpoint: &Url,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    debug!("Connecting with {addr}");
-    let mut stream = TcpStream::connect(addr).await?;
+    debug!("Connecting with {endpoint}");
+    let mut stream = TcpStream::connect(endpoint.as_str()).await?;
     debug!("Connection established!");
 
     stream.write_all(&serde_json::to_vec(&write)?).await?;
