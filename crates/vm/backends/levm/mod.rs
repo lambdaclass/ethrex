@@ -27,6 +27,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
+use ::tracing::info;
 use std::cmp::min;
 use std::collections::BTreeMap;
 
@@ -51,11 +52,12 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+        for (idx, (tx, tx_sender)) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        })?.into_iter().enumerate() {
+            info!("Executing tx at idx: {idx}");
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-
+            info!("TX {idx} gas used: {}", report.gas_used);
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
