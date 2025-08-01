@@ -340,7 +340,9 @@ impl<'a> VM<'a> {
                 // It's a constant, therefore the conversion cannot fail.
                 value == Opcode::JUMPDEST as u8
                     && !self
-                        .get_current_jump_dest_filter()
+                        .current_call_frame
+                        .jump_target_filter
+                        .borrow_mut()
                         .is_blacklisted(jump_address)
             })
     }

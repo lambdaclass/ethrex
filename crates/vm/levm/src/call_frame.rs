@@ -2,15 +2,17 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::restore_cache_state,
+    utils::{JumpTargetFilter, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     fmt,
+    rc::Rc,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -228,6 +230,9 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    pub jump_target_filter: Rc<RefCell<JumpTargetFilter>>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -297,6 +302,7 @@ impl CallFrame {
         ret_size: usize,
         stack: Stack,
         memory: Memory,
+        jump_target_filter: Rc<RefCell<JumpTargetFilter>>,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
@@ -320,6 +326,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
+            jump_target_filter,
         }
     }
 

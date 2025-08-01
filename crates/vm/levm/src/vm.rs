@@ -72,7 +72,8 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub jump_target_filters: BTreeMap<H160, JumpTargetFilter>,
+    /// Maps code_hash to jump filter.
+    pub jump_target_filters: BTreeMap<H160, Rc<RefCell<JumpTargetFilter>>>,
 }
 
 impl<'a> VM<'a> {
@@ -88,6 +89,10 @@ impl<'a> VM<'a> {
         let mut substate = Substate::initialize(&env, tx)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
+
+        // This filter is properly set up later in prepare_execution.
+        let jump_target_filter_placeholder =
+            Rc::new(RefCell::new(JumpTargetFilter::new(Bytes::new())));
 
         let mut vm = Self {
             call_frames: Vec::new(),
@@ -117,6 +122,7 @@ impl<'a> VM<'a> {
                 0,
                 Stack::default(),
                 Memory::default(),
+                jump_target_filter_placeholder,
             ),
             env,
             jump_target_filters: BTreeMap::default(),
@@ -261,6 +267,17 @@ impl<'a> VM<'a> {
             hook.borrow_mut().prepare_execution(self)?;
         }
 
+        // The bytecode and code address are now set, so we can setup the first call frame jump target filter.
+        let jump_target_filter = self
+            .jump_target_filters
+            .entry(self.current_call_frame.code_address)
+            .or_insert_with(|| {
+                Rc::new(RefCell::new(JumpTargetFilter::new(
+                    self.current_call_frame.bytecode.clone(),
+                )))
+            });
+        self.current_call_frame.jump_target_filter = jump_target_filter.clone();
+
         Ok(())
     }
 
@@ -284,12 +301,6 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
-    }
-
-    pub(crate) fn get_current_jump_dest_filter(&mut self) -> &mut JumpTargetFilter {
-        self.jump_target_filters
-            .entry(self.current_call_frame.code_address)
-            .or_insert_with(|| JumpTargetFilter::new(self.current_call_frame.bytecode.clone()))
     }
 }
 
