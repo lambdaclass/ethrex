@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
@@ -83,17 +83,6 @@ impl Store {
         self.set_lastest_sent_batch_proof(0).await
     }
 
-    /// Stores the block numbers by a given batch_number
-    pub async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_block_numbers_by_batch(batch_number, block_numbers)
-            .await
-    }
-
     /// Returns the block numbers by a given batch_number
     pub async fn get_block_numbers_by_batch(
         &self,
@@ -108,15 +97,6 @@ impl Store {
     ) -> Result<Option<u64>, RollupStoreError> {
         self.engine.get_batch_number_by_block(block_number).await
     }
-    pub async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_batch_number_by_block(block_number, batch_number)
-            .await
-    }
 
     pub async fn get_message_hashes_by_batch(
         &self,
@@ -125,35 +105,12 @@ impl Store {
         self.engine.get_message_hashes_by_batch(batch_number).await
     }
 
-    pub async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_message_hashes_by_batch(batch_number, message_hashes)
-            .await
-    }
-
     pub async fn get_privileged_transactions_hash_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
             .get_privileged_transactions_hash_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_privileged_transactions_hash_by_batch(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_privileged_transactions_hash_by_batch_number(
-                batch_number,
-                privileged_transactions_hash,
-            )
             .await
     }
 
@@ -166,32 +123,12 @@ impl Store {
             .await
     }
 
-    pub async fn store_state_root_by_batch(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_state_root_by_batch_number(batch_number, state_root)
-            .await
-    }
-
     pub async fn get_blobs_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         self.engine
             .get_blob_bundle_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_blobs_by_batch(
-        &self,
-        batch_number: u64,
-        blobs: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_blob_bundle_by_batch_number(batch_number, blobs)
             .await
     }
 
@@ -250,21 +187,23 @@ impl Store {
                 "Failed while trying to retrieve the state root of a known batch. This is a bug."
                     .to_owned(),
             ))?;
+
         let blobs_bundle = BlobsBundle::create_from_blobs(
+            // Currently validium mode doesn't generate blobs, so no one will be stored
+            // TODO: If/When that behaviour change, this should throw error on None
             &self
                 .get_blobs_by_batch(batch_number)
                 .await?
-                .ok_or(RollupStoreError::Custom(
-                    "Failed while trying to retrieve the blobs of a known batch. This is a bug."
-                        .to_owned(),
-                ))?,
+                .unwrap_or_default()
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
+
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
+
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
@@ -290,34 +229,7 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block(*block_number, batch.number)
-                .await?;
-        }
-        self.store_block_numbers_by_batch(batch.number, blocks)
-            .await?;
-        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
-            .await?;
-        self.store_privileged_transactions_hash_by_batch(
-            batch.number,
-            batch.privileged_transactions_hash,
-        )
-        .await?;
-        self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
-            .await?;
-        self.store_state_root_by_batch(batch.number, batch.state_root)
-            .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch(batch.number, commit_tx)
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch(batch.number, verify_tx)
-                .await?;
-        }
-        Ok(())
+        self.engine.seal_batch(batch).await
     }
 
     pub async fn update_operations_count(
@@ -338,6 +250,53 @@ impl Store {
     /// Returns whether the batch with the given number is present.
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         self.engine.contains_batch(batch_number).await
+    }
+
+    /// Stores the sequencer signature for a given block hash.
+    /// When the lead sequencer sends a block by P2P, it signs the message and it is validated
+    /// If we want to gossip or broadcast the message, we need to store the signature for later use
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given block hash.
+    /// We want to retrieve the validated signature to broadcast or gossip the block to the peers
+    /// So they can also validate the message
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
     }
 
     /// Returns the lastest sent batch proof
@@ -398,5 +357,18 @@ impl Store {
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
+    }
+
+    /// Returns privileged transactions about to be included in the next batch
+    pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        self.engine.precommit_privileged().await
+    }
+
+    /// Updates privileged transaction
+    pub async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        self.engine.update_precommit_privileged(range).await
     }
 }

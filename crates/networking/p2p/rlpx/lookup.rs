@@ -14,13 +14,10 @@ use crate::{
 pub type RLPxLookupServerHandle = GenServerHandle<RLPxLookupServer>;
 
 #[derive(Debug, Clone)]
-pub struct RLPxLookupServerState {
+pub struct RLPxLookupServer {
     ctx: P2PContext,
     node_iterator: Discv4NodeIterator,
 }
-
-#[derive(Debug, Clone)]
-pub struct RLPxLookupServer;
 
 impl RLPxLookupServer {
     pub async fn spawn(
@@ -28,8 +25,8 @@ impl RLPxLookupServer {
         node_iterator: Discv4NodeIterator,
         _consumer: RLPxServerHandle,
     ) -> Result<GenServerHandle<Self>, GenServerError> {
-        let state = RLPxLookupServerState { ctx, node_iterator };
-        let mut handle = Self::start(state);
+        let state = Self { ctx, node_iterator };
+        let mut handle = state.start();
         handle.cast(InMessage::FetchPeers).await?;
         Ok(handle)
     }
@@ -49,18 +46,12 @@ impl GenServer for RLPxLookupServer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = Unused;
-    type State = RLPxLookupServerState;
     type Error = std::convert::Infallible;
 
-    fn new() -> Self {
-        Self
-    }
-
     async fn handle_cast(
-        &mut self,
+        mut self,
         msg: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
     ) -> CastResponse<Self> {
         if matches!(msg, InMessage::Stop) {
             return CastResponse::Stop;
@@ -70,11 +61,11 @@ impl GenServer for RLPxLookupServer {
             error!("RLPxLookupServer: failed to send message to self, stopping lookup");
             return CastResponse::Stop;
         }
-        let node = state.node_iterator.next().await;
+        let node = self.node_iterator.next().await;
         let node_id = node.node_id();
         // Get peer status and mark as connected
         {
-            let mut table = state.ctx.table.lock().await;
+            let mut table = self.ctx.table.lock().await;
             table.insert_node_forced(node.clone());
             let node = table
                 .get_by_node_id_mut(node_id)
@@ -83,13 +74,13 @@ impl GenServer for RLPxLookupServer {
             // If we already have a connection to this node, we don't need to start a new one
             if node.is_connected {
                 drop(table);
-                return CastResponse::NoReply(state);
+                return CastResponse::NoReply(self);
             }
             node.is_connected = true;
         }
         // Start a connection
-        RLPxConnection::spawn_as_initiator(state.ctx.clone(), &node).await;
+        RLPxConnection::spawn_as_initiator(self.ctx.clone(), &node).await;
 
-        CastResponse::NoReply(state)
+        CastResponse::NoReply(self)
     }
 }

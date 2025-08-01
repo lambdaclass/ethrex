@@ -1,9 +1,9 @@
-use std::{panic::RefUnwindSafe, sync::Arc};
+use std::{ops::Range, panic::RefUnwindSafe, sync::Arc};
 
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -26,6 +26,9 @@ const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
 const OPERATIONS_COUNTS: TableDefinition<u64, OperationsCountRLP> =
     TableDefinition::new("OperationsCount");
 
+const PRECOMMIT_PRIVILEGED: TableDefinition<u64, Rlp<(u64, u64)>> =
+    TableDefinition::new("PrecommitPrivileged");
+
 const BLOB_BUNDLES: TableDefinition<u64, Rlp<Vec<Blob>>> = TableDefinition::new("BlobBundles");
 
 const STATE_ROOTS: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("StateRoots");
@@ -34,6 +37,12 @@ const PRIVILEGED_TRANSACTIONS_HASHES: TableDefinition<u64, Rlp<H256>> =
     TableDefinition::new("PrivilegedTransactionHashes");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
+
+const SIGNATURES_BY_BLOCK: TableDefinition<[u8; 32], [u8; 65]> =
+    TableDefinition::new("SignaturesByBlock");
+
+const SIGNATURES_BY_BATCH: TableDefinition<u64, [u8; 65]> =
+    TableDefinition::new("SignaturesByBatch");
 
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
@@ -123,6 +132,8 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(PRIVILEGED_TRANSACTIONS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BLOCK)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BATCH)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
     table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
     table_creation_txn.open_table(COMMIT_TX_BY_BATCH)?;
@@ -144,15 +155,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|b| b.value()))
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number, batch_number)
-            .await
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -161,32 +163,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(MESSAGES_BY_BATCH, batch_number)
             .await?
             .map(|w| w.value().to()))
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            MESSAGES_BY_BATCH,
-            batch_number,
-            <Vec<H256> as Into<MessageHashesRLP>>::into(messages),
-        )
-        .await
-    }
-
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            BLOCK_NUMBERS_BY_BATCH,
-            batch_number,
-            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
-        )
-        .await
     }
 
     async fn get_block_numbers_by_batch(
@@ -207,19 +183,6 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(exists)
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            PRIVILEGED_TRANSACTIONS_HASHES,
-            batch_number,
-            privileged_transactions_hash.into(),
-        )
-        .await
-    }
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -230,15 +193,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|rlp| rlp.value().to()))
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(STATE_ROOTS, batch_number, state_root.into())
-            .await
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
@@ -247,15 +201,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(STATE_ROOTS, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BLOB_BUNDLES, batch_number, state_diff.into())
-            .await
     }
 
     async fn get_blob_bundle_by_batch_number(
@@ -361,6 +306,43 @@ impl StoreEngineRollup for RedBStoreRollup {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
 
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
+        self.write(SIGNATURES_BY_BLOCK, block_hash.into(), signature)
+            .await
+    }
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BLOCK, block_hash.into())
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s.value())))
+    }
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
+        self.write(SIGNATURES_BY_BATCH, batch_number, signature)
+            .await
+    }
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BATCH, batch_number)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s.value())))
+    }
+
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,
@@ -424,6 +406,88 @@ impl StoreEngineRollup for RedBStoreRollup {
         delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;
         delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
         txn.commit()?;
+        Ok(())
+    }
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db.begin_write().map_err(Box::new)?;
+
+            {
+                let mut table = transaction.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
+                for block in blocks.iter() {
+                    table.insert(*block, batch.number)?;
+                }
+            }
+
+            transaction.open_table(BLOCK_NUMBERS_BY_BATCH)?.insert(
+                batch.number,
+                BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+            )?;
+
+            transaction.open_table(MESSAGES_BY_BATCH)?.insert(
+                batch.number,
+                <Vec<H256> as Into<MessageHashesRLP>>::into(batch.message_hashes),
+            )?;
+
+            transaction
+                .open_table(PRIVILEGED_TRANSACTIONS_HASHES)?
+                .insert(
+                    batch.number,
+                    <H256 as Into<Rlp<H256>>>::into(batch.privileged_transactions_hash),
+                )?;
+
+            transaction.open_table(BLOB_BUNDLES)?.insert(
+                batch.number,
+                <Vec<Blob> as Into<Rlp<Vec<Blob>>>>::into(batch.blobs_bundle.blobs),
+            )?;
+
+            transaction.open_table(STATE_ROOTS)?.insert(
+                batch.number,
+                <H256 as Into<Rlp<H256>>>::into(batch.state_root),
+            )?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .open_table(COMMIT_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(commit_tx))?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .open_table(VERIFY_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(verify_tx))?;
+            }
+
+            transaction.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        Ok(self
+            .read(PRECOMMIT_PRIVILEGED, 0)
+            .await?
+            .map(|b| b.value().to())
+            .map(|(start, end)| start..end))
+    }
+
+    async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        if let Some(range) = range {
+            self.write(PRECOMMIT_PRIVILEGED, 0, (range.start, range.end).into())
+                .await?;
+        } else {
+            let txn = self.db.begin_write().map_err(Box::new)?;
+            txn.open_table(PRECOMMIT_PRIVILEGED)?.remove(0)?;
+            txn.commit()?;
+        }
         Ok(())
     }
 }

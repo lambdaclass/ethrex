@@ -1,6 +1,7 @@
 use crate::discv4::server::{DiscoveryError, Discv4Server};
 use crate::kademlia::{self, KademliaTable};
 use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::server::RLPxServer;
@@ -8,11 +9,9 @@ use crate::types::{Node, NodeRecord};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
-use k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
-};
+use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
+
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket},
@@ -40,7 +39,7 @@ pub enum NetworkError {
 #[derive(Clone, Debug)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
-    pub signer: SigningKey,
+    pub signer: SecretKey,
     pub table: Arc<Mutex<KademliaTable>>,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
@@ -48,6 +47,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    pub based_context: Option<P2PBasedContext>,
 }
 
 impl P2PContext {
@@ -56,11 +56,12 @@ impl P2PContext {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
-        signer: SigningKey,
+        signer: SecretKey,
         peer_table: Arc<Mutex<KademliaTable>>,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -77,6 +78,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            based_context,
         }
     }
 
@@ -147,10 +149,10 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
+pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
+    let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
+    let encoded = public_key.serialize_uncompressed();
+    H512::from_slice(&encoded[1..])
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
