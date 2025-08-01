@@ -1,20 +1,10 @@
 use crate::{
-    TransientStorage,
-    call_frame::{CallFrame, Stack},
-    db::gen_db::GeneralizedDatabase,
-    debug::DebugMode,
-    environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
-    hooks::{
+    call_frame::{CallFrame, Stack}, db::gen_db::GeneralizedDatabase, debug::DebugMode, environment::Environment, errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError}, hooks::{
         backup_hook::BackupHook,
-        hook::{Hook, get_hooks},
-    },
-    l2_precompiles,
-    memory::Memory,
-    precompiles::{
+        hook::{get_hooks, Hook},
+    }, l2_precompiles, memory::Memory, opcodes::Opcode, precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-    },
-    tracing::LevmCallTracer,
+    }, tracing::LevmCallTracer, TransientStorage, TX
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -189,6 +179,13 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+<<<<<<< HEAD
+=======
+            if *(TX.lock().unwrap()) {
+                let o = Opcode::from(opcode);
+                info!("Opcode: {o:?}");
+            }
+>>>>>>> 964ec6ba3 (Use mutex const to dbg tx)
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
