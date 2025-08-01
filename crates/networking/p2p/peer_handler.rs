@@ -999,7 +999,6 @@ impl PeerHandler {
             }
         }
 
-        // TODO: This is repeated code, consider refactoring
         {
             let current_account_hashes = std::mem::take(&mut all_account_hashes);
             let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -1010,18 +1009,11 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
-            if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
-                .expect("Failed")
-            {
-                std::fs::create_dir_all("/home/admin/.local/share/ethrex/account_state_snapshots")
-                    .expect("Failed to create accounts_state_snapshot dir");
-            }
-
-            tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
-                })
-                .await
-                .unwrap();
+            let path = format!(
+                "/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"
+            );
+            let contents = account_state_chunk.clone();
+            persistant_storage_set.spawn(async move { dump_storage(path, contents).await });
         }
 
         *METRICS.accounts_downloads_tasks_queued.lock().await =
