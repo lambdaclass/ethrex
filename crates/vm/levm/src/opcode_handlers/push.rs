@@ -1,9 +1,10 @@
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
-    vm::VM,
+    vm::VM, TX,
 };
 use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use tracing::info;
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -32,6 +33,9 @@ impl<'a> VM<'a> {
             .bytecode
             .get(pc_offset..pc_offset.wrapping_add(N))
         {
+            if *(TX.lock().unwrap()) {
+                info!("PUSH-N, getting range {pc_offset}..{}, obtained slice: {slice:?}", pc_offset.wrapping_add(N));
+            }
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
                 #[expect(unsafe_code)]
@@ -42,6 +46,9 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
+        if *(TX.lock().unwrap()) {
+            info!("PUSH-N: {value}");
+        }
 
         current_call_frame.stack.push1(value)?;
 
