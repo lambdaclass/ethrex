@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-01
+
+- Reuse jumpdest filters within the same VM instance [#3905](https://github.com/lambdaclass/ethrex/pull/3905)
+
 ### 2025-07-31
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
