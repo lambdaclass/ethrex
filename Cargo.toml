@@ -1,15 +1,29 @@
 [workspace]
 members = [
+  # Command line tools
   "cmd/ef_tests/blockchain",
   "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_replay",
+
+  # Core components
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
+  "crates/storage",
+  "crates/vm",
+  "crates/vm/levm",
+  "crates/vm/levm/bench/revm_comparison",
+  "crates/vm/levm/runner",
+
+  # Networking
+  "crates/networking/p2p",
+  "crates/networking/rpc",
+
+  # Layer 2
   "crates/l2/",
   "crates/l2/contracts",
   "crates/l2/common",
@@ -19,13 +33,8 @@ members = [
   "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
   "crates/l2/networking/rpc",
-  "crates/networking/p2p",
-  "crates/networking/rpc",
-  "crates/storage",
-  "crates/vm",
-  "crates/vm/levm",
-  "crates/vm/levm/bench/revm_comparison",
-  "crates/vm/levm/runner",
+
+  # Tools
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",
@@ -49,109 +58,126 @@ codegen-units = 1
 inherits = "release"
 debug = 2
 
+# ----------------------------------------------------------------------------
+# Internal Crates
+# ----------------------------------------------------------------------------
 [workspace.dependencies]
+# Core components
 ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-common = { path = "./crates/common" }
-ethrex-p2p = { path = "./crates/networking/p2p" }
-ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }
-ethrex-vm = { path = "./crates/vm", default-features = false }
-ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-crypto = { path = "./crates/common/crypto" }
+ethrex-vm = { path = "./crates/vm", default-features = false }
+ethrex-levm = { path = "./crates/vm/levm" }
+ethrex-p2p = { path = "./crates/networking/p2p" }
+ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
-ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 
+# ----------------------------------------------------------------------------
+# Core & Infrastructure
+# ----------------------------------------------------------------------------
+# Logging and error handling
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
+log = "0.4.27"
+env_logger = "0.11.8"
+tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+thiserror = "2.0.9"
+anyhow = "1.0.86"
+eyre = "0.6.12"
+color-eyre = "0.6.5"
 
+# Storage
+libmdbx = { version = "=0.5.3", features = ["orm"] }
+redb = "=2.4.0"
+libsql = "0.9.10"
+
+# Runtime & Concurrency
+tokio = { version = "1.41.1", default-features = false }
+tokio-util = { version = "0.7.15", features = ["rt"] }
+tokio-stream = "0.1.17"
+futures = "0.3.31"
 async-trait = "0.1.88"
-ethereum-types = { version = "0.15.1", features = ["serialize"] }
+spawned-concurrency = "0.2.1"
+spawned-rt = "0.2.1"
+rayon = "1.10.0"
+
+# System utilities
+cfg-if = "1.0.0"
+once_cell = "1.20.2"
+lazy_static = "1.5.0"
+chrono = "0.4.41"
+directories = "5.0.1"
+walkdir = "2.5.0"
+rand = "0.8.5"
+
+# ----------------------------------------------------------------------------
+# Data Processing & Serialization
+# ----------------------------------------------------------------------------
+# Serialization
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 serde_json = "1.0.117"
-libmdbx = { version = "=0.5.3", features = ["orm"] }
+simd-json = "0.15.1"
+bincode = "1.3.3"
+json5 = "0.4.1"
+snap = "1.1.1"
+
+# Data structures
 bytes = { version = "1.6.0", features = ["serde"] }
-tokio = { version = "1.41.1", default-features = false }
-thiserror = "2.0.9"
+tinyvec = "1.6.0"
+smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
+itertools = "0.13.0"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+derive_more = { version = "1.0.0", features = ["full"] }
+strum = { version = "0.27.1", features = ["derive"] }
+dyn-clone = "1.0"
+
+# Utilities
+rustc-hex = "2.1.0"
 hex = "0.4.3"
 hex-literal = "0.4.1"
+regex = "1.11.1"
+envy = "0.4.2"
+local-ip-address = "0.6"
 crc32fast = "1.4.2"
-lazy_static = "1.5.0"
+
+# ----------------------------------------------------------------------------
+# Blockchain & Cryptography
+# ----------------------------------------------------------------------------
+# Blockchain
+ethereum-types = { version = "0.15.1", features = ["serialize"] }
+keccak-hash = "0.11.0"
+ethers = "2.0"
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
+revm = { version = "19.0.0", default-features = false }
+revm-primitives = { version = "15.2.0", default-features = false }
+revm-inspectors = { version = "0.15.0" }
+alloy-rlp = "0.3.12"
+
+# Cryptography
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tokio-util = { version = "0.7.15", features = ["rt"] }
-jsonwebtoken = "9.3.0"
-rand = "0.8.5"
-cfg-if = "1.0.0"
-reqwest = { version = "0.12.7", features = ["json"] }
-redb = "=2.4.0"
-snap = "1.1.1"
 secp256k1 = { version = "0.29.1", default-features = false, features = [
   "global-context",
   "recovery",
   "rand",
 ] }
-keccak-hash = "0.11.0"
-axum = "0.8.1"
-axum-extra = { version = "0.10.0", features = ["typed-header"] }
-clap = { version = "4.3", features = ["derive", "env"] }
-clap_complete = "4.5.17"
-eyre = "0.6.12"
-rustc-hex = "2.1.0"
-url = "2.5.4"
-kzg-rs = "0.2.6"
-libsql = "0.9.10"
-futures = "0.3.31"
-spawned-concurrency = "0.2.1"
-spawned-rt = "0.2.1"
-lambdaworks-crypto = "0.11.0"
-tui-logger = { version = "0.17.3", features = ["tracing-support"] }
-rayon = "1.10.0"
-envy = "0.4.2"
-prometheus = "0.13.4"
-tinyvec = "1.6.0"
-anyhow = "1.0.86"
-digest = "0.10.6"
-smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
-once_cell = "1.20.2"
-colored = "2.1.0"
-tower-http = { version = "0.6.2" }
-bincode = "1.3.3"
-itertools = "0.13.0"
-directories = "5.0.1"
-chrono = "0.4.41"
-crossterm = { version = "0.29.0", features = ["event-stream"] }
-ratatui = "0.29.0"
-tui-big-text = "0.7.1"
-tui-scrollview = "0.5.1"
-tabwriter = "1.4.1"
-color-eyre = "0.6.5"
-ctr = "0.9.2"
-aes = "0.8.4"
-hmac = "0.12.1"
-concat-kdf = "0.1.0"
-tokio-stream = "0.1.17"
-json5 = "0.4.1"
-log = "0.4.27"
-env_logger = "0.11.8"
-num-bigint = "0.4.6"
-num-traits = "0.2.19"
-derive_more = { version = "1.0.0", features = ["full"] }
-datatest-stable = "0.2.9"
-walkdir = "2.5.0"
 p256 = { version = "0.13.2", features = [
   "ecdsa",
   "arithmetic",
   "expose-field",
 ] }
-ripemd = "0.1.3"
+lambdaworks-crypto = "0.11.0"
 lambdaworks-math = "0.11.0"
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [
   "groups",
@@ -163,24 +189,40 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
 ark-bn254 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
-strum = { version = "0.27.1", features = ["derive"] }
-regex = "1.11.1"
-simd-json = "0.15.1"
+jsonwebtoken = "9.3.0"
+hmac = "0.12.1"
+aes = "0.8.4"
+ctr = "0.9.2"
+concat-kdf = "0.1.0"
+digest = "0.10.6"
+ripemd = "0.1.3"
+kzg-rs = "0.2.6"
+
+# ----------------------------------------------------------------------------
+# UI & Development Tools
+# ----------------------------------------------------------------------------
+# CLI & UI
+clap = { version = "4.3", features = ["derive", "env"] }
+clap_complete = "4.5.17"
+ratatui = "0.29.0"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+tui-big-text = "0.7.1"
+tui-scrollview = "0.5.1"
+tabwriter = "1.4.1"
+colored = "2.1.0"
 spinoff = "0.8.0"
-alloy-rlp = "0.3.12"
-local-ip-address = "0.6"
 charming = { version = "0.4.0", features = ["ssr"] }
-dyn-clone = "1.0"
 
+# Testing & Development
+datatest-stable = "0.2.9"
 
-# VM
-revm = { version = "19.0.0", default-features = false }
-revm-primitives = { version = "15.2.0", default-features = false }
-revm-inspectors = { version = "0.15.0" }
-
-# L2
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
-ethers = "2.0"
+# Network & API
+axum = "0.8.1"
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
+tower-http = { version = "0.6.2" }
+reqwest = { version = "0.12.7", features = ["json"] }
+prometheus = "0.13.4"
+url = "2.5.4"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
