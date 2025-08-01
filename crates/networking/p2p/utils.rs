@@ -9,7 +9,6 @@ use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
-use tracing::info;
 
 use crate::{
     kademlia::PeerChannels,
@@ -79,9 +78,7 @@ pub async fn send_message_and_wait_for_response(
     message: Message,
     request_id: u64,
 ) -> Result<Vec<Node>, SendMessageError> {
-    info!("Locking peer channel receiver");
     let mut receiver = peer_channel.receiver.lock().await;
-    info!("Locked peer channel receiver!");
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
