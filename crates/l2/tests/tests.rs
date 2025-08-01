@@ -246,25 +246,27 @@ async fn test_privileged_tx_with_contract_call(
     l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // pragma solidity ^0.8.27;
-    // contract Test {
-    //     event NumberSet(uint256 indexed number);
-    //     function emitNumber(uint256 _number) public {
-    //         emit NumberSet(_number);
-    //     }
-    // }
-    let init_code = hex::decode(
-        "6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033",
-    )?;
-
     println!("ptx_with_contract_call: Deploying contract on L2");
 
+    let init_code = hex::decode(std::fs::read(
+        "../../fixtures/contracts/payable/Payable.bin",
+    )?)?;
     let deployed_contract_address =
         test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
 
+    let payable_initial_balance = l2_client
+        .get_balance(
+            deployed_contract_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
     let number_to_emit = U256::from(424242);
-    let calldata_to_contract: Bytes =
-        encode_calldata("emitNumber(uint256)", &[Value::Uint(number_to_emit)])?.into();
+    let calldata_to_contract: Bytes = encode_calldata(
+        "functionThatEmitsEvent(uint256)",
+        &[Value::Uint(number_to_emit)],
+    )?
+    .into();
 
     // We need to get the block number before the deposit to search for logs later.
     let first_block = l2_client.get_block_number().await?;
@@ -277,6 +279,8 @@ async fn test_privileged_tx_with_contract_call(
         deployed_contract_address,
         calldata_to_contract,
         rich_wallet_private_key,
+        U256::from(1),
+        false,
     )
     .await?;
 
@@ -284,7 +288,7 @@ async fn test_privileged_tx_with_contract_call(
 
     let mut block_number = first_block;
 
-    let topic = keccak(b"NumberSet(uint256)");
+    let topic = keccak(b"Number(uint256)");
 
     while l2_client
         .get_logs(
@@ -298,7 +302,7 @@ async fn test_privileged_tx_with_contract_call(
     {
         println!("ptx_with_contract_call: Waiting for the event to be built");
         block_number += U256::one();
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 
     println!("ptx_with_contract_call: Event found in block {block_number}");
@@ -328,6 +332,15 @@ async fn test_privileged_tx_with_contract_call(
         "Event emitted with wrong value. Expected 424242, got {number_emitted}"
     );
 
+    let payable_final_balance = l2_client
+        .get_balance(
+            deployed_contract_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    assert_eq!(payable_initial_balance + 1, payable_final_balance);
+
     Ok(())
 }
 
@@ -338,22 +351,25 @@ async fn test_privileged_tx_with_contract_call_revert(
     l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // pragma solidity ^0.8.27;
-    // contract RevertTest {
-    //     function revert_call() public {
-    //         revert("Reverted");
-    //     }
-    // }
-    let init_code = hex::decode(
-        "6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033",
-    )?;
+    let init_code = hex::decode(std::fs::read(
+        "../../fixtures/contracts/payable/Payable.bin",
+    )?)?;
+    let deployed_contract_address =
+        test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
+
+    let payable_initial_balance = l2_client
+        .get_balance(
+            deployed_contract_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
 
     println!("ptx_with_contract_call_revert: Deploying contract on L2");
 
     let deployed_contract_address =
         test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
 
-    let calldata_to_contract: Bytes = encode_calldata("revert_call()", &[])?.into();
+    let calldata_to_contract: Bytes = encode_calldata("functionThatReverts()", &[])?.into();
 
     println!("ptx_with_contract_call_revert: Calling contract with deposit");
 
@@ -363,6 +379,8 @@ async fn test_privileged_tx_with_contract_call_revert(
         deployed_contract_address,
         calldata_to_contract,
         rich_wallet_private_key,
+        U256::from(1),
+        true,
     )
     .await?;
 
@@ -896,6 +914,17 @@ async fn test_deposit(
     assert!(
         deposit_tx_receipt.receipt.status,
         "Deposit transaction failed"
+    );
+
+    let l2_deposit_receipt = wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        l1_client,
+        l2_client,
+    )
+    .await?;
+    assert!(
+        l2_deposit_receipt.receipt.status,
+        "L2 Deposit transaction failed"
     );
 
     let depositor_l1_balance_after_deposit = l1_client
@@ -1555,6 +1584,8 @@ async fn test_call_to_contract_with_deposit(
     deployed_contract_address: Address,
     calldata_to_contract: Bytes,
     caller_private_key: &SecretKey,
+    value: U256,
+    should_revert: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let caller_address = ethrex_l2_sdk::get_address_from_secret_key(caller_private_key)
         .expect("Failed to get address");
@@ -1585,7 +1616,7 @@ async fn test_call_to_contract_with_deposit(
         L1ToL2TransactionData::new(
             deployed_contract_address,
             21000 * 5,
-            U256::zero(),
+            value,
             calldata_to_contract.clone(),
         ),
         caller_private_key,
@@ -1639,9 +1670,12 @@ async fn test_call_to_contract_with_deposit(
         )
         .await?;
 
+    let value = if should_revert { U256::zero() } else { value };
+
     assert_eq!(
-        deployed_contract_balance_after_call, deployed_contract_balance_before_call,
-        "Deployed contract increased unexpectedly after call"
+        deployed_contract_balance_before_call + value,
+        deployed_contract_balance_after_call,
+        "Deployed contract final balance was not expected"
     );
 
     Ok(())
