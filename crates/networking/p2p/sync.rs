@@ -1,6 +1,7 @@
 use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    utils::dump_storage,
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -22,7 +23,7 @@ use std::{
     },
     time::SystemTime,
 };
-use tokio::{sync::mpsc::error::SendError, time::Instant};
+use tokio::{sync::mpsc::error::SendError, task::JoinSet, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -726,8 +727,16 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
 
+        // Set that holds all storage tasks that are currently running
+        let mut persistant_storage_set = JoinSet::new();
+
         self.peers
-            .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+            .request_account_range(
+                state_root,
+                H256::zero(),
+                H256::repeat_byte(0xff),
+                &mut persistant_storage_set,
+            )
             .await;
 
         let empty = *EMPTY_TRIE_HASH;
@@ -751,7 +760,7 @@ impl Syncer {
 
             let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                 account_states_snapshot.iter().cloned().unzip();
-            
+
             let account_storage_roots: Vec<(H256, H256)> = account_hashes
                 .iter()
                 .zip(account_states.iter())
@@ -761,12 +770,17 @@ impl Syncer {
                 .collect();
 
             downloaded_account_storages += account_storage_roots.len();
-    
-            chunk_index = self.peers
-                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+
+            chunk_index = self
+                .peers
+                .request_storage_ranges(
+                    state_root,
+                    account_storage_roots.clone(),
+                    chunk_index,
+                    &mut persistant_storage_set,
+                )
                 .await;
         }
-
 
         info!("Starting to compute the state root...");
 
@@ -848,9 +862,10 @@ impl Syncer {
             let snapshot_contents = std::fs::read(&snapshot_path)
                 .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> = RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-            });
+            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                });
 
             let maybe_big_account_storage_state_roots_clone =
                 maybe_big_account_storage_state_roots.clone();
@@ -870,11 +885,11 @@ impl Syncer {
                             Entry::Occupied(occupied_entry) => *occupied_entry.get(),
                             Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
                         };
-    
+
                         let mut storage_trie = store
                             .open_storage_trie(account_hash, account_storage_root)
                             .unwrap_or_else(|_| panic!("Failed to open trie storage for account hash {account_hash}"));
-    
+
                         for (hashed_key, value) in key_value_pairs {
                             if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
                                 error!(
@@ -883,14 +898,14 @@ impl Syncer {
                                 continue;
                             }
                         }
-    
+
                         let (computed_state_root, changes) =
                             storage_trie.collect_changes_since_last_hash();
-    
+
                         maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
-    
+
                         METRICS.storage_tries_state_roots_computed.inc();
-    
+
                         sender.send((account_hash, changes)).expect("Failed to send changes");
                     });
 
@@ -903,20 +918,6 @@ impl Syncer {
                 .write_storage_trie_nodes_batch(storage_trie_node_changes)
                 .await?;
         }
-
-        // for (account_hash, expected_storage_root) in &account_storage_roots {
-        //     let mut binding = maybe_big_account_storage_state_roots
-        //         .lock()
-        //         .expect("Failed to acquire lock");
-
-        //     let computed_storage_root = binding.entry(*account_hash).or_default();
-
-        //     if *computed_storage_root != *expected_storage_root {
-        //         error!(
-        //             "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
-        //         );
-        //     }
-        // }
 
         METRICS
             .storage_tries_state_roots_end_time
@@ -962,6 +963,40 @@ impl Syncer {
 
         store.mark_chain_as_canonical(&numbers_and_hashes).await?;
         store.update_latest_block_number(pivot_number).await?;
+
+        // Verify that all storage tasks have completed,
+        // And retry the ones that failed
+        while let Some(result) = persistant_storage_set.join_next().await {
+            match result {
+                Ok(result) => match result {
+                    Ok(path) => {
+                        debug!("Stored file in path {path} succesfully.");
+                    }
+                    Err(err) => {
+                        if err.retriable() {
+                            debug!(
+                                "Failed storing file in path {}, due to err: {:?}",
+                                err.path, err.reason
+                            );
+
+                            persistant_storage_set
+                                .spawn(async move { dump_storage(err.path, err.contents).await });
+                        } else {
+                            error!(
+                                "Failed storing file in path {}, due to err: {:?}",
+                                err.path, err.reason
+                            );
+
+                            todo!("SHUTDOWN")
+                        }
+                    }
+                },
+                Err(err) => {
+                    error!("Critical error! an unkown storage task failed")
+                    // TODO: what to do next
+                }
+            }
+        }
 
         Ok(())
     }

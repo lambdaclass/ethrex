@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    io::ErrorKind,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -13,7 +14,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
@@ -32,6 +33,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
+    utils::{StorageDumpError, dump_storage},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -703,7 +705,13 @@ impl PeerHandler {
     ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_account_range(&self, state_root: H256, start: H256, limit: H256) {
+    pub async fn request_account_range(
+        &self,
+        state_root: H256,
+        start: H256,
+        limit: H256,
+        persistant_storage_set: &mut JoinSet<Result<String, StorageDumpError>>,
+    ) {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -741,10 +749,6 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        // channel to send the result of dumping accounts
-        let (dump_account_result_sender, mut dump_account_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), AccountDumpError>>(1000);
-
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
@@ -771,24 +775,11 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
-                    .expect("Failed")
-                {
-                    std::fs::create_dir_all(
-                        "/home/admin/.local/share/ethrex/account_state_snapshots",
-                    )
-                    .expect("Failed to create accounts_state_snapshot dir");
-                }
-
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
+                persistant_storage_set.spawn(async move {
                     let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
-                    // TODO: check the error type and handle it properly
-                    let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
-                    dump_account_result_sender_cloned.send(result).await;  
-                })
-                .await
-                .unwrap();
+                    let contents = account_state_chunk.clone();
+                    dump_storage(path, contents).await
+                });
 
                 chunk_file += 1;
             }
@@ -838,25 +829,6 @@ impl PeerHandler {
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });
-            }
-
-            // Check if any dump account task finished
-            // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
-                if let Err(dump_account_data) = dump_account_result {
-                    // If the dumping failed, retry it
-                    let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                    tokio::task::spawn(async move {
-                        let AccountDumpError { path, contents } = dump_account_data;
-                        // Dump the account data
-                        // TODO: check the error type and handle it properly
-                        let result = std::fs::write(path.clone(), contents.clone()).map_err(|_| AccountDumpError{path, contents});
-                        // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;  
-                    })
-                    .await
-                    .unwrap();
-                }
             }
 
             let peer_channels = self
@@ -1354,6 +1326,7 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
+        persistant_storage_set: &mut JoinSet<Result<String, StorageDumpError>>,
     ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1853,11 +1826,12 @@ impl PeerHandler {
                 .expect("Failed to create accounts_state_snapshot dir");
             }
 
-            tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
-                })
-                .await
-                .expect("");
+            persistant_storage_set.spawn(
+                async move {
+                    let path = format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}");
+                    dump_storage(path, snapshot).await
+                }
+            );
         }
 
         *METRICS.storages_downloads_tasks_queued.lock().await =
@@ -2069,9 +2043,4 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
-}
-
-struct AccountDumpError {
-    pub path: String,
-    pub contents: Vec<u8>,
 }

@@ -1,4 +1,5 @@
 use std::{
+    io::ErrorKind,
     net::IpAddr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -45,4 +46,77 @@ pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
         }
     }
     addr
+}
+
+#[derive(Clone, Debug)]
+pub enum InternalStorageDumpError {
+    DirectoryNotAccessible,
+    FailedToCreateDirectory,
+    IoRetriable(std::io::ErrorKind),
+    IoNonRetriable(std::io::ErrorKind),
+}
+
+impl InternalStorageDumpError {
+    fn retriable(&self) -> bool {
+        match self {
+            InternalStorageDumpError::DirectoryNotAccessible
+            | InternalStorageDumpError::FailedToCreateDirectory
+            | InternalStorageDumpError::IoNonRetriable(_) => false,
+            InternalStorageDumpError::IoRetriable(_) => true,
+        }
+    }
+}
+
+impl From<std::io::Error> for InternalStorageDumpError {
+    fn from(value: std::io::Error) -> Self {
+        match value.kind() {
+            ErrorKind::ResourceBusy | ErrorKind::Interrupted | ErrorKind::BrokenPipe => {
+                Self::IoRetriable(value.kind())
+            }
+            other => Self::IoNonRetriable(other),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StorageDumpError {
+    pub path: String,
+    pub contents: Vec<u8>,
+    pub reason: InternalStorageDumpError,
+}
+
+impl StorageDumpError {
+    pub fn retriable(&self) -> bool {
+        self.reason.retriable()
+    }
+}
+
+// TODO: RELOCATE?
+pub async fn dump_storage(path: String, contents: Vec<u8>) -> Result<String, StorageDumpError> {
+    let directory = std::path::Path::new(&path)
+        .parent()
+        .expect("Failed to get parent directory");
+
+    let exists = std::fs::exists(directory).map_err(|_| StorageDumpError {
+        path: path.clone(),
+        contents: contents.clone(),
+        reason: InternalStorageDumpError::DirectoryNotAccessible,
+    })?;
+
+    if !exists {
+        // Attempt to create needed directory in case it's not already there
+        std::fs::create_dir_all(directory).map_err(|_| StorageDumpError {
+            path: path.clone(),
+            contents: contents.clone(),
+            reason: InternalStorageDumpError::FailedToCreateDirectory,
+        })?;
+    }
+
+    std::fs::write(path.clone(), contents.clone()).map_err(|e| StorageDumpError {
+        path: path.clone(),
+        contents,
+        reason: e.into(),
+    })?;
+
+    Ok(path)
 }
