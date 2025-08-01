@@ -203,10 +203,9 @@ pub(crate) async fn heal_state_trie(
                         .await
                         .inspect_err(|err| {
                             error!("Failed to send state trie nodes response. Error: {err}")
-                        });
-                })
-                .await
-                .unwrap();
+                        })
+                        .unwrap();
+                });
             }
         }
 
@@ -224,9 +223,7 @@ pub(crate) async fn heal_state_trie(
                         .await
                         .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
                 }
-            })
-            .await
-            .unwrap();
+            });
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
