@@ -2,25 +2,25 @@ module.exports = async ({ github, context }) => {
     // Gets a project given the number and the organization.
     async function getProject(org, number) {
         const res = await github.graphql(`
-    query($org: String!) {
-        organization(login: $org) {
-        projectsV2(first: 100) {
-            nodes {
-            id
-            title
-            number
+        query($org: String!) {
+            organization(login: $org) {
+            projectsV2(first: 100) {
+                nodes {
+                id
+                title
+                number
+                }
+            }
             }
         }
-        }
-    }
-    `, { org });
+        `, { org });
         const project = res.organization.projectsV2.nodes.find(p => p.number === number);
         if (!project) throw new Error(`Project #${number} not found in org ${org}`);
         return project;
     }
 
-    // Find a PR's item for a specific project with a single API call.
-    async function findPrItemInProject(owner, repo, prNumber, projectId) {
+    // Find a Issue or PR item for a specific project.
+    async function findItemInProject(owner, repo, prNumber, projectId) {
         const res = await github.graphql(`
         # The $projectId variable has been removed from the query signature.
         query($owner: String!, $repo: String!, $prNumber: Int!) {
@@ -39,7 +39,7 @@ module.exports = async ({ github, context }) => {
                 }
             }
         }
-    `, {
+        `, {
             owner,
             repo,
             prNumber
@@ -57,86 +57,45 @@ module.exports = async ({ github, context }) => {
         return prItem || null;
     }
 
-    // Get all items of a project.
-    async function getAllProjectItems(projectId) {
-        let hasNextPage = true;
-        let after = null;
-        let items = [];
-
-        while (hasNextPage) {
-            const res = await github.graphql(`
-        query($projectId: ID!, $after: String) {
-        node(id: $projectId) {
-            ... on ProjectV2 {
-            items(first: 100, after: $after) {
-                pageInfo {
-                hasNextPage
-                endCursor
-                }
-                nodes {
-                id
-                content {
-                    ... on PullRequest {
-                    number
-                    }
-                    ... on Issue {
-                    number
-                    }
-                }
-                }
-            }
-            }
-        }
-        }
-    `, { projectId, after });
-
-            items.push(...res.node.items.nodes);
-            hasNextPage = res.node.items.pageInfo.hasNextPage;
-            after = res.node.items.pageInfo.endCursor;
-        }
-
-        return items;
-    }
-
     // Gets all fields of a project. Any kind of field.
     async function getProjectFields(projectId) {
         const res = await github.graphql(`
-    query($projectId: ID!) {
-        node(id: $projectId) {
-        ... on ProjectV2 {
-            fields(first: 100) {
-            nodes {
-                __typename
-                ... on ProjectV2SingleSelectField {
-                id
-                name
-                options {
+        query($projectId: ID!) {
+            node(id: $projectId) {
+            ... on ProjectV2 {
+                fields(first: 100) {
+                nodes {
+                    __typename
+                    ... on ProjectV2SingleSelectField {
                     id
                     name
-                }
-                }
-                ... on ProjectV2IterationField {
-                id
-                name
-                configuration {
-                    iterations {
+                    options {
+                        id
+                        name
+                    }
+                    }
+                    ... on ProjectV2IterationField {
                     id
-                    title
-                    startDate
-                    duration
+                    name
+                    configuration {
+                        iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                        }
+                    }
+                    }
+                    ... on ProjectV2FieldCommon {
+                    id
+                    name
                     }
                 }
                 }
-                ... on ProjectV2FieldCommon {
-                id
-                name
-                }
             }
             }
         }
-        }
-    }
-    `, { projectId });
+        `, { projectId });
 
         // Return an array of all fields with their options if available
         return res.node.fields.nodes;
@@ -148,17 +107,17 @@ module.exports = async ({ github, context }) => {
         const date = dateValue.split("T")[0]; // "YYYY-MM-DD"
 
         await github.graphql(`
-    mutation {
-        updateProjectV2ItemFieldValue(input: {
-        projectId: "${projectId}",
-        itemId: "${itemId}",
-        fieldId: "${field.id}",
-        value: { date: "${date}" }
-        }) {
-        projectV2Item { id }
+        mutation {
+            updateProjectV2ItemFieldValue(input: {
+            projectId: "${projectId}",
+            itemId: "${itemId}",
+            fieldId: "${field.id}",
+            value: { date: "${date}" }
+            }) {
+            projectV2Item { id }
+            }
         }
-    }
-    `);
+        `);
 
         console.log(`Set date field '${field.name}' to '${date}'.`);
     }
@@ -174,17 +133,17 @@ module.exports = async ({ github, context }) => {
 
         // Run the mutation
         await github.graphql(`
-    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-        updateProjectV2ItemFieldValue(input: {
-        projectId: $projectId,
-        itemId: $itemId,
-        fieldId: $fieldId,
-        value: { singleSelectOptionId: $optionId }
-        }) {
-        projectV2Item { id }
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+            updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: { singleSelectOptionId: $optionId }
+            }) {
+            projectV2Item { id }
+            }
         }
-    }
-    `, {
+        `, {
             projectId,
             itemId,
             fieldId: field.id,
@@ -239,18 +198,11 @@ module.exports = async ({ github, context }) => {
     const project = await getProject(orgLogin, projectNumber);
     const projectId = project.id;
 
-    // Usage
-    // You'll need the repo owner and name for this query.
-    const prItem = await findPrItemInProject(orgLogin, 'ethrex', pr.number, projectId);
-    console.log("PR Item:", prItem);
-    // const allItems = await getAllProjectItems(projectId);
-    // // const prItem = findItemByNumber(allItems, pr.number);
+    const prItem = await findItemInProject(orgLogin, 'ethrex', pr.number, projectId);
     if (!prItem) {
         console.warn(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
         return;
     }
-
-    return;
 
     // Get all fields of the project.
     const fields = await getProjectFields(projectId);
@@ -299,7 +251,7 @@ module.exports = async ({ github, context }) => {
 
     console.log(`Synchronizing linked issues with new PR status.`);
     for (const issueNumber of issueNumbers) {
-        const issueItem = findItemByNumber(allItems, issueNumber);
+        const issueItem = await findItemInProject(orgLogin, 'ethrex', issueNumber, projectId);
 
         if (issueItem) {
             console.log(`Setting status of issue #${issueNumber} to '${newStatus}'.`);
