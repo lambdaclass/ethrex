@@ -1,6 +1,6 @@
 #![no_main]
 
-use zkvm_interface::{io::JSONProgramInput, execution::execution_program};
+use zkvm_interface::{execution::execution_program, io::JSONProgramInput};
 
 sp1_zkvm::entrypoint!(main);
 
