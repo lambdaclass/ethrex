@@ -242,6 +242,12 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     nibbles
 }
 
+impl std::hash::Hash for Nibbles {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.data.hash(state);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

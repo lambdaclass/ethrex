@@ -5,33 +5,37 @@ use std::{
 
 use crate::peer_handler::PeerHandler;
 use ethrex_common::H256;
-use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
-use tracing::info;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// This struct stores the metadata we need when we request a node
+#[derive(Debug)]
 pub struct NodeRequest {
     /// What account this belongs too (so what is the storage tree)
     acc_path: Nibbles,
     /// Where in the tree is this node located
     storage_path: Nibbles,
     /// What node needs this node
-    parent: H256,
+    parent: Nibbles,
     // /// What hash was requested. We can use this for validation
     // hash: H256 // this is a potential optimization, we ignore for now
 }
 
 /// This struct stores the metadata we need when we request a node
+#[derive(Debug)]
 pub struct NodeResponse {
-    /// Who is
+    /// Who is this node
     node: Node,
-    /// What node needs this node
-    parent: H256,
+    /// What did we ask for
+    node_request: NodeRequest,
 }
 
 /// This struct stores the metadata we need when we store a node in the memory bank before storing
+#[derive(Debug)]
 pub struct MembatchEntry {
     /// What node needs this node
     parent: H256,
@@ -65,32 +69,172 @@ pub fn storage_heal_trie(
     // Logging stuff, we log during a given interval
     let mut last_update = Instant::now();
 
-    let mut download_queue: Vec<NodeRequest> = account_paths
+    let mut download_queue = get_initial_downloads(&account_paths);
+
+    let mut node_processing_queue: Vec<NodeResponse> = Vec::new();
+
+    // channel to send the download task to the peers
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<Vec<NodeResponse>>(1000);
+
+    loop {
+        log_storage_heal(&mut last_update);
+
+        // we request the trie nodes
+        spawn_downloader_task(task_sender.clone(), &mut download_queue, &peers);
+
+        // try_recv
+        receive_data_from_tasks(&mut task_receiver, &mut node_processing_queue);
+
+        // Then we process them
+        // The coordinator for now is going to process them, although it may be more efficient if the writing to the database
+        // is concurrentized
+        process_data(
+            &mut node_processing_queue,
+            &mut download_queue,
+            store.clone(),
+            membatch,
+        );
+    }
+}
+
+fn receive_data_from_tasks(
+    task_receiver: &mut Receiver<Vec<NodeResponse>>,
+    node_processing_queue: &mut Vec<NodeResponse>,
+) {
+}
+
+fn spawn_downloader_task(
+    task_receiver: Sender<Vec<NodeResponse>>,
+    download_queue: &mut Vec<NodeRequest>,
+    peers: &PeerHandler,
+) {
+}
+
+fn process_data(
+    node_processing_queue: &mut Vec<NodeResponse>,
+    download_queue: &mut Vec<NodeRequest>,
+    store: Store,
+    membatch: &mut Membatch,
+) -> Result<(), StoreError> {
+    while let Some(node_response) = node_processing_queue.pop() {
+        trace!("We are processing node response {:?}", node_response);
+
+        let (missing_children_nibbles, missing_children_count) = determine_missing_children(
+            &node_response.node,
+            &node_response.node_request.storage_path,
+            store.clone(),
+            membatch,
+        )?;
+
+        if missing_children_count == 0 {
+            // We flush to the database this node
+            commit_node(node_response, store, membatch);
+        } else {
+        }
+    }
+
+    Ok(())
+}
+
+fn log_storage_heal(last_update: &mut Instant) {
+    if last_update.elapsed() > LOGGING_INTERVAL {
+        info!("Storage Healing");
+        *last_update = Instant::now();
+    }
+}
+
+fn get_initial_downloads(account_paths: &[Nibbles]) -> Vec<NodeRequest> {
+    account_paths
         .into_iter()
         .map(|acc_path| {
             NodeRequest {
-                acc_path,
+                acc_path: acc_path.clone(),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                parent: H256::zero(),
+                parent: Nibbles::default(),
             }
         })
-        .collect();
+        .collect()
+}
 
-    let mut node_processing_queue: Vec<NodeResponse>;
-
-    loop {
-        if last_update.elapsed() > LOGGING_INTERVAL {
-            info!("Storage Healing");
-            last_update = Instant::now();
+/// Returns the partial paths to the node's missing children and the number of direct missing children
+pub fn determine_missing_children(
+    node: &Node,
+    parent_path: &Nibbles,
+    store: Store,
+    membatch: &Membatch,
+) -> Result<(Vec<Nibbles>, u64), StoreError> {
+    let mut paths = Vec::new();
+    let mut count = 0;
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie_state = trie.db();
+    match &node {
+        Node::Branch(node) => {
+            for (index, child) in node.choices.iter().enumerate() {
+                if child.is_valid()
+                    && !child
+                        .get_node(trie_state)?
+                        .is_some_and(|node| node.compute_hash() == child.compute_hash())
+                {
+                    count += 1;
+                    paths.extend(determine_membatch_missing_children(
+                        parent_path.append_new(index as u8),
+                        parent_path,
+                        membatch,
+                        store.clone(),
+                    )?);
+                }
+            }
         }
+        Node::Extension(node) => {
+            let hash = node.child.compute_hash();
+            if node.child.is_valid()
+                && node
+                    .child
+                    .get_node(trie_state)?
+                    .is_some_and(|node| node.compute_hash() == hash)
+            {
+                count += 1;
+                paths.extend(determine_membatch_missing_children(
+                    parent_path.concat(node.prefix.clone()),
+                    parent_path,
+                    membatch,
+                    store.clone(),
+                )?);
+            }
+        }
+        _ => {}
+    }
+    Ok((paths, count))
+}
 
-        // we request the trie nodes
-        // tokio::spawn(peers.request_storage_trienods())
+// This function searches for the nodes we have to download that are childs from the membatch
+fn determine_membatch_missing_children(
+    nibbles: Nibbles,
+    parent_path: &Nibbles,
+    membatch: &Membatch,
+    store: Store,
+) -> Result<Vec<Nibbles>, StoreError> {
+    if let Some(membatch_entry) = membatch.get(&nibbles) {
+        determine_missing_children(&membatch_entry.node, &nibbles, store, membatch)
+            .map(|(paths, count)| paths)
+    } else {
+        Ok(vec![nibbles])
+    }
+}
 
-        // Then we process them
-        // So, we first for each node check the missing children
+fn commit_node(
+    node: NodeResponse,
+    store: Store,
+    membatch: &mut Membatch,
+) -> Result<(), StoreError> {
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie_db = trie.db();
+    trie_db
+        .put(node.node.compute_hash(), node.node.encode_raw())
+        .map_err(StoreError::Trie)?;
 
-        // The coordinator for now is going to process them, although it may be more efficient if the writing to the database
-        // is concurrentized
+    // Special case, we have just ocmmited the root, we stop
+    if node.node_request.parent == node.node_request.storage_path {
+        return Ok(());
     }
 }
