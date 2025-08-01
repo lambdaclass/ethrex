@@ -177,9 +177,9 @@ pub async fn start_api(
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context)
-        // Disable the body limit for the engine API
+        // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
-        .layer(DefaultBodyLimit::disable());
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
 
     let authrpc_listener = TcpListener::bind(authrpc_addr)
         .await
