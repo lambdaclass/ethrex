@@ -350,7 +350,7 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
         .or_insert_with(|| msg.block.clone());
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
-    while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+    while let Some(block) = l2_state.blocks_on_queue.get(&next_block_to_add) {
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
         if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
@@ -360,7 +360,7 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
         }
         established
             .blockchain
-            .add_block(&block)
+            .add_block(block)
             .await
             .inspect_err(|e| {
                 log_peer_error(
@@ -374,15 +374,6 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
             })?;
         let block_hash = block.hash();
 
-        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
-            .await
-            .map_err(|e| {
-                RLPxError::BlockchainError(ChainError::Custom(format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block.header.number,
-                    block.hash()
-                )))
-            })?;
         info!(
             "Added new block {} with hash {:?}",
             next_block_to_add, block_hash
@@ -450,6 +441,39 @@ async fn process_batch_sealed(
         "Sealed batch {} with blocks from {} to {}",
         msg.batch.number, msg.batch.first_block, msg.batch.last_block
     );
+    // Since we a peer cannot know in which block a batch was sealed, we have to keep the blocks
+    // in the queue until the batch is sealed
+    let latest_hash_on_batch = {
+        // Remove the priors blocks from the queue
+        for block_number in msg.batch.first_block..msg.batch.last_block {
+            l2_state
+                .blocks_on_queue
+                .remove(&block_number)
+                .ok_or(RLPxError::MessageNotHandled(format!(
+                    "Tried to seal a batch but block {block_number} was not found in the queue or received by a peer."
+                )))?;
+        }
+        // Remove the last block from the queue and retrieve its hash
+        l2_state.blocks_on_queue.remove(&msg.batch.last_block)
+            .ok_or(RLPxError::MessageNotHandled(format!(
+                "Tried to seal a batch but last block {} was not found in the queue or received by a peer.",
+                msg.batch.last_block
+            )))?
+            .hash()
+    };
+    apply_fork_choice(
+        &established.storage,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+    )
+    .await
+    .map_err(|e| {
+        RLPxError::BlockchainError(ChainError::Custom(format!(
+            "Error adding new block {} with hash {:?}, error: {e}",
+            msg.batch.last_block, latest_hash_on_batch
+        )))
+    })?;
     Ok(())
 }
 
