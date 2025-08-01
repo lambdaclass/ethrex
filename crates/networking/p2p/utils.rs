@@ -9,6 +9,7 @@ use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
+use tracing::info;
 
 use crate::{
     kademlia::PeerChannels,
