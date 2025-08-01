@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754064101282,
+  "lastUpdate": 1754064123974,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15773,6 +15773,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0067071959798994975,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4ef8801965cf2895d7896cfb0339fed02413ddf2",
+          "message": "ci(l1): update to new ethereum package version. (#3860)\n\n**Motivation**\nStart using the official `ethrereum-package` repo instead of a fork\n\n**Description**\nSee https://github.com/ethpandaops/ethereum-package/pull/1131\n\n- Updated version of ethereum-package to use the lastest one instead of\na fork\n- Improved `checkout-ethereum-package` make task\n- Made sure we're using the local build of ethrex everywhere\n- Downgraded an error to warning\n\nCloses #595",
+          "timestamp": "2025-08-01T14:15:41Z",
+          "tree_id": "a55302f13ead84c4d7dfe0333cb3e6e6cf503461",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4ef8801965cf2895d7896cfb0339fed02413ddf2"
+        },
+        "date": 1754064108717,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
