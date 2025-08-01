@@ -752,7 +752,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                     valid_txs.push(tx);
                 }
-                // FIXME: we're supposed to send `Transaction` message only to a random
+                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
                 // subset and send only the hashes to everyone else.
                 // Consider sending to the sqrt of the number of peers like geth does.
                 if !valid_txs.is_empty() {
