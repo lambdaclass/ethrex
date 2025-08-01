@@ -779,6 +779,33 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
+            // REMOVE THIS IF; JUST FOR TESTING IN SEPOLIA ❌❌❌❌❌
+            if all_accounts_state.len() == 33438524 {
+                let current_account_hashes = std::mem::take(&mut all_account_hashes);
+                let current_account_states = std::mem::take(&mut all_accounts_state);
+
+                let account_state_chunk = current_account_hashes
+                    .into_iter()
+                    .zip(current_account_states)
+                    .collect::<Vec<(H256, AccountState)>>()
+                    .encode_to_vec();
+
+                tokio::task::spawn(async move {
+                    if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                    .expect("Failed")
+                {
+                    std::fs::create_dir_all(
+                        "/home/admin/.local/share/ethrex/account_state_snapshots",
+                    )
+                    .expect("Failed to create accounts_state_snapshot dir");
+                }
+                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
+                })
+                .await
+                .unwrap();
+                let is_stale = true;
+                return is_stale;
+            }
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -919,25 +946,6 @@ impl PeerHandler {
                     *downloader_is_free = false;
                 });
             debug!("Downloader {free_peer_id} is now busy");
-
-            // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
-            //  while current_unix_time() > staleness_timestamp {
-            //      info!("We are stale, updating pivot");
-            //      let Some(header) = self
-            //          .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
-            //          .await
-            //      else {
-            //          info!("Received None pivot_header");
-            //          continue;
-            //      };
-            //      pivot_header = header;
-            //      info!(
-            //          "New pivot block number: {}, header: {:?}",
-            //          pivot_header.number, pivot_header
-            //      );
-            //      staleness_timestamp = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-            //  }
-            // TODO: not remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
 
             // after our time limit, the block is stale. Stop downloading blocks
             if current_unix_time() > staleness_timestamp {
