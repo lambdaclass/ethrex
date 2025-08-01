@@ -10,7 +10,7 @@ ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 
 tracing.workspace = true
-tinyvec = "1.6.0"
+tinyvec.workspace = true
 ethereum-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,7 +22,7 @@ kzg-rs.workspace = true
 keccak-hash.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
-once_cell = "1.20.2"
+once_cell.workspace = true
 crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
