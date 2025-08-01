@@ -19,21 +19,25 @@ module.exports = async ({ github, context }) => {
         return project;
     }
 
-    // Find a Issue or PR item for a specific project.
-    async function findItemInProject(owner, repo, prNumber, projectId) {
+    // Find an Issue or PR item for a specific project.
+    async function findItemInProject(owner, repo, itemNumber, projectId) {
         const res = await github.graphql(`
-        # The $projectId variable has been removed from the query signature.
-        query($owner: String!, $repo: String!, $prNumber: Int!) {
+        # The query now fetches both issue and pullRequest by the same number.
+        query($owner: String!, $repo: String!, $itemNumber: Int!) {
             repository(owner: $owner, name: $repo) {
-                pullRequest(number: $prNumber) {
-                    # A PR can be in multiple projects. We'll get the top 10.
+                pullRequest(number: $itemNumber) {
                     projectItems(first: 10) {
                         nodes {
                             id
-                            # We still need the project ID in the response to filter on it later.
-                            project {
-                                id
-                            }
+                            project { id }
+                        }
+                    }
+                }
+                issue(number: $itemNumber) {
+                    projectItems(first: 10) {
+                        nodes {
+                            id
+                            project { id }
                         }
                     }
                 }
@@ -42,19 +46,24 @@ module.exports = async ({ github, context }) => {
         `, {
             owner,
             repo,
-            prNumber
-            // We still pass projectId to the function, but not to the GraphQL query.
+            itemNumber
         });
 
-        if (!res.repository.pullRequest) {
+        if (!res.repository) {
             return null;
         }
 
-        // This part is the same: find the item that matches the target project's ID.
-        const projectItems = res.repository.pullRequest.projectItems.nodes;
-        const prItem = projectItems.find(item => item.project.id === projectId);
+        // Since a PR is also an issue, we prioritize the PR result.
+        // If `pullRequest` is null, it will use the `issue` result.
+        const projectItems = res.repository.pullRequest?.projectItems?.nodes || res.repository.issue?.projectItems?.nodes;
 
-        return prItem || null;
+        if (!projectItems) {
+            return null;
+        }
+
+        // The rest of the logic is the same: find the item matching the project ID.
+        const item = projectItems.find(p => p.project.id === projectId);
+        return item || null;
     }
 
     // Gets all fields of a project. Any kind of field.
