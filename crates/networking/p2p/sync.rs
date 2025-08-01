@@ -173,7 +173,8 @@ impl Syncer {
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        let mut current_head = block_sync_state.get_current_head().await?;
+        //let mut current_head = block_sync_state.get_current_head().await?;
+        let mut current_head = store.get_canonical_block_hash(6027941).await?;
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
