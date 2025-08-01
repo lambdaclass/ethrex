@@ -40,6 +40,8 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
+pub const MAX_ACCOUNTS_FILE_SIZE: usize = 8 * 1024 * 1024 * 1024; // 8 GB
+pub const MAX_ACCOUNTS_STORAGES_FILE_SIZE: usize = 8 * 1024 * 1024 * 1024; // 8 GB
 
 // Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
@@ -764,7 +766,7 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= MAX_ACCOUNTS_FILE_SIZE {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1397,7 +1399,7 @@ impl PeerHandler {
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
+                > MAX_ACCOUNTS_STORAGES_FILE_SIZE
             {
                 let current_account_hashes = account_storage_roots
                     .iter()
