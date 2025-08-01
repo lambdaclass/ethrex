@@ -22,22 +22,19 @@ module.exports = async ({ github, context }) => {
     // Find an Issue or PR item for a specific project.
     async function findItemInProject(owner, repo, itemNumber, projectId) {
         const res = await github.graphql(`
-        # The query now fetches both issue and pullRequest by the same number.
+        # Use the 'issueOrPullRequest' field for a more robust query.
         query($owner: String!, $repo: String!, $itemNumber: Int!) {
             repository(owner: $owner, name: $repo) {
-                pullRequest(number: $itemNumber) {
-                    projectItems(first: 10) {
-                        nodes {
-                            id
-                            project { id }
+                issueOrPullRequest(number: $itemNumber) {
+                    # Use inline fragments to get projectItems regardless of the type.
+                    ... on PullRequest {
+                        projectItems(first: 10) {
+                            nodes { id project { id } }
                         }
                     }
-                }
-                issue(number: $itemNumber) {
-                    projectItems(first: 10) {
-                        nodes {
-                            id
-                            project { id }
+                    ... on Issue {
+                        projectItems(first: 10) {
+                            nodes { id project { id } }
                         }
                     }
                 }
@@ -49,19 +46,13 @@ module.exports = async ({ github, context }) => {
             itemNumber
         });
 
-        if (!res.repository) {
-            return null;
-        }
-
-        // Since a PR is also an issue, we prioritize the PR result.
-        // If `pullRequest` is null, it will use the `issue` result.
-        const projectItems = res.repository.pullRequest?.projectItems?.nodes || res.repository.issue?.projectItems?.nodes;
+        // The logic is now simpler and safer.
+        const projectItems = res.repository?.issueOrPullRequest?.projectItems?.nodes;
 
         if (!projectItems) {
             return null;
         }
 
-        // The rest of the logic is the same: find the item matching the project ID.
         const item = projectItems.find(p => p.project.id === projectId);
         return item || null;
     }
