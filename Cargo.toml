@@ -15,10 +15,13 @@ members = [
   "crates/l2/common",
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
+  "crates/l2/prover/zkvm/interface/sp1",
+  "crates/l2/prover/zkvm/interface/risc0",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
   "crates/l2/networking/rpc",
+  "crates/l2/tee/quote-gen",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
@@ -164,24 +167,27 @@ ark-bn254 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 strum = { version = "0.27.1", features = ["derive"] }
+regex = "1.11.1"
+simd-json = "0.15.1"
+spinoff = "0.8.0"
 
 # VM
-revm = "9.0.0"
+revm = { version = "19.0.0", default-features = false }
 
 # L2
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
 ethers = "2.0"
 
 # Prover
-risc0-zkvm = "=2.3.1"
-risc0-zkvm-platform = "=2.0.3"
-risc0-zkp = "=2.0.2"
-risc0-build = "=2.3.1"
+risc0-zkvm = { version = "=2.3.1", default-features = false }
+risc0-zkvm-platform = { version = "=2.0.3", default-features = false }
+risc0-zkp = { version = "=2.0.2", default-features = false }
+risc0-build = { version = "=2.3.1", default-features = false }
 
-sp1-sdk = "=5.0.8"
-sp1-build = "=5.0.8"
-sp1-recursion-gnark-ffi = "=5.0.8"
-sp1-zkvm = "=5.0.8"
+sp1-sdk = { version = "=5.0.8", default-features = false }
+sp1-build = { version = "=5.0.8", default-features = false }
+sp1-recursion-gnark-ffi = { version = "=5.0.8", default-features = false }
+sp1-zkvm = { version = "=5.0.8", default-features = false }
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
