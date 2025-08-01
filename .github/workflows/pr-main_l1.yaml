@@ -34,7 +34,6 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Install RISC0
-        if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
