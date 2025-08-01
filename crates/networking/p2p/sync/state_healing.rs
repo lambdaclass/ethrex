@@ -123,6 +123,7 @@ pub(crate) async fn heal_state_trie(
         }
 
         // Attempt to receive a response from one of the peers
+        // TODO: this match response should score the appropiate peers
         if let Ok((peer_id, response, batch)) = task_receiver.try_recv() {
             info!("Finished request_state_trienodes task");
             inflight_tasks -= 1;
@@ -196,7 +197,6 @@ pub(crate) async fn heal_state_trie(
                         batch.clone(),
                     )
                     .await;
-                    info!("Sending request_state_trienodes response through channel");
                     // TODO: add error handling
                     tx.send((peer_id, response, batch))
                         .await
