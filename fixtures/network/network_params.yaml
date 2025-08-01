@@ -25,6 +25,7 @@ participants:
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
+    snooper_enabled: true
 
 network_params:
   electra_fork_epoch: 1
