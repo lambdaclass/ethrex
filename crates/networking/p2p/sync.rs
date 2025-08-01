@@ -531,8 +531,9 @@ impl Syncer {
                             bytecode_hashes.push(account.code_hash);
                         }
                         trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                            .unwrap();
+                            .expect("We should be inserting");
                     }
+                    info!("We have finished inserting in the trie, getting the hash");
                     let current_state_root = trie.hash().unwrap();
                     // TODO: readd this, potentialy in another place
                     // bytecode_hashes.sort();
