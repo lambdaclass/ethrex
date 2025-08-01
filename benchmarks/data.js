@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754063393716,
+  "lastUpdate": 1754064101282,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7255,6 +7255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166037292323,
             "range": "± 342450573",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53660242+samoht9277@users.noreply.github.com",
+            "name": "Tomás Casagrande",
+            "username": "samoht9277"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5628e4578a9f43e18d4e754149f2dd67e8b7558a",
+          "message": "ci(l1): add Docker login to prevent rate limit. (#3919)\n\n**Motivation**\n\nUnauthenticated users have strict rate limiting. We created an DockerHub\naccount to circumvent this.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nAdds Docker login and reverts caché removal.\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-01T15:11:40Z",
+          "tree_id": "b0366bfcabd20a1d3f9f91e69940894b16d60b2a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5628e4578a9f43e18d4e754149f2dd67e8b7558a"
+        },
+        "date": 1754064085785,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166475765801,
+            "range": "± 589557361",
             "unit": "ns/iter"
           }
         ]
