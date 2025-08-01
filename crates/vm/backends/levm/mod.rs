@@ -55,9 +55,14 @@ impl LEVM {
         for (idx, (tx, tx_sender)) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?.into_iter().enumerate() {
-            info!("Executing tx at idx: {idx}");
+            if idx == 60 {
+                info!("Executing tx at idx: {idx}");
+            }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            info!("TX {idx} gas used: {}", report.gas_used);
+            if  idx == 60 {
+                info!("Executed tx at idx: {idx}, report: {report:?}");
+                panic!("abporting");
+            }
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
