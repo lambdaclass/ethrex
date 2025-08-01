@@ -173,10 +173,10 @@ aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0
 ethers = "2.0"
 
 # Prover
-risc0-zkvm = "2.1.0"
-risc0-zkvm-platform = "2.0.2"
-risc0-zkp = "2.0.1"
-risc0-build = "2.1.2"
+risc0-zkvm = "=2.3.1"
+risc0-zkvm-platform = "=2.0.3"
+risc0-zkp = "=2.0.2"
+risc0-build = "=2.3.1"
 
 sp1-sdk = "=5.0.8"
 sp1-build = "=5.0.8"

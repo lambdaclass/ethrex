@@ -155,7 +155,11 @@ pub async fn send_tx_bump_gas_exponential_backoff(
                 }
             }
         }
-        let tx_hash = send_wrapped_transaction(client, wrapped_tx, signer).await?;
+        let Ok(tx_hash) = send_wrapped_transaction(client, wrapped_tx, signer).await else {
+            bump_gas_wrapped_tx(client, wrapped_tx, 30);
+            number_of_retries += 1;
+            continue;
+        };
 
         if number_of_retries > 0 {
             warn!(
@@ -175,17 +179,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas
                 // and go to the next one.
-                match wrapped_tx {
-                    WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                        client.bump_eip4844(wrapped_eip4844_transaction, 30);
-                    }
-                    WrappedTransaction::EIP1559(eip1559_transaction) => {
-                        client.bump_eip1559(eip1559_transaction, 30);
-                    }
-                    WrappedTransaction::L2(privileged_l2_transaction) => {
-                        client.bump_privileged_l2(privileged_l2_transaction, 30);
-                    }
-                }
+                bump_gas_wrapped_tx(client, wrapped_tx, 30);
 
                 number_of_retries += 1;
                 continue 'outer;
@@ -205,4 +199,22 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     }
 
     Err(EthClientError::TimeoutError)
+}
+
+fn bump_gas_wrapped_tx(
+    client: &EthClient,
+    wrapped_tx: &mut WrappedTransaction,
+    bump_percentage: u64,
+) {
+    match wrapped_tx {
+        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
+            client.bump_eip4844(wrapped_eip4844_transaction, bump_percentage);
+        }
+        WrappedTransaction::EIP1559(eip1559_transaction) => {
+            client.bump_eip1559(eip1559_transaction, bump_percentage);
+        }
+        WrappedTransaction::L2(privileged_l2_transaction) => {
+            client.bump_privileged_l2(privileged_l2_transaction, bump_percentage);
+        }
+    }
 }
