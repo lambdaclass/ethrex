@@ -221,7 +221,7 @@ jobs:
         run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
       - name: Run Hive Simulation ethereum/eest/execute-blobs
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ethereum/eest/execute-blobs --sim.parallelism 16 --sim.loglevel 1 --sim.buildarg fork=Cancun
+        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ethereum/eest/execute-blobs --sim.parallelism 16 --sim.loglevel 1 --sim.buildarg fork=Cancun --docker.output
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
