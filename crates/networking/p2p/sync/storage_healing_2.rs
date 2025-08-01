@@ -37,16 +37,17 @@ pub struct NodeResponse {
 /// This struct stores the metadata we need when we store a node in the memory bank before storing
 #[derive(Debug)]
 pub struct MembatchEntry {
-    /// What node needs this node
-    parent: H256,
     /// What this node is
-    node: Node,
+    node_response: NodeResponse,
     /// How many missing children this node has
     /// if this number is 0, it should be flushed to the db, not stored in memory
     missing_children_count: usize,
 }
 
-type Membatch = HashMap<Nibbles, MembatchEntry>;
+/// The membatch key represents the account path and the storage path
+type MembatchKey = (Nibbles, Nibbles);
+
+type Membatch = HashMap<MembatchKey, MembatchEntry>;
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
 /// by the storage root in their account state
@@ -119,17 +120,24 @@ fn process_data(
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
 
-        let (missing_children_nibbles, missing_children_count) = determine_missing_children(
-            &node_response.node,
-            &node_response.node_request.storage_path,
-            store.clone(),
-            membatch,
-        )?;
+        let (missing_children_nibbles, missing_children_count) =
+            determine_missing_children(&node_response, store.clone(), membatch)?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(node_response, store, membatch);
+            commit_node(&node_response, store.clone(), membatch);
         } else {
+            let key = (
+                node_response.node_request.acc_path.clone(),
+                node_response.node_request.storage_path.clone(),
+            );
+            membatch.insert(
+                key,
+                MembatchEntry {
+                    node_response: node_response,
+                    missing_children_count: missing_children_count,
+                },
+            );
         }
     }
 
@@ -156,29 +164,29 @@ fn get_initial_downloads(account_paths: &[Nibbles]) -> Vec<NodeRequest> {
         .collect()
 }
 
-/// Returns the partial paths to the node's missing children and the number of direct missing children
+/// Returns the full paths to the node's missing children and grandchildren
+/// and the number of direct missing children
 pub fn determine_missing_children(
-    node: &Node,
-    parent_path: &Nibbles,
+    node_response: &NodeResponse,
     store: Store,
     membatch: &Membatch,
-) -> Result<(Vec<Nibbles>, u64), StoreError> {
+) -> Result<(Vec<MembatchKey>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
+    let node = node_response.node.clone();
     let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
     let trie_state = trie.db();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid()
-                    && !child
-                        .get_node(trie_state)?
-                        .is_some_and(|node| node.compute_hash() == child.compute_hash())
-                {
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
                     count += 1;
                     paths.extend(determine_membatch_missing_children(
-                        parent_path.append_new(index as u8),
-                        parent_path,
+                        &node_response.node_request.acc_path,
+                        &node_response
+                            .node_request
+                            .storage_path
+                            .append_new(index as u8),
                         membatch,
                         store.clone(),
                     )?);
@@ -187,16 +195,14 @@ pub fn determine_missing_children(
         }
         Node::Extension(node) => {
             let hash = node.child.compute_hash();
-            if node.child.is_valid()
-                && node
-                    .child
-                    .get_node(trie_state)?
-                    .is_some_and(|node| node.compute_hash() == hash)
-            {
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 count += 1;
                 paths.extend(determine_membatch_missing_children(
-                    parent_path.concat(node.prefix.clone()),
-                    parent_path,
+                    &node_response.node_request.acc_path,
+                    &node_response
+                        .node_request
+                        .parent
+                        .concat(node.prefix.clone()),
                     membatch,
                     store.clone(),
                 )?);
@@ -209,32 +215,57 @@ pub fn determine_missing_children(
 
 // This function searches for the nodes we have to download that are childs from the membatch
 fn determine_membatch_missing_children(
-    nibbles: Nibbles,
-    parent_path: &Nibbles,
+    acc_path: &Nibbles,
+    nibbles: &Nibbles,
     membatch: &Membatch,
     store: Store,
-) -> Result<Vec<Nibbles>, StoreError> {
-    if let Some(membatch_entry) = membatch.get(&nibbles) {
-        determine_missing_children(&membatch_entry.node, &nibbles, store, membatch)
+) -> Result<Vec<MembatchKey>, StoreError> {
+    if let Some(membatch_entry) = membatch.get(&(acc_path.clone(), nibbles.clone())) {
+        determine_missing_children(&membatch_entry.node_response, store, membatch)
             .map(|(paths, count)| paths)
     } else {
-        Ok(vec![nibbles])
+        Ok(vec![(acc_path.clone(), nibbles.clone())])
     }
 }
 
 fn commit_node(
-    node: NodeResponse,
+    node: &NodeResponse,
     store: Store,
     membatch: &mut Membatch,
 ) -> Result<(), StoreError> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.clone().open_state_trie(*EMPTY_TRIE_HASH)?;
     let trie_db = trie.db();
     trie_db
         .put(node.node.compute_hash(), node.node.encode_raw())
-        .map_err(StoreError::Trie)?;
+        .map_err(StoreError::Trie)?; // we can have an error if 2 trees have the same nodes
 
-    // Special case, we have just ocmmited the root, we stop
-    if node.node_request.parent == node.node_request.storage_path {
+    // Special case, we have just commited the root, we stop
+    if node.node_request.storage_path == node.node_request.parent {
+        trace!("We have the parent of an account");
         return Ok(());
     }
+
+    let parent_key: (Nibbles, Nibbles) = (
+        node.node_request.acc_path.clone(),
+        node.node_request.parent.clone(),
+    );
+
+    if !membatch.contains_key(&parent_key) {
+        return Err(StoreError::Custom(
+            "We are missing the parent from the membatch!".to_string(),
+        ));
+    }
+
+    let mut parent_entry = membatch
+        .remove(&parent_key)
+        .expect("We are missing the parent from the membatch!");
+
+    parent_entry.missing_children_count -= 1;
+
+    if parent_entry.missing_children_count == 0 {
+        commit_node(&parent_entry.node_response, store, membatch)?;
+    } else {
+        membatch.insert(parent_key, parent_entry);
+    }
+    Ok(())
 }
