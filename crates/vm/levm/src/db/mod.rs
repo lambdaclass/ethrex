@@ -2,13 +2,10 @@ use crate::errors::DatabaseError;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Account, AccountInfo, ChainConfig},
+    types::{AccountInfo, ChainConfig},
 };
-use std::collections::BTreeMap;
 
 pub mod gen_db;
-
-pub type CacheDB = BTreeMap<Address, Account>;
 
 pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;

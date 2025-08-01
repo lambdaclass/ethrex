@@ -30,8 +30,6 @@ use ethrex_levm::{
 use std::cmp::min;
 use std::collections::BTreeMap;
 
-// Export needed types
-pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]

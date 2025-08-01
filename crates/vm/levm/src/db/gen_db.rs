@@ -14,14 +14,15 @@ use crate::errors::VMError;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 
-use super::CacheDB;
 use super::Database;
+
+pub type CacheDB = BTreeMap<Address, Account>;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
-    pub initial_accounts_state: BTreeMap<Address, Account>,
+    pub initial_accounts_state: CacheDB,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
