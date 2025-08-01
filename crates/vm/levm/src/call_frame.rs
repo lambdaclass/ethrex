@@ -8,6 +8,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
+use tracing::info;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
@@ -346,6 +347,7 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
+        info!("Remaining gas: {}", self.gas_remaining);
         self.gas_remaining = self
             .gas_remaining
             .checked_sub(gas)

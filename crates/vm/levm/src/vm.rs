@@ -22,6 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{Fork, Log, Transaction},
 };
+use tracing::info;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -189,6 +190,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+            info!("{opcode}");
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
