@@ -29,7 +29,9 @@ impl<'a> VM<'a> {
 
         let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
         let value = u256_from_big_endian_const(read_n_bytes);
-        info!("PUSH-N, value for old implementation: {value}");
+        if *(TX.lock().unwrap()) {
+            info!("PUSH-N, value for old implementation: {value}");
+        }
         let value = if let Some(slice) = current_call_frame
             .bytecode
             .get(pc_offset..pc_offset.wrapping_add(N))
