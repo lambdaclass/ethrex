@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use crate::peer_handler::PeerHandler;
 use ethrex_common::H256;
@@ -20,6 +23,14 @@ pub struct NodeRequest {
     // hash: H256 // this is a potential optimization, we ignore for now
 }
 
+/// This struct stores the metadata we need when we request a node
+pub struct NodeResponse {
+    /// Who is
+    node: Node,
+    /// What node needs this node
+    parent: H256,
+}
+
 /// This struct stores the metadata we need when we store a node in the memory bank before storing
 pub struct MembatchEntry {
     /// What node needs this node
@@ -30,6 +41,8 @@ pub struct MembatchEntry {
     /// if this number is 0, it should be flushed to the db, not stored in memory
     missing_children_count: usize,
 }
+
+type Membatch = HashMap<Nibbles, MembatchEntry>;
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
 /// by the storage root in their account state
@@ -46,6 +59,7 @@ pub fn storage_heal_trie(
     account_paths: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
+    membatch: &mut Membatch,
     staleness_timestamp: u64,
 ) {
     // Logging stuff, we log during a given interval
@@ -62,6 +76,8 @@ pub fn storage_heal_trie(
         })
         .collect();
 
+    let mut node_processing_queue: Vec<NodeResponse>;
+
     loop {
         if last_update.elapsed() > LOGGING_INTERVAL {
             info!("Storage Healing");
@@ -69,8 +85,11 @@ pub fn storage_heal_trie(
         }
 
         // we request the trie nodes
-        let nodes = vec![8_u8, 10]; // Temporary imaginary data
+        // tokio::spawn(peers.request_storage_trienods())
+
         // Then we process them
+        // So, we first for each node check the missing children
+
         // The coordinator for now is going to process them, although it may be more efficient if the writing to the database
         // is concurrentized
     }
