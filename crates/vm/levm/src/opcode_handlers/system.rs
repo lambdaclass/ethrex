@@ -394,7 +394,7 @@ impl<'a> VM<'a> {
             let address = word_to_address(address);
             let args_start_offset = args_start_offset
                 .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+                .map_err(|_err| {tracing::warn!("Returning error due to arg_start_offset in staticcal being too large: {:?}", args_start_offset);ExceptionalHalt::VeryLargeNumber})?;
             let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;

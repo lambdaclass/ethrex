@@ -6,6 +6,7 @@ use crate::{
 };
 
 use bytes::Bytes;
+use tracing::info;
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
@@ -81,6 +82,7 @@ impl<'a> VM<'a> {
 
     #[cold] // used in the hot path loop, called only really once.
     pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ContextResult, VMError> {
+        info!("Handling opcode error: {error:?} should_propagate: {}, is_revert: {}", error.should_propagate(), error.is_revert_opcode());
         if error.should_propagate() {
             return Err(error);
         }
@@ -91,6 +93,8 @@ impl<'a> VM<'a> {
         if !error.is_revert_opcode() {
             callframe.gas_remaining = 0;
         }
+
+        info!("gas_used = gas_limit {} - callframe.gas_remaining {}", callframe.gas_limit, callframe.gas_remaining);
 
         Ok(ContextResult {
             result: TxResult::Revert(error),
