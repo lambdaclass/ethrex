@@ -38,7 +38,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -441,6 +441,17 @@ impl Blockchain {
 
                     metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
+                }
+                Err(e @ ChainError::EvmError(EvmError::Nonce { state, tx })) if state > tx => {
+                    txs.shift()?;
+                    // Pull transaction from the mempool
+                    self.remove_transaction_from_pool(&tx_hash)?;
+                    warn!(
+                        "Removed stale transaction: {tx_hash:x}, tx nonce: {tx}, account nonce: {state}"
+                    );
+                    _ = e;
+                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                    continue;
                 }
                 // Ignore following txs from sender
                 Err(e) => {

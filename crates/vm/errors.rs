@@ -2,11 +2,14 @@ use std::fmt::Display;
 
 use ethereum_types::{H160, H256};
 use ethrex_common::{Address, types::BlockHash};
-use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
+use ethrex_levm::errors::{
+    DatabaseError as LevmDatabaseError, InternalError, TxValidationError, VMError,
+};
 use ethrex_trie::TrieError;
 use revm::primitives::{
     Address as RevmAddress, B256 as RevmB256, U256 as RevmU256, result::EVMError as RevmError,
 };
+use revm_primitives::InvalidTransaction;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -29,6 +32,8 @@ pub enum EvmError {
     SystemContractEmpty(String),
     #[error("System call failed: {0}")]
     SystemContractCallFailed(String),
+    #[error("Invalid Transaction: Nonce mismatch: expected {state}, got {tx}")]
+    Nonce { state: u64, tx: u64 },
 }
 
 #[derive(Debug, Error)]
@@ -102,6 +107,10 @@ pub enum StateProofsError {
 impl<E: Display> From<RevmError<E>> for EvmError {
     fn from(value: RevmError<E>) -> Self {
         match value {
+            RevmError::Transaction(InvalidTransaction::NonceTooHigh { tx, state })
+            | RevmError::Transaction(InvalidTransaction::NonceTooLow { tx, state }) => {
+                EvmError::Nonce { state, tx }
+            }
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
             RevmError::Database(err) => EvmError::DB(err.to_string()),
@@ -115,6 +124,13 @@ impl From<VMError> for EvmError {
     fn from(value: VMError) -> Self {
         if value.should_propagate() {
             EvmError::Custom(value.to_string())
+        } else if let VMError::TxValidation(TxValidationError::NonceMismatch { expected, actual }) =
+            value
+        {
+            EvmError::Nonce {
+                state: expected,
+                tx: actual,
+            }
         } else {
             // If an error is not internal it means it is a transaction validation error.
             EvmError::Transaction(value.to_string())
