@@ -177,11 +177,12 @@ impl RpcReceiptTxInfo {
         let nonce = transaction.nonce();
         let from = transaction.sender()?;
         let transaction_hash = transaction.compute_hash();
-        let effective_gas_price = transaction
-            .calc_effective_gas_price(base_fee_per_gas)
-            .ok_or(RpcErr::Internal(
-                "Could not get effective gas price from tx".into(),
-            ))?;
+        let effective_gas_price =
+            transaction
+                .effective_gas_price(base_fee_per_gas)
+                .ok_or(RpcErr::Internal(
+                    "Could not get effective gas price from tx".into(),
+                ))?;
         let transaction_index = index;
         let (blob_gas_price, blob_gas_used) = match &transaction {
             Transaction::EIP4844Transaction(tx) => (
