@@ -61,7 +61,6 @@ impl LEVM {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
             if  idx == 60 {
                 info!("Executed tx at idx: {idx}, report: {report:?}");
-                panic!("abporting");
             }
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
