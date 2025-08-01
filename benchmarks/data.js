@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754076648645,
+  "lastUpdate": 1754076764431,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7315,6 +7315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164628837498,
             "range": "± 616147668",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce98123c062a50cfb92b45ca8950cab66ffab01c",
+          "message": "feat(l1): add max blob count check to `BlobsBundle::validate` (#3888)\n\n**Motivation**\nValidate that the blob count doesn't exceed the maximum amount when\nvalidating blob bundles\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add max amount check to `BlobsBundle::validate`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1201",
+          "timestamp": "2025-08-01T18:41:58Z",
+          "tree_id": "14a2f69deee1053a8d139f51798e9a8ddf2ec5f7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce98123c062a50cfb92b45ca8950cab66ffab01c"
+        },
+        "date": 1754076751040,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164600218823,
+            "range": "± 255305892",
             "unit": "ns/iter"
           }
         ]
