@@ -120,14 +120,12 @@ pub(crate) async fn heal_state_trie(
                     paths.len()
                 );
             }
-
-            downloads_success = 0;
-            downloads_fail = 0;
         }
 
         // Attempt to receive a response from one of the peers
         // TODO: this match response should score the appropiate peers
         if let Ok((peer_id, response, batch)) = task_receiver.try_recv() {
+            info!("Finished request_state_trienodes task");
             inflight_tasks -= 1;
             // Mark the peer as available
             downloaders
@@ -155,6 +153,7 @@ pub(crate) async fn heal_state_trie(
 
         // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
         if let Ok(mut returned_paths) = returned_paths_receiver.try_recv() {
+            info!("Finished heal_state_batch task");
             inflight_tasks -= 1;
             // We try to extend returned_paths so that the new nodes are the first to be downloaded.
             // This is so we do depth first search, which should make the algorithm more efficient if we need
@@ -189,6 +188,7 @@ pub(crate) async fn heal_state_trie(
 
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
+                info!("Spawning request_state_trienodes task");
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
@@ -214,6 +214,7 @@ pub(crate) async fn heal_state_trie(
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
             inflight_tasks += 1;
             // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
+            info!("Spawning heal_state_batch task");
             tokio::spawn(async move {
                 if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
                     let _ = tx
