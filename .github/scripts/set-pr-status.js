@@ -22,14 +22,15 @@ module.exports = async ({ github, context }) => {
     // Find a PR's item for a specific project with a single API call.
     async function findPrItemInProject(owner, repo, prNumber, projectId) {
         const res = await github.graphql(`
-        query($owner: String!, $repo: String!, $prNumber: Int!, $projectId: ID!) {
+        # The $projectId variable has been removed from the query signature.
+        query($owner: String!, $repo: String!, $prNumber: Int!) {
             repository(owner: $owner, name: $repo) {
                 pullRequest(number: $prNumber) {
                     # A PR can be in multiple projects. We'll get the top 10.
                     projectItems(first: 10) {
                         nodes {
                             id
-                            # We need the project ID to find the correct item.
+                            # We still need the project ID in the response to filter on it later.
                             project {
                                 id
                             }
@@ -38,13 +39,18 @@ module.exports = async ({ github, context }) => {
                 }
             }
         }
-    `, { owner, repo, prNumber, projectId });
+    `, {
+            owner,
+            repo,
+            prNumber
+            // We still pass projectId to the function, but not to the GraphQL query.
+        });
 
         if (!res.repository.pullRequest) {
             return null;
         }
 
-        // Find the project item that matches our target project's ID.
+        // This part is the same: find the item that matches the target project's ID.
         const projectItems = res.repository.pullRequest.projectItems.nodes;
         const prItem = projectItems.find(item => item.project.id === projectId);
 
