@@ -62,6 +62,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -73,6 +79,8 @@ jobs:
           load: true
           tags: ethrex
           outputs: type=docker,dest=/tmp/ethrex_image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
