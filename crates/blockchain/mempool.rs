@@ -36,15 +36,14 @@ impl Mempool {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        let (sender, nonce) = (transaction.sender(), transaction.nonce());
+        self.txs_by_sender_nonce
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert((transaction.sender(), transaction.nonce()), hash);
         self.transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert(hash, transaction);
-        self.txs_by_sender_nonce
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert((sender, nonce), hash);
 
         Ok(())
     }
