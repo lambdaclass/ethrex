@@ -1,4 +1,5 @@
 use ethrex_common::U256 as CoreU256;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
@@ -85,7 +86,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
-        {
+        if code_hash != *EMPTY_KECCACK_HASH {
             let mut code_accessed = self
                 .code_accessed
                 .lock()
