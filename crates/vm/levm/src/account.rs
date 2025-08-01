@@ -1,16 +1,12 @@
-use std::collections::BTreeMap;
-
-use bytes::Bytes;
 use ethrex_common::{U256, types::AccountInfo};
 use keccak_hash::H256;
+use std::collections::BTreeMap;
 
 /// Similar to Account but suited for LEVM implementation.
-/// Difference is that code is an Option and it contains an additional `status` field for decision-making
+/// Difference is this doesn't have code and it contains an additional `status` field for decision-making
+/// The code is stored in the GeneralizedDatabase and can be accessed with the hash.
 pub struct LevmAccount {
     info: AccountInfo,
-    /// If `None` it means it hasn't been fetched, empty code is Some(Bytes::new())
-    /// Code will only be fetched when necessary, because sometimes we don't need it. e.g. When processing withdrawals
-    code: Option<Bytes>,
     storage: BTreeMap<H256, U256>,
     /// Current status of the account.
     status: AccountStatus,

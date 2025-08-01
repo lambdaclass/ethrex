@@ -7,6 +7,7 @@ use crate::{
     vm::VM,
 };
 
+use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{Account, Fork},
@@ -29,10 +30,7 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let (sender_balance, sender_nonce) = {
-            let sender_account = vm.db.get_account(sender_address)?;
-            (sender_account.info.balance, sender_account.info.nonce)
-        };
+        let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
@@ -45,7 +43,7 @@ impl Hook for DefaultHook {
             .checked_mul(vm.env.gas_limit.into())
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
-        validate_sender_balance(vm, sender_balance)?;
+        validate_sender_balance(vm, sender_info.balance)?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -71,9 +69,9 @@ impl Hook for DefaultHook {
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
         // check for nonce mismatch
-        if sender_nonce != vm.env.tx_nonce {
+        if sender_info.nonce != vm.env.tx_nonce {
             return Err(TxValidationError::NonceMismatch {
-                expected: sender_nonce,
+                expected: sender_info.nonce,
                 actual: vm.env.tx_nonce,
             }
             .into());
@@ -94,7 +92,8 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        validate_sender(sender_address, vm.db.get_account(sender_address)?)?;
+        let code = vm.db.get_code(sender_info.code_hash)?;
+        validate_sender(sender_address, code)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -382,8 +381,8 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, sender_account: &Account) -> Result<(), VMError> {
-    if sender_account.has_code() && !has_delegation(sender_account)? {
+pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
+    if *code != Bytes::new() && !code_has_delegation(code)? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())

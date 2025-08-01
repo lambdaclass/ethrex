@@ -7,14 +7,15 @@ use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
 use keccak_hash::H256;
+use keccak_hash::keccak;
 
+use super::Database;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
-
-use super::Database;
+use std::collections::btree_map::Entry;
 
 pub type CacheDB = BTreeMap<Address, Account>;
 
@@ -23,6 +24,8 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
+    //TODO: For max perf use like a Map with the code_hash as the lookup method
+    pub codes: BTreeMap<H256, Bytes>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
@@ -31,6 +34,7 @@ pub struct GeneralizedDatabase {
 }
 
 impl GeneralizedDatabase {
+    //TODO: The codes should be a parameter here, or at least extracted from current accoutnts state
     pub fn new(store: Arc<dyn Database>, current_accounts_state: CacheDB) -> Self {
         Self {
             store,
@@ -38,6 +42,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: current_accounts_state,
             tx_backup: None,
             destroyed_accounts: HashSet::new(),
+            codes: BTreeMap::new(),
         }
     }
 
@@ -46,14 +51,12 @@ impl GeneralizedDatabase {
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut Account, InternalError> {
         match self.current_accounts_state.entry(address) {
-            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
-            std::collections::btree_map::Entry::Vacant(entry) => {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
                 let info = self.store.get_account_info(address)?;
-                //TODO: We could fetch the code only when necessary instead of every time we load an account, but this is simpler for now.
-                let code = self.store.get_account_code(info.code_hash)?;
                 let account = Account {
                     info,
-                    code,
+                    code: Bytes::new(), //TODO: Use LevmAccount that doesn't have code instead
                     storage: BTreeMap::new(),
                 };
                 self.initial_accounts_state.insert(address, account.clone());
@@ -70,6 +73,17 @@ impl GeneralizedDatabase {
     /// Gets mutable reference of an account
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
         self.load_account(address)
+    }
+
+    /// Gets code immutably given the code hash.
+    pub fn get_code(&mut self, code_hash: H256) -> Result<&Bytes, InternalError> {
+        match self.codes.entry(code_hash) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let code = self.store.get_account_code(code_hash)?;
+                Ok(entry.insert(code))
+            }
+        }
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
@@ -195,8 +209,10 @@ impl<'a> VM<'a> {
         address: Address,
         new_bytecode: Bytes,
     ) -> Result<(), InternalError> {
-        let account = self.get_account_mut(address)?;
-        account.set_code(new_bytecode);
+        let acc = self.get_account_mut(address)?;
+        let code_hash = keccak(new_bytecode.as_ref()).0.into();
+        acc.info.code_hash = code_hash;
+        self.db.codes.entry(code_hash).or_insert(new_bytecode);
         Ok(())
     }
 

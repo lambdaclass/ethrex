@@ -13,8 +13,8 @@ use ethrex_common::types::{
     Withdrawal,
 };
 pub use ethrex_levm::call_frame::CallFrameBackup;
-use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
+use ethrex_levm::db::Database as LevmDatabase;
+use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
 use ethrex_levm::vm::VMType;
 use levm::LEVM;
 use revm::REVM;

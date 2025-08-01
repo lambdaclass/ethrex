@@ -260,30 +260,23 @@ pub fn word_to_address(word: U256) -> Address {
 
 // ================== EIP-7702 related functions =====================
 
-/// Checks if account.info.bytecode has been delegated as the EIP7702
-/// determines.
-pub fn has_delegation(account: &Account) -> Result<bool, VMError> {
-    let mut has_delegation = false;
-    if account.has_code() && account.code.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = &account.code.get(..3).ok_or(InternalError::Slicing)?;
-
-        if *first_3_bytes == SET_CODE_DELEGATION_BYTES {
-            has_delegation = true;
-        }
+pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+    if code.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
+        return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
     }
-    Ok(has_delegation)
+    Ok(false)
 }
 
-/// Gets the address inside the account.info.bytecode if it has been
+/// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
-    if has_delegation(account)? {
-        let address_bytes = &account
-            .code
+pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+    if code_has_delegation(code)? {
+        let address_bytes = &code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(InternalError::Slicing)?;
         // It shouldn't panic when doing Address::from_slice()
-        // because the length is checked inside the has_delegation() function
+        // because the length is checked inside the code_has_delegation() function
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {
@@ -369,20 +362,20 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = db.get_account(address)?;
-    let bytecode = account.code.clone();
+    let code_hash = db.get_account(address)?.info.code_hash;
+    let bytecode = db.get_code(code_hash)?.clone();
 
     // If the Address doesn't have a delegation code
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(account)? {
+    if !code_has_delegation(&bytecode)? {
         return Ok((false, 0, address, bytecode));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(account)?;
+    let auth_address = get_authorized_address_from_code(&bytecode)?;
 
     let access_cost = if accrued_substate.accessed_addresses.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -391,7 +384,8 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account(auth_address)?.code.clone();
+    let contract_code_hash = db.get_account(auth_address)?.info.code_hash;
+    let authorized_bytecode = db.get_code(contract_code_hash)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
@@ -425,12 +419,13 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let authority_account = self.db.get_account(authority_address)?;
+            let authority_info = self.db.get_account(authority_address)?.info.clone();
+            let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.accessed_addresses.insert(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
-                authority_account.code.is_empty() || has_delegation(authority_account)?;
+                authority_code.is_empty() || code_has_delegation(authority_code)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -438,12 +433,12 @@ impl<'a> VM<'a> {
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account.info.nonce != auth_tuple.nonce {
+            if authority_info.nonce != auth_tuple.nonce {
                 continue;
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_account.is_empty() {
+            if !authority_info.is_empty() {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
@@ -459,14 +454,12 @@ impl<'a> VM<'a> {
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
-            let auth_account = self.get_account_mut(authority_address)?;
-
             let code = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
                 Bytes::new()
             };
-            auth_account.set_code(code);
+            self.update_account_bytecode(authority_address, code)?;
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)

@@ -1,6 +1,6 @@
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{U256, types::Genesis};
-use ethrex_levm::db::{CacheDB, gen_db::GeneralizedDatabase};
+use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
 use keccak_hash::H256;
