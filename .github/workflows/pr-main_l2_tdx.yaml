@@ -74,8 +74,8 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
           make init-l1-docker;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
