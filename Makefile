@@ -45,7 +45,7 @@ ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 ethereum-package:
-	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
+	git clone https://github.com/lambdaclass/ethereum-package
 
 checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
 	cd ethereum-package && \
@@ -57,6 +57,10 @@ ENCLAVE ?= lambdanet
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex exchanges with the consensus client
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
+	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
 
 localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
