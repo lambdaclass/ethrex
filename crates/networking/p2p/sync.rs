@@ -991,8 +991,9 @@ impl Syncer {
                         }
                     }
                 },
-                Err(err) => {
-                    error!("Critical error! an unkown storage task failed")
+                Err(_err) => {
+                    error!("Critical error! an unkown storage task failed");
+                    todo!("Handle graceful shutdown");
                     // TODO: what to do next
                 }
             }

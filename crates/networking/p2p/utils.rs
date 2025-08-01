@@ -95,7 +95,11 @@ impl StorageDumpError {
 pub async fn dump_storage(path: String, contents: Vec<u8>) -> Result<String, StorageDumpError> {
     let directory = std::path::Path::new(&path)
         .parent()
-        .expect("Failed to get parent directory");
+        .ok_or_else(|| StorageDumpError {
+            path: path.clone(),
+            contents: contents.clone(),
+            reason: InternalStorageDumpError::DirectoryNotAccessible,
+        })?;
 
     let exists = std::fs::exists(directory).map_err(|_| StorageDumpError {
         path: path.clone(),
