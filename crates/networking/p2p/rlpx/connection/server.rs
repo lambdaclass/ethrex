@@ -803,7 +803,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::PooledTransactions(msg) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
-                    if let Err(error) = msg.validate_requested(requested).await {
+                    let fork = state.blockchain.current_fork().await?;
+                    if let Err(error) = msg.validate_requested(requested, fork).await {
                         log_peer_warn(
                             &state.node,
                             &format!("disconnected from peer. Reason: {error}"),
