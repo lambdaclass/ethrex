@@ -299,7 +299,7 @@ impl Transaction {
         }
     }
 
-    fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
+    pub fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
         if self.max_fee_per_gas()? < base_fee_per_gas? {
             // This is invalid, can't calculate
             return None;
