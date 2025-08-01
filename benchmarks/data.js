@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754002664422,
+  "lastUpdate": 1754032430907,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15537,6 +15537,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013150068965517242,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f628ff01996eb99075425720055ae16a88953127",
+          "message": "chore(l1): add snooper for ethrex on ethereum package network params (#3693)\n\n**Motivation**\n\nWe want to see the JSON-RPC requests while running a local net.\n\n**Description**\n\nThis pr sets the snooper flag as true in the ethrex client configuration\nand a target to see the JSON-RPC messages on the console output.\n\nTo test it you can run:\n```bash\nmake localnet-snooper  \n```\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-07-31T22:06:50Z",
+          "tree_id": "68820da3d70bd99df0f7949438b643f451aab51f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f628ff01996eb99075425720055ae16a88953127"
+        },
+        "date": 1754032420379,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006447980676328503,
             "unit": "Mgas/s"
           }
         ]
