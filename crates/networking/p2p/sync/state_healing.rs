@@ -73,6 +73,8 @@ pub(crate) async fn heal_state_trie(
     let mut inflight_tasks: u64 = 0;
     let mut is_stale = false;
     let mut longest_path_seen = 0;
+    let mut downloads_success = 0;
+    let mut downloads_fail = 0;
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -94,17 +96,25 @@ pub(crate) async fn heal_state_trie(
     loop {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
+            let downloads_rate =
+                downloads_success as f64 / (downloads_success + downloads_fail) as f64;
+
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}. Paths to go {}",
+                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, 
+                    Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}. Paths to go {}",
+                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, inflight_tasks: {inflight_tasks},
+                    Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             }
+
+            downloads_success = 0;
+            downloads_fail = 0;
         }
 
         // Attempt to receive a response from one of the peers
@@ -115,10 +125,12 @@ pub(crate) async fn heal_state_trie(
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     nodes_to_heal.push((nodes, batch));
+                    downloads_success += 1;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
                     paths.extend(batch);
+                    downloads_fail += 1;
                 }
             }
         }
