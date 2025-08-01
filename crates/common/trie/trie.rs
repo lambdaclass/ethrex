@@ -10,7 +10,6 @@ mod test_utils;
 mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
-use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -28,17 +27,11 @@ pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-        Keccak256::new()
-            .chain_update([RLP_NULL])
-            .finalize()
-            .as_slice(),
-    );
-}
+pub const EMPTY_TRIE_HASH: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]); // 0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
@@ -74,7 +67,7 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
+            root: if root != EMPTY_TRIE_HASH {
                 NodeHash::from(root).into()
             } else {
                 Default::default()
@@ -154,7 +147,7 @@ impl Trie {
         if self.root.is_valid() {
             self.root.compute_hash().finalize()
         } else {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         }
     }
 
@@ -425,7 +418,7 @@ impl Trie {
     }
 
     pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
-        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
+        if self.hash_no_commit() == EMPTY_TRIE_HASH {
             return Ok(None);
         }
         self.root.get_node(self.db.as_ref())

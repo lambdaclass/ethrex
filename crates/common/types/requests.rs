@@ -96,7 +96,7 @@ impl Requests {
                     && log
                         .topics
                         .first()
-                        .is_some_and(|topic| topic == &*DEPOSIT_TOPIC)
+                        .is_some_and(|topic| topic == &DEPOSIT_TOPIC)
                 {
                     deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }

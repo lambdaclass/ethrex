@@ -96,6 +96,7 @@ impl From<RevmExecutionResult> for ExecutionResult {
         }
     }
 }
+
 impl From<LevmExecutionReport> for ExecutionResult {
     fn from(val: LevmExecutionReport) -> Self {
         match val.result {

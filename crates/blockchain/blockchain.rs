@@ -11,17 +11,16 @@ use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    GAS_PER_BLOB, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
+use ethrex_common::types::{MIN_BASE_FEE_PER_BLOB_GAS, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{

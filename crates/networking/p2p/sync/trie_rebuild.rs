@@ -107,7 +107,7 @@ async fn rebuild_state_trie_in_backgound(
             .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
         end: STATE_TRIE_SEGMENTS_END[i],
     });
-    let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
+    let mut root = checkpoint.map(|(root, _)| root).unwrap_or(EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let mut total_rebuild_time = 0;
     let initial_rebuild_status = rebuild_status.clone();
@@ -287,7 +287,7 @@ async fn rebuild_storage_trie(
     store: Store,
 ) -> Result<(), SyncError> {
     let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let mut storage_trie = store.open_storage_trie(account_hash, EMPTY_TRIE_HASH)?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         snapshot_reads_since_last_commit += 1;

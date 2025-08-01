@@ -4,10 +4,8 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{
-        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
-    },
-    types::{Receipt, Transaction},
+    constants::{DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH},
+    types::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS, Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -566,7 +564,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::NonceNotZero);
     }
 
-    if header.ommers_hash != *DEFAULT_OMMERS_HASH {
+    if header.ommers_hash != DEFAULT_OMMERS_HASH {
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
@@ -603,7 +601,7 @@ pub fn validate_block_body(
             }
         }
         (Some(withdrawals_root), None) => {
-            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+            if withdrawals_root != EMPTY_WITHDRAWALS_HASH {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
         }
@@ -792,7 +790,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
         let block = BlockHeader {
@@ -836,7 +834,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())

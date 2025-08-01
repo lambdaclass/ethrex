@@ -7,12 +7,13 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, GAS_PER_BLOB, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -99,7 +100,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
 
     let header = BlockHeader {
         parent_hash: args.parent,
-        ommers_hash: *DEFAULT_OMMERS_HASH,
+        ommers_hash: DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
         transactions_root: compute_transactions_root(&[]),
@@ -133,7 +134,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         parent_beacon_block_root: args.beacon_root,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
-            .then_some(*DEFAULT_REQUESTS_HASH),
+            .then_some(DEFAULT_REQUESTS_HASH),
         ..Default::default()
     };
 

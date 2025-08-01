@@ -3,17 +3,14 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethrex_common::{
-    H256, U256,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::AccountState,
-};
+use ethrex_common::{H256, U256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use ethrex_trie::EMPTY_TRIE_HASH;
 
 // Snap Capability Messages
 
@@ -409,12 +406,12 @@ impl RLPDecode for AccountStateSlim {
 
 impl From<AccountState> for AccountStateSlim {
     fn from(value: AccountState) -> Self {
-        let storage_root = if value.storage_root == *EMPTY_TRIE_HASH {
+        let storage_root = if value.storage_root == EMPTY_TRIE_HASH {
             Bytes::new()
         } else {
             Bytes::copy_from_slice(value.storage_root.as_bytes())
         };
-        let code_hash = if value.code_hash == *EMPTY_KECCACK_HASH {
+        let code_hash = if value.code_hash == EMPTY_KECCACK_HASH {
             Bytes::new()
         } else {
             Bytes::copy_from_slice(value.code_hash.as_bytes())
@@ -431,12 +428,12 @@ impl From<AccountState> for AccountStateSlim {
 impl From<AccountStateSlim> for AccountState {
     fn from(value: AccountStateSlim) -> Self {
         let storage_root = if value.storage_root.is_empty() {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         } else {
             H256::from_slice(value.storage_root.as_ref())
         };
         let code_hash = if value.code_hash.is_empty() {
-            *EMPTY_KECCACK_HASH
+            EMPTY_KECCACK_HASH
         } else {
             H256::from_slice(value.code_hash.as_ref())
         };

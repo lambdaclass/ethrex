@@ -123,7 +123,7 @@ impl ExecutionWitnessResult {
                 .unwrap_or_else(|| Ok(AccountState::default()))
                 .expect("Failed to get account state");
 
-            if state.storage_root == *EMPTY_TRIE_HASH {
+            if state.storage_root == EMPTY_TRIE_HASH {
                 storage_tries.insert(
                     *addr,
                     Trie::from_nodes(None, nodes).map_err(|e| {
@@ -360,7 +360,7 @@ impl ExecutionWitnessResult {
     }
 
     pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
         match self.codes.get(&code_hash) {

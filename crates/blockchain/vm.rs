@@ -100,7 +100,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
         match self.store.get_account_code(code_hash) {

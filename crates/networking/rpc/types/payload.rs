@@ -108,7 +108,7 @@ impl ExecutionPayload {
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
-            ommers_hash: *DEFAULT_OMMERS_HASH,
+            ommers_hash: DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
             transactions_root: compute_transactions_root(&body.transactions),

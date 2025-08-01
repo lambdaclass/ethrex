@@ -163,14 +163,14 @@ async fn state_sync_segment(
             for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
                 // Build the batch of code hashes to send to the bytecode fetcher
                 // Ignore accounts without code / code we already have stored
-                if account.code_hash != *EMPTY_KECCACK_HASH
+                if account.code_hash != EMPTY_KECCACK_HASH
                     && store.get_account_code(account.code_hash)?.is_none()
                 {
                     code_hashes.push(account.code_hash)
                 }
                 // Build the batch of hashes and roots to send to the storage fetcher
                 // Ignore accounts without storage and account's which storage hasn't changed from our current stored state
-                if account.storage_root != *EMPTY_TRIE_HASH
+                if account.storage_root != EMPTY_TRIE_HASH
                     && !store.contains_storage_node(*account_hash, account.storage_root)?
                 {
                     account_hashes_and_storage_roots.push((*account_hash, account.storage_root));

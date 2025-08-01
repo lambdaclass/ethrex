@@ -10,13 +10,14 @@ use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::EMPTY_KECCACK_HASH,
     types::{AccountState, Block},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
+use ethrex_trie::EMPTY_TRIE_HASH;
 use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
@@ -69,7 +70,7 @@ pub async fn archive_sync(
     let sync_start = Instant::now();
     let mut stream = UnixStream::connect(archive_ipc_path).await?;
     let mut start = H256::zero();
-    let mut state_trie_root = *EMPTY_TRIE_HASH;
+    let mut state_trie_root = EMPTY_TRIE_HASH;
     let mut should_continue = true;
     let mut state_root = None;
     while should_continue {
@@ -142,13 +143,13 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
             dump_account.get_account_state().encode_to_vec(),
         )?;
         // Add code to DB if it is not empty
-        if dump_account.code_hash != *EMPTY_KECCACK_HASH {
+        if dump_account.code_hash != EMPTY_KECCACK_HASH {
             store
                 .add_account_code(dump_account.code_hash, dump_account.code.clone())
                 .await?;
         }
         // Process storage trie if it is not empty
-        if dump_account.storage_root != *EMPTY_TRIE_HASH {
+        if dump_account.storage_root != EMPTY_TRIE_HASH {
             storage_tasks.spawn(process_dump_storage(
                 dump_account.storage,
                 store.clone(),
@@ -169,7 +170,7 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    let mut trie = store.open_storage_trie(hashed_address, EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;

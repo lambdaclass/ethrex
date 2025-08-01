@@ -21,3 +21,5 @@ pub const BYTES_PER_BLOB_F64: f64 = BYTES_PER_BLOB as f64;
 /// The maximum number of bytes that can be "safely" stored in a blob. This is, prepend
 /// a zero byte for every 32 bytes of data to ensure they not exceed the field modulus.
 pub const SAFE_BYTES_PER_BLOB: usize = BYTES_PER_BLOB * 31 / 32;
+/// Gas consumption of a single data blob (== blob byte size).
+pub const GAS_PER_BLOB: u64 = 1 << 17; // 131072

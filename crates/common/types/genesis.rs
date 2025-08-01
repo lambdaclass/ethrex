@@ -383,11 +383,11 @@ impl Genesis {
         let requests_hash = self
             .config
             .is_prague_activated(self.timestamp)
-            .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
+            .then_some(self.requests_hash.unwrap_or(DEFAULT_REQUESTS_HASH));
 
         BlockHeader {
             parent_hash: H256::zero(),
-            ommers_hash: *DEFAULT_OMMERS_HASH,
+            ommers_hash: DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
             transactions_root: compute_transactions_root(&[]),
@@ -551,7 +551,7 @@ mod tests {
         let header = genesis_block.header;
         let body = genesis_block.body;
         assert_eq!(header.parent_hash, H256::from([0; 32]));
-        assert_eq!(header.ommers_hash, *DEFAULT_OMMERS_HASH);
+        assert_eq!(header.ommers_hash, DEFAULT_OMMERS_HASH);
         assert_eq!(header.coinbase, Address::default());
         assert_eq!(
             header.state_root,

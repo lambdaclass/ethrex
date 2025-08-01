@@ -582,6 +582,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-trie",
  "eyre",
  "hex",
  "keccak-hash",

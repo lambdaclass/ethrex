@@ -1,10 +1,8 @@
 use ethrex_common::{
-    Address, Bloom, Bytes, H256,
-    constants::GAS_PER_BLOB,
-    serde_utils,
+    Address, Bloom, Bytes, H256, serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
-        bloom_from_logs,
+        BlockHash, BlockHeader, BlockNumber, GAS_PER_BLOB, Log, Receipt, Transaction, TxKind,
+        TxType, bloom_from_logs,
     },
 };
 use ethrex_vm::create_contract_address;
