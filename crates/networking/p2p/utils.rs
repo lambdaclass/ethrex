@@ -79,9 +79,7 @@ pub async fn send_message_and_wait_for_response(
     message: Message,
     request_id: u64,
 ) -> Result<Vec<Node>, SendMessageError> {
-    info!("Locking peer_channel receiver");
     let mut receiver = peer_channel.receiver.lock().await;
-    info!("Locked peer_channel receiver");
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
