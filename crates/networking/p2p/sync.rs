@@ -52,7 +52,7 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 5;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -344,6 +344,7 @@ impl Syncer {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 blockchain.add_block(&block).await.map_err(|e| {
+                    warn!("Failed to execute block {}", block.header.number);
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
