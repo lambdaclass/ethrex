@@ -752,7 +752,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 }
                 if !valid_txs.is_empty() {
                     for tx in valid_txs.iter() {
-                        log_peer_warn(&state.node, &format!("Sending tx: {:#x}", tx.compute_hash()));
+                        log_peer_warn(
+                            &state.node,
+                            &format!("Sending tx: {:#x}", tx.compute_hash()),
+                        );
                     }
                     broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
