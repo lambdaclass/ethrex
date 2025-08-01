@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     runner::{EFTestRunnerError, InternalError},
@@ -6,7 +6,7 @@ use crate::{
 };
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
-use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     DynVmDatabase,
@@ -39,7 +39,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
 
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
 
-    GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
+    GeneralizedDatabase::new(Arc::new(store), BTreeMap::new())
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

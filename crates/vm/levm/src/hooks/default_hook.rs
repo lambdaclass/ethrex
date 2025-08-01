@@ -1,4 +1,5 @@
 use crate::{
+    account::LevmAccount,
     constants::*,
     errors::{ContextResult, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -8,10 +9,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{
-    Address, U256,
-    types::{Account, Fork},
-};
+use ethrex_common::{Address, U256, types::Fork};
 
 use std::cmp::max;
 
@@ -227,7 +225,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     let selfdestruct_set = vm.substate.selfdestruct_set.clone();
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
-        *account_to_remove = Account::default();
+        *account_to_remove = LevmAccount::default();
         vm.db.destroyed_accounts.insert(address);
     }
     Ok(())

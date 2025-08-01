@@ -42,7 +42,7 @@ pub async fn run_tx(
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
-        let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
+        let mut db = GeneralizedDatabase::new(store.clone(), BTreeMap::new());
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };

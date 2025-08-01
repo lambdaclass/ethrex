@@ -23,10 +23,7 @@ use ethrex_common::{
     types::{Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
-use ethrex_common::{
-    types::{Account, TxKind},
-    utils::u256_from_big_endian_const,
-};
+use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -172,7 +169,6 @@ pub fn restore_cache_state(
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
-            current_account.code = account.code;
         }
     }
 
