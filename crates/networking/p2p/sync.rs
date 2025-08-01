@@ -496,64 +496,64 @@ impl Syncer {
         let mut computed_state_root = *EMPTY_TRIE_HASH;
         let mut bytecode_hashes = Vec::new();
 
-        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
-            .expect("Failed to read account_state_snapshots dir")
-        {
-            let entry = entry.expect("Failed to read dir entry");
-            info!("Started reading account_state_snapshots entry {}", entry.file_name().to_str().expect("we should have a name"));
+        // for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+        //     .expect("Failed to read account_state_snapshots dir")
+        // {
+        //     let entry = entry.expect("Failed to read dir entry");
+        //     info!("Started reading account_state_snapshots entry {}", entry.file_name().to_str().expect("we should have a name"));
 
-            let snapshot_path = entry.path();
+        //     let snapshot_path = entry.path();
 
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+        //     let snapshot_contents = std::fs::read(&snapshot_path)
+        //         .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-            let account_state_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-                });
+        //     let account_state_snapshot: Vec<(H256, AccountState)> =
+        //         RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+        //             panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+        //         });
 
-            let trie = store.open_state_trie(computed_state_root).unwrap();
+        //     let trie = store.open_state_trie(computed_state_root).unwrap();
 
-            let (current_state_root, current_bytecode_hashes) =
-                tokio::task::spawn_blocking(move || {
-                    let mut bytecode_hashes = vec![];
-                    let mut trie = trie;
-                    let mut counter = 0;
-                    let mut instant = Instant::now();
+        //     let (current_state_root, current_bytecode_hashes) =
+        //         tokio::task::spawn_blocking(move || {
+        //             let mut bytecode_hashes = vec![];
+        //             let mut trie = trie;
+        //             let mut counter = 0;
+        //             let mut instant = Instant::now();
 
-                    for (account_hash, account) in account_state_snapshot {
-                        counter += 1;
-                        if instant.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
-                            instant = Instant::now();
-                            info!("We have read and inserted {counter} accounts");
-                        }
-                        if account.code_hash != *EMPTY_KECCACK_HASH {
-                            bytecode_hashes.push(account.code_hash);
-                        }
-                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                            .expect("We should be inserting");
-                    }
-                    info!("We have finished inserting in the trie, getting the hash");
-                    let current_state_root = trie.hash().unwrap();
-                    // TODO: readd this, potentialy in another place
-                    // bytecode_hashes.sort();
-                    // bytecode_hashes.dedup();
-                    (current_state_root, bytecode_hashes)
-                })
-                .await
-                .expect("This shouldn't have an error");
+        //             for (account_hash, account) in account_state_snapshot {
+        //                 counter += 1;
+        //                 if instant.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+        //                     instant = Instant::now();
+        //                     info!("We have read and inserted {counter} accounts");
+        //                 }
+        //                 if account.code_hash != *EMPTY_KECCACK_HASH {
+        //                     bytecode_hashes.push(account.code_hash);
+        //                 }
+        //                 trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+        //                     .expect("We should be inserting");
+        //             }
+        //             info!("We have finished inserting in the trie, getting the hash");
+        //             let current_state_root = trie.hash().unwrap();
+        //             // TODO: readd this, potentialy in another place
+        //             // bytecode_hashes.sort();
+        //             // bytecode_hashes.dedup();
+        //             (current_state_root, bytecode_hashes)
+        //         })
+        //         .await
+        //         .expect("This shouldn't have an error");
 
-            info!("We have finished computing the current state root {current_state_root}");
-            computed_state_root = current_state_root;
-            //bytecode_hashes.extend(&current_bytecode_hashes);
-        }
+        //     info!("We have finished computing the current state root {current_state_root}");
+        //     computed_state_root = current_state_root;
+        //     //bytecode_hashes.extend(&current_bytecode_hashes);
+        // }
 
-        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+        // *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
 
-        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+        // let account_store_time = Instant::now().saturating_duration_since(account_store_start);
 
-        info!("Expected state root: {state_root:?}");
-        info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+        // info!("Expected state root: {state_root:?}");
+        // info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
         let storages_store_start = Instant::now();
 
