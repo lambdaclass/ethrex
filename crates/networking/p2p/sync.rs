@@ -52,7 +52,7 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 100;
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 20;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -174,7 +174,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         //let mut current_head = block_sync_state.get_current_head().await?;
-        let mut current_head = store.get_canonical_block_hash(6027941).await?.unwrap();
+        let mut current_head = store.get_canonical_block_hash(6028542).await?.unwrap();
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
