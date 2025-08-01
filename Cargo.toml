@@ -167,24 +167,20 @@ strum = { version = "0.27.1", features = ["derive"] }
 regex = "1.11.1"
 simd-json = "0.15.1"
 spinoff = "0.8.0"
+alloy-rlp = "0.3.12"
+local-ip-address = "0.6"
+charming = { version = "0.4.0", features = ["ssr"] }
+dyn-clone = "1.0"
+
 
 # VM
 revm = { version = "19.0.0", default-features = false }
+revm-primitives = { version = "15.2.0", default-features = false }
+revm-inspectors = { version = "0.15.0" }
 
 # L2
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
 ethers = "2.0"
-
-# Prover
-# risc0-zkvm = { version = "=2.3.1", default-features = false }
-# risc0-zkvm-platform = { version = "=2.0.3", default-features = false }
-# risc0-zkp = { version = "=2.0.2", default-features = false }
-# risc0-build = { version = "=2.3.1", default-features = false }
-
-# sp1-sdk = { version = "=5.0.8" }
-# sp1-build = { version = "=5.0.8" }
-# sp1-recursion-gnark-ffi = { version = "=5.0.8" }
-# sp1-zkvm = { version = "=5.0.8" }
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
