@@ -67,6 +67,8 @@ use crate::{
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
+// Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
+const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -441,23 +443,27 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .flatten()
             .collect();
         if !txs.is_empty() {
-            let tx_count = txs.len();
-            for tx in txs {
+            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+                let tx_count = tx_chunk.len();
+                let mut txs_to_send = Vec::with_capacity(tx_count);
+                for tx in tx_chunk {
+                    txs_to_send.push((**tx).clone());
+                    state.broadcasted_txs.insert(tx.compute_hash());
+                }
+
                 send(
                     state,
                     Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        vec![(*tx).clone()],
+                        txs_to_send,
                         &state.blockchain,
                     )?),
                 )
                 .await?;
-                // Possible improvement: the mempool already knows the hash but the filter function does not return it
-                state.broadcasted_txs.insert((*tx).compute_hash());
+                log_peer_debug(
+                    &state.node,
+                    &format!("Sent {tx_count} transaction hashes to peer"),
+                );
             }
-            log_peer_debug(
-                &state.node,
-                &format!("Sent {tx_count} transactions to peer"),
-            );
         }
     }
     Ok(())
