@@ -25,6 +25,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install nvcc
+        uses: Jimver/cuda-toolkit@master
+
       - name: Run cargo check
         run: cargo check --workspace
 
