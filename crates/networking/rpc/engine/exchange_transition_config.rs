@@ -48,7 +48,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        debug!("Requrested new engine request: {self}");
+        debug!("Requested new engine request: {self}");
         let payload = &self.payload;
 
         let chain_config = context.storage.get_chain_config()?;
