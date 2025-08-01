@@ -737,6 +737,63 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        latest: BlockNumber,
+        safe_res: Option<BlockHeader>,
+        finalized_res: Option<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // Update canonical block hashes
+            for (number, hash) in new_canonical_blocks {
+                tx.upsert::<CanonicalBlockHashes>(number, hash.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // Remove anything after the head from the canonical chain.
+            for number in (head_number + 1)..(latest + 1) {
+                tx.delete::<CanonicalBlockHashes>(number, None)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // Make head canonical and label all special blocks correctly
+            tx.upsert::<CanonicalBlockHashes>(head_number, head_hash.into())
+                .map_err(StoreError::LibmdbxError)?;
+
+            if let Some(finalized) = finalized_res {
+                tx.upsert::<ChainData>(
+                    ChainDataIndex::FinalizedBlockNumber,
+                    finalized.number.encode_to_vec(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            if let Some(safe) = safe_res {
+                tx.upsert::<ChainData>(
+                    ChainDataIndex::SafeBlockNumber,
+                    safe.number.encode_to_vec(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<ChainData>(
+                ChainDataIndex::LatestBlockNumber,
+                head_number.encode_to_vec(),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write::<PendingBlocks>(block.hash().into(), block.into())
             .await

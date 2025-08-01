@@ -395,6 +395,7 @@ impl StoreEngine for Store {
         Ok(self.inner()?.chain_data.earliest_block_number)
     }
 
+    // TODO: check if this is still needed
     async fn update_finalized_block_number(
         &self,
         block_number: BlockNumber,
@@ -505,8 +506,49 @@ impl StoreEngine for Store {
         self.get_canonical_block_hash_sync(block_number)
     }
 
+    // TODO: CHECK IF THIS IS STILL NEEDED
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
         self.inner()?.canonical_hashes.remove(&number);
+        Ok(())
+    }
+
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        latest: BlockNumber,
+        safe_res: Option<BlockHeader>,
+        finalized_res: Option<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        // Make all ancestors to head canonical.
+        for (number, hash) in new_canonical_blocks {
+            store.canonical_hashes.insert(number, hash);
+        }
+
+        // Remove anything after the head from the canonical chain.
+        for number in (head_number + 1)..(latest + 1) {
+            store.canonical_hashes.remove(&number);
+        }
+
+        // Make head canonical and label all special blocks correctly.
+        store.canonical_hashes.insert(head_number, head_hash);
+
+        if let Some(finalized) = finalized_res {
+            store
+                .chain_data
+                .finalized_block_number
+                .replace(finalized.number);
+        }
+
+        if let Some(safe) = safe_res {
+            store.chain_data.safe_block_number.replace(safe.number);
+        }
+
+        store.chain_data.latest_block_number.replace(head_number);
+
         Ok(())
     }
 

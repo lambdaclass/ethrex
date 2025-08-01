@@ -274,6 +274,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Unsets canonical block for a block number.
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError>;
 
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        latest: BlockNumber,
+        safe_res: Option<BlockHeader>,
+        finalized_res: Option<BlockHeader>,
+    ) -> Result<(), StoreError>;
+
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;

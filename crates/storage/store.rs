@@ -752,6 +752,27 @@ impl Store {
         self.engine.unset_canonical_block(number).await
     }
 
+    pub async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        latest: BlockNumber,
+        safe_res: Option<BlockHeader>,
+        finalized_res: Option<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .forkchoice_update(
+                new_canonical_blocks,
+                head_number,
+                head_hash,
+                latest,
+                safe_res,
+                finalized_res,
+            )
+            .await
+    }
+
     /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {

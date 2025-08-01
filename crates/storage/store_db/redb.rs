@@ -941,6 +941,61 @@ impl StoreEngine for RedBStore {
         self.delete(CANONICAL_BLOCK_HASHES_TABLE, number)
     }
 
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        latest: BlockNumber,
+        safe_res: Option<BlockHeader>,
+        finalized_res: Option<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let write_txn = db.begin_write().map_err(Box::new)?;
+            {
+                // Make all ancestors to head canonical.
+                let mut canonical_table = write_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?;
+                for (number, hash) in new_canonical_blocks {
+                    canonical_table.insert(number, <H256 as Into<BlockHashRLP>>::into(hash))?;
+                }
+
+                // Remove anything after the head from the canonical chain.
+                for number in (head_number + 1)..(latest + 1) {
+                    canonical_table.remove(number)?;
+                }
+
+                // Make head canonical and label all special blocks correctly
+                canonical_table
+                    .insert(head_number, <H256 as Into<BlockHashRLP>>::into(head_hash))?;
+
+                let mut chain_data_table = write_txn.open_table(CHAIN_DATA_TABLE)?;
+
+                if let Some(finalized_header) = finalized_res {
+                    chain_data_table.insert(
+                        ChainDataIndex::FinalizedBlockNumber,
+                        finalized_header.number.encode_to_vec(),
+                    )?;
+                }
+
+                if let Some(safe_header) = safe_res {
+                    chain_data_table.insert(
+                        ChainDataIndex::SafeBlockNumber,
+                        safe_header.number.encode_to_vec(),
+                    )?;
+                }
+
+                chain_data_table
+                    .insert(ChainDataIndex::LatestBlockNumber, latest.encode_to_vec())?;
+            }
+
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         self.write(
             PAYLOADS_TABLE,
