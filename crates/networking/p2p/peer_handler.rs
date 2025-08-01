@@ -780,7 +780,7 @@ impl PeerHandler {
 
         loop {
             // REMOVE THIS IF; JUST FOR TESTING IN SEPOLIA ❌❌❌❌❌
-            if all_accounts_state.len() == 33438524 {
+            if all_accounts_state.len() >= 33438524 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -804,6 +804,7 @@ impl PeerHandler {
                 .await
                 .unwrap();
                 let is_stale = true;
+                info!("Stopping account download due to \"staleness\"");
                 return is_stale;
             }
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
