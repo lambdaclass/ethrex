@@ -181,7 +181,7 @@ impl GetPooledTransactions {
         let txs = self
             .transaction_hashes
             .iter()
-            // As per the spec, skipping unavailable transactions perfectly acceptable,
+            // As per the spec, skipping unavailable transactions is perfectly acceptable,
             // for example if a transaction was taken out of the mempool due to payload
             // building after being advertised.
             .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
