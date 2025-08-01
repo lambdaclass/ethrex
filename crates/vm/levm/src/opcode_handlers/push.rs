@@ -38,6 +38,7 @@ impl<'a> VM<'a> {
         {
             if *(TX.lock().unwrap()) {
                 info!("PUSH-N, getting range {pc_offset}..{}, obtained slice: {slice:?}", pc_offset.wrapping_add(N));
+                info!("PUSH-N, from big endian lib: {}", U256::from_big_endian(slice));
             }
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
