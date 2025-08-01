@@ -3,6 +3,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
@@ -241,10 +242,11 @@ impl PooledTransactions {
     pub async fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
+        fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx)?;
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
