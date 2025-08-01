@@ -148,6 +148,12 @@ impl Kademlia {
             })
             .collect()
     }
+
+    pub async fn get_peer_channel(&self, peer_id: H256) -> Option<PeerChannels> {
+        let peers = self.peers.lock().await;
+        let peer_data = peers.get(&peer_id)?;
+        peer_data.channels.clone()
+    }
 }
 
 impl Default for Kademlia {

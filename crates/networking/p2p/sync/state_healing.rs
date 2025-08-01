@@ -10,6 +10,7 @@
 
 use std::{
     cmp::min,
+    collections::HashMap,
     time::{Duration, Instant},
 };
 
@@ -47,6 +48,7 @@ const MAX_CHANNEL_READS: usize = 200;
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+const MAX_SCORE: i64 = 10;
 
 use super::SyncError;
 
@@ -78,6 +80,7 @@ pub(crate) async fn heal_state_trie(
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+        H256,
         Result<Vec<Node>, RequestStateTrieNodesError>,
         Vec<Nibbles>,
     )>(1000);
@@ -86,11 +89,18 @@ pub(crate) async fn heal_state_trie(
     let (returned_paths_sender, mut returned_paths_receiver) =
         tokio::sync::mpsc::channel::<Vec<Nibbles>>(1000);
 
-    // let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-    //     peers_table
-    //         .iter()
-    //         .map(|(peer_id, _peer_data)| (*peer_id, true)),
-    // );
+    let peers_table = peers
+        .peer_table
+        .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+        .await;
+    let mut downloaders: HashMap<H256, bool> = HashMap::from_iter(
+        peers_table
+            .iter()
+            .map(|(peer_id, _peer_data)| (*peer_id, true)),
+    );
+    let mut scores: HashMap<H256, i64> =
+        HashMap::from_iter(peers_table.iter().map(|(peer_id, _)| (*peer_id, 0)));
+
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     loop {
@@ -119,18 +129,28 @@ pub(crate) async fn heal_state_trie(
 
         // Attempt to receive a response from one of the peers
         // TODO: this match response should score the appropiate peers
-        if let Ok((response, batch)) = task_receiver.try_recv() {
+        if let Ok((peer_id, response, batch)) = task_receiver.try_recv() {
             inflight_tasks -= 1;
+            // Mark the peer as available
+            downloaders
+                .entry(peer_id)
+                .and_modify(|is_free| *is_free = true);
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
+                    scores.entry(peer_id).and_modify(|score| {
+                        if *score < MAX_SCORE {
+                            *score += 1;
+                        }
+                    });
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
                     paths.extend(batch);
                     downloads_fail += 1;
+                    scores.entry(peer_id).and_modify(|score| *score -= 1);
                 }
             }
         }
@@ -145,12 +165,6 @@ pub(crate) async fn heal_state_trie(
             paths = returned_paths;
         }
 
-        // TODO: add scoring
-        let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-            .await
-            .unwrap();
-
         if !is_stale {
             let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
             if !batch.is_empty() {
@@ -162,6 +176,19 @@ pub(crate) async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
+                let Some((peer_id, mut peer_channel)) =
+                    get_peer_with_highest_score_and_mark_it_as_occupied(
+                        &peers,
+                        &mut downloaders,
+                        &scores,
+                    )
+                    .await
+                else {
+                    // If there are no peers available, re-add the batch to the paths vector, and continue
+                    paths.extend(batch);
+                    continue;
+                };
+
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
                 tokio::spawn(async move {
@@ -173,9 +200,12 @@ pub(crate) async fn heal_state_trie(
                     )
                     .await;
                     // TODO: add error handling
-                    let _ = tx.send((response, batch)).await.inspect_err(|err| {
-                        error!("Failed to send state trie nodes response. Error: {err}")
-                    });
+                    let _ = tx
+                        .send((peer_id, response, batch))
+                        .await
+                        .inspect_err(|err| {
+                            error!("Failed to send state trie nodes response. Error: {err}")
+                        });
                 });
             }
         }
@@ -295,4 +325,41 @@ async fn heal_state_batch(
         //bytecode_sender.send(code_hashes).await?;
     }
     Ok(batch)
+}
+
+async fn get_peer_with_highest_score_and_mark_it_as_occupied(
+    peers: &PeerHandler,
+    downloaders: &mut HashMap<H256, bool>,
+    scores: &HashMap<H256, i64>,
+) -> Option<(H256, PeerChannels)> {
+    // Filter the free downloaders
+    let free_downloaders: Vec<H256> = downloaders
+        .iter()
+        .filter(|(_peer_id, is_free)| **is_free)
+        .map(|(peer_id, _is_free)| peer_id.clone())
+        .collect();
+
+    // Get the peer with the highest score
+    let mut peer_with_highest_score = free_downloaders.get(0)?;
+    let mut highest_score = i64::MIN;
+    for peer_id in &free_downloaders {
+        let Some(score) = scores.get(&peer_id) else {
+            continue;
+        };
+        if *score > highest_score {
+            highest_score = *score;
+            peer_with_highest_score = &peer_id;
+        }
+    }
+    let peer_channel = peers
+        .peer_table
+        .get_peer_channel(*peer_with_highest_score)
+        .await?;
+
+    // Mark it as occupied
+    downloaders
+        .entry(*peer_with_highest_score)
+        .and_modify(|is_free| *is_free = false);
+
+    Some((peer_with_highest_score.clone(), peer_channel))
 }
