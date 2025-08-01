@@ -198,12 +198,12 @@ pub(crate) async fn heal_state_trie(
                     )
                     .await;
                     // TODO: add error handling
-                    tx.send((peer_id, response, batch))
+                    let _ = tx
+                        .send((peer_id, response, batch))
                         .await
                         .inspect_err(|err| {
                             error!("Failed to send state trie nodes response. Error: {err}")
-                        })
-                        .unwrap();
+                        });
                 })
                 .await
                 .unwrap();
