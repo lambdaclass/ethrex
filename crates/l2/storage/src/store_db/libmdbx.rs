@@ -1,5 +1,6 @@
 use std::{
     fmt::{Debug, Formatter},
+    ops::Range,
     path::Path,
     sync::Arc,
 };
@@ -75,6 +76,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(OperationsCount),
         table_info!(SignatureByBlockHash),
         table_info!(SignatureByBatch),
+        table_info!(PrecommitPrivileged),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
         table_info!(PrivilegedTransactionsHash),
@@ -361,6 +363,8 @@ impl StoreEngineRollup for Store {
         delete_starting_at::<PrivilegedTransactionsHash>(&txn, batch_number + 1)?;
         delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
         delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
+        txn.clear_table::<PrecommitPrivileged>()
+            .map_err(RollupStoreError::LibmdbxError)?;
         txn.commit().map_err(RollupStoreError::LibmdbxError)?;
         Ok(())
     }
@@ -419,7 +423,9 @@ impl StoreEngineRollup for Store {
                     .upsert::<VerifyTxByBatch>(batch.number, verify_tx.into())
                     .map_err(RollupStoreError::LibmdbxError)?;
             }
-
+            transaction
+                .clear_table::<PrecommitPrivileged>()
+                .map_err(RollupStoreError::LibmdbxError)?;
             transaction.commit().map_err(RollupStoreError::LibmdbxError)
         })
         .await
@@ -441,6 +447,32 @@ impl StoreEngineRollup for Store {
             .map_err(RollupStoreError::LibmdbxError)?;
         tx.delete::<BatchProofs>(key, val)
             .map_err(RollupStoreError::LibmdbxError)?;
+        Ok(())
+    }
+
+    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        if let Some(val) = self.read::<PrecommitPrivileged>(0).await? {
+            let (from, to) = val.to();
+            return Ok(Some(from..to));
+        } else {
+            return Ok(None);
+        }
+    }
+
+    async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        if let Some(range) = range {
+            let val = (range.start, range.end);
+            self.write::<PrecommitPrivileged>(0, val.into()).await?;
+        } else {
+            self.db
+                .begin_readwrite()
+                .map_err(RollupStoreError::LibmdbxError)?
+                .clear_table::<PrecommitPrivileged>()
+                .map_err(RollupStoreError::LibmdbxError)?;
+        }
         Ok(())
     }
 }
@@ -486,6 +518,11 @@ table!(
 table!(
     /// Signature by batch number
     ( SignatureByBatch ) u64 => [u8; 65]
+);
+
+table!(
+    /// Privileged transaction ids included in batch being built
+    ( PrecommitPrivileged ) u64 => Rlp<(u64, u64)>
 );
 
 table!(
