@@ -3,10 +3,8 @@ version = "0.1.0"
 name = "zkvm-sp1-program"
 edition = "2024"
 
-[workspace]
-
 [dependencies]
-sp1-zkvm = "=5.0.8"
+sp1-zkvm.workspace = true
 zkvm_interface = { path = "../" }
 
 ethrex-common = { path = "../../../../../common", default-features = false }

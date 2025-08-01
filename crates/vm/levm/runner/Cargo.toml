@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ethrex-levm = { path = "../" }
+ethrex-levm.workspace = true
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
@@ -13,9 +13,9 @@ hex.workspace = true
 bytes.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
-json5 = "0.4.1"
+json5.workspace = true
 clap.workspace = true
-log = "0.4.27"
-env_logger = "0.11.8"
-num-bigint = "0.4.6"
-num-traits = "0.2.19"
+log.workspace = true
+env_logger.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true

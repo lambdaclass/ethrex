@@ -7,9 +7,9 @@ edition = "2024"
 
 [dependencies]
 axum.workspace = true
-tower-http = { version = "0.6.2", features = ["cors"] }
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.117"
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
 tracing.workspace = true
@@ -24,16 +24,16 @@ ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true
 hex.workspace = true
-axum-extra = { version = "0.10.0", features = ["typed-header"] }
+axum-extra.workspace = true
 jsonwebtoken.workspace = true
 rand.workspace = true
 tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
-sha3 = "0.10.8"
+sha3.workspace = true
 sha2.workspace = true
 
 # Clients
-envy = "0.4.2"
+envy.workspace = true
 thiserror.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true

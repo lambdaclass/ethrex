@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-levm ={ path = "./levm", default-features = false}
+ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
@@ -32,7 +32,6 @@ tracing.workspace = true
 serde.workspace = true
 sha3.workspace = true
 
-bincode = "1"
 dyn-clone = "1.0"
 
 ethereum-types.workspace = true
