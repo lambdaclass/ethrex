@@ -20,4 +20,4 @@ pub use environment::*;
 pub mod account;
 pub mod l2_precompiles;
 
-pub const TX: Mutex<bool> = Mutex::new(false);
+pub static TX: Mutex<bool> = Mutex::new(false);
