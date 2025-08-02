@@ -66,7 +66,7 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
-	l2 init \
+	l2 \
 	--watcher.block-delay <WATCHER_BLOCK_DELAY> \
 	--network <L2_GENESIS_FILE_PATH> \
 	--http.port <L2_PORT> \

@@ -7,6 +7,7 @@ use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
+use std::time::Instant;
 use tracing::info;
 use zkvm_interface::{
     io::{JSONProgramInput, ProgramInput},
@@ -34,9 +35,11 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
 
     let executor = default_executor();
 
+    let now = Instant::now();
     let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
+    let elapsed = now.elapsed();
 
-    info!("Successfully generated session info.");
+    info!("Successfully generated session info in {:.2?}", elapsed);
     Ok(())
 }
 
