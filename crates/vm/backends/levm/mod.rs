@@ -266,13 +266,11 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            let mut account = db
-                .get_account(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?
-                .clone(); // Not a big deal cloning here because it's an EOA.
+            let account = db
+                .get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
-            db.current_accounts_state.insert(address, account);
         }
         Ok(())
     }
