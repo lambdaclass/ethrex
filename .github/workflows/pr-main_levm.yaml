@@ -39,7 +39,7 @@ jobs:
         run: |
           cd cmd/ef_tests/state
           set -o pipefail
-          make run-evm-ef-tests-ci | tee test_result_pr.txt
+          make run-state-tests-ci | tee test_result_pr.txt
 
       - name: Show test summary -- full
         run: |
@@ -84,7 +84,7 @@ jobs:
         run: |
           cd cmd/ef_tests/state
           set -o pipefail
-          make run-evm-ef-tests-ci | tee test_result_main.txt
+          make run-state-tests-ci | tee test_result_main.txt
 
       - name: Show test summary -- full
         run: |
