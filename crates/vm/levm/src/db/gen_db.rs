@@ -41,31 +41,31 @@ impl GeneralizedDatabase {
     }
 
     // ================== Account related functions =====================
-    /// Gets account, first checking the cache and then the database
-    /// (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Result<&Account, InternalError> {
-        if !self.current_accounts_state.contains_key(&address) {
-            let account = self.get_account_from_database(address)?;
-            self.current_accounts_state.insert(address, account);
+    /// Loads account
+    /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
+    fn load_account(&mut self, address: Address) -> Result<&mut Account, InternalError> {
+        match self.current_accounts_state.entry(address) {
+            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let account = self.store.get_account(address)?;
+                self.initial_accounts_state.insert(address, account.clone());
+                Ok(entry.insert(account))
+            }
         }
-
-        self.current_accounts_state
-            .get(&address)
-            .ok_or(InternalError::AccountNotFound)
     }
 
-    /// Gets account from storage, storing in initial_accounts_state for efficiency when getting AccountUpdates.
-    pub fn get_account_from_database(
-        &mut self,
-        address: Address,
-    ) -> Result<Account, InternalError> {
-        let account = self.store.get_account(address)?;
-        self.initial_accounts_state.insert(address, account.clone());
-        Ok(account)
+    /// Gets reference of an account
+    pub fn get_account(&mut self, address: Address) -> Result<&Account, InternalError> {
+        Ok(self.load_account(address)?)
+    }
+
+    /// Gets mutable reference of an account
+    pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
+        self.load_account(address)
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
-    pub fn get_value_from_database(
+    fn get_value_from_database(
         &mut self,
         address: Address,
         key: H256,
@@ -130,17 +130,7 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
-        let account = match self.db.current_accounts_state.entry(address) {
-            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                let account = self.db.store.get_account(address)?;
-                self.db
-                    .initial_accounts_state
-                    .insert(address, account.clone());
-
-                entry.insert(account)
-            }
-        };
+        let account = self.db.get_account_mut(address)?;
 
         self.current_call_frame
             .call_frame_backup
