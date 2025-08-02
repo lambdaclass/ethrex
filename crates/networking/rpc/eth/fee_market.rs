@@ -8,7 +8,7 @@ use ethrex_common::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -87,7 +87,7 @@ impl RpcHandler for FeeHistoryRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let config = storage.get_chain_config()?;
-        info!(
+        debug!(
             "Requested fee history for {} blocks starting from {}",
             self.block_count, self.newest_block
         );

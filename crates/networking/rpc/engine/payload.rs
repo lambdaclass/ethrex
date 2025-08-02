@@ -7,7 +7,7 @@ use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
@@ -724,7 +724,7 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
 }
 
 async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
-    info!("Requested payload with id: {:#018x}", payload_id);
+    debug!("Requested payload with id: {:#018x}", payload_id);
     let Some(payload) = context.storage.get_payload(payload_id).await? else {
         return Err(RpcErr::UnknownPayload(format!(
             "Payload with id {payload_id:#018x} not found",
