@@ -2,7 +2,9 @@ use crate::signer::{Signable, Signer};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{EIP1559Transaction, TxKind, TxType, WrappedEIP4844Transaction},
+    types::{
+        EIP1559Transaction, PrivilegedL2Transaction, TxKind, TxType, WrappedEIP4844Transaction,
+    },
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -16,6 +18,117 @@ use keccak_hash::keccak;
 use tracing::warn;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
+
+pub trait ResendableTx: Clone + Send + Sync + 'static {
+    fn clamp_fees(&mut self, client: &EthClient);
+    fn bump(&mut self, client: &EthClient, pct: u64);
+    fn send<'a>(
+        &'a self,
+        client: &'a EthClient,
+        signer: &'a Signer,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<H256, EthClientError>> + Send + 'a>,
+    >;
+}
+
+impl ResendableTx for EIP1559Transaction {
+    fn clamp_fees(&mut self, client: &EthClient) {
+        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+            if self.max_fee_per_gas > max_fee_per_gas {
+                self.max_fee_per_gas = max_fee_per_gas;
+
+                // Ensure that max_priority_fee_per_gas does not exceed max_fee_per_gas
+                if self.max_priority_fee_per_gas > self.max_fee_per_gas {
+                    self.max_priority_fee_per_gas = self.max_fee_per_gas;
+                }
+                warn!(
+                    "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                );
+            }
+        }
+    }
+    fn bump(&mut self, client: &EthClient, pct: u64) {
+        client.bump_eip1559(self, pct);
+    }
+    fn send<'a>(
+        &'a self,
+        client: &'a EthClient,
+        signer: &'a Signer,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<H256, EthClientError>> + Send + 'a>,
+    > {
+        Box::pin(
+            async move { crate::clients::send_eip1559_transaction(client, self, signer).await },
+        )
+    }
+}
+
+impl ResendableTx for WrappedEIP4844Transaction {
+    fn clamp_fees(&mut self, client: &EthClient) {
+        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+            if self.tx.max_fee_per_gas > max_fee_per_gas {
+                self.tx.max_fee_per_gas = max_fee_per_gas;
+
+                // Ensure that max_priority_fee_per_gas does not exceed max_fee_per_gas
+                if self.tx.max_priority_fee_per_gas > self.tx.max_fee_per_gas {
+                    self.tx.max_priority_fee_per_gas = self.tx.max_fee_per_gas;
+                }
+
+                warn!(
+                    "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                );
+            }
+        }
+        if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
+            if self.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                self.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+            }
+        }
+    }
+    fn bump(&mut self, client: &EthClient, pct: u64) {
+        client.bump_eip4844(self, pct);
+    }
+    fn send<'a>(
+        &'a self,
+        client: &'a EthClient,
+        signer: &'a Signer,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<H256, EthClientError>> + Send + 'a>,
+    > {
+        Box::pin(
+            async move { crate::clients::send_eip4844_transaction(client, self, signer).await },
+        )
+    }
+}
+
+impl ResendableTx for PrivilegedL2Transaction {
+    fn clamp_fees(&mut self, client: &EthClient) {
+        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+            if self.max_fee_per_gas > max_fee_per_gas {
+                self.max_fee_per_gas = max_fee_per_gas;
+                if self.max_priority_fee_per_gas > self.max_fee_per_gas {
+                    self.max_priority_fee_per_gas = self.max_fee_per_gas;
+                }
+
+                warn!(
+                    "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                );
+            }
+        }
+    }
+    fn bump(&mut self, client: &EthClient, pct: u64) {
+        client.bump_privileged_l2(self, pct);
+    }
+    fn send<'a>(
+        &'a self,
+        client: &'a EthClient,
+        _signer: &'a Signer,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<H256, EthClientError>> + Send + 'a>,
+    > {
+        Box::pin(async move { client.send_privileged_l2_transaction(self).await })
+    }
+}
 
 pub async fn send_eip1559_transaction(
     client: &EthClient,
