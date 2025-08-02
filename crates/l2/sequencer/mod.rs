@@ -52,7 +52,6 @@ pub async fn start_l2(
     let shared_state = SequencerState::from(initial_status);
 
     let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.proof_coordinator.dev_mode,
         cfg.eth.rpc_url.clone(),
         cfg.l1_committer.on_chain_proposer_address,
     )

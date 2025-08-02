@@ -70,20 +70,16 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    dev_mode: bool,
     rpc_urls: Vec<String>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
 
     let mut needed_proof_types = vec![];
-    if !dev_mode {
-        for prover_type in ProverType::all() {
-            let Some(getter) = prover_type.verifier_getter() else {
-                continue;
-            };
-            let calldata = keccak(getter)[..4].to_vec();
 
+    for prover_type in ProverType::all() {
+        if let Some(getter) = prover_type.verifier_getter() {
+            let calldata = keccak(getter)[..4].to_vec();
             let response = eth_client
                 .call(
                     on_chain_proposer_address,
@@ -91,12 +87,10 @@ pub async fn get_needed_proof_types(
                     Overrides::default(),
                 )
                 .await?;
-            // trim to 20 bytes, also removes 0x prefix
-            let trimmed_response = &response[26..];
-
-            let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                EthClientError::Custom(format!(
-                    "Failed to parse OnChainProposer response {response}"
+            let address = Address::from_str(&format!("0x{}", &response[26..])).map_err(|e| {
+                EthClientError::InternalError(format!(
+                    "Invalid on-chain response: {:?}, parse error: {}",
+                    response, e
                 ))
             })?;
 
@@ -105,10 +99,13 @@ pub async fn get_needed_proof_types(
                 needed_proof_types.push(prover_type);
             }
         }
-    } else {
-        needed_proof_types.push(ProverType::Exec);
     }
-    Ok(needed_proof_types)
+    // if nothing was required by the contract, fall back to Exec‑only "dev mode"
+    Ok(if needed_proof_types.is_empty() {
+        vec![ProverType::Exec]
+    } else {
+        needed_proof_types
+    })
 }
 
 pub async fn get_latest_sent_batch(
