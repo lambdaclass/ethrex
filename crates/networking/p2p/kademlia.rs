@@ -11,9 +11,9 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
-pub const MAX_NODES_PER_BUCKET: usize = 16;
+pub const MAX_NODES_PER_BUCKET: usize = 1600;
 const NUMBER_OF_BUCKETS: usize = 256;
-const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+const MAX_NUMBER_OF_REPLACEMENTS: usize = 1000;
 
 /// Maximum Peer Score to avoid overflows upon weigh calculations
 const PEER_SCORE_UPPER_BOUND: i32 = 500;
@@ -110,7 +110,7 @@ impl KademliaTable {
             .replacements
             .iter()
             .any(|p| p.node.node_id() == node.node_id());
-        if peer_already_in_replacements {
+        if peer_already_in_replacements && !force_push {
             return (None, false);
         }
 

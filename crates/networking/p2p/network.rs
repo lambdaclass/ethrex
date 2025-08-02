@@ -4,11 +4,13 @@ use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
 use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
+use crate::rlpx::server::RLPxServer;
 use crate::types::{Node, NodeRecord};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::error::GenServerError;
 
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -31,6 +33,7 @@ pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
 #[derive(Debug)]
 pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
+    RLPxStart(GenServerError),
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +106,11 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .start(bootnodes)
         .await
         .map_err(NetworkError::DiscoveryStart)?;
+
+    info!("Starting P2P service");
+    RLPxServer::spawn(context.clone(), discovery)
+        .await
+        .map_err(NetworkError::RLPxStart)?;
 
     info!(
         "Listening for requests at {}",

@@ -11,7 +11,7 @@ use super::{
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::P2PContext,
-    rlpx::{connection::server::RLPxConnection, utils::node_id},
+    rlpx::utils::node_id,
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
@@ -24,6 +24,8 @@ use std::{
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
 use tracing::{debug, error};
+
+pub use crate::discv4::lookup::Discv4NodeIterator;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -74,11 +76,7 @@ impl Discv4Server {
     /// - Loads bootnodes to establish initial peer connections.
     /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
     pub async fn start(&self, bootnodes: Vec<Node>) -> Result<(), DiscoveryError> {
-        let lookup_handler = Discv4LookupHandler::new(
-            self.ctx.clone(),
-            self.udp_socket.clone(),
-            self.lookup_interval_minutes,
-        );
+        let lookup_handler = self.new_lookup_handler();
 
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
@@ -89,9 +87,18 @@ impl Discv4Server {
             async move { self_clone.start_revalidation().await }
         });
         self.load_bootnodes(bootnodes).await;
-        lookup_handler.start(10);
+        lookup_handler.start(self.lookup_interval_minutes, 10);
 
         Ok(())
+    }
+
+    /// Creates an iterator that yields nodes retrieved by doing random lookups.
+    pub fn new_random_iterator(&self) -> Discv4NodeIterator {
+        Discv4NodeIterator::new(self.ctx.clone(), self.udp_socket.clone())
+    }
+
+    fn new_lookup_handler(&self) -> Discv4LookupHandler {
+        Discv4LookupHandler::new(self.ctx.clone(), self.udp_socket.clone())
     }
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
@@ -102,7 +109,7 @@ impl Discv4Server {
         }
     }
 
-    pub async fn receive(&self) {
+    async fn receive(&self) {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         loop {
@@ -162,7 +169,7 @@ impl Discv4Server {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq && peer.is_proven {
                         debug!("Found outdated enr-seq, sending an enr_request");
-                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, &mut self.ctx.table.lock().await)
                             .await?;
                     }
                 }
@@ -193,7 +200,7 @@ impl Discv4Server {
                     ));
                 }
 
-                // all validations went well, mark as answered and start a rlpx connection
+                // all validations went well, mark as answered
                 self.ctx
                     .table
                     .lock()
@@ -204,29 +211,11 @@ impl Discv4Server {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
-                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, &mut self.ctx.table.lock().await)
                             .await?;
                         return Ok(());
                     }
                 }
-
-                // We won't initiate a connection if we are already connected.
-                // This will typically be the case when revalidating a node.
-                if peer.is_connected {
-                    return Ok(());
-                }
-
-                // We won't initiate a connection if we have reached the maximum number of peers.
-                let active_connections = {
-                    let table = self.ctx.table.lock().await;
-                    table.count_connected_peers()
-                };
-                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
-                    return Ok(());
-                }
-
-                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
-
                 Ok(())
             }
             Message::FindNode(msg) => {
@@ -503,29 +492,6 @@ impl Discv4Server {
                         peer.node.public_key
                     );
                 }
-                let peer = {
-                    let table = self.ctx.table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
-                };
-                let Some(peer) = peer else {
-                    return Err(DiscoveryError::InvalidMessage("not known node".into()));
-                };
-                // This will typically be the case when revalidating a node.
-                if peer.is_connected {
-                    return Ok(());
-                }
-
-                // We won't initiate a connection if we have reached the maximum number of peers.
-                let active_connections = {
-                    let table = self.ctx.table.lock().await;
-                    table.count_connected_peers()
-                };
-                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
-                    return Ok(());
-                }
-
-                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
-
                 Ok(())
             }
         }
@@ -695,10 +661,10 @@ impl Discv4Server {
         }
     }
 
-    async fn send_enr_request<'a>(
+    pub async fn send_enr_request<'a>(
         &self,
         node: &Node,
-        mut table_lock: MutexGuard<'a, KademliaTable>,
+        table_lock: &mut MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
