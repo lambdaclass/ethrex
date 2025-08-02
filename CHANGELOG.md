@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-01
+
+- Reuse jumpdest filters within the same VM instance [#3905](https://github.com/lambdaclass/ethrex/pull/3905)
+
 ### 2025-07-31
 
 - Batching of transaction hashes sent in a single NewPooledTransactionHashes message [#3912](https://github.com/lambdaclass/ethrex/pull/3912)

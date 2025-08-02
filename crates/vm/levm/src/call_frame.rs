@@ -9,8 +9,10 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     fmt,
+    rc::Rc,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -230,7 +232,7 @@ pub struct CallFrame {
     pub depth: usize,
     /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
+    pub jump_target_filter: Rc<RefCell<JumpTargetFilter>>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -300,6 +302,7 @@ impl CallFrame {
         ret_size: usize,
         stack: Stack,
         memory: Memory,
+        jump_target_filter: Rc<RefCell<JumpTargetFilter>>,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
@@ -313,7 +316,6 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -324,6 +326,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
+            jump_target_filter,
         }
     }
 
@@ -352,7 +355,6 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
         Ok(())
     }

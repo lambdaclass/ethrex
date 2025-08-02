@@ -15,6 +15,7 @@ use crate::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
     tracing::LevmCallTracer,
+    utils::JumpTargetFilter,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -69,6 +70,10 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    /// Maps code_hash to jump filter.
+    pub jump_target_filters: BTreeMap<H160, Rc<RefCell<JumpTargetFilter>>>,
 }
 
 impl<'a> VM<'a> {
@@ -84,6 +89,10 @@ impl<'a> VM<'a> {
         let mut substate = Substate::initialize(&env, tx)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
+
+        // This filter is properly set up later in prepare_execution.
+        let jump_target_filter_placeholder =
+            Rc::new(RefCell::new(JumpTargetFilter::new(Bytes::new())));
 
         let mut vm = Self {
             call_frames: Vec::new(),
@@ -113,8 +122,10 @@ impl<'a> VM<'a> {
                 0,
                 Stack::default(),
                 Memory::default(),
+                jump_target_filter_placeholder,
             ),
             env,
+            jump_target_filters: BTreeMap::default(),
         };
 
         let call_type = if is_create {
@@ -255,6 +266,17 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;
         }
+
+        // The bytecode and code address are now set, so we can setup the first call frame jump target filter.
+        let jump_target_filter = self
+            .jump_target_filters
+            .entry(self.current_call_frame.code_address)
+            .or_insert_with(|| {
+                Rc::new(RefCell::new(JumpTargetFilter::new(
+                    self.current_call_frame.bytecode.clone(),
+                )))
+            });
+        self.current_call_frame.jump_target_filter = jump_target_filter.clone();
 
         Ok(())
     }

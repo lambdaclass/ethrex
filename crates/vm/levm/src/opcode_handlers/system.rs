@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
@@ -737,6 +739,11 @@ impl<'a> VM<'a> {
 
         let next_memory = self.current_call_frame.memory.next_memory();
 
+        let jump_target_filter = self
+            .jump_target_filters
+            .entry(new_address)
+            .or_insert_with(|| Rc::new(RefCell::new(JumpTargetFilter::new(Bytes::new()))));
+
         let new_call_frame = CallFrame::new(
             deployer,
             new_address,
@@ -753,6 +760,7 @@ impl<'a> VM<'a> {
             0,
             stack,
             next_memory,
+            jump_target_filter.clone(),
         );
         self.add_callframe(new_call_frame);
 
@@ -872,6 +880,11 @@ impl<'a> VM<'a> {
 
             let next_memory = self.current_call_frame.memory.next_memory();
 
+            let jump_target_filter = self
+                .jump_target_filters
+                .entry(code_address)
+                .or_insert_with(|| Rc::new(RefCell::new(JumpTargetFilter::new(bytecode.clone()))));
+
             let new_call_frame = CallFrame::new(
                 msg_sender,
                 to,
@@ -888,6 +901,7 @@ impl<'a> VM<'a> {
                 ret_size,
                 stack,
                 next_memory,
+                jump_target_filter.clone(),
             );
             self.add_callframe(new_call_frame);
 
