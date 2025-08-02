@@ -176,8 +176,13 @@ impl Trie {
     pub fn commit(&mut self) -> Result<(), TrieError> {
         if self.root.is_valid() {
             let mut acc = Vec::new();
-            self.root.commit(&mut acc);
-            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
+            let mut buffer = Vec::new();
+            self.root.commit(&mut buffer, &mut acc);
+            let updates: Vec<(NodeHash, Vec<u8>)> = acc
+                .iter()
+                .map(|(hash, range)| (*hash, buffer[range.clone()].to_vec()))
+                .collect();
+            self.db.put_batch(updates)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
@@ -187,11 +192,16 @@ impl Trie {
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
+        let mut buffer = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(&mut acc);
+            self.root.commit(&mut buffer, &mut acc);
         }
 
-        acc
+        let updates: Vec<(NodeHash, Vec<u8>)> = acc
+            .iter()
+            .map(|(hash, range)| (*hash, buffer[range.clone()].to_vec()))
+            .collect();
+        updates
     }
 
     /// Obtain a merkle proof for the given path.
