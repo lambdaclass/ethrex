@@ -270,6 +270,13 @@ impl Mempool {
         Ok(tx)
     }
 
+    pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
+        self.transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()).into())
+            .map(|pool| pool.contains_key(&tx_hash))
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
