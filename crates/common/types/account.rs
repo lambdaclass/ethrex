@@ -183,14 +183,13 @@ impl Account {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero()
-            && self.info.nonce == 0
-            && self.info.code_hash == *EMPTY_KECCACK_HASH
+        self.info.is_empty()
     }
+}
 
-    pub fn set_code(&mut self, code: Bytes) {
-        self.info.code_hash = keccak(code.as_ref()).0.into();
-        self.code = code;
+impl AccountInfo {
+    pub fn is_empty(&self) -> bool {
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
     }
 }
 

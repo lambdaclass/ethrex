@@ -1,4 +1,5 @@
 use crate::{
+    account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
@@ -6,7 +7,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Account};
+use ethrex_common::{Address, U256};
 use keccak_hash::H256;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -245,7 +246,7 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_accounts_info: HashMap<Address, LevmAccount>,
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
@@ -253,14 +254,14 @@ impl CallFrameBackup {
     pub fn backup_account_info(
         &mut self,
         address: Address,
-        account: &Account,
+        account: &LevmAccount,
     ) -> Result<(), InternalError> {
         self.original_accounts_info
             .entry(address)
-            .or_insert_with(|| Account {
+            .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                code: account.code.clone(),
                 storage: BTreeMap::new(),
+                status: account.status.clone(),
             });
 
         Ok(())

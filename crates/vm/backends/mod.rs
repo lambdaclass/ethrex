@@ -13,12 +13,13 @@ use ethrex_common::types::{
     Withdrawal,
 };
 pub use ethrex_levm::call_frame::CallFrameBackup;
+use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
 use ethrex_levm::vm::VMType;
 use levm::LEVM;
 use revm::REVM;
 use revm::db::EvmState;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -84,7 +85,7 @@ impl Evm {
                 state: evm_state(wrapped_db),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db), BTreeMap::new()),
                 vm_type: VMType::L1,
             },
         }
@@ -100,7 +101,7 @@ impl Evm {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         let evm = Evm::LEVM {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db), BTreeMap::new()),
             vm_type: VMType::L2,
         };
 
@@ -117,7 +118,7 @@ impl Evm {
 
     fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
         Evm::LEVM {
-            db: GeneralizedDatabase::new(store, CacheDB::new()),
+            db: GeneralizedDatabase::new(store, BTreeMap::new()),
             vm_type,
         }
     }
