@@ -31,7 +31,7 @@ impl<'a> VM<'a> {
         )?)?;
 
         let mut hasher = Keccak256::new();
-        hasher.update(current_call_frame.memory.load_range(offset, size)?);
+        hasher.update(current_call_frame.memory.as_slice(offset, size));
         current_call_frame
             .stack
             .push1(u256_from_big_endian(&hasher.finalize()))?;

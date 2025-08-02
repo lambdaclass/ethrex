@@ -7,7 +7,7 @@ use crate::{
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
@@ -103,7 +103,7 @@ impl<'a> VM<'a> {
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        callframe.memory.grow_to(new_memory_size);
 
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
@@ -210,7 +210,7 @@ impl<'a> VM<'a> {
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        callframe.memory.grow_to(new_memory_size);
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let from = callframe.to;
@@ -260,7 +260,11 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = {
+            let mut buffer = BytesMut::zeroed(size);
+            current_call_frame.memory.read(offset, buffer.as_mut());
+            buffer.freeze()
+        };
 
         Ok(OpcodeResult::Halt)
     }
@@ -342,7 +346,7 @@ impl<'a> VM<'a> {
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        callframe.memory.grow_to(new_memory_size);
 
         // OPERATION
         let from = callframe.msg_sender;
@@ -447,7 +451,7 @@ impl<'a> VM<'a> {
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        callframe.memory.grow_to(new_memory_size);
 
         // OPERATION
         let value = U256::zero();
@@ -568,7 +572,11 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = {
+            let mut buffer = BytesMut::zeroed(size);
+            current_call_frame.memory.read(offset, buffer.as_mut());
+            buffer.freeze()
+        };
 
         Err(VMError::RevertOpcode)
     }
@@ -668,11 +676,13 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
-        let code = Bytes::from(
+        let code = {
+            let mut buffer = BytesMut::zeroed(code_size_in_memory);
             self.current_call_frame
                 .memory
-                .load_range(code_offset_in_memory, code_size_in_memory)?,
-        );
+                .read(code_offset_in_memory, buffer.as_mut());
+            buffer.freeze()
+        };
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -735,7 +745,7 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
-        let next_memory = self.current_call_frame.memory.next_memory();
+        let next_memory = self.current_call_frame.memory.make_child();
 
         let new_call_frame = CallFrame::new(
             deployer,
@@ -838,7 +848,7 @@ impl<'a> VM<'a> {
             }
 
             // Store return data of sub-context
-            call_frame.memory.store_data(
+            call_frame.memory.write(
                 ret_offset,
                 if ctx_result.output.len() >= ret_size {
                     ctx_result
@@ -848,7 +858,7 @@ impl<'a> VM<'a> {
                 } else {
                     &ctx_result.output
                 },
-            )?;
+            );
             call_frame.sub_return_data = ctx_result.output.clone();
 
             // What to do, depending on TxResult
@@ -870,7 +880,7 @@ impl<'a> VM<'a> {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
-            let next_memory = self.current_call_frame.memory.next_memory();
+            let next_memory = self.current_call_frame.memory.make_child();
 
             let new_call_frame = CallFrame::new(
                 msg_sender,
@@ -942,11 +952,8 @@ impl<'a> VM<'a> {
             gas_limit,
             ret_offset,
             ret_size,
-            memory: old_callframe_memory,
             ..
         } = executed_call_frame;
-
-        old_callframe_memory.clean_from_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
@@ -960,7 +967,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
-        parent_call_frame.memory.store_data(
+        parent_call_frame.memory.write(
             ret_offset,
             if ctx_result.output.len() >= ret_size {
                 ctx_result
@@ -970,7 +977,7 @@ impl<'a> VM<'a> {
             } else {
                 &ctx_result.output
             },
-        )?;
+        );
 
         parent_call_frame.sub_return_data = ctx_result.output.clone();
 
@@ -1003,11 +1010,8 @@ impl<'a> VM<'a> {
             gas_limit,
             to,
             call_frame_backup,
-            memory: old_callframe_memory,
             ..
         } = executed_call_frame;
-
-        old_callframe_memory.clean_from_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
@@ -1080,9 +1084,9 @@ impl<'a> VM<'a> {
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        Ok(Bytes::from(
-            self.current_call_frame.memory.load_range(offset, size)?,
-        ))
+        let mut buffer = BytesMut::zeroed(size);
+        self.current_call_frame.memory.read(offset, buffer.as_mut());
+        Ok(buffer.freeze())
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {

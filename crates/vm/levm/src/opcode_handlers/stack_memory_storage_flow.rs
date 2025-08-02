@@ -1,17 +1,13 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
     opcodes::Opcode,
     vm::VM,
 };
-use ethrex_common::{
-    U256,
-    types::Fork,
-    utils::{u256_to_big_endian, u256_to_h256},
-};
+use ethrex_common::{U256, types::Fork, utils::u256_to_h256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -92,7 +88,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(current_call_frame.memory.load_word(offset)?)?;
+            .push1(current_call_frame.memory.read_u256(offset))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -119,7 +115,7 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        current_call_frame.memory.store_word(offset, value)?;
+        current_call_frame.memory.write_u256(offset, value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -143,9 +139,7 @@ impl<'a> VM<'a> {
 
         let value = current_call_frame.stack.pop1()?;
 
-        current_call_frame
-            .memory
-            .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
+        current_call_frame.memory.write_u8(offset, value.byte(0));
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -311,7 +305,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .memory
-            .copy_within(src_offset, dest_offset, size)?;
+            .copy(src_offset, dest_offset, size);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
