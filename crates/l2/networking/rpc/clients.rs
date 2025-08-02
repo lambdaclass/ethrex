@@ -221,56 +221,26 @@ pub async fn deploy(
     Ok((deploy_tx_hash, deployed_address))
 }
 
-pub async fn send_tx_bump_gas_exponential_backoff(
+pub async fn send_tx_bump_gas_exponential_backoff<T>(
     client: &EthClient,
-    wrapped_tx: &mut WrappedTransaction,
+    tx: &mut T,
     signer: &Signer,
-) -> Result<H256, EthClientError> {
+) -> Result<H256, EthClientError>
+where
+    T: ResendableTx,
+{
     let mut number_of_retries = 0;
 
-    'outer: while number_of_retries < client.max_number_of_retries {
-        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
-            let (tx_max_fee, tx_max_priority_fee) = match wrapped_tx {
-                WrappedTransaction::EIP4844(tx) => (
-                    &mut tx.tx.max_fee_per_gas,
-                    &mut tx.tx.max_priority_fee_per_gas,
-                ),
-                WrappedTransaction::EIP1559(tx) => {
-                    (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
-                }
-                WrappedTransaction::L2(tx) => {
-                    (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
-                }
-            };
+    loop {
+        tx.clamp_fees(client);
 
-            if *tx_max_fee > max_fee_per_gas {
-                *tx_max_fee = max_fee_per_gas;
-
-                // Ensure that max_priority_fee_per_gas does not exceed max_fee_per_gas
-                if *tx_max_priority_fee > *tx_max_fee {
-                    *tx_max_priority_fee = *tx_max_fee;
-                }
-
-                warn!(
-                    "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
-                );
-            }
-        }
-
-        // Check blob gas fees only for EIP4844 transactions
-        if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
-                    warn!(
-                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
-                    );
-                }
-            }
-        }
-        let Ok(tx_hash) = send_wrapped_transaction(client, wrapped_tx, signer).await else {
-            bump_gas_wrapped_tx(client, wrapped_tx, 30);
+        // Try to broadcast
+        let Ok(tx_hash) = tx.send(client, signer).await else {
+            tx.bump(client, 30);
             number_of_retries += 1;
+            if number_of_retries >= client.max_number_of_retries {
+                return Err(EthClientError::TimeoutError);
+            }
             continue;
         };
 
@@ -292,10 +262,13 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas
                 // and go to the next one.
-                bump_gas_wrapped_tx(client, wrapped_tx, 30);
-
+                tx.bump(client, 30);
                 number_of_retries += 1;
-                continue 'outer;
+
+                if number_of_retries >= client.max_number_of_retries {
+                    return Err(EthClientError::TimeoutError);
+                }
+                continue;
             }
 
             attempt += 1;
