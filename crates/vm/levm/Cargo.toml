@@ -8,7 +8,7 @@ lazy_static.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
-derive_more = { version = "1.0.0", features = ["full"] }
+derive_more.workspace = true
 
 bytes.workspace = true
 keccak-hash.workspace = true
@@ -16,31 +16,20 @@ thiserror.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 
-sha3 = "0.10.8"
-datatest-stable = "0.2.9"
-walkdir = "2.5.0"
+sha3.workspace = true
+datatest-stable.workspace = true
+walkdir.workspace = true
 secp256k1.workspace = true
-p256 = { version = "0.13.2", features = [
-  "ecdsa",
-  "arithmetic",
-  "expose-field",
-] }
-sha2 = "0.10.8"
-ripemd = "0.1.3"
-num-bigint = "0.4.5"
-lambdaworks-math = "0.11.0"
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [
-    "groups",
-    "bits",
-    "pairings",
-    "alloc",
-    "experimental",
-] }
-ark-bn254 = "0.5.0"
-ark-ec = "0.5.0"
-ark-ff = "0.5.0"
-strum = { version = "0.27.1", features = ["derive"] }
-
+p256.workspace = true
+sha2.workspace = true
+ripemd.workspace = true
+num-bigint.workspace = true
+lambdaworks-math.workspace = true
+bls12_381.workspace = true
+ark-bn254.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
+strum.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

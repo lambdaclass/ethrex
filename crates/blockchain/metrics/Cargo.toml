@@ -14,10 +14,8 @@ serde.workspace = true
 
 ethrex-common.workspace = true
 
-
-prometheus = { version = "0.13.4", optional = true }
+prometheus = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-
 
 [lib]
 path = "./mod.rs"
