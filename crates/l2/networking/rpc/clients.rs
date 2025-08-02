@@ -8,10 +8,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::{
-        EthClientError, Overrides,
-        eth::{EthClient, WrappedTransaction},
-    },
+    clients::{EthClientError, Overrides, eth::EthClient},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::keccak;
@@ -164,26 +161,6 @@ pub async fn send_eip4844_transaction(
     client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
-pub async fn send_wrapped_transaction(
-    client: &EthClient,
-    wrapped_tx: &WrappedTransaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    match wrapped_tx {
-        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            send_eip4844_transaction(client, wrapped_eip4844_transaction, signer).await
-        }
-        WrappedTransaction::EIP1559(eip1559_transaction) => {
-            send_eip1559_transaction(client, eip1559_transaction, signer).await
-        }
-        WrappedTransaction::L2(privileged_l2_transaction) => {
-            client
-                .send_privileged_l2_transaction(privileged_l2_transaction)
-                .await
-        }
-    }
-}
-
 pub async fn deploy(
     client: &EthClient,
     deployer: &Signer,
@@ -280,27 +257,6 @@ where
 
             receipt = client.get_transaction_receipt(tx_hash).await?;
         }
-
         return Ok(tx_hash);
-    }
-
-    Err(EthClientError::TimeoutError)
-}
-
-fn bump_gas_wrapped_tx(
-    client: &EthClient,
-    wrapped_tx: &mut WrappedTransaction,
-    bump_percentage: u64,
-) {
-    match wrapped_tx {
-        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            client.bump_eip4844(wrapped_eip4844_transaction, bump_percentage);
-        }
-        WrappedTransaction::EIP1559(eip1559_transaction) => {
-            client.bump_eip1559(eip1559_transaction, bump_percentage);
-        }
-        WrappedTransaction::L2(privileged_l2_transaction) => {
-            client.bump_privileged_l2(privileged_l2_transaction, bump_percentage);
-        }
     }
 }

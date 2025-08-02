@@ -7,7 +7,7 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::{
     Overrides,
-    eth::{EthClient, WrappedTransaction},
+    eth::{EthClient},
 };
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -71,7 +71,7 @@ pub async fn register_tdx_key(
         })?;
 
     let tdx_address = get_tdx_address(eth_client, on_chain_proposer_address).await?;
-    let verify_tx = eth_client
+    let mut verify_tx = eth_client
         .build_eip1559_transaction(
             tdx_address,
             get_address_from_secret_key(private_key)
@@ -85,11 +85,10 @@ pub async fn register_tdx_key(
         )
         .await?;
 
-    let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
     let signer = Signer::Local(LocalSigner::new(*private_key));
 
-    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, &signer).await?;
+    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut verify_tx, &signer).await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
     Ok(())

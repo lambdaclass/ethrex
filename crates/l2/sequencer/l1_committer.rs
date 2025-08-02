@@ -30,7 +30,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    clients::eth::{EthClient, eth_sender::Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -478,7 +478,7 @@ impl L1Committer {
 
         // Validium: EIP1559 Transaction.
         // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
-        let mut tx = if !self.validium {
+        let commit_tx_hash = if !self.validium {
             info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
             let le_bytes = estimate_blob_gas(
                 &self.eth_client,
@@ -490,7 +490,7 @@ impl L1Committer {
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
-            let wrapped_tx = self
+            let mut tx = self
                 .eth_client
                 .build_eip4844_transaction(
                     self.on_chain_proposer_address,
@@ -507,11 +507,10 @@ impl L1Committer {
                 )
                 .await
                 .map_err(CommitterError::from)?;
-
-            WrappedTransaction::EIP4844(wrapped_tx)
+            send_tx_bump_gas_exponential_backoff(&self.eth_client, &mut tx, &self.signer).await?
         } else {
             info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
-            let wrapped_tx = self
+            let mut tx = self
                 .eth_client
                 .build_eip1559_transaction(
                     self.on_chain_proposer_address,
@@ -527,15 +526,8 @@ impl L1Committer {
                 .await
                 .map_err(CommitterError::from)?;
 
-            WrappedTransaction::EIP1559(wrapped_tx)
+            send_tx_bump_gas_exponential_backoff(&self.eth_client, &mut tx, &self.signer).await?
         };
-
-        self.eth_client
-            .set_gas_for_wrapped_tx(&mut tx, self.signer.address())
-            .await?;
-
-        let commit_tx_hash =
-            send_tx_bump_gas_exponential_backoff(&self.eth_client, &mut tx, &self.signer).await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 

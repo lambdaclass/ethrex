@@ -7,13 +7,11 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
-    clients::{send_eip1559_transaction, send_tx_bump_gas_exponential_backoff},
+    clients::send_eip1559_transaction,
     signer::{LocalSigner, Signer},
 };
 use ethrex_rpc::clients::eth::L1MessageProof;
-use ethrex_rpc::clients::eth::{
-    EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
-};
+use ethrex_rpc::clients::eth::{EthClient, errors::EthClientError, eth_sender::Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
 
 use keccak_hash::keccak;
@@ -505,12 +503,7 @@ async fn create2_deploy(
         )
         .await?;
 
-    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
-    eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
-        .await?;
-    let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, &mut wrapped_tx, deployer).await?;
+    let deploy_tx_hash = send_eip1559_transaction(eth_client, &deploy_tx, deployer).await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
@@ -562,14 +555,8 @@ pub async fn initialize_contract(
         )
         .await?;
 
-    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
-
-    eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer.address())
-        .await?;
-
     let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, &mut wrapped_tx, initializer).await?;
+        send_eip1559_transaction(eth_client, &initialize_tx, initializer).await?;
 
     Ok(initialize_tx_hash)
 }
