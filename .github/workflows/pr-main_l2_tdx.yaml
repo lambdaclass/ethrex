@@ -68,9 +68,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
+          tags: ethrex:unstable
           push: false
+          build-args: |
+            BUILD_FLAGS=--features dev
 
       - name: Start L1 & Deploy contracts
         run: |
