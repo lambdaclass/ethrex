@@ -3,7 +3,7 @@ use std::fmt::Display;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{calldata::Value, l1_messages::L1MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
-use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
+use ethrex_rpc::{clients::eth::Overrides, types::receipt::RpcLog, EthClient};
 use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,

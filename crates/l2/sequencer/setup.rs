@@ -5,10 +5,7 @@ use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::clients::{
-    Overrides,
-    eth::{EthClient, WrappedTransaction},
-};
+use ethrex_rpc::clients::eth::{EthClient, Overrides, WrappedTransaction};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::str::FromStr;

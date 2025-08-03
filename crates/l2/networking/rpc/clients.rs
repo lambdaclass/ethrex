@@ -7,8 +7,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::{
-        EthClientError, Overrides,
-        eth::{EthClient, WrappedTransaction},
+        eth::{EthClient, Overrides, WrappedTransaction}, EthClientError
     },
     types::block_identifier::{BlockIdentifier, BlockTag},
 };

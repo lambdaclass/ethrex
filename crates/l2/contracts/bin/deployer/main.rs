@@ -21,9 +21,10 @@ use ethrex_l2_sdk::{
     calldata::encode_calldata, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
     initialize_contract,
 };
+use ethrex_rpc::clients::eth::Overrides;
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::get_address_from_secret_key},
+    clients::eth::get_address_from_secret_key,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;

@@ -4,8 +4,7 @@ use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{clients::send_eip1559_transaction, signer::LocalSigner};
 use ethrex_rpc::{
-    EthClient,
-    clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
+    clients::{eth::{errors::CalldataEncodeError, Overrides}, EthClientError}, EthClient
 };
 use keccak_hash::H256;
 use secp256k1::SecretKey;

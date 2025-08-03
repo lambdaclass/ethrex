@@ -1,6 +1,6 @@
 use ethrex_common::{Address, H256};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::{EthClient, clients::Overrides};
+use ethrex_rpc::{clients::eth::Overrides, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{

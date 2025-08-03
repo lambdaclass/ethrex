@@ -18,8 +18,9 @@ use ethrex_l2_sdk::{
     compile_contract, deposit_erc20, get_address_alias, get_address_from_secret_key,
     get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
+use ethrex_rpc::clients::eth::Overrides;
 use ethrex_rpc::{
-    clients::eth::{EthClient, L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256},
+    clients::eth::{EthClient, L1MessageProof, from_hex_string_to_u256},
     types::{
         block_identifier::{BlockIdentifier, BlockTag},
         receipt::RpcReceipt,

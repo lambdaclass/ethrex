@@ -4,8 +4,7 @@ use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::{
-    EthClient,
-    clients::{EthClientError, Overrides, eth::WrappedTransaction},
+    clients::{eth::{Overrides, WrappedTransaction}, EthClientError}, EthClient
 };
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
