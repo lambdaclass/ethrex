@@ -86,7 +86,6 @@ services:
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - ./.env:/.env:ro
-      - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       l2
@@ -102,6 +101,7 @@ services:
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
       --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --no-monitor
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
