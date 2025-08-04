@@ -65,7 +65,7 @@ pub enum BlockRequestOrder {
 
 async fn ask_peer_head_number(peer_id: H256, peer_channel: &mut PeerChannels, sync_head: H256, retries: i32) -> Result<u64, String> {
     // TODO: Better error handling
-    info!("MY LOGS 11: Requesting sync head block number from peer {peer_id}");
+    info!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
     let request_id = rand::random();
     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
         id: request_id,
@@ -91,7 +91,7 @@ async fn ask_peer_head_number(peer_id: H256, peer_channel: &mut PeerChannels, sy
         Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
             if id == request_id && !block_headers.is_empty() {
                 let sync_head_number = block_headers.last().unwrap().number;
-                info!("MY LOGS 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}");
+                info!("Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}");
                 Ok(sync_head_number)
             } else {
                 Err(format!("Received unexpected response from peer {peer_id}"))
@@ -227,7 +227,7 @@ impl PeerHandler {
                         sync_head_number = number;
                     }
                     Err(err) => {
-                        info!("MY LOGS 13: Failed to retrieve sync head block number from peer {peer_id}: {err}");
+                        info!("Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}");
                     }
                 }
             }
@@ -290,7 +290,6 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
 
         loop {
-            info!("MY LOGS 7: In request block headers loop");
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -436,7 +435,7 @@ impl PeerHandler {
 
             // run download_chunk_from_peer in a different Tokio task
             let _download_result = tokio::spawn(async move {
-                info!("MY LOGS 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}");
+                info!("Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}");
                 debug!(
                     "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
@@ -448,7 +447,7 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| info!("MY LOGS 6: {free_peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| info!("Sync Log 6: {free_peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
                 tx.send((

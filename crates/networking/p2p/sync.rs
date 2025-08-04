@@ -162,8 +162,8 @@ impl Syncer {
         };
 
         loop {
-            info!("MY LOGS 1: In snap sync");
-            info!("MY LOGS 2: State block hashes len {}", block_sync_state.into_snap_block_hashes().len());
+            info!("Sync Log 1: In snap sync");
+            info!("Sync Log 2: State block hashes len {}", block_sync_state.into_snap_block_hashes().len());
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -298,9 +298,9 @@ impl Syncer {
         };
 
         loop {
-            info!("MY LOGS 1: In Full Sync");
-            info!("MY LOGS 3: State current headears len {}", block_sync_state.current_headers.len());
-            info!("MY LOGS 4: State current blocks len {}", block_sync_state.current_blocks.len());
+            info!("Sync Log 1: In Full Sync");
+            info!("Sync Log 3: State current headears len {}", block_sync_state.current_headers.len());
+            info!("Sync Log 4: State current blocks len {}", block_sync_state.current_blocks.len());
             
             debug!("Requesting Block Headers from {current_head}");
 
@@ -310,11 +310,11 @@ impl Syncer {
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
-                info!("MY LOGS 8: Sync failed to find target block header, aborting");
+                info!("Sync Log 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };
 
-            info!("MY LOGS 9: Received {} block headers", block_headers.len());
+            info!("Sync Log 9: Received {} block headers", block_headers.len());
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
