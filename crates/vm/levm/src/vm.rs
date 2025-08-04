@@ -181,8 +181,8 @@ impl<'a> VM<'a> {
         loop {
             if *(TX.lock().unwrap()) {
                 let current_stack = self.current_call_frame.stack.values.clone();
-                let stack_hex = current_stack.iter().filter_map(|v| (!v.is_zero()).then_some(format!("{v:#x}"))).collect::<Vec<_>>().join(", ");
-                info!("Current Stack: [{stack_hex}]");
+                let stack_hex = current_stack.iter().enumerate().skip_while(|(i, v)| v.is_zero()).map(|(i, v)| format!("offset {i}: {v:#x}")).collect::<Vec<_>>().join(", ");
+                info!("Current Stack: [{stack_hex}], offset: {}", self.current_call_frame.stack.offset);
             }
 
             let opcode = self.current_call_frame.next_opcode();
