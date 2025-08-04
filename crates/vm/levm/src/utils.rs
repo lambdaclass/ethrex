@@ -679,3 +679,8 @@ impl<'a> VM<'a> {
         }
     }
 }
+
+/// Converts U256 value into usize by taking the first 64 bytes and discarding the rest
+pub fn u256_into_usize(val: U256) -> usize {
+    val.0[0] as usize
+}

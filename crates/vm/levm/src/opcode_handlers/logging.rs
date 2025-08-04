@@ -2,6 +2,7 @@ use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
+    utils::u256_into_usize,
     vm::VM,
 };
 use bytes::Bytes;
@@ -19,13 +20,9 @@ impl<'a> VM<'a> {
         }
 
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let size = size
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let offset = match offset.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
+        let offset = u256_into_usize(offset);
+        let size = u256_into_usize(size);
+
         let topics = current_call_frame
             .stack
             .pop::<N_TOPICS>()?

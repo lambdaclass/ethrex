@@ -40,18 +40,10 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let callee: Address = word_to_address(callee);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset: usize = return_data_start_offset
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size: usize = return_data_size
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = u256_into_usize(args_start_offset);
+            let args_size = u256_into_usize(args_size);
+            let return_data_start_offset = u256_into_usize(return_data_start_offset);
+            let return_data_size = u256_into_usize(return_data_size);
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -153,19 +145,10 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_start_offset = match args_start_offset.try_into() {
-                Ok(x) => x,
-                Err(_) => usize::MAX,
-            };
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = u256_into_usize(args_start_offset);
+            let args_size = u256_into_usize(args_size);
+            let return_data_start_offset = u256_into_usize(return_data_start_offset);
+            let return_data_size = u256_into_usize(return_data_size);
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -241,18 +224,13 @@ impl<'a> VM<'a> {
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let size = size
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let size = u256_into_usize(size);
 
         if size == 0 {
             return Ok(OpcodeResult::Halt);
         }
 
-        let offset: usize = match offset.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
+        let offset: usize = u256_into_usize(offset);
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -287,18 +265,10 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = u256_into_usize(args_start_offset);
+            let args_size = u256_into_usize(args_size);
+            let return_data_start_offset = u256_into_usize(return_data_start_offset);
+            let return_data_size = u256_into_usize(return_data_size);
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -392,18 +362,10 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = u256_into_usize(args_start_offset);
+            let args_size = u256_into_usize(args_size);
+            let return_data_start_offset = u256_into_usize(return_data_start_offset);
+            let return_data_size = u256_into_usize(return_data_size);
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -483,13 +445,8 @@ impl<'a> VM<'a> {
             code_offset_in_memory,
             code_size_in_memory,
         ] = *current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = code_size_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
+        let code_size_in_memory: usize = u256_into_usize(code_size_in_memory);
+        let code_offset_in_memory: usize = u256_into_usize(code_offset_in_memory);
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -518,13 +475,8 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             salt,
         ] = *current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = code_size_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
+        let code_size_in_memory: usize = u256_into_usize(code_size_in_memory);
+        let code_offset_in_memory: usize = u256_into_usize(code_offset_in_memory);
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -553,14 +505,8 @@ impl<'a> VM<'a> {
 
         let [offset, size] = *current_call_frame.stack.pop()?;
 
-        let offset = match offset.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
-
-        let size = size
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset = u256_into_usize(offset);
+        let size = u256_into_usize(size);
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
