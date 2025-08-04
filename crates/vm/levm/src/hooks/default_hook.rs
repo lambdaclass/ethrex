@@ -4,13 +4,14 @@ use crate::{
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
-    vm::VM,
+    vm::VM, TX,
 };
 
 use ethrex_common::{
     Address, U256,
     types::{Account, Fork},
 };
+use tracing::info;
 
 use std::cmp::max;
 
@@ -484,6 +485,10 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         (bytecode, code_address)
     };
+
+    if *(TX.lock().unwrap()) {
+        info!("Setting bytecode: {bytecode:?}");
+    }
 
     // Assign code and code_address to callframe
     vm.current_call_frame.code_address = code_address;
