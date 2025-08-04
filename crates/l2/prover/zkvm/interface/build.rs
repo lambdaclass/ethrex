@@ -51,6 +51,19 @@ fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
+    // SP1 doesn't build the program if using clippy as compiler.
+    // In this case, the ELF is not generated so the following steps fail.
+    // Return early if using clippy to avoid this.
+    if std::env::var("RUSTC_WORKSPACE_WRAPPER")
+        .map(|bin_name| bin_name.contains("clippy-driver"))
+        .unwrap_or(false)
+    {
+        std::fs::File::create("./sp1/out/riscv32im-succinct-zkvm-elf")
+            .expect("could not create SP1 elf file");
+        println!("cargo:warning=Skipping build because clippy is running.");
+        return;
+    }
+
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
     } else {
