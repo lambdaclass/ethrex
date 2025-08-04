@@ -26,20 +26,10 @@ impl<'a> VM<'a> {
             // to read. We only want to read the data _NEXT_ to that
             // bytecode
             .wrapping_add(1);
-
-        let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
-        let value = u256_from_big_endian_const(read_n_bytes);
-        if *(TX.lock().unwrap()) {
-            info!("PUSH-N, value for old implementation: {value}");
-        }
         let value = if let Some(slice) = current_call_frame
             .bytecode
             .get(pc_offset..pc_offset.wrapping_add(N))
         {
-            if *(TX.lock().unwrap()) {
-                info!("PUSH-N, getting range {pc_offset}..{}, obtained slice: {slice:?}", pc_offset.wrapping_add(N));
-                info!("PUSH-N, from big endian lib: {}", U256::from_big_endian(slice));
-            }
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
                 #[expect(unsafe_code)]
@@ -50,9 +40,6 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
-        if *(TX.lock().unwrap()) {
-            info!("PUSH-N: {value}");
-        }
 
         current_call_frame.stack.push1(value)?;
 
@@ -77,27 +64,5 @@ impl<'a> VM<'a> {
         current_call_frame.stack.push1(U256::zero())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
-    }
-}
-
-fn read_bytcode_slice<const N: usize>(current_call_frame: &CallFrame) -> Result<[u8; N], VMError> {
-    let current_pc = current_call_frame.pc;
-    let pc_offset = current_pc
-        // Add 1 to the PC because we don't want to include the
-        // Bytecode of the current instruction in the data we're about
-        // to read. We only want to read the data _NEXT_ to that
-        // bytecode
-        .checked_add(1)
-        .ok_or(InternalError::Overflow)?;
-
-    if let Some(slice) = current_call_frame
-        .bytecode
-        .get(pc_offset..pc_offset.checked_add(N).unwrap())
-    {
-        Ok(slice
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?)
-    } else {
-        Ok([0; N])
     }
 }
