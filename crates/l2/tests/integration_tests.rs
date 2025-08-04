@@ -1,22 +1,19 @@
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
-use crate::harness::contracts::{
-    test_privileged_tx_with_contract_call, test_privileged_tx_with_contract_call_revert,
-    test_upgrade,
-};
-use crate::harness::erc20::{test_erc20_failed_deposit, test_erc20_roundtrip};
-use crate::harness::eth::{
-    test_5_withdrawals, test_aliasing, test_deposit, test_forced_withdrawal, test_gas_burning,
-    test_privileged_spammer, test_privileged_tx_not_enough_balance, test_total_eth_l2,
-    test_transfer, test_transfer_with_privileged_tx,
-};
-use crate::harness::{
-    clean_contracts_dir, deposit, l1_client, l2_client, read_env_file_by_config, rich_pk_1,
-    rich_pk_2,
-};
-
 mod harness;
+
+use crate::harness::{
+    clean_contracts_dir,
+    contracts::{
+        test_privileged_tx_with_contract_call, test_privileged_tx_with_contract_call_revert,
+        test_upgrade,
+    },
+    erc20::{test_erc20_failed_deposit, test_erc20_roundtrip},
+    eth::{
+        test_5_withdrawals, test_aliasing, test_deposit, test_forced_withdrawal, test_gas_burning,
+        test_privileged_spammer, test_privileged_tx_not_enough_balance, test_total_eth_l2,
+        test_transfer, test_transfer_with_privileged_tx,
+    },
+    read_env_file_by_config,
+};
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {

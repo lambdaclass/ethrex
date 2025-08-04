@@ -347,7 +347,6 @@ pub async fn wait_for_verified_proof(
 pub struct FeesDetails {
     pub total_fees: U256,
     pub recoverable_fees: U256,
-    pub burned_fees: U256,
 }
 
 pub async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> FeesDetails {
@@ -370,52 +369,7 @@ pub async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) 
     FeesDetails {
         total_fees,
         recoverable_fees,
-        burned_fees: total_fees - recoverable_fees,
     }
-}
-
-async fn deploy_l2(
-    l2_client: &EthClient,
-    init_code: &[u8],
-    deployer_private_key: &SecretKey,
-) -> Result<Address, Box<dyn std::error::Error>> {
-    let deployer_signer: Signer = LocalSigner::new(*deployer_private_key).into();
-    let deployed_contract_address = deploy(
-        l2_client,
-        &deployer_signer,
-        init_code.to_vec().into(),
-        Default::default(),
-    )
-    .await?;
-    Ok(deployed_contract_address.1)
-}
-
-async fn call_to_contract_with_deposit(
-    l1_client: &EthClient,
-    l2_client: &EthClient,
-    deployed_contract_address: Address,
-    calldata_to_contract: Bytes,
-    rich_wallet_private_key: &SecretKey,
-    deposit_value: U256,
-    should_revert: bool,
-) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let tx_receipt = test_send(
-        l1_client,
-        rich_wallet_private_key,
-        ethrex_l2_sdk::bridge_address()?,
-        "deposit(address,address,uint256,bytes)",
-        &[
-            Value::Address(get_address_from_secret_key(rich_wallet_private_key)?),
-            Value::Address(deployed_contract_address),
-            Value::Uint(deposit_value),
-            Value::Bytes(calldata_to_contract),
-        ],
-    )
-    .await;
-
-    wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client).await?;
-
-    Ok(tx_receipt)
 }
 
 pub async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U256 {
