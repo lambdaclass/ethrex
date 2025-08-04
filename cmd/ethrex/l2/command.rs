@@ -367,8 +367,7 @@ impl Command {
                                 .expect("Error storing batch");
                         }
                         let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
-                            info!("No blocks found in blobs directory");
-                            return Ok(());
+                            return Err(eyre::eyre!("No blocks found in blobs directory"));
                         };
                         store.forkchoice_update(Some(new_canonical_blocks), last_number, last_hash, None, None).await?;
                     } else {
