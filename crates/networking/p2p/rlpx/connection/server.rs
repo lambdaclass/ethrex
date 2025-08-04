@@ -138,7 +138,7 @@ impl Established {
             .await
             .close()
             .await
-            .inspect_err(|err| error!("Could not close the socket: {err}"));
+            .inspect_err(|err| debug!("Could not close the socket: {err}"));
     }
 }
 
