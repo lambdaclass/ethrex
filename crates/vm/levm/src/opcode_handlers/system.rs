@@ -5,7 +5,7 @@ use crate::{
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
     utils::{address_to_word, word_to_address, *},
-    vm::VM,
+    vm::VM, TX,
 };
 use bytes::Bytes;
 use ethrex_common::tracing::CallType::{
@@ -374,7 +374,11 @@ impl<'a> VM<'a> {
     // STATICCALL operation
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
         // STACK
-        info!("Current Stack: {:?}", self.current_call_frame.stack);
+        if *(TX.lock().unwrap()) {
+            let current_stack = self.current_call_frame.stack.values.clone();
+            let stack_hex = current_stack.iter().map(|v| format!("{v:x}")).collect::<Vec<_>>().join(", ");
+            info!("Current Stack: [{stack_hex}]");
+        }
         let (
             gas,
             address,
