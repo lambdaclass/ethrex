@@ -5,6 +5,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
+use crate::utils::ChainDataIndex::{FinalizedBlockNumber, LatestBlockNumber, SafeBlockNumber};
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -715,15 +716,44 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        self.engine
-            .forkchoice_update(
-                new_canonical_blocks,
-                head_number,
-                head_hash,
-                safe,
-                finalized,
-            )
-            .await
+        let latest = self.engine.get_latest_block_number().await?.unwrap_or(0);
+        tokio::task::spawn_blocking(move || {
+            let tx = self.engine.begin_readwrite()?;
+
+            // Make all ancestors to head canonical.
+            if let Some(new_canonical_blocks) = new_canonical_blocks {
+                for (number, hash) in new_canonical_blocks {
+                    self.engine.set_canonical_block(&mut tx, number, hash)?;
+                }
+            }
+
+            // Remove anything after the head from the canonical chain.
+            for number in (head_number + 1)..(latest + 1) {
+                self.engine.remove_canonical_block(&mut tx, number)?;
+            }
+
+            // Make head canonical and label all special blocks correctly.
+            self.engine
+                .set_canonical_block(&mut tx, head_number, head_hash)?;
+
+            if let Some(finalized) = finalized {
+                self.engine
+                    .update_chain_data(&mut tx, FinalizedBlockNumber, finalized)?;
+            }
+
+            if let Some(safe) = safe {
+                self.engine
+                    .update_chain_data(&mut tx, SafeBlockNumber, safe)?;
+            }
+
+            self.engine
+                .update_chain_data(&mut tx, LatestBlockNumber, head_number)?;
+
+            self.engine.commit_tx(tx)?;
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?;
+        Ok(())
     }
 
     /// Obtain the storage trie for the given block

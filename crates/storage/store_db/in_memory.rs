@@ -1,8 +1,9 @@
 use crate::{
     UpdateBatch,
-    api::StoreEngine,
+    api::{DbTransaction, StoreEngine},
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    utils::ChainDataIndex,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -22,7 +23,7 @@ pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 pub struct Store(Arc<Mutex<StoreInner>>);
 
 #[derive(Default, Debug)]
-struct StoreInner {
+pub struct StoreInner {
     chain_data: ChainData,
     block_numbers: HashMap<BlockHash, BlockNumber>,
     canonical_hashes: HashMap<BlockNumber, BlockHash>,
@@ -407,6 +408,27 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn update_chain_data(
+        &self,
+        db_transaction: &mut DbTransaction,
+        key: ChainDataIndex,
+        value: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let DbTransaction::InMemory(store) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+
+        match key {
+            ChainDataIndex::FinalizedBlockNumber => {
+                store.chain_data.finalized_block_number = Some(value)
+            }
+            ChainDataIndex::SafeBlockNumber => store.chain_data.safe_block_number = Some(value),
+            ChainDataIndex::LatestBlockNumber => store.chain_data.latest_block_number = Some(value),
+            _ => panic!("Unsupported ChainDataIndex for update: {:?}", key),
+        }
+        Ok(())
+    }
+
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner()?.chain_data.pending_block_number)
     }
@@ -454,45 +476,6 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.get_canonical_block_hash_sync(block_number)
-    }
-
-    async fn forkchoice_update(
-        &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
-        head_number: BlockNumber,
-        head_hash: BlockHash,
-        safe: Option<BlockNumber>,
-        finalized: Option<BlockNumber>,
-    ) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
-
-        // Make all ancestors to head canonical.
-        if let Some(new_canonical_blocks) = new_canonical_blocks {
-            for (number, hash) in new_canonical_blocks {
-                store.canonical_hashes.insert(number, hash);
-            }
-        }
-
-        // Remove anything after the head from the canonical chain.
-        let latest = store.chain_data.latest_block_number.unwrap_or(0);
-        for number in (head_number + 1)..(latest + 1) {
-            store.canonical_hashes.remove(&number);
-        }
-
-        // Make head canonical and label all special blocks correctly.
-        store.canonical_hashes.insert(head_number, head_hash);
-
-        if let Some(finalized) = finalized {
-            store.chain_data.finalized_block_number.replace(finalized);
-        }
-
-        if let Some(safe) = safe {
-            store.chain_data.safe_block_number.replace(safe);
-        }
-
-        store.chain_data.latest_block_number.replace(head_number);
-
-        Ok(())
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -752,6 +735,40 @@ impl StoreEngine for Store {
         self.inner()?
             .invalid_ancestors
             .insert(bad_block, latest_valid);
+        Ok(())
+    }
+    fn begin_readwrite(&self) -> Result<DbTransaction, StoreError> {
+        let db = self.inner()?;
+        Ok(DbTransaction::InMemory(db))
+    }
+
+    fn commit_tx(&self, _db_transaction: DbTransaction) -> Result<(), StoreError> {
+        // Dropping the lock
+        Ok(())
+    }
+
+    fn set_canonical_block(
+        &self,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let DbTransaction::InMemory(store) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        store.canonical_hashes.insert(block_number, block_hash);
+        Ok(())
+    }
+
+    fn remove_canonical_block(
+        &self,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let DbTransaction::InMemory(store) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        store.canonical_hashes.remove(&block_number);
         Ok(())
     }
 }

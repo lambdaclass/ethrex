@@ -1,5 +1,5 @@
 use crate::UpdateBatch;
-use crate::api::StoreEngine;
+use crate::api::{DbTransaction, StoreEngine};
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
@@ -22,11 +22,9 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
-use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
-    dupsort,
-    orm::{Database, table},
+    DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind, dupsort,
+    orm::{Database, Decodable, DupSort, Encodable, Table, table},
     table_info,
 };
 use serde_json;
@@ -674,60 +672,43 @@ impl StoreEngine for Store {
         Ok(Some(Block::new(header, body)))
     }
 
-    async fn forkchoice_update(
+    fn set_canonical_block(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
-        head_number: BlockNumber,
-        head_hash: BlockHash,
-        safe: Option<BlockNumber>,
-        finalized: Option<BlockNumber>,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        let latest = self.get_latest_block_number().await?.unwrap_or(0);
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+        let DbTransaction::Libmdbx(tx) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        tx.upsert::<CanonicalBlockHashes>(block_number, block_hash.into())
+            .map_err(StoreError::LibmdbxError)
+    }
 
-            // Update canonical block hashes
-            if let Some(new_canonical_blocks) = new_canonical_blocks {
-                for (number, hash) in new_canonical_blocks {
-                    tx.upsert::<CanonicalBlockHashes>(number, hash.into())
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-
-            // Remove anything after the head from the canonical chain.
-            for number in (head_number + 1)..(latest + 1) {
-                tx.delete::<CanonicalBlockHashes>(number, None)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            // Make head canonical and label all special blocks correctly
-            tx.upsert::<CanonicalBlockHashes>(head_number, head_hash.into())
-                .map_err(StoreError::LibmdbxError)?;
-
-            if let Some(finalized) = finalized {
-                tx.upsert::<ChainData>(
-                    ChainDataIndex::FinalizedBlockNumber,
-                    finalized.encode_to_vec(),
-                )
-                .map_err(StoreError::LibmdbxError)?;
-            }
-
-            if let Some(safe) = safe {
-                tx.upsert::<ChainData>(ChainDataIndex::SafeBlockNumber, safe.encode_to_vec())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            tx.upsert::<ChainData>(
-                ChainDataIndex::LatestBlockNumber,
-                head_number.encode_to_vec(),
-            )
+    fn remove_canonical_block(
+        &self,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let DbTransaction::Libmdbx(tx) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        tx.delete::<CanonicalBlockHashes>(block_number, None)
             .map_err(StoreError::LibmdbxError)?;
+        Ok(())
+    }
 
-            tx.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    fn update_chain_data(
+        &self,
+        db_transaction: &mut DbTransaction,
+        index: ChainDataIndex,
+        value: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let DbTransaction::Libmdbx(tx) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        tx.upsert::<ChainData>(index, value.encode_to_vec())
+            .map_err(StoreError::LibmdbxError)
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
@@ -1096,6 +1077,21 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
+    }
+
+    fn begin_readwrite(&self) -> Result<DbTransaction, StoreError> {
+        Ok(DbTransaction::Libmdbx(
+            self.db
+                .begin_readwrite()
+                .map_err(StoreError::LibmdbxError)?,
+        ))
+    }
+
+    fn commit_tx(&self, db_transaction: DbTransaction) -> Result<(), StoreError> {
+        let DbTransaction::Libmdbx(tx) = db_transaction else {
+            return Err(StoreError::Custom("Invalid transaction type".to_string()));
+        };
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 }
 

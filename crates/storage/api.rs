@@ -4,11 +4,16 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
+use std::sync::MutexGuard;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
+use crate::store_db::in_memory::StoreInner;
+use crate::utils::ChainDataIndex;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
+#[cfg(feature = "libmdbx")]
+use libmdbx::{RW, orm::Transaction as LibmdbxTransaction};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -245,15 +250,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
-    async fn forkchoice_update(
-        &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
-        head_number: BlockNumber,
-        head_hash: BlockHash,
-        safe: Option<BlockNumber>,
-        finalized: Option<BlockNumber>,
-    ) -> Result<(), StoreError>;
-
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
@@ -397,4 +393,33 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
+
+    fn set_canonical_block(
+        &self,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError>;
+
+    fn remove_canonical_block(
+        &self,
+        db_transaction: &mut DbTransaction,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
+
+    fn update_chain_data(
+        &self,
+        db_transaction: &mut DbTransaction,
+        key: ChainDataIndex,
+        value: BlockNumber,
+    ) -> Result<(), StoreError>;
+
+    fn begin_readwrite(&self) -> Result<DbTransaction, StoreError>;
+    fn commit_tx(&self, db_transaction: DbTransaction) -> Result<(), StoreError>;
+}
+
+pub enum DbTransaction<'db> {
+    InMemory(MutexGuard<'db, StoreInner>),
+    #[cfg(feature = "libmdbx")]
+    Libmdbx(LibmdbxTransaction<'db, RW>),
 }
