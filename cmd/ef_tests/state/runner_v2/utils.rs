@@ -32,7 +32,7 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
 }
 
 /// Loads the pre state of the test (the initial state of specific accounts) into the Genesis.
-pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store) {
+pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = Genesis::from(test);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
@@ -41,9 +41,11 @@ pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Stor
     let block_hash = genesis.get_block().hash();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage.clone(), block_hash));
 
+    // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
         GeneralizedDatabase::new(Arc::new(store), CacheDB::new()),
         block_hash,
         storage,
+        genesis,
     )
 }

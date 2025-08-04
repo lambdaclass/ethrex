@@ -11,19 +11,28 @@ RUN cargo install cargo-chef
 
 WORKDIR /ethrex
 
+# --- Planner Stage ---
+# Copy all source code to calculate the dependency recipe.
+# This layer is fast and will be invalidated on any source change.
 FROM chef AS planner
 COPY crates ./crates
 COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
-# Determine the crates that need to be built from dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 
+# --- Builder Stage ---
+# Build the dependencies. This is the most time-consuming step.
+# This layer will be cached and only re-run if the recipe.json from the
+# previous stage has changed, which only happens when dependencies change.
 FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
-# Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
+
+# --- Application Build Stage ---
+# Copy the full, up-to-date source code and build the application.
+# This uses the cached dependencies from the builder stage.
 
 # Optional build flags
 ARG BUILD_FLAGS=""
@@ -33,10 +42,11 @@ COPY metrics ./metrics
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
+# --- Final Image ---
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
-COPY --from=builder ethrex/target/release/ethrex .
+COPY --from=builder /ethrex/target/release/ethrex .
 EXPOSE 8545
 ENTRYPOINT [ "./ethrex" ]
