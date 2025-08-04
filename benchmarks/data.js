@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754330733077,
+  "lastUpdate": 1754333304597,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16446,6 +16446,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006510887804878049,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49fde90e24ca437c2fbc0caf8ba81d2820faad0b",
+          "message": "chore(l1): preventing errors to propagate to spawned (#3840)\n\n**Motivation**\n\nError lines in spawned logs [were\nmuted](https://github.com/lambdaclass/ethrex/pull/3467) because there\nwas a lot of spam regarding failed connections and handshakes. That was\nnot safe as other important problems may get muted too.\n\n**Description**\n\nThis PR handles the connection errors on handshake and initialization\nand logs a lower priority log line (debug) as it is pretty common.\n\nIt also reverts the log directive to mute spawned initialization errors.\n\nit requires [spawned\n0.2.2](https://github.com/lambdaclass/spawned/pull/39).\n\nCloses #3472",
+          "timestamp": "2025-08-04T16:25:48Z",
+          "tree_id": "36fdd705fd3162a82dd9e4616806878c0705ccec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/49fde90e24ca437c2fbc0caf8ba81d2820faad0b"
+        },
+        "date": 1754333304145,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001256809792843691,
             "unit": "Mgas/s"
           }
         ]
