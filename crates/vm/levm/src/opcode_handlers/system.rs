@@ -401,18 +401,10 @@ impl<'a> VM<'a> {
                     return_data_size: {return_data_size:#x}");
             }
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| {tracing::warn!("Returning error due to arg_start_offset in staticcal being too large: {:?}", args_start_offset);ExceptionalHalt::VeryLargeNumber})?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = args_start_offset.0[0] as usize;
+            let args_size = args_size.0[0] as usize;
+            let return_data_start_offset = return_data_start_offset.0[0] as usize;
+            let return_data_size = return_data_size.0[0] as usize;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
