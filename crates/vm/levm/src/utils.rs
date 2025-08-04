@@ -680,11 +680,3 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
         account.code,
     )
 }
-
-pub fn levm_account_to_account(levm_account: LevmAccount, code: Bytes) -> Account {
-    Account {
-        info: levm_account.info,
-        storage: levm_account.storage,
-        code: code,
-    }
-}
