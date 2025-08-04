@@ -570,8 +570,9 @@ impl Store {
     pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
-    ) -> Result<H256, StoreError> {
+    ) -> Result<(H256, BTreeMap<H256, (H256, H256)>), StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)> = BTreeMap::new();
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -595,9 +596,13 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            storage_roots_and_code_hash
+                .insert(H256::from_slice(&hashed_address), (storage_root, code_hash));
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        genesis_state_trie.hash().map_err(StoreError::Trie)
+        let hash = genesis_state_trie.hash().map_err(StoreError::Trie)?;
+
+        Ok((hash, storage_roots_and_code_hash))
     }
 
     pub async fn add_receipt(
@@ -685,8 +690,12 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        let (genesis_state_root, storage_roots_and_code_hash) =
+            self.setup_genesis_state_trie(genesis.alloc.clone()).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+
+        self.engine
+            .write_genesis_account_snapshot(&genesis.alloc, storage_roots_and_code_hash)?;
 
         // Store genesis block
         info!(
@@ -1453,7 +1462,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
-fn hash_address_fixed(address: &Address) -> H256 {
+pub fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()

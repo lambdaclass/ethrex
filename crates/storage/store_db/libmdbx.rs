@@ -6,13 +6,15 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, hash_address_fixed};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
+use ethrex_common::types::GenesisAccount;
 use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
@@ -30,6 +32,7 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -1093,11 +1096,45 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
-    fn write_account_snapshots(
+    fn write_genesis_account_snapshot(
         &self,
-        accounts: Vec<(H256, AccountState)>,
+        accounts: &BTreeMap<Address, GenesisAccount>,
+        storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for (address, acc) in accounts {
+            let hash = hash_address_fixed(address);
+            let (storage_root, code_hash) =
+                *storage_roots_and_code_hash.get(&hash).ok_or_else(|| {
+                    StoreError::Custom("Missing storage root and code hash".to_string())
+                })?;
+            tx.upsert::<AccountSnapshot>(
+                KeyBytes(hash.0),
+                AccountStateRLP::from(AccountState {
+                    balance: acc.balance,
+                    code_hash,
+                    nonce: acc.nonce,
+                    storage_root,
+                }),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            for (key, value) in acc.storage.iter() {
+                tx.upsert::<AccountStorageSnapshot>(
+                    TupleKeyBytes((hash.0, key.to_big_endian())),
+                    AccountStorageValueBytes(value.to_little_endian()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)?;
+
+        Ok(())
     }
 
     fn get_account_snapshot(&self, address: H256) -> Result<Option<AccountState>, StoreError> {

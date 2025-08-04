@@ -1,9 +1,12 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
+use ethrex_common::types::GenesisAccount;
 use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
+use std::collections::BTreeMap;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
@@ -385,9 +388,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
 
-    fn write_account_snapshots(
+    fn write_genesis_account_snapshot(
         &self,
-        accounts: Vec<(H256, AccountState)>,
+        accounts: &BTreeMap<Address, GenesisAccount>,
+        storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)>,
     ) -> Result<(), StoreError>;
 
     fn get_account_snapshot(&self, address: H256) -> Result<Option<AccountState>, StoreError>;

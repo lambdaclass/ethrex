@@ -6,9 +6,12 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, payload::PayloadBundle,
+use ethrex_common::{
+    Address,
+    types::{
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+        GenesisAccount, Index, Receipt, payload::PayloadBundle,
+    },
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -764,9 +767,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn write_account_snapshots(
+    fn write_genesis_account_snapshot(
         &self,
-        accounts: Vec<(H256, AccountState)>,
+        accounts: &BTreeMap<Address, GenesisAccount>,
+        storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)>,
     ) -> Result<(), StoreError> {
         todo!()
     }

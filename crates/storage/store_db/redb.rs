@@ -10,6 +10,8 @@ use crate::{
         PayloadBundleRLP, ReceiptRLP, TupleRLP,
     },
 };
+use ethrex_common::Address;
+use ethrex_common::types::GenesisAccount;
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
     H256, U256,
@@ -23,6 +25,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
+use std::collections::BTreeMap;
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::UpdateBatch;
@@ -1338,9 +1341,10 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    fn write_account_snapshots(
+    fn write_genesis_account_snapshot(
         &self,
-        accounts: Vec<(H256, AccountState)>,
+        accounts: &BTreeMap<Address, GenesisAccount>,
+        storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)>,
     ) -> Result<(), StoreError> {
         todo!()
     }
