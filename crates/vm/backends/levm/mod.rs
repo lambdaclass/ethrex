@@ -214,6 +214,7 @@ impl LEVM {
             let code =
                 if initial_state_account.info.code_hash != new_state_account.info.code_hash {
                     acc_info_updated = true;
+                    // code should be in `codes`
                     Some(db.codes.get(&new_state_account.info.code_hash).ok_or(
                         EvmError::Custom(format!("Failed to get code for account {address}")),
                     )?)
@@ -259,8 +260,10 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
-        db.current_accounts_state.clear();
         db.initial_accounts_state.clear();
+        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory.
+        db.current_accounts_state.clear();
+        db.codes.clear();
         Ok(account_updates)
     }
 
