@@ -1688,16 +1688,16 @@ async fn wait_for_l2_deposit_receipt(
     l1_client: &EthClient,
     l2_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let log = rpc_receipt
+    let data = rpc_receipt
         .logs
-        .first()
-        .ok_or(format!(
-            "RpcReceipt for transaction {:?} contains no logs",
-            rpc_receipt.tx_info.transaction_hash
-        ))?
-        .log
-        .clone();
-    let data = PrivilegedTransactionData::from_log(log)?;
+        .iter()
+        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
+        .ok_or_else(|| {
+            format!(
+                "RpcReceipt for transaction {:?} contains no valid logs",
+                rpc_receipt.tx_info.transaction_hash
+            )
+        })?;
 
     let l2_deposit_tx_hash = data
         .into_tx(
