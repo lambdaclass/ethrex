@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::harness::{
     find_withdrawal_with_widget, get_contract_dependencies, l1_client, l2_client, rich_pk_1,
-    test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_deposit_receipt,
+    test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_ptx_receipt,
     wait_for_verified_proof,
 };
 use ethrex_common::{Address, U256};
@@ -96,7 +96,7 @@ pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert!(res.receipt.status);
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L2");
-    wait_for_l2_deposit_receipt(res.block_info.block_number, &l1_client, &l2_client)
+    wait_for_l2_ptx_receipt(res.block_info.block_number, &l1_client, &l2_client)
         .await
         .unwrap();
     let remaining_l1_balance = test_balance_of(&l1_client, token_l1, rich_address).await;
@@ -253,7 +253,7 @@ pub async fn test_erc20_failed_deposit() -> Result<(), Box<dyn std::error::Error
 
     println!("test_erc20_failed_deposit: Waiting for deposit transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(res.block_info.block_number, &l1_client, &l2_client)
+    let res = wait_for_l2_ptx_receipt(res.block_info.block_number, &l1_client, &l2_client)
         .await
         .unwrap();
 

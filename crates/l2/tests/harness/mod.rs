@@ -93,7 +93,7 @@ pub async fn deposit(
     );
 
     println!("waiting for L2 deposit transaction receipt");
-    let l2_deposit_receipt = wait_for_l2_deposit_receipt(
+    let l2_deposit_receipt = wait_for_l2_ptx_receipt(
         deposit_tx_receipt.block_info.block_number,
         l1_client,
         l2_client,
@@ -175,7 +175,7 @@ pub fn rich_pk_2() -> SecretKey {
     rich_wallet()[1]
 }
 
-pub async fn wait_for_l2_deposit_receipt(
+pub async fn wait_for_l2_ptx_receipt(
     l1_receipt_block_number: BlockNumber,
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -605,7 +605,7 @@ pub async fn perform_transfer(
     Ok(())
 }
 
-pub async fn test_call_to_contract_with_deposit(
+pub async fn test_call_to_contract_with_transfer(
     l1_client: &EthClient,
     l2_client: &EthClient,
     deployed_contract_address: Address,
@@ -634,7 +634,7 @@ pub async fn test_call_to_contract_with_deposit(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    println!("Calling contract on L2 with deposit");
+    println!("Calling contract on L2 with transfer");
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         caller_address,
@@ -660,7 +660,7 @@ pub async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_ptx_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         l1_client,
         l2_client,

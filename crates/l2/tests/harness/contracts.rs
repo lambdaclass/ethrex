@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::harness::{
-    get_contract_dependencies, l1_client, l2_client, rich_pk_1, test_call_to_contract_with_deposit,
-    test_deploy, test_send, wait_for_l2_deposit_receipt,
+    get_contract_dependencies, l1_client, l2_client, rich_pk_1,
+    test_call_to_contract_with_transfer, test_deploy, test_send, wait_for_l2_ptx_receipt,
 };
 use bytes::Bytes;
 use ethrex_common::U256;
@@ -67,8 +67,8 @@ pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(tx_receipt.receipt.status, "Upgrade transaction failed");
 
-    let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, &l1_client, &l2_client)
-        .await?;
+    let _ =
+        wait_for_l2_ptx_receipt(tx_receipt.block_info.block_number, &l1_client, &l2_client).await?;
     let final_impl = l2_client
         .get_storage_at(
             COMMON_BRIDGE_L2_ADDRESS,
@@ -82,8 +82,6 @@ pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
-/// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
-/// The deposit will trigger the call to the contract.
 pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
@@ -108,7 +106,7 @@ pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::
 
     println!("ptx_with_contract_call: Calling contract with deposit");
 
-    test_call_to_contract_with_deposit(
+    test_call_to_contract_with_transfer(
         &l1_client,
         &l2_client,
         deployed_contract_address,
@@ -187,7 +185,7 @@ pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dy
 
     println!("ptx_with_contract_call_revert: Calling contract with deposit");
 
-    test_call_to_contract_with_deposit(
+    test_call_to_contract_with_transfer(
         &l1_client,
         &l2_client,
         deployed_contract_address,

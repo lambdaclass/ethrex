@@ -1,7 +1,7 @@
 use crate::harness::{
     L2_GAS_COST_MAX_DELTA, fees_vault, find_withdrawal_with_widget, get_fees_details_l2,
     get_rich_accounts_balance, l1_client, l2_client, perform_transfer, rich_pk_1, test_deploy_l1,
-    test_send, transfer_value, wait_for_l2_deposit_receipt, wait_for_verified_proof,
+    test_send, transfer_value, wait_for_l2_ptx_receipt, wait_for_verified_proof,
 };
 use bytes::Bytes;
 use color_eyre::eyre;
@@ -78,7 +78,7 @@ pub async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> 
         l1_to_l2_tx_receipt.tx_info.gas_used * l1_to_l2_tx_receipt.tx_info.effective_gas_price;
     println!("forced_withdrawal: Waiting for L1 to L2 transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(
+    let res = wait_for_l2_ptx_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         &l1_client,
         &l2_client,
@@ -255,7 +255,7 @@ pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error
 
     println!("transfer_with_ptx: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_ptx_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         &l1_client,
         &l2_client,
@@ -349,7 +349,7 @@ pub async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::
 
     println!("ptx_not_enough_balance: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_ptx_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         &l1_client,
         &l2_client,
@@ -602,7 +602,7 @@ pub async fn test_aliasing() -> Result<(), Box<dyn std::error::Error>> {
     assert!(receipt_l1.receipt.status);
 
     let receipt_l2 =
-        wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, &l1_client, &l2_client)
+        wait_for_l2_ptx_receipt(receipt_l1.block_info.block_number, &l1_client, &l2_client)
             .await
             .unwrap();
     println!(
