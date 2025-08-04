@@ -3,7 +3,7 @@ use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
