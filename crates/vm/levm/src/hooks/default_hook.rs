@@ -487,7 +487,8 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     };
 
     if *(TX.lock().unwrap()) {
-        info!("Setting bytecode: {bytecode:?}");
+        let a = U256::from_big_endian(&bytecode);
+        info!("Setting bytecode: {a:x}");
     }
 
     // Assign code and code_address to callframe
