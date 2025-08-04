@@ -703,8 +703,10 @@ impl Store {
         self.get_canonical_block_hash(latest_block_number).await
     }
 
-    /// Updates the forkchoice with the new canonical blocks and head information.
-    /// All actions are performed atomically.
+    /// Updates the canonical chain.
+    /// Inserts new canonical blocks, removes blocks beyond the new head,
+    /// and updates the head, safe, and finalized block pointers.
+    /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
