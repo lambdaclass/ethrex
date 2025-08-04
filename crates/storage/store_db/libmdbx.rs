@@ -29,6 +29,9 @@ use libmdbx::{
     orm::{Database, table},
     table_info,
 };
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
@@ -133,44 +136,57 @@ impl StoreEngine for Store {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
+            update_batch.account_updates.into_par_iter().try_for_each(
+                |(node_hash, node_data)| {
+                    tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                        .map_err(StoreError::LibmdbxError)
+                },
+            )?;
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
+            update_batch
+                .code_updates
+                .into_par_iter()
+                .try_for_each(|(hashed_address, code)| {
+                    tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                        .map_err(StoreError::LibmdbxError)
+                })?;
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+            update_batch.storage_updates.into_par_iter().try_for_each(
+                |(hashed_address, nodes)| -> Result<(), StoreError> {
+                    for (node_hash, node_data) in nodes {
+                        let key_1: [u8; 32] = hashed_address.into();
+                        let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
+                        tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                    Ok(())
+                },
+            )?;
+
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
 
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
-                }
+                let encoded_body = block.body.encode_to_vec();
 
-                tx.upsert::<Bodies>(
-                    hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                block
+                    .body
+                    .transactions
+                    .into_par_iter()
+                    .enumerate()
+                    .try_for_each(|(index, transaction)| {
+                        tx.upsert::<TransactionLocations>(
+                            transaction.compute_hash().into(),
+                            (number, hash, index as u64).into(),
+                        )
+                        .map_err(StoreError::LibmdbxError)
+                    })?;
+
+                tx.upsert::<Bodies>(hash.into(), BlockBodyRLP::from_bytes(encoded_body))
+                    .map_err(StoreError::LibmdbxError)?;
 
                 tx.upsert::<Headers>(
                     hash.into(),
@@ -181,28 +197,32 @@ impl StoreEngine for Store {
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
-            for (block_hash, receipts) in update_batch.receipts {
-                // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                        })
-                {
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
+
+            update_batch.receipts.into_par_iter().try_for_each(
+                |(block_hash, receipts)| -> Result<(), StoreError> {
+                    // store receipts
+                    let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                    for mut entries in
+                        receipts
+                            .into_iter()
+                            .enumerate()
+                            .filter_map(|(index, receipt)| {
+                                let key = (block_hash, index as u64).into();
+                                let receipt_rlp = receipt.encode_to_vec();
+                                IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                            })
+                    {
+                        key_values.append(&mut entries);
+                    }
+                    let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+                    for (key, value) in key_values {
+                        cursor
+                            .upsert(key, value)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                    Ok(())
+                },
+            )?;
 
             tx.commit().map_err(StoreError::LibmdbxError)
         })
