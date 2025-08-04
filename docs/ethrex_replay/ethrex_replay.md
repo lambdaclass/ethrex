@@ -12,7 +12,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches â
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.1.0
+rzup install cargo-risczero 2.3.1
 rzup install rust
 ```
 
@@ -20,7 +20,7 @@ rzup install rust
 
 ```sh
 curl -L https://sp1up.succinct.xyz | bash
-sp1up --version 5.0.0
+sp1up --version 5.0.8
 ```
 
 ### Environment Variables
