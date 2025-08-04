@@ -44,7 +44,7 @@ impl GeneralizedDatabase {
         let levm_accounts: BTreeMap<Address, LevmAccount> = current_accounts_state
             .into_iter()
             .map(|(address, account)| {
-                let (levm_account, code) = account_to_levm_account(&account);
+                let (levm_account, code) = account_to_levm_account(account);
                 codes.insert(levm_account.info.code_hash, code);
                 (address, levm_account)
             })

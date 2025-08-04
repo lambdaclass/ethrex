@@ -670,21 +670,21 @@ impl<'a> VM<'a> {
     }
 }
 
-pub fn account_to_levm_account(account: &Account) -> (LevmAccount, Bytes) {
+pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
-            info: account.info.clone(),
-            storage: account.storage.clone(),
+            info: account.info,
+            storage: account.storage,
             status: AccountStatus::Unmodified,
         },
-        account.code.clone(),
+        account.code,
     )
 }
 
-pub fn levm_account_to_account(levm_account: &LevmAccount, code: &Bytes) -> Account {
+pub fn levm_account_to_account(levm_account: LevmAccount, code: Bytes) -> Account {
     Account {
-        info: levm_account.info.clone(),
-        storage: levm_account.storage.clone(),
-        code: code.clone(),
+        info: levm_account.info,
+        storage: levm_account.storage,
+        code: code,
     }
 }
