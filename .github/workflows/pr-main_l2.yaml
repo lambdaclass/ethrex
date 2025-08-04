@@ -53,7 +53,7 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace -- -D warnings
-          make lint
+          NVCC_PREPEND_FLAGS='-arch=sm_70' make lint
 
       - name: Run cargo fmt
         run: |
