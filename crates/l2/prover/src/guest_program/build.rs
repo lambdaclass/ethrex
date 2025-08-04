@@ -37,10 +37,10 @@ fn build_risc0_program() {
     let image_id = built_guests[0].image_id;
 
     // this errs if the dir already exists, so we don't handle an error.
-    let _ = std::fs::create_dir("./risc0/out");
+    let _ = std::fs::create_dir("./src/risc0/out");
 
     std::fs::write(
-        "./risc0/out/riscv32im-risc0-vk",
+        "./src/risc0/out/riscv32im-risc0-vk",
         format!("0x{}\n", hex::encode(image_id.as_bytes())),
     )
     .expect("could not write Risc0 vk to file");
@@ -58,9 +58,9 @@ fn build_sp1_program() {
     };
 
     sp1_build::build_program_with_args(
-        "./sp1",
+        "./src/sp1",
         sp1_build::BuildArgs {
-            output_directory: Some("./sp1/out".to_string()),
+            output_directory: Some("./src/sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: true,
@@ -72,7 +72,7 @@ fn build_sp1_program() {
 
     // Get verification key
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
-    let elf = std::fs::read("./sp1/out/riscv32im-succinct-zkvm-elf")
+    let elf = std::fs::read("./src/sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
@@ -82,13 +82,16 @@ fn build_sp1_program() {
     if aligned_mode == "true" {
         let vk = vk.vk.hash_bytes();
         std::fs::write(
-            "./sp1/out/riscv32im-succinct-zkvm-vk",
+            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
             format!("0x{}\n", hex::encode(vk)),
         )
         .expect("could not write SP1 vk to file");
     } else {
         let vk = vk.vk.bytes32();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", format!("{}\n", vk))
-            .expect("could not write SP1 vk to file");
+        std::fs::write(
+            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
+            format!("{}\n", vk),
+        )
+        .expect("could not write SP1 vk to file");
     };
 }

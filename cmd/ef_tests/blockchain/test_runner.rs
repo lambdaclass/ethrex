@@ -21,7 +21,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
 use regex::Regex;
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::input::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,
