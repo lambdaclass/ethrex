@@ -309,8 +309,9 @@ fn get_account_diffs_in_tx(
                     None
                 };
 
-                let bytecode = if new_account.code != original_account.code {
-                    Some(new_account.code.clone())
+                let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
+                    let code = db.codes.get(&new_account.info.code_hash).unwrap(); //TODO: remove unwrap
+                    Some(code.clone())
                 } else {
                     None
                 };

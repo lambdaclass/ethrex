@@ -8,7 +8,7 @@ use crate::{
 };
 use clap::Parser;
 use colored::Colorize;
-use ethrex_common::{Address, types::Account};
+use ethrex_common::Address;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_vm::SpecId;
