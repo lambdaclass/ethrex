@@ -1694,7 +1694,7 @@ async fn wait_for_l2_deposit_receipt(
         .ok_or(format!(
             "RpcReceipt for transaction {:?} contains no logs",
             rpc_receipt.tx_info.transaction_hash
-        ))
+        ))?
         .log
         .clone();
     let data = PrivilegedTransactionData::from_log(log)?;
