@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754333304597,
+  "lastUpdate": 1754339349164,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7465,6 +7465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164725041738,
             "range": "± 999665450",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e610d4a9781d216c07289a650a7aa6e334d1fbae",
+          "message": "refactor(l2): improve error handling in `EthClient`'s `send_request_to_all` (#3932)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWhen sending a transaction, the `EthClient` returns the last `Ok()`\nresult, if there is one, but it doesn't take into account\n`Ok(RpcResponse::Error)` cases, resulting in confusing errors.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nImprove the way responses are handled.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-04T19:39:07Z",
+          "tree_id": "ca9cd4c29fe79a5d44b398d1279bbf7faa7cf5fa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e610d4a9781d216c07289a650a7aa6e334d1fbae"
+        },
+        "date": 1754339334511,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165049708380,
+            "range": "± 350033969",
             "unit": "ns/iter"
           }
         ]
