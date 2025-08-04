@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754319010477,
+  "lastUpdate": 1754320245242,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7375,6 +7375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164125613117,
             "range": "± 246625272",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b5f17e54d97e5d29ef77858e67d780a134a77b9",
+          "message": "fix(l1): avoid broadcasting duplicate transactions (#3897)\n\n**Motivation**\n\nWire protocol correctness. Crucially, sending a transaction back to its\nsource is punishable by connection drop.\n\n**Description**\n\nAdd an early check for presence in the mempool for received\ntransactions, update the per-peer filters, and use them to avoid sending\nthem transactions they already know about in the `Transactions` relay\nand the `SendNewPooledTransactionHashes` paths.",
+          "timestamp": "2025-08-04T14:07:32Z",
+          "tree_id": "8d31b85b81f96d69ae44bddc24f467718c3d6c33",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2b5f17e54d97e5d29ef77858e67d780a134a77b9"
+        },
+        "date": 1754320231010,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163224238089,
+            "range": "± 207703998",
             "unit": "ns/iter"
           }
         ]
