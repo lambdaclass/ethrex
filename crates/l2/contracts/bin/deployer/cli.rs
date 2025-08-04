@@ -139,11 +139,22 @@ pub struct DeployerOptions {
         long = "risc0.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        required = true, // TODO: This should be required_unless_present = "risc0_deploy_verifier",
+        required_unless_present = "risc0_deploy_verifier",
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
     pub risc0_verifier_address: Option<Address>,
+    #[arg(
+        long = "risc0.deploy-verifier",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        action = ArgAction::SetTrue,
+        env = "ETHREX_DEPLOYER_RISC0_DEPLOY_VERIFIER",
+        required_unless_present = "risc0_verifier_address",
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+    )]
+    pub risc0_deploy_verifier: bool,
     #[arg(
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
@@ -323,6 +334,7 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
+            risc0_deploy_verifier: false,
             sp1_verifier_address: Some(H160([
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
