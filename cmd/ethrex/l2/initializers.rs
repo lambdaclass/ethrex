@@ -98,7 +98,7 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-cfg_if::cfg_if! {
+    cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
         } else {
