@@ -994,6 +994,19 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+         {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return self
+                    .engine
+                    .get_account_snapshot(hash_address_fixed(&address));
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
