@@ -95,6 +95,8 @@ impl GeneralizedDatabase {
     }
 
     /// Gets code immutably given the code hash.
+    /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
+    /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.
     pub fn get_code(&mut self, code_hash: H256) -> Result<&Bytes, InternalError> {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
