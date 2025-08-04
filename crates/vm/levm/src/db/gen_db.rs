@@ -10,7 +10,6 @@ use keccak_hash::H256;
 use keccak_hash::keccak;
 
 use super::Database;
-use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
