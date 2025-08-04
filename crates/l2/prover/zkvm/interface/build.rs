@@ -58,6 +58,7 @@ fn build_sp1_program() {
         .map(|bin_name| bin_name.contains("clippy-driver"))
         .unwrap_or(false)
     {
+        std::fs::create_dir_all("./sp1/out").expect("could not create SP1 out dir");
         std::fs::File::create("./sp1/out/riscv32im-succinct-zkvm-elf")
             .expect("could not create SP1 elf file");
         println!("cargo:warning=Skipping build because clippy is running.");
