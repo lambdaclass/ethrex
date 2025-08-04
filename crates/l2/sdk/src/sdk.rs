@@ -29,12 +29,6 @@ pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 #[doc(inline)]
 pub use ethrex_sdk_contract_utils::*;
 
-// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
-pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
-    0xdd, 0x0d, 0xab, 0x2a,
-]);
-
 // 0x000000000000000000000000000000000000ffff
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -68,12 +62,11 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
-        .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
-        .parse()
-        .map_err(|_| SdkError::FailedToParseAddressFromHex)
+    .unwrap_or("0x5705d3c547b0b5703f5c2e52542c5c09a4d33189".to_string())
+    .parse()
+    .map_err(|_| SdkError::FailedToParseAddressFromHex)
 }
 
 pub async fn wait_for_transaction_receipt(
