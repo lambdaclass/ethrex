@@ -27,7 +27,6 @@ use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -38,14 +37,8 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(
-            // Filters all spawned logs
-            // TODO: revert #3467 when error logs are no longer emitted
-            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
-                .expect("this can't fail"),
-        )
-        .from_env_lossy()
-        .add_directive(Directive::from(opts.log_level));
+        .with_default_directive(Directive::from(opts.log_level))
+        .from_env_lossy();
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
         .finish();
@@ -264,7 +257,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 
     match read_node_config_file(config_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
-        Err(e) => error!("Could not read from peers file: {e}"),
+        Err(e) => warn!("Could not read from peers file: {e}"),
     };
 
     bootnodes
