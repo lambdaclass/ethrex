@@ -376,7 +376,7 @@ impl<'a> VM<'a> {
         // STACK
         if *(TX.lock().unwrap()) {
             let current_stack = self.current_call_frame.stack.values.clone();
-            let stack_hex = current_stack.iter().map(|v| format!("{v:x}")).collect::<Vec<_>>().join(", ");
+            let stack_hex = current_stack.iter().filter_map(|v| (!v.is_zero()).then_some(format!("{v:0x}"))).collect::<Vec<_>>().join(", ");
             info!("Current Stack: [{stack_hex}]");
         }
         let (
