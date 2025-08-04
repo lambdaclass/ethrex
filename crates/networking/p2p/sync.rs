@@ -751,7 +751,7 @@ impl Syncer {
 
             let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                 account_states_snapshot.iter().cloned().unzip();
-            
+
             let account_storage_roots: Vec<(H256, H256)> = account_hashes
                 .iter()
                 .zip(account_states.iter())
@@ -761,7 +761,7 @@ impl Syncer {
                 .collect();
 
             downloaded_account_storages += account_storage_roots.len();
-    
+
             chunk_index = self.peers
                 .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
                 .await;
@@ -870,11 +870,11 @@ impl Syncer {
                             Entry::Occupied(occupied_entry) => *occupied_entry.get(),
                             Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
                         };
-    
+
                         let mut storage_trie = store
                             .open_storage_trie(account_hash, account_storage_root)
                             .unwrap_or_else(|_| panic!("Failed to open trie storage for account hash {account_hash}"));
-    
+
                         for (hashed_key, value) in key_value_pairs {
                             if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
                                 error!(
@@ -883,14 +883,19 @@ impl Syncer {
                                 continue;
                             }
                         }
-    
-                        let (computed_state_root, changes) =
+
+                        let (computed_storage_root, changes) =
                             storage_trie.collect_changes_since_last_hash();
-    
-                        maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
-    
+
+                        let path = account_hash.0.to_vec();
+                        let noderlp = store.open_state_trie(computed_state_root).unwrap().get(&path).unwrap().unwrap();
+
+                        let account = AccountState::decode(&noderlp).unwrap();
+                        if account.storage_root != computed_storage_root {
+                            maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_storage_root);
+                        }
                         METRICS.storage_tries_state_roots_computed.inc();
-    
+
                         sender.send((account_hash, changes)).expect("Failed to send changes");
                     });
 
