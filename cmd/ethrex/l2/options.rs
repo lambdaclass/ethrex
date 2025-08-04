@@ -466,7 +466,7 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
     )]
-    pub proof_coordinator_tdx_private_key: SecretKey,
+    pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
@@ -537,10 +537,11 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: false,
-            proof_coordinator_tdx_private_key:
+            proof_coordinator_tdx_private_key: Some(
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
                     .parse()
                     .unwrap(),
+            ),
         }
     }
 }
