@@ -1509,6 +1509,9 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(AccountSnapshot),
+        table_info!(AccountStorageSnapshot),
+        table_info!(CurrentBlockHashSnapshot),
     ]
     .into_iter()
     .collect();

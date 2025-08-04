@@ -83,9 +83,15 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_block_updates(&self, mut update_batch: UpdateBatch) -> Result<(), StoreError> {
+    pub async fn store_block_updates(
+        &self,
+        mut update_batch: UpdateBatch,
+    ) -> Result<(), StoreError> {
         if let Some(block) = update_batch.blocks.last() {
-            let mut current = self.snapshot_block_hash.write().map_err(|_| StoreError::LockError)?;
+            let mut current = self
+                .snapshot_block_hash
+                .write()
+                .map_err(|_| StoreError::LockError)?;
             // if current is not parent, dont update so we no longer use snapshot
             if *current == block.header.parent_hash {
                 *current = block.hash();
@@ -156,6 +162,26 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return self
+                    .engine
+                    .get_account_snapshot(hash_address_fixed(&address))
+                    .map(|acc| {
+                        acc.map(|acc| AccountInfo {
+                            balance: acc.balance,
+                            code_hash: acc.code_hash,
+                            nonce: acc.nonce,
+                        })
+                    });
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -728,6 +754,22 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                // if value is zero it is actually None.
+                let value = self
+                    .engine
+                    .get_storage_snapshot(hash_address_fixed(&address), storage_key)?
+                    .and_then(|v| if v == U256::zero() { None } else { Some(v) });
+                return Ok(value);
+            }
+        }
+
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -918,6 +960,20 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return self
+                    .engine
+                    .get_account_snapshot(hash_address_fixed(&address));
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };

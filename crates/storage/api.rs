@@ -385,7 +385,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
 
-    fn write_account_snapshots(&self, accounts: Vec<(H256, AccountState)>) -> Result<(), StoreError>;
+    fn write_account_snapshots(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+    ) -> Result<(), StoreError>;
 
     fn get_account_snapshot(&self, address: H256) -> Result<Option<AccountState>, StoreError>;
 

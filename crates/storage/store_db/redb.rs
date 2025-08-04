@@ -1338,7 +1338,10 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    fn write_account_snapshots(&self, accounts: Vec<(H256, AccountState)>) -> Result<(), StoreError> {
+    fn write_account_snapshots(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 
