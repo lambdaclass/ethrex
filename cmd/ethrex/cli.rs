@@ -17,7 +17,10 @@ use tracing::{Level, info, warn};
 use crate::{
     DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
-    l2,
+    l2::{
+        self,
+        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
+    },
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
@@ -32,7 +35,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -190,6 +193,49 @@ pub struct Options {
     pub discovery_port: String,
 }
 
+impl Options {
+    pub fn default_l1() -> Self {
+        Self {
+            network: Some(Network::LocalDevnet),
+            datadir: DB_ETHREX_DEV_L1.to_string(),
+            dev: true,
+            http_addr: "0.0.0.0".to_string(),
+            http_port: "8545".to_string(),
+            authrpc_port: "8551".to_string(),
+            metrics_port: "9090".to_string(),
+            authrpc_addr: "localhost".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".to_string(),
+            p2p_port: "30303".to_string(),
+            discovery_addr: "0.0.0.0".to_string(),
+            discovery_port: "30303".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn default_l2() -> Self {
+        Self {
+            network: Some(Network::LocalDevnetL2),
+            datadir: DB_ETHREX_DEV_L2.to_string(),
+            metrics_port: "3702".into(),
+            metrics_enabled: true,
+            dev: true,
+            http_addr: "0.0.0.0".into(),
+            http_port: "1729".into(),
+            authrpc_addr: "localhost".into(),
+            authrpc_port: "8551".into(),
+            authrpc_jwtsecret: "jwt.hex".into(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".into(),
+            p2p_port: "30303".into(),
+            discovery_addr: "0.0.0.0".into(),
+            discovery_port: "30303".into(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -278,8 +324,8 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[command(subcommand)]
-    L2(l2::Command),
+    #[command(name = "l2")]
+    L2(l2::L2Command),
 }
 
 impl Subcommand {
@@ -317,6 +363,7 @@ impl Subcommand {
             }
             Subcommand::L2(command) => command.run().await?,
         }
+
         Ok(())
     }
 }
@@ -410,7 +457,11 @@ pub async fn import_blocks(
             blockchain
                 .add_block(block)
                 .await
-                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
+                .inspect_err(|err| match err {
+                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                })?;
         }
 
         _ = store
