@@ -392,6 +392,14 @@ impl<'a> VM<'a> {
                 return_data_start_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
+            if *(TX.lock().unwrap()) {
+                info!("gas: {gas:#x}
+                    address: {address:x}
+                    args_start_offset: {args_start_offset:#x}
+                    args_size: {args_size:#x}
+                    return_data_start_offset: {return_data_start_offset:#x}
+                    return_data_size: {return_data_size:#x}");
+            }
             let address = word_to_address(address);
             let args_start_offset = args_start_offset
                 .try_into()
