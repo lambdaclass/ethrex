@@ -249,7 +249,7 @@ impl Command {
                                 .join("./rollup_store")
                                 .to_str()
                                 .expect("Invalid store path"),
-                            EngineTypeRollup::Libmdbx,
+                            EngineTypeRollup::SQL,
                         )?;
                         rollup_store
                             .init()
