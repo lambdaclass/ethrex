@@ -30,8 +30,6 @@ use ethrex_levm::{
 use std::cmp::min;
 use std::collections::BTreeMap;
 
-// Export needed types
-pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -187,7 +185,14 @@ impl LEVM {
                     address: *address,
                     removed: false,
                     info: Some(new_state_account.info.clone()),
-                    code: Some(new_state_account.code.clone()),
+                    code: Some(
+                        db.codes
+                            .get(&new_state_account.info.code_hash)
+                            .ok_or(EvmError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))?
+                            .clone(),
+                    ),
                     added_storage: new_state_account.storage.clone(),
                 };
                 account_updates.push(new_account_update);
@@ -206,12 +211,15 @@ impl LEVM {
                 acc_info_updated = true;
             }
 
-            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                acc_info_updated = true;
-                Some(new_state_account.code.clone())
-            } else {
-                None
-            };
+            let code =
+                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                    acc_info_updated = true;
+                    Some(db.codes.get(&new_state_account.info.code_hash).ok_or(
+                        EvmError::Custom(format!("Failed to get code for account {address}")),
+                    )?)
+                } else {
+                    None
+                };
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = BTreeMap::new();
@@ -245,7 +253,7 @@ impl LEVM {
                 address: *address,
                 removed,
                 info,
-                code,
+                code: code.cloned(),
                 added_storage,
             };
 
