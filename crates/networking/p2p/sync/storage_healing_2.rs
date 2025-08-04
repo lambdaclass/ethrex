@@ -187,6 +187,7 @@ pub fn determine_missing_children(
                             .node_request
                             .storage_path
                             .append_new(index as u8),
+                        &child.compute_hash(),
                         membatch,
                         store.clone(),
                     )?);
@@ -203,6 +204,7 @@ pub fn determine_missing_children(
                         .node_request
                         .parent
                         .concat(node.prefix.clone()),
+                    &node.child.compute_hash(),
                     membatch,
                     store.clone(),
                 )?);
@@ -217,12 +219,17 @@ pub fn determine_missing_children(
 fn determine_membatch_missing_children(
     acc_path: &Nibbles,
     nibbles: &Nibbles,
+    hash: &NodeHash,
     membatch: &Membatch,
     store: Store,
 ) -> Result<Vec<MembatchKey>, StoreError> {
     if let Some(membatch_entry) = membatch.get(&(acc_path.clone(), nibbles.clone())) {
-        determine_missing_children(&membatch_entry.node_response, store, membatch)
-            .map(|(paths, count)| paths)
+        if membatch_entry.node_response.node.compute_hash() == *hash {
+            determine_missing_children(&membatch_entry.node_response, store, membatch)
+                .map(|(paths, count)| paths)
+        } else {
+            Ok(vec![(acc_path.clone(), nibbles.clone())])
+        }
     } else {
         Ok(vec![(acc_path.clone(), nibbles.clone())])
     }
