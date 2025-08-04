@@ -39,7 +39,6 @@ lazy_static.workspace = true
 aligned-sdk.workspace = true
 ethers.workspace = true
 chrono.workspace = true
-clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 tui-logger.workspace = true

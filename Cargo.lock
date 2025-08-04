@@ -3879,7 +3879,6 @@ dependencies = [
  "bincode",
  "bytes",
  "chrono",
- "clap 4.5.40",
  "crossterm 0.29.0",
  "ethereum-types 0.15.1",
  "ethers",
