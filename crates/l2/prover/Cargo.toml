@@ -15,7 +15,6 @@ bincode.workspace = true
 anyhow.workspace = true
 
 # ethrex
-ethrex-blockchain.workspace = true
 
 # l2
 ethrex-l2 = { path = "../", default-features = false }
@@ -28,9 +27,6 @@ risc0-zkp = { version = "=2.0.2", optional = true }
 
 sp1-sdk = { version = "=5.0.8", optional = true }
 # sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
-
-[dev-dependencies]
-ethrex-storage.workspace = true
 
 [lib]
 name = "ethrex_prover_lib"
