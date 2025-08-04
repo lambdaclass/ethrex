@@ -9,18 +9,19 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
-        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        AccountState, AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
+        BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
 
 use ethrex_vm::{Evm, EvmEngine, EvmError};
 
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::{Store, error::StoreError, hash_address};
 
 use sha3::{Digest, Keccak256};
 
@@ -341,6 +342,26 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
+        // First remove outdated transactions
+        if let Some(state_trie) = self.storage.state_trie(context.parent_hash())? {
+            let timestamp = context.payload.header.timestamp;
+            let _ = self
+                .mempool
+                .remove_matching_transaction(|sender, nonce, _tx_hash, tx| {
+                    // TEST: expire after 10 minutes
+                    if timestamp as u128 > tx.time() + 600 {
+                        return true;
+                    }
+                    let hashed_address = hash_address(&sender);
+                    let account_state: AccountState = state_trie
+                        .get(&hashed_address)
+                        .ok()
+                        .flatten()
+                        .and_then(|encoded| RLPDecode::decode(&encoded).ok())
+                        .unwrap_or_default();
+                    nonce <= account_state.nonce
+                });
+        }
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
@@ -441,6 +462,7 @@ impl Blockchain {
                     receipt
                 }
                 Err(e @ ChainError::EvmError(EvmError::Nonce { state, tx })) if state > tx => {
+                    // NOTE: in principle this case should be prevented by the initial filter
                     txs.shift()?;
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&tx_hash)?;
