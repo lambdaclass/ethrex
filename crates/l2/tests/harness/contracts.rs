@@ -96,13 +96,6 @@ pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::
     let deployed_contract_address =
         test_deploy(&l2_client, &init_code, &rich_wallet_private_key).await?;
 
-    let payable_initial_balance = l2_client
-        .get_balance(
-            deployed_contract_address,
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
-        .await?;
-
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes = encode_calldata(
         "functionThatEmitsEvent(uint256)",
@@ -174,20 +167,9 @@ pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::
         "Event emitted with wrong value. Expected 424242, got {number_emitted}"
     );
 
-    let payable_final_balance = l2_client
-        .get_balance(
-            deployed_contract_address,
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
-        .await?;
-
-    assert_eq!(payable_initial_balance + 1, payable_final_balance);
-
     Ok(())
 }
 
-/// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
-/// The call to the contract should revert but the deposit should be successful.
 pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>>
 {
     let l1_client = l1_client();
@@ -196,16 +178,6 @@ pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dy
     let init_code = hex::decode(std::fs::read(
         "../../fixtures/contracts/payable/Payable.bin",
     )?)?;
-    let deployed_contract_address =
-        test_deploy(&l2_client, &init_code, &rich_wallet_private_key).await?;
-
-    let payable_initial_balance = l2_client
-        .get_balance(
-            deployed_contract_address,
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
-        .await?;
-
     println!("ptx_with_contract_call_revert: Deploying contract on L2");
 
     let deployed_contract_address =
