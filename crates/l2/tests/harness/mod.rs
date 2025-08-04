@@ -7,7 +7,7 @@ use ethrex_l2_rpc::{
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::{
-    bridge_address, get_address_alias, get_address_from_secret_key, git_clone, wait_for_transaction_receipt, L1ToL2TransactionData
+    bridge_address,  get_address_from_secret_key, git_clone, wait_for_transaction_receipt, L1ToL2TransactionData
 };
 use bytes::Bytes;
 use ethrex_l2::{monitor::widget::{l2_to_l1_messages::L2ToL1MessageRow, L2ToL1MessagesTable}, sequencer::l1_watcher::PrivilegedTransactionData};
@@ -22,8 +22,6 @@ use std::{
 };
 use ethrex_rpc::{
     clients::eth::{ L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256},
-    types::{
-    },
 };
 use hex::FromHexError;
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -53,10 +51,10 @@ pub async fn deposit(
     println!("fetching initial balances on L1 and L2");
     let depositor_address = ethrex_l2_sdk::get_address_from_secret_key(&depositor_pk)?;
     let depositor_l1_initial_balance = l1_client
-        .get_balance(depositor_address, BlockIdentifier::latest())
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let depositor_l2_initial_balance = l2_client
-        .get_balance(depositor_address, BlockIdentifier::latest())
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     assert!(
@@ -65,11 +63,11 @@ pub async fn deposit(
     );
 
     let bridge_initial_balance = l1_client
-        .get_balance(bridge_address()?, BlockIdentifier::latest())
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let fee_vault_balance_before_deposit = l2_client
-        .get_balance(fees_vault(), BlockIdentifier::latest())
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     println!("depositing funds from L1 to L2");
