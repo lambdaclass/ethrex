@@ -61,7 +61,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             tx_backup: None,
             destroyed_accounts: HashSet::new(),
-            codes: BTreeMap::new(),
+            codes,
         }
     }
 
