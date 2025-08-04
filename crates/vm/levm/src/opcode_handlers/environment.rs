@@ -137,7 +137,7 @@ impl<'a> VM<'a> {
 
         let size = u256_into_usize(size);
         let dest_offset = u256_into_usize(dest_offset);
-        let calldata_offset = calldata_offset.try_into().unwrap_or(u64::MAX as usize);
+        let calldata_offset = calldata_offset.try_into().unwrap_or(usize::MAX);
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -192,7 +192,7 @@ impl<'a> VM<'a> {
 
         let size = u256_into_usize(size);
         let destination_offset = u256_into_usize(destination_offset);
-        let code_offset = code_offset.try_into().unwrap_or(u64::MAX as usize);
+        let code_offset = code_offset.try_into().unwrap_or(usize::MAX);
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
@@ -277,7 +277,7 @@ impl<'a> VM<'a> {
         let address = word_to_address(address);
         let size = u256_into_usize(size);
         let dest_offset = u256_into_usize(dest_offset);
-        let offset = offset.try_into().unwrap_or(u64::MAX as usize);
+        let offset = offset.try_into().unwrap_or(usize::MAX);
 
         let current_memory_size = call_frame.memory.len();
         let address_was_cold = self.substate.accessed_addresses.insert(address);
@@ -334,7 +334,7 @@ impl<'a> VM<'a> {
 
         let size = u256_into_usize(size);
         let dest_offset = u256_into_usize(dest_offset);
-        let returndata_offset = returndata_offset.try_into().unwrap_or(u64::MAX as usize);
+        let returndata_offset = returndata_offset.try_into().unwrap_or(usize::MAX);
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
