@@ -8,18 +8,10 @@ edition = "2024"
 [dependencies]
 ethrex-rpc.workspace = true
 
-reqwest = { workspace = true, features = ["json"] }
 tokio.workspace = true
 tracing.workspace = true
-thiserror.workspace = true
-jsonwebtoken.workspace = true
-serde_json.workspace = true
-serde.workspace = true
 bytes.workspace = true
 ethereum-types.workspace = true
-hex.workspace = true
-envy.workspace = true
-keccak-hash.workspace = true
 sha2.workspace = true
 
 [lib]

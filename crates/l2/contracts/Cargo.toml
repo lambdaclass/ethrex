@@ -7,21 +7,17 @@ edition = "2024"
 
 [dependencies]
 tokio = { workspace = true, features = ["full"] }
-ethereum-types = { workspace = true, features = ["serialize"] }
 bytes = { workspace = true, features = ["serde"] }
 secp256k1.workspace = true
 keccak-hash.workspace = true
 hex.workspace = true
 serde_json.workspace = true
-colored.workspace = true
 lazy_static.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 thiserror.workspace = true
 clap.workspace = true
-clap_complete.workspace = true
 eyre.workspace = true
-reqwest.workspace = true
 
 ethrex-l2 = { path = "../../l2" }
 ethrex-sdk = { path = "../../l2/sdk" }

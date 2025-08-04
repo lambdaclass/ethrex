@@ -18,7 +18,6 @@ tracing.workspace = true
 thiserror.workspace = true
 sha3.workspace = true
 hex.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
@@ -27,7 +26,6 @@ redb = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, default-features = false, features = [
     "rt",
 ] }
-bincode.workspace = true
 
 [features]
 default = []
@@ -36,7 +34,6 @@ redb = ["dep:redb", "dep:tokio"]
 
 [dev-dependencies]
 hex.workspace = true
-hex-literal.workspace = true
 tempdir = "0.3.7"
 tokio = { workspace = true, features = ["full"] }
 

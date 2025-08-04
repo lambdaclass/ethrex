@@ -1966,15 +1966,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap_complete"
-version = "4.5.54"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aad5b1b4de04fead402672b48897030eec1f3bfe1550776322f59f6d6e6a5677"
-dependencies = [
- "clap 4.5.40",
-]
-
-[[package]]
 name = "clap_derive"
 version = "4.5.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3823,7 +3814,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if 1.0.1",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -3864,7 +3854,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -3876,17 +3865,9 @@ name = "ethrex-dev"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "envy",
  "ethereum-types 0.15.1",
  "ethrex-rpc",
- "hex",
- "jsonwebtoken 9.3.1",
- "keccak-hash",
- "reqwest 0.12.20",
- "serde",
- "serde_json",
  "sha2",
- "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -4024,8 +4005,6 @@ dependencies = [
  "axum 0.8.4",
  "ethrex-common",
  "prometheus",
- "serde",
- "serde_json",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -4074,29 +4053,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
- "bytes",
- "cfg-if 1.0.1",
  "clap 4.5.40",
- "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
  "ethrex-l2",
  "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-sdk",
  "ethrex-storage",
- "ethrex-vm",
- "hex",
- "kzg-rs",
  "risc0-zkp",
  "risc0-zkvm",
  "serde",
  "serde_json",
- "sp1-recursion-gnark-ffi",
  "sp1-sdk",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
  "zkvm_interface",
@@ -4179,21 +4147,14 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
- "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
- "eyre",
  "hex",
- "itertools 0.13.0",
  "keccak-hash",
- "lazy_static",
- "reqwest 0.12.20",
  "secp256k1",
  "serde",
- "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -4210,17 +4171,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "hex-literal",
  "libmdbx",
  "redb",
- "serde",
  "serde_json",
  "sha3",
  "tempdir",
@@ -4240,8 +4198,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
  "futures",
  "libmdbx",
  "libsql",
@@ -4308,9 +4264,6 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "clap 4.5.40",
- "clap_complete",
- "colored",
- "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2",
  "ethrex-l2-common",
@@ -4322,7 +4275,6 @@ dependencies = [
  "hex",
  "keccak-hash",
  "lazy_static",
- "reqwest 0.12.20",
  "secp256k1",
  "serde_json",
  "thiserror 2.0.12",
