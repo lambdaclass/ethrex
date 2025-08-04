@@ -139,7 +139,7 @@ async fn connect_to_prover_server_wr(
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
     debug!("Connecting with {endpoint}");
-    let mut stream = TcpStream::connect(endpoint.as_str()).await?;
+    let mut stream = TcpStream::connect(&*endpoint.socket_addrs(|| None)?).await?;
     debug!("Connection established!");
 
     stream.write_all(&serde_json::to_vec(&write)?).await?;
