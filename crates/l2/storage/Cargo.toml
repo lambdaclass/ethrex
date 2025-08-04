@@ -11,7 +11,6 @@ ethrex-l2-common.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true
-futures.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
