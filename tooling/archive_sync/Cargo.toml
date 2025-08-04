@@ -12,9 +12,8 @@ ethrex-rpc.workspace = true
 keccak-hash.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 clap = { workspace = true, features = ["string"] }
-clap_complete.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
 serde.workspace = true

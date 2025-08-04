@@ -554,7 +554,6 @@ name = "archive_sync"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.40",
- "clap_complete",
  "ethrex",
  "ethrex-common",
  "ethrex-rlp",
@@ -2064,33 +2063,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "color-eyre"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5920befb47832a6d61ee3a3a846565cfa39b331331e68a3b1d1116630f2f26d"
-dependencies = [
- "backtrace",
- "color-spantrace",
- "eyre",
- "indenter",
- "once_cell",
- "owo-colors",
- "tracing-error",
-]
-
-[[package]]
-name = "color-spantrace"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8b88ea9df13354b55bc7234ebcce36e6ef896aca2e42a15de9e10edce01b427"
-dependencies = [
- "once_cell",
- "owo-colors",
- "tracing-core",
- "tracing-error",
-]
-
-[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3192,7 +3164,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "hex",
  "lazy_static",
  "regex",
  "serde",
@@ -3208,7 +3179,6 @@ dependencies = [
  "alloy-rlp",
  "bytes",
  "clap 4.5.40",
- "clap_complete",
  "colored",
  "ethrex-blockchain",
  "ethrex-common",
@@ -3809,7 +3779,6 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.1",
  "clap 4.5.40",
- "clap_complete",
  "criterion",
  "directories",
  "ethrex-blockchain",
@@ -3929,21 +3898,15 @@ dependencies = [
  "aligned-sdk",
  "bincode",
  "bytes",
- "cfg-if 1.0.1",
  "chrono",
  "clap 4.5.40",
- "color-eyre",
  "crossterm 0.29.0",
- "directories",
- "envy",
  "ethereum-types 0.15.1",
  "ethers",
  "ethrex-blockchain",
  "ethrex-common",
- "ethrex-dev",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
- "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -3954,7 +3917,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "jsonwebtoken 9.3.1",
  "keccak-hash",
  "lazy_static",
  "rand 0.8.5",
@@ -3965,15 +3927,11 @@ dependencies = [
  "serde_json",
  "serde_with",
  "spawned-concurrency",
- "spawned-rt",
- "tabwriter",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",
- "tui-big-text",
  "tui-logger",
- "tui-scrollview",
  "vergen-git2",
  "zkvm_interface",
 ]
@@ -4188,16 +4146,12 @@ dependencies = [
  "axum 0.8.4",
  "axum-extra",
  "bytes",
- "cfg-if 1.0.1",
  "envy",
- "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
- "ethrex-l2-common",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
- "ethrex-storage-rollup",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -4212,10 +4166,8 @@ dependencies = [
  "sha3",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
  "tower-http 0.6.6",
  "tracing",
- "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -4583,12 +4535,6 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "font8x8"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
 
 [[package]]
 name = "fontconfig-parser"
@@ -6583,7 +6529,6 @@ dependencies = [
  "clap 4.5.40",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
@@ -6591,7 +6536,6 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
- "keccak-hash",
  "secp256k1",
  "tokio",
 ]
@@ -6601,7 +6545,6 @@ name = "loc"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.40",
- "clap_complete",
  "colored",
  "prettytable",
  "serde",
@@ -7401,12 +7344,6 @@ name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
-
-[[package]]
-name = "owo-colors"
-version = "4.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48dd4f4a2c8405440fd0462561f0e5806bd0f77e86f51c761481bdd4018b545e"
 
 [[package]]
 name = "p256"
@@ -8802,12 +8739,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "relative-path"
-version = "1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
-
-[[package]]
 name = "remove_dir_all"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9508,36 +9439,6 @@ dependencies = [
  "downcast-rs",
  "num_enum 0.5.11",
  "paste",
-]
-
-[[package]]
-name = "rstest"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a2c585be59b6b5dd66a9d2084aa1d8bd52fbdb806eafdeffb52791147862035"
-dependencies = [
- "futures",
- "futures-timer",
- "rstest_macros",
- "rustc_version 0.4.1",
-]
-
-[[package]]
-name = "rstest_macros"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "825ea780781b15345a146be27eaefb05085e337e869bff01b4306a4fd4a9ad5a"
-dependencies = [
- "cfg-if 1.0.1",
- "glob",
- "proc-macro-crate 3.3.0",
- "proc-macro2",
- "quote",
- "regex",
- "relative-path",
- "rustc_version 0.4.1",
- "syn 2.0.104",
- "unicode-ident",
 ]
 
 [[package]]
@@ -11399,15 +11300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabwriter"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
-dependencies = [
- "unicode-width 0.2.0",
-]
-
-[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12106,16 +11998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-error"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db"
-dependencies = [
- "tracing",
- "tracing-subscriber 0.3.19",
-]
-
-[[package]]
 name = "tracing-forest"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12189,18 +12071,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49d64318d8311fc2668e48b63969f4343e0a85c4a109aa8460d6672e364b8bd1"
 
 [[package]]
-name = "tui-big-text"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a97cefa9f1425ab6146db2961241cec86845d11105b5dd6bb504294b0cdd21af"
-dependencies = [
- "derive_builder",
- "font8x8",
- "itertools 0.14.0",
- "ratatui",
-]
-
-[[package]]
 name = "tui-logger"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12216,17 +12086,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.19",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "tui-scrollview"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef6e1d736488ba64c2e74637089a6b9ca666ccd2eaade3ab83854f415f1d260b"
-dependencies = [
- "indoc",
- "ratatui",
- "rstest",
 ]
 
 [[package]]

@@ -22,7 +22,6 @@ colored.workspace = true
 spinoff.workspace = true
 thiserror.workspace = true
 clap.workspace = true
-clap_complete.workspace = true
 itertools.workspace = true
 revm = { workspace = true, features = [
     "serde",
