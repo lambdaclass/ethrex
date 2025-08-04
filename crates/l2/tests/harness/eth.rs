@@ -1,19 +1,21 @@
 use crate::harness::{
-    fees_vault, find_withdrawal_with_widget, get_fees_details_l2, rich_pk_1, get_rich_accounts_balance, l1_client, l2_client, perform_transfer, test_deploy_l1, test_send, transfer_value, wait_for_l2_deposit_receipt, wait_for_verified_proof, L2_GAS_COST_MAX_DELTA
+    L2_GAS_COST_MAX_DELTA, fees_vault, find_withdrawal_with_widget, get_fees_details_l2,
+    get_rich_accounts_balance, l1_client, l2_client, perform_transfer, rich_pk_1, test_deploy_l1,
+    test_send, transfer_value, wait_for_l2_deposit_receipt, wait_for_verified_proof,
 };
 use bytes::Bytes;
 use color_eyre::eyre;
-use ethrex_common::{
-     H160, U256,
-};
+use ethrex_common::{H160, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
     L2ToL1MessageKind, L2ToL1MessageRow, L2ToL1MessageStatus,
 };
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    bridge_address, calldata::encode_calldata, claim_withdraw, get_address_alias, get_address_from_secret_key, l1_to_l2_tx_data::L1ToL2TransactionData, wait_for_transaction_receipt, COMMON_BRIDGE_L2_ADDRESS
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_withdraw,
+    get_address_alias, get_address_from_secret_key, l1_to_l2_tx_data::L1ToL2TransactionData,
+    wait_for_transaction_receipt,
 };
-use ethrex_rpc::{ types::block_identifier::{BlockIdentifier, BlockTag}};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 
 use crate::harness::{deposit, rich_pk_2};
 
@@ -23,8 +25,9 @@ pub async fn test_deposit() -> eyre::Result<()> {
         &l1_client(),
         &l2_client(),
         rich_wallet_private_key,
-        U256::from(42)
-    ).await
+        U256::from(42),
+    )
+    .await
 }
 
 /// Tests that a withdrawal can be triggered by a privileged transaction
@@ -67,8 +70,7 @@ pub async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> 
 
     println!("forced_withdrawal: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt =
-        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
 
     assert!(l1_to_l2_tx_receipt.receipt.status);
 
@@ -85,9 +87,14 @@ pub async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> 
 
     let withdrawal_tx_hash = res.tx_info.transaction_hash;
     assert_eq!(
-        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, &l2_client, &l1_client)
-            .await
-            .unwrap(),
+        find_withdrawal_with_widget(
+            bridge_address()?,
+            withdrawal_tx_hash,
+            &l2_client,
+            &l1_client
+        )
+        .await
+        .unwrap(),
         L2ToL1MessageRow {
             status: L2ToL1MessageStatus::WithdrawalInitiated,
             kind: L2ToL1MessageKind::ETHWithdraw,
@@ -120,9 +127,14 @@ pub async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> 
     let res = wait_for_transaction_receipt(withdraw_claim_tx, &l1_client, 5).await?;
     l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
     assert_eq!(
-        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, &l2_client, &l1_client)
-            .await
-            .unwrap(),
+        find_withdrawal_with_widget(
+            bridge_address()?,
+            withdrawal_tx_hash,
+            &l2_client,
+            &l1_client
+        )
+        .await
+        .unwrap(),
         L2ToL1MessageRow {
             status: L2ToL1MessageStatus::WithdrawalClaimed,
             kind: L2ToL1MessageKind::ETHWithdraw,
@@ -234,8 +246,7 @@ pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error
 
     println!("transfer_with_ptx: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt =
-        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
 
     assert!(
         l1_to_l2_tx_receipt.receipt.status,
@@ -284,8 +295,7 @@ pub async fn test_gas_burning() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("test_gas_burning: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt =
-        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
 
     assert!(l1_to_l2_tx_receipt.receipt.status);
     assert!(l1_to_l2_tx_receipt.tx_info.gas_used > l2_gas_limit);
@@ -330,8 +340,7 @@ pub async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::
 
     println!("ptx_not_enough_balance: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt =
-        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
 
     assert!(
         l1_to_l2_tx_receipt.receipt.status,
@@ -355,7 +364,6 @@ pub async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::
     assert_eq!(balance_after, balance_before);
     Ok(())
 }
-
 
 pub async fn test_5_withdrawals() -> Result<(), Box<dyn std::error::Error>> {
     let n = 5;
@@ -449,7 +457,9 @@ pub async fn test_5_withdrawals() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut withdraw_fees = U256::zero();
     for receipt in receipts {
-        withdraw_fees += get_fees_details_l2(receipt, &l2_client).await.recoverable_fees;
+        withdraw_fees += get_fees_details_l2(receipt, &l2_client)
+            .await
+            .recoverable_fees;
     }
 
     assert_eq!(

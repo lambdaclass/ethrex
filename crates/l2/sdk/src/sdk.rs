@@ -64,9 +64,9 @@ pub enum SdkError {
 
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
-    .unwrap_or("0x5705d3c547b0b5703f5c2e52542c5c09a4d33189".to_string())
-    .parse()
-    .map_err(|_| SdkError::FailedToParseAddressFromHex)
+        .unwrap_or("0x5705d3c547b0b5703f5c2e52542c5c09a4d33189".to_string())
+        .parse()
+        .map_err(|_| SdkError::FailedToParseAddressFromHex)
 }
 
 pub async fn wait_for_transaction_receipt(

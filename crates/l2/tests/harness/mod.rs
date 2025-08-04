@@ -1,17 +1,29 @@
+use bytes::Bytes;
 use color_eyre::eyre;
-use ethrex_common::{types::BlockNumber, Address, H160, H256, U256};
-use ethrex_rpc::{types::block_identifier::{BlockIdentifier, BlockTag}, EthClient, types::receipt::RpcReceipt};
-use secp256k1::SecretKey;
+use ethrex_common::{Address, H160, H256, U256, types::BlockNumber};
+use ethrex_l2::{
+    monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow},
+    sequencer::l1_watcher::PrivilegedTransactionData,
+};
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
     clients::{deploy, send_eip1559_transaction},
     signer::{LocalSigner, Signer},
 };
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::{
-    bridge_address,  get_address_from_secret_key, git_clone, wait_for_transaction_receipt, L1ToL2TransactionData
+    L1ToL2TransactionData, bridge_address, get_address_from_secret_key, git_clone,
+    wait_for_transaction_receipt,
 };
-use bytes::Bytes;
-use ethrex_l2::{monitor::widget::{l2_to_l1_messages::L2ToL1MessageRow, L2ToL1MessagesTable}, sequencer::l1_watcher::PrivilegedTransactionData};
+use ethrex_rpc::clients::eth::{L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256};
+use ethrex_rpc::{
+    EthClient,
+    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::receipt::RpcReceipt,
+};
+use hex::FromHexError;
 use keccak_hash::keccak;
+use secp256k1::SecretKey;
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
@@ -20,12 +32,6 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use ethrex_rpc::{
-    clients::eth::{ L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256},
-};
-use hex::FromHexError;
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_l2_common::calldata::Value;
 
 pub mod contracts;
 pub mod erc20;
@@ -72,13 +78,9 @@ pub async fn deposit(
 
     println!("depositing funds from L1 to L2");
 
-    let deposit_tx_hash = ethrex_l2_sdk::deposit_through_transfer(
-        value,
-        depositor_address,
-        &depositor_pk,
-        l1_client,
-    )
-    .await?;
+    let deposit_tx_hash =
+        ethrex_l2_sdk::deposit_through_transfer(value, depositor_address, &depositor_pk, l1_client)
+            .await?;
 
     println!("waiting for L1 deposit transaction receipt");
 
@@ -106,10 +108,7 @@ pub async fn deposit(
         .get_balance(depositor_address, BlockIdentifier::default())
         .await?;
     let depositor_l2_balance_after_deposit = l2_client
-        .get_balance(
-            depositor_address,
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let bridge_balance_after_deposit = l1_client
         .get_balance(bridge_address()?, BlockIdentifier::default())
@@ -144,13 +143,11 @@ pub async fn deposit(
 }
 
 pub fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(L1_RPC.to_string()))
-        .unwrap()
+    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(L1_RPC.to_string())).unwrap()
 }
 
 pub fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(L2_RPC.to_string()))
-        .unwrap()
+    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(L2_RPC.to_string())).unwrap()
 }
 
 pub fn fees_vault() -> Address {
@@ -387,7 +384,7 @@ async fn deploy_l2(
         l2_client,
         &deployer_signer,
         init_code.to_vec().into(),
-        Default::default()
+        Default::default(),
     )
     .await?;
     Ok(deployed_contract_address.1)
@@ -416,8 +413,7 @@ async fn call_to_contract_with_deposit(
     )
     .await;
 
-    wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
-        .await?;
+    wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client).await?;
 
     Ok(tx_receipt)
 }

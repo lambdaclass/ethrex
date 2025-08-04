@@ -1,13 +1,16 @@
 use std::path::Path;
 
+use crate::harness::{
+    get_contract_dependencies, l1_client, l2_client, rich_pk_1, test_call_to_contract_with_deposit,
+    test_deploy, test_send, wait_for_l2_deposit_receipt,
+};
 use bytes::Bytes;
 use ethrex_common::U256;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_sdk::{bridge_address, compile_contract, get_erc1967_slot, COMMON_BRIDGE_L2_ADDRESS};
-use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, bridge_address, compile_contract, get_erc1967_slot};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use keccak_hash::keccak;
-use crate::harness::{get_contract_dependencies, l1_client, l2_client, test_deploy, test_send, wait_for_l2_deposit_receipt, rich_pk_1, test_call_to_contract_with_deposit};
 
 pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing upgrade");
@@ -185,7 +188,8 @@ pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
 /// The call to the contract should revert but the deposit should be successful.
-pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>>
+{
     let l1_client = l1_client();
     let l2_client = l2_client();
     let rich_wallet_private_key = rich_pk_1();

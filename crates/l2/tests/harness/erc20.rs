@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use crate::harness::{
-    find_withdrawal_with_widget, get_contract_dependencies, rich_pk_1, l1_client, l2_client, test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_deposit_receipt, wait_for_verified_proof
+    find_withdrawal_with_widget, get_contract_dependencies, l1_client, l2_client, rich_pk_1,
+    test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_deposit_receipt,
+    wait_for_verified_proof,
 };
 use ethrex_common::{Address, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
@@ -10,8 +12,8 @@ use ethrex_l2::monitor::widget::l2_to_l1_messages::{
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    bridge_address, claim_erc20withdraw, compile_contract, deposit_erc20,
-    wait_for_transaction_receipt, COMMON_BRIDGE_L2_ADDRESS,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, compile_contract, deposit_erc20,
+    wait_for_transaction_receipt,
 };
 
 pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -130,9 +132,14 @@ pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     .await;
     let withdrawal_tx_hash = res.tx_info.transaction_hash;
     assert_eq!(
-        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, &l2_client, &l1_client)
-            .await
-            .unwrap(),
+        find_withdrawal_with_widget(
+            bridge_address()?,
+            withdrawal_tx_hash,
+            &l2_client,
+            &l1_client
+        )
+        .await
+        .unwrap(),
         L2ToL1MessageRow {
             status: L2ToL1MessageStatus::WithdrawalInitiated,
             kind: L2ToL1MessageKind::ERC20Withdraw,
@@ -160,9 +167,14 @@ pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     .expect("error while claiming");
     wait_for_transaction_receipt(withdraw_claim_tx, &l1_client, 5).await?;
     assert_eq!(
-        find_withdrawal_with_widget(bridge_address()?, withdrawal_tx_hash, &l2_client, &l1_client)
-            .await
-            .unwrap(),
+        find_withdrawal_with_widget(
+            bridge_address()?,
+            withdrawal_tx_hash,
+            &l2_client,
+            &l1_client
+        )
+        .await
+        .unwrap(),
         L2ToL1MessageRow {
             status: L2ToL1MessageStatus::WithdrawalClaimed,
             kind: L2ToL1MessageKind::ERC20Withdraw,
