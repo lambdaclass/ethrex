@@ -25,6 +25,7 @@ This will generate the SP1 ELF program and verification key under:
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
+COMPILE_CONTRACTS=true \ 
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url <L1_RPC_URL> \
 	--private-key <L1_PRIVATE_KEY> \
@@ -42,7 +43,8 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
     --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
 ```
 
-> [!NOTE]
+> [!NOTE]  
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.  
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
@@ -64,7 +66,7 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
-	l2 init \
+	l2 \
 	--watcher.block-delay <WATCHER_BLOCK_DELAY> \
 	--network <L2_GENESIS_FILE_PATH> \
 	--http.port <L2_PORT> \
@@ -167,8 +169,9 @@ let ws_stream_future =
 
 ### Initialize L2 node
 1. In another terminal, let's deploy the L1 contracts specifying the `AlignedProofAggregatorService` contract address:
-```
+```bash
 cd ethrex/crates/l2
+COMPILE_CONTRACTS=true \ 
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -177,13 +180,16 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0xFD471836031dc5108809D173A067e8486B9047A3 \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
 	--genesis-l2-path ../../fixtures/genesis/l2.json
 ```
+
+> [!NOTE]  
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.  
 
 You will see that some deposits fail with the following error:
 ```
@@ -205,7 +211,7 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
 > [!IMPORTANT]  

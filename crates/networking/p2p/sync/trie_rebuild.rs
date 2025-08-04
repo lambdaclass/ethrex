@@ -16,7 +16,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -109,15 +109,15 @@ async fn rebuild_state_trie_in_backgound(
     });
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
-    let start_time = Instant::now();
+    let mut total_rebuild_time = 0;
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            tokio::spawn(show_trie_rebuild_progress(
-                start_time,
+            tokio::spawn(show_state_trie_rebuild_progress(
+                total_rebuild_time,
                 initial_rebuild_status.clone(),
                 rebuild_status.clone(),
             ));
@@ -126,6 +126,7 @@ async fn rebuild_state_trie_in_backgound(
         if cancel_token.is_cancelled() {
             return Ok(());
         }
+        let rebuild_start = Instant::now();
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, current_hash) = rebuild_state_trie_segment(
@@ -136,6 +137,11 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )
             .await?;
+
+            // Count time taken if rebuild took place
+            if current_root != root {
+                total_rebuild_time += rebuild_start.elapsed().as_millis();
+            }
             // Update status
             root = current_root;
             rebuild_status[current_segment].current = current_hash;
@@ -216,20 +222,36 @@ async fn rebuild_storage_trie_in_background(
         .get_storage_trie_rebuild_pending()
         .await?
         .unwrap_or_default();
+    let mut total_rebuild_time: u128 = 0;
+    let mut last_show_progress = Instant::now();
+    // Count of all storages that have entered the queue
+    let mut pending_historic_count = pending_storages.len();
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
         if cancel_token.is_cancelled() {
             break;
+        }
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_show_progress = Instant::now();
+            tokio::spawn(show_storage_tries_rebuild_progress(
+                total_rebuild_time,
+                pending_historic_count,
+                pending_storages.len(),
+                store.clone(),
+            ));
         }
         // Read incoming batch
         if !receiver.is_empty() || pending_storages.is_empty() {
             let mut buffer = vec![];
             receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
             incoming = !buffer.iter().any(|batch| batch.is_empty());
+            pending_historic_count += buffer.iter().fold(0, |acc, batch| acc + batch.len());
             pending_storages.extend(buffer.iter().flatten());
         }
 
         // Spawn tasks to rebuild current storages
+        let rebuild_start = Instant::now();
         let mut rebuild_tasks = JoinSet::new();
         for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
@@ -248,6 +270,7 @@ async fn rebuild_storage_trie_in_background(
         for res in rebuild_tasks.join_all().await {
             res?;
         }
+        total_rebuild_time += rebuild_start.elapsed().as_millis();
     }
     store
         .set_storage_trie_rebuild_pending(pending_storages)
@@ -276,7 +299,6 @@ async fn rebuild_storage_trie(
             start = next_hash(last.0);
         }
         // Process batch
-        // Launch storage rebuild tasks for all non-empty storages
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
@@ -305,8 +327,8 @@ fn next_hash(hash: H256) -> H256 {
 }
 
 /// Shows the completion rate and estimated finish time of the state trie rebuild
-async fn show_trie_rebuild_progress(
-    start_time: Instant,
+async fn show_state_trie_rebuild_progress(
+    total_rebuild_time: u128,
     initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
     rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
 ) {
@@ -324,12 +346,48 @@ async fn show_trie_rebuild_progress(
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
     let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
-    let time_to_finish = (U512::from(start_time.elapsed().as_secs())
-        * U512::from(remaining_accounts))
-        / (U512::from(accounts_processed_this_cycle));
+    let time_to_finish = (U512::from(total_rebuild_time) * U512::from(remaining_accounts))
+        / (U512::from(accounts_processed_this_cycle))
+        / 1000;
     info!(
         "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
         completion_rate,
         seconds_to_readable(time_to_finish)
     );
+}
+
+async fn show_storage_tries_rebuild_progress(
+    total_rebuild_time: u128,
+    all_storages_in_queue: usize,
+    current_storages_in_queue: usize,
+    store: Store,
+) {
+    // Calculate current rebuild speed
+    let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
+    let storage_rebuild_time = total_rebuild_time / (rebuilt_storages_count as u128 + 1);
+    // Check if state sync has already finished before reporting estimated finish time
+    let state_sync_finished =
+        if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint().await {
+            checkpoint
+                .iter()
+                .enumerate()
+                .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
+        } else {
+            false
+        };
+    // Show current speed only as debug data
+    debug!(
+        "Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
+        storage_rebuild_time, current_storages_in_queue,
+    );
+    if state_sync_finished {
+        // storage_rebuild_time (ms) * remaining storages / 1000
+        let estimated_time_to_finish = (U512::from(storage_rebuild_time)
+            * U512::from(current_storages_in_queue))
+            / (U512::from(1000));
+        info!(
+            "Storage Tries Rebuild in Progress, estimated time to finish: {}",
+            seconds_to_readable(estimated_time_to_finish)
+        )
+    }
 }

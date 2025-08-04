@@ -1,3 +1,4 @@
+{ gitRev }:
 let
   pkgs = import <nixpkgs> { };
 in
@@ -17,7 +18,7 @@ in
       imports = [
         "${modulesPath}/image/repart.nix"
         "${modulesPath}/profiles/minimal.nix"
-        ./service.nix
+        (import ./service.nix { inherit gitRev; })
       ];
 
       system.stateVersion = "25.11";

@@ -1,8 +1,4 @@
 use ethrex_common::{H256, U256};
-use k256::{
-    Secp256k1,
-    elliptic_curve::{Curve, bigint::Encoding},
-};
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
@@ -67,7 +63,7 @@ pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> =
-    LazyLock::new(|| U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()));
+    LazyLock::new(|| U256::from_big_endian(&secp256k1::constants::CURVE_ORDER));
 pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;

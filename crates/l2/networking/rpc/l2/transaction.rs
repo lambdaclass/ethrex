@@ -1,13 +1,13 @@
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    signer::{LocalSigner, Signable},
     utils::RpcErr,
 };
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{
-        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
-        TxKind,
+        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, TxKind,
     },
 };
 use ethrex_rpc::types::transaction::SendRawTransactionRequest;
@@ -230,20 +230,27 @@ impl RpcHandler for SponsoredTx {
                 "tx too expensive".to_string(),
             ));
         }
+
+        let signer = LocalSigner::new(context.sponsor_pk).into();
+
         match tx {
             SendRawTransactionRequest::EIP7702(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk)?;
+                tx.sign_inplace(&signer)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk)?;
+                tx.sign_inplace(&signer)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
             }
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(

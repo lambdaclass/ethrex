@@ -71,6 +71,19 @@ impl RLPxCodec {
     }
 }
 
+// Manual implementation as Aes256Ctr64BE does not implement Debug traits
+impl std::fmt::Debug for RLPxCodec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RLPxCodec")
+            .field("mac_key", &self.mac_key)
+            .field("ingress_mac", &self.ingress_mac)
+            .field("egress_mac", &self.egress_mac)
+            .field("ingress_aes", &"Aes256Ctr64BE")
+            .field("egress_aes", &"Aes256Ctr64BE")
+            .finish()
+    }
+}
+
 impl Decoder for RLPxCodec {
     type Item = rlpx::Message;
 

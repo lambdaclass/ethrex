@@ -63,7 +63,7 @@ Once you have the new contract, you need to do the following three steps:
 2. Upgrade the proxy by calling the method `upgradeToAndCall(address newImplementation, bytes memory data)`. The `data` parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.
 
     ```sh
-    rex send <PROXY_ADDRESS> 0 <PRIVATE_KEY> -- 'upgradeToAndCall(address,bytes)' <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA>
+    rex send <PROXY_ADDRESS> 'upgradeToAndCall(address,bytes)' <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA> --private-key <PRIVATE_KEY>
     ```
 
 3. Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:
@@ -79,11 +79,11 @@ The contracts are `Ownable2Step`, that means that whenever you want to transfer 
 1. Start the transfer:
 
     ```sh
-    rex send <PROXY_ADDRESS> 0 <CURRENT_OWNER_PRIVATE_KEY> -- 'transferOwnership(address)' <NEW_OWNER_ADDRESS>
+    rex send <PROXY_ADDRESS> 'transferOwnership(address)' <NEW_OWNER_ADDRESS> --private-key <CURRENT_OWNER_PRIVATE_KEY>
     ```
 
 2. Accept the ownership:
 
     ```sh
-    rex send <PROXY_ADDRESS> 0 <NEW_OWNER_PRIVATE_KEY> -- 'acceptOwnership()'
+    rex send <PROXY_ADDRESS> 'acceptOwnership()' --private-key <NEW_OWNER_PRIVATE_KEY>
     ```

@@ -88,6 +88,9 @@ contract OnChainProposer is
 
     bytes32 public RISC0_VERIFICATION_KEY;
 
+    /// @notice Chain ID of the network
+    uint256 public CHAIN_ID;
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -113,7 +116,8 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses
+        address[] calldata sequencerAddresses,
+        uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -160,6 +164,8 @@ contract OnChainProposer is
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
+
+        CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -273,6 +279,19 @@ contract OnChainProposer is
             "OnChainProposer: cannot verify an uncommitted batch"
         );
 
+        // The first 2 bytes are the number of privileged transactions.
+        uint16 privileged_transaction_count = uint16(
+            bytes2(
+                batchCommitments[batchNumber]
+                    .processedPrivilegedTransactionsRollingHash
+            )
+        );
+        if (privileged_transaction_count > 0) {
+            ICommonBridge(BRIDGE).removePendingTransactionHashes(
+                privileged_transaction_count
+            );
+        }
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
@@ -300,18 +319,6 @@ contract OnChainProposer is
         }
 
         lastVerifiedBatch = batchNumber;
-        // The first 2 bytes are the number of privileged transactions.
-        uint16 privileged_transaction_count = uint16(
-            bytes2(
-                batchCommitments[batchNumber]
-                    .processedPrivilegedTransactionsRollingHash
-            )
-        );
-        if (privileged_transaction_count > 0) {
-            ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                privileged_transaction_count
-            );
-        }
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -346,6 +353,19 @@ contract OnChainProposer is
                 "OnChainProposer: cannot verify an uncommitted batch"
             );
 
+            // The first 2 bytes are the number of transactions.
+            uint16 privileged_transaction_count = uint16(
+                bytes2(
+                    batchCommitments[batchNumber]
+                        .processedPrivilegedTransactionsRollingHash
+                )
+            );
+            if (privileged_transaction_count > 0) {
+                ICommonBridge(BRIDGE).removePendingTransactionHashes(
+                    privileged_transaction_count
+                );
+            }
+
             // Verify public data for the batch
             _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
@@ -367,19 +387,6 @@ contract OnChainProposer is
                 "OnChainProposer: Aligned proof verification failed"
             );
 
-            // The first 2 bytes are the number of transactions.
-            uint16 privileged_transaction_count = uint16(
-                bytes2(
-                    batchCommitments[batchNumber]
-                        .processedPrivilegedTransactionsRollingHash
-                )
-            );
-            if (privileged_transaction_count > 0) {
-                ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    privileged_transaction_count
-                );
-            }
-
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
@@ -395,7 +402,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 192,
+            publicData.length == 256,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -432,6 +439,19 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
+        );
+        uint256 chainId = uint256(bytes32(publicData[192:224]));
+        require(
+            chainId == CHAIN_ID,
+            "OnChainProposer: given chain id does not correspond to this network"
+        );
+        uint256 nonPrivilegedTransactions = uint256(
+            bytes32(publicData[224:256])
+        );
+        require(
+            !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
+                nonPrivilegedTransactions == 0,
+            "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
     }
 

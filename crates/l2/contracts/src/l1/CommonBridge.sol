@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
@@ -66,12 +67,22 @@ contract CommonBridge is
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    /// @notice Owner of the L2 system contract proxies
+    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
+
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the message id of the L1Message of the transaction.
     /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
     mapping(uint256 => bool) public claimedWithdrawalIDs;
+
+    /// @notice Maximum time the sequencer is allowed to take without processing a privileged transaction
+    /// @notice Specified in seconds.
+    uint256 public PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+
+    /// @notice Deadline for the sequencer to include the transaction.
+    mapping(bytes32 => uint256) public privilegedTxDeadline;
 
     modifier onlyOnChainProposer() {
         require(
@@ -88,7 +99,8 @@ contract CommonBridge is
     /// @param onChainProposer the address of the OnChainProposer contract.
     function initialize(
         address owner,
-        address onChainProposer
+        address onChainProposer,
+        uint256 inclusionMaxWait
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -98,6 +110,8 @@ contract CommonBridge is
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
+
+        PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -111,11 +125,39 @@ contract CommonBridge is
     {
         return pendingTxHashes;
     }
-    
+
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
         uint256 startingGas = gasleft();
         while (startingGas - gasleft() < amount) {}
+    }
+
+
+    /// EIP-7702 delegated accounts have code beginning with this.
+    bytes3 internal constant EIP7702_PREFIX = 0xef0100;
+    /// Code size in bytes of an EIP-7702 delegated account
+    /// = len(EIP7702_PREFIX) + len(account)
+    uint256 internal constant EIP7702_CODE_LENGTH = 23;
+
+    /// This is intentionally different from the constant Optimism uses, but arbitrary.
+    uint256 internal constant ADDRESS_ALIASING = uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+
+    /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
+    /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
+    /// @dev We don't want this to affect users, so we need to detect if the caller is an EOA
+    /// @dev We still want L2 contracts to be able to know who called in on L1
+    /// @dev So we modify the calling address by with a constant
+    function _getSenderAlias() private view returns (address) {
+        // If sender is origin, the account is an EOA
+        if (msg.sender == tx.origin) return msg.sender;
+        // Check for an EIP7702 delegate it account
+        if (msg.sender.code.length == EIP7702_CODE_LENGTH) {
+            if (bytes3(msg.sender.code) == EIP7702_PREFIX) {
+                // And treat it as an EOA
+                return msg.sender;
+            }
+        }
+        return address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
@@ -144,11 +186,14 @@ contract CommonBridge is
             sendValues.data
         );
         transactionId += 1;
+        privilegedTxDeadline[l2MintTxHash] =
+            block.timestamp +
+            PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
     }
 
     /// @inheritdoc ICommonBridge
     function sendToL2(SendValues calldata sendValues) public {
-        _sendToL2(msg.sender, sendValues);
+        _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
@@ -234,6 +279,14 @@ contract CommonBridge is
         for (uint _i = 0; _i < number; _i++) {
             pendingTxHashes.pop();
         }
+    }
+
+    /// @inheritdoc ICommonBridge
+    function hasExpiredPrivilegedTransactions() public view returns (bool) {
+        if (pendingTxHashes.length == 0) {
+            return false;
+        }
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[0]];
     }
 
     /// @inheritdoc ICommonBridge
@@ -366,6 +419,17 @@ contract CommonBridge is
                 batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
                 withdrawalLeaf
             );
+    }
+
+    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
+        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
+        SendValues memory sendValues = SendValues({
+            to: l2Contract,
+            gasLimit: gasLimit,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.

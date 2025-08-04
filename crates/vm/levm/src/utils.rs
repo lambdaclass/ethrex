@@ -1,5 +1,5 @@
 use crate::{
-    EVMConfig,
+    EVMConfig, Environment,
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -17,10 +17,11 @@ use crate::{
     vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::Bytes;
+use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, tx_fields::*},
+    types::{Fork, Transaction, tx_fields::*},
+    utils::u256_to_big_endian,
 };
 use ethrex_common::{
     types::{Account, TxKind},
@@ -34,7 +35,10 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    iter::Enumerate,
+};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -95,28 +99,67 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// Generates blacklist of jump destinations given some bytecode.
-/// This is a necessary calculation because of PUSH opcodes.
-/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
-/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-    let mut address_blacklist = Vec::new();
+/// # Filter for jump target offsets.
+///
+/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
+/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
+#[derive(Debug)]
+pub struct JumpTargetFilter {
+    /// The list of invalid jump target offsets.
+    filter: Vec<usize>,
+    /// The last processed offset, plus one.
+    offset: usize,
 
-    let mut iter = code.iter().enumerate();
-    while let Some((_, &value)) = iter.next() {
-        let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
-            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-            address_blacklist.extend(
-                (&mut iter)
-                    .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-            );
+    /// Program bytecode iterator.
+    iter: Enumerate<IntoIter<Bytes>>,
+    /// Number of bytes remaining to process from the last push instruction.
+    partial: usize,
+}
+
+impl JumpTargetFilter {
+    /// Create an empty `JumpTargetFilter`.
+    pub fn new(bytecode: Bytes) -> Self {
+        Self {
+            filter: Vec::new(),
+            offset: 0,
+
+            iter: bytecode.into_iter().enumerate(),
+            partial: 0,
         }
     }
 
-    Ok(address_blacklist.into_boxed_slice())
+    /// Check whether a target jump address is blacklisted or not.
+    ///
+    /// This method may potentially grow the filter if the requested address is out of range.
+    pub fn is_blacklisted(&mut self, address: usize) -> bool {
+        if let Some(delta) = address.checked_sub(self.offset) {
+            // It is not realistic to expect a bytecode offset to overflow an `usize`.
+            #[expect(clippy::arithmetic_side_effects)]
+            for (offset, value) in (&mut self.iter).take(delta + 1) {
+                match self.partial.checked_sub(1) {
+                    None => {
+                        // Neither the `as` conversions nor the subtraction can fail here.
+                        #[expect(clippy::as_conversions)]
+                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
+                            self.partial = value as usize - Opcode::PUSH0 as usize;
+                        }
+                    }
+                    Some(partial) => {
+                        self.partial = partial;
+
+                        #[expect(clippy::as_conversions)]
+                        if value == Opcode::JUMPDEST as u8 {
+                            self.filter.push(offset);
+                        }
+                    }
+                }
+            }
+
+            self.filter.last() == Some(&address)
+        } else {
+            self.filter.binary_search(&address).is_ok()
+        }
+    }
 }
 
 // ================== Backup related functions =======================
@@ -212,7 +255,7 @@ pub fn get_blob_gas_price(
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
+    Address::from_slice(&u256_to_big_endian(word)[12..])
 }
 
 // ================== EIP-7702 related functions =====================
@@ -440,7 +483,7 @@ impl<'a> VM<'a> {
 
         let intrinsic_gas = self.get_intrinsic_gas()?;
 
-        self.current_call_frame_mut()?
+        self.current_call_frame
             .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
@@ -454,7 +497,7 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
 
         intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -470,11 +513,7 @@ impl<'a> VM<'a> {
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
-                let number_of_words = &self
-                    .current_call_frame()?
-                    .calldata
-                    .len()
-                    .div_ceil(WORD_SIZE);
+                let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
                 let double_number_of_words: u64 = number_of_words
                     .checked_mul(2)
                     .ok_or(OutOfGas)?
@@ -529,9 +568,9 @@ impl<'a> VM<'a> {
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame()?.bytecode
+            &self.current_call_frame.bytecode
         } else {
-            &self.current_call_frame()?.calldata
+            &self.current_call_frame.calldata
         };
 
         // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
@@ -568,7 +607,7 @@ impl<'a> VM<'a> {
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(self.env.origin);
@@ -614,21 +653,26 @@ impl<'a> VM<'a> {
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
     /// Bool indicates whether it is a `create` transaction or not.
-    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
-        match self.tx.to() {
+    pub fn get_tx_callee(
+        tx: &Transaction,
+        db: &mut GeneralizedDatabase,
+        env: &Environment,
+        substate: &mut Substate,
+    ) -> Result<(Address, bool), VMError> {
+        match tx.to() {
             TxKind::Call(address_to) => {
-                self.substate.accessed_addresses.insert(address_to);
+                substate.accessed_addresses.insert(address_to);
 
                 Ok((address_to, false))
             }
 
             TxKind::Create => {
-                let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
+                let sender_nonce = db.get_account(env.origin)?.info.nonce;
 
-                let created_address = calculate_create_address(self.env.origin, sender_nonce)?;
+                let created_address = calculate_create_address(env.origin, sender_nonce)?;
 
-                self.substate.accessed_addresses.insert(created_address);
-                self.substate.created_accounts.insert(created_address);
+                substate.accessed_addresses.insert(created_address);
+                substate.created_accounts.insert(created_address);
 
                 Ok((created_address, true))
             }

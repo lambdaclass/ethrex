@@ -17,6 +17,7 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
+use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -218,15 +219,10 @@ impl StoreEngine for Store {
             .await
     }
 
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        let hashes_and_headers = block_hashes
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let hashes_and_headers = block_headers
             .into_iter()
-            .zip(block_headers)
-            .map(|(hash, header)| (hash.into(), header.into()))
+            .map(|header| (header.hash().into(), header.into()))
             .collect();
         self.write_batch::<Headers>(hashes_and_headers).await
     }
@@ -293,12 +289,14 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let key_values = blocks
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        let key_values = numbers_and_hashes
             .iter()
-            .map(|e| (e.header.number, e.hash().into()))
+            .map(|(n, h)| (*n, (*h).into()))
             .collect();
-
         self.write_batch::<CanonicalBlockHashes>(key_values).await
     }
 
@@ -1358,7 +1356,7 @@ impl From<H256> for AccountStorageKeyBytes {
 
 impl From<U256> for AccountStorageValueBytes {
     fn from(value: U256) -> Self {
-        AccountStorageValueBytes(value.to_big_endian())
+        AccountStorageValueBytes(u256_to_big_endian(value))
     }
 }
 

@@ -1,8 +1,11 @@
 name: Benchmark Block building
 
+# This benchmark is put on manual mode until it's fixed.
+
 on:
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:
+  #pull_request:
+    #branches: ["**"]
 
 permissions:
   pull-requests: write
@@ -12,14 +15,10 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Fetch Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

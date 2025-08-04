@@ -10,8 +10,8 @@ use crate::{
     types::Node,
 };
 use ethrex_common::{H256, H512};
-use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::debug;
@@ -85,7 +85,7 @@ impl Discv4LookupHandler {
 
             // lookup closest to 3 random keys
             for _ in 0..3 {
-                let random_pub_key = SigningKey::random(&mut OsRng);
+                let random_pub_key = SecretKey::new(&mut OsRng);
                 self.ctx.tracker.spawn({
                     let self_clone = self.clone();
                     async move {
@@ -144,7 +144,7 @@ impl Discv4LookupHandler {
         asked_peers: &mut HashSet<H512>,
         nodes_to_ask: &Vec<Node>,
     ) -> (Vec<Node>, u32) {
-        // send FIND_NODE as much as three times
+        // send FIND_NODE as many as three times
         let alpha = 3;
         let mut queries = 0;
         let mut nodes = vec![];

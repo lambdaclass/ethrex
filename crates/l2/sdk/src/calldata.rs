@@ -4,6 +4,8 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
 
+use crate::address_to_word;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CalldataDecodeError {
     #[error("Failed to parse function signature: {0}")]
@@ -506,14 +508,6 @@ fn copy_into(
         .copy_from_slice(to_copy_slice);
 
     Ok(())
-}
-
-fn address_to_word(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-    U256::from_big_endian(&word)
 }
 
 #[test]

@@ -16,7 +16,7 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
     utils::{self, get_client_version, set_datadir},
@@ -278,27 +278,24 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[command(subcommand)]
-    L2(l2::Command),
+    #[command(name = "l2")]
+    L2(l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
+        // L2 has its own init_tracing because of the ethrex monitor
+        match self {
+            Self::L2(_) => {}
+            _ => init_tracing(opts),
+        }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    Box::pin(async {
-                        Self::RemoveDB {
-                            datadir: opts.datadir.clone(),
-                            force: opts.force,
-                        }
-                        .run(opts)
-                        .await
-                    })
-                    .await?;
+                    remove_db(&opts.datadir.clone(), opts.force);
                 }
 
                 let network = get_network(opts);
@@ -389,6 +386,10 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
+        let numbers_and_hashes = blocks
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect::<Vec<_>>();
         // Execute block by block
         for block in &blocks {
             let hash = block.hash();
@@ -409,11 +410,15 @@ pub async fn import_blocks(
             blockchain
                 .add_block(block)
                 .await
-                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
+                .inspect_err(|err| match err {
+                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                })?;
         }
 
         _ = store
-            .mark_chain_as_canonical(&blocks)
+            .mark_chain_as_canonical(&numbers_and_hashes)
             .await
             .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
