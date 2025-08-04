@@ -5,23 +5,20 @@ use crate::{
     vm::VM,
 };
 
-use bytes::Bytes;
-
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
-        precompile_result: Result<Bytes, VMError>,
+        maybe_error: Option<VMError>,
         gas_limit: u64,
         gas_remaining: u64,
     ) -> Result<ContextResult, VMError> {
-        match precompile_result {
-            Ok(output) => Ok(ContextResult {
+        match maybe_error {
+            None => Ok(ContextResult {
                 result: TxResult::Success,
                 gas_used: gas_limit
                     .checked_sub(gas_remaining)
                     .ok_or(InternalError::Underflow)?,
-                output,
             }),
-            Err(error) => {
+            Some(error) => {
                 if error.should_propagate() {
                     return Err(error);
                 }
@@ -29,7 +26,6 @@ impl<'a> VM<'a> {
                 Ok(ContextResult {
                     result: TxResult::Revert(error),
                     gas_used: gas_limit,
-                    output: Bytes::new(),
                 })
             }
         }
@@ -56,13 +52,12 @@ impl<'a> VM<'a> {
                         .gas_limit
                         .checked_sub(callframe.gas_remaining)
                         .ok_or(InternalError::Underflow)?,
-                    output: Bytes::new(),
                 });
             }
 
             // Set bytecode to the newly created contract.
             let contract_address = self.current_call_frame.to;
-            let code = self.current_call_frame.output.clone();
+            let code = self.ret_data.clone();
             self.update_account_bytecode(contract_address, code)?;
         }
 
@@ -75,7 +70,6 @@ impl<'a> VM<'a> {
                     .checked_sub(callframe.gas_remaining)
                     .ok_or(InternalError::Underflow)?
             },
-            output: std::mem::take(&mut self.current_call_frame.output),
         })
     }
 
@@ -85,20 +79,18 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
-        let callframe = &mut self.current_call_frame;
-
         // Unless error is caused by Revert Opcode, consume all gas left.
         if !error.is_revert_opcode() {
-            callframe.gas_remaining = 0;
+            self.current_call_frame.gas_remaining = 0;
         }
 
         Ok(ContextResult {
             result: TxResult::Revert(error),
-            gas_used: callframe
+            gas_used: self
+                .current_call_frame
                 .gas_limit
-                .checked_sub(callframe.gas_remaining)
+                .checked_sub(self.current_call_frame.gas_remaining)
                 .ok_or(InternalError::Underflow)?,
-            output: std::mem::take(&mut callframe.output),
         })
     }
 
@@ -111,7 +103,6 @@ impl<'a> VM<'a> {
             return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
-                output: Bytes::new(),
             }));
         }
 
@@ -124,8 +115,7 @@ impl<'a> VM<'a> {
 
     /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
     fn validate_contract_creation(&mut self) -> Result<(), VMError> {
-        let callframe = &mut self.current_call_frame;
-        let code = &callframe.output;
+        let code = &self.ret_data;
 
         let code_length: u64 = code
             .len()
@@ -148,7 +138,8 @@ impl<'a> VM<'a> {
         }
 
         // 3. current_consumed_gas + code_deposit_cost > gas_limit
-        callframe.increase_consumed_gas(code_deposit_cost)?;
+        self.current_call_frame
+            .increase_consumed_gas(code_deposit_cost)?;
 
         Ok(())
     }

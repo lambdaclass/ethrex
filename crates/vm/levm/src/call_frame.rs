@@ -11,6 +11,7 @@ use keccak_hash::H256;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
+    ops::Range,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -219,11 +220,9 @@ pub struct CallFrame {
     pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes,
+    pub calldata: Range<usize>,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
-    pub output: Bytes,
-    /// Return data of the SUB-CONTEXT (see docs for more details)
-    pub sub_return_data: Bytes,
+    pub ret_data: Range<usize>,
     /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
     /// Call stack current depth
@@ -235,10 +234,6 @@ pub struct CallFrame {
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
-    /// Return data offset
-    pub ret_offset: usize,
-    /// Return data size
-    pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
 }
@@ -290,14 +285,13 @@ impl CallFrame {
         code_address: Address,
         bytecode: Bytes,
         msg_value: U256,
-        calldata: Bytes,
+        calldata: Range<usize>,
+        ret_data: Range<usize>,
         is_static: bool,
         gas_limit: u64,
         depth: usize,
         should_transfer_value: bool,
         is_create: bool,
-        ret_offset: usize,
-        ret_size: usize,
         stack: Stack,
         memory: Memory,
     ) -> Self {
@@ -313,19 +307,16 @@ impl CallFrame {
             bytecode,
             msg_value,
             calldata,
+            ret_data,
             is_static,
             depth,
             invalid_jump_destinations,
             should_transfer_value,
             is_create,
-            ret_offset,
-            ret_size,
             stack,
             memory,
             call_frame_backup: CallFrameBackup::default(),
-            output: Bytes::default(),
             pc: 0,
-            sub_return_data: Bytes::default(),
         }
     }
 

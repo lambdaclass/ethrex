@@ -33,7 +33,7 @@ pub const P256VERIFY_COST: u64 = 3450;
 
 pub fn execute_precompile(
     address: Address,
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
     let result = match address {
@@ -51,7 +51,7 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
-pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
+pub fn p_256_verify(calldata: &[u8], gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = P256VERIFY_COST;
     precompiles::increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 

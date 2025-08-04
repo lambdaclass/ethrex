@@ -12,6 +12,7 @@ use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
 use ethrex_common::{Address, U256, types::Fork};
+use std::ops::Range;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -121,9 +122,8 @@ impl<'a> VM<'a> {
             code_address,
             true,
             is_static,
-            data,
-            return_data_start_offset,
-            return_data_size,
+            args_start_offset..args_start_offset + args_size,
+            return_data_start_offset..return_data_start_offset + return_data_size,
             bytecode,
             is_delegation_7702,
         )
@@ -229,9 +229,8 @@ impl<'a> VM<'a> {
             code_address,
             true,
             is_static,
-            data,
-            return_data_start_offset,
-            return_data_size,
+            args_start_offset..args_start_offset + args_size,
+            return_data_start_offset..return_data_start_offset + return_data_size,
             bytecode,
             is_delegation_7702,
         )
@@ -239,30 +238,28 @@ impl<'a> VM<'a> {
 
     // RETURN operation
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [offset, size] = *current_call_frame.stack.pop()?;
+        let [offset, size] = *self.current_call_frame.stack.pop()?;
         let size = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-        if size == 0 {
-            return Ok(OpcodeResult::Halt);
-        }
-
         let offset: usize = match offset.try_into() {
             Ok(x) => x,
             Err(_) => usize::MAX,
         };
 
-        let new_memory_size = calculate_memory_size(offset, size)?;
-        let current_memory_size = current_call_frame.memory.len();
+        if size == 0 {
+            return Ok(OpcodeResult::Halt);
+        }
 
-        current_call_frame
-            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(
+                calculate_memory_size(offset, size)?,
+                self.current_call_frame.memory.len(),
+            )?)?;
 
-        current_call_frame.output = {
+        self.ret_data = {
             let mut buffer = BytesMut::zeroed(size);
-            current_call_frame.memory.read(offset, buffer.as_mut());
+            self.current_call_frame.memory.read(offset, buffer.as_mut());
             buffer.freeze()
         };
 
@@ -366,9 +363,8 @@ impl<'a> VM<'a> {
             code_address,
             false,
             is_static,
-            data,
-            return_data_start_offset,
-            return_data_size,
+            args_start_offset..args_start_offset + args_size,
+            return_data_start_offset..return_data_start_offset + return_data_size,
             bytecode,
             is_delegation_7702,
         )
@@ -470,9 +466,8 @@ impl<'a> VM<'a> {
             address,
             true,
             true,
-            data,
-            return_data_start_offset,
-            return_data_size,
+            args_start_offset..args_start_offset + args_size,
+            return_data_start_offset..return_data_start_offset + return_data_size,
             bytecode,
             is_delegation_7702,
         )
@@ -553,28 +548,24 @@ impl<'a> VM<'a> {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        let current_call_frame = &mut self.current_call_frame;
-
-        let [offset, size] = *current_call_frame.stack.pop()?;
-
+        let [offset, size] = *self.current_call_frame.stack.pop()?;
         let offset = match offset.try_into() {
             Ok(x) => x,
             Err(_) => usize::MAX,
         };
-
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
-        let new_memory_size = calculate_memory_size(offset, size)?;
-        let current_memory_size = current_call_frame.memory.len();
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(
+                calculate_memory_size(offset, size)?,
+                self.current_call_frame.memory.len(),
+            )?)?;
 
-        current_call_frame
-            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
-
-        current_call_frame.output = {
+        self.ret_data = {
             let mut buffer = BytesMut::zeroed(size);
-            current_call_frame.memory.read(offset, buffer.as_mut());
+            self.current_call_frame.memory.read(offset, buffer.as_mut());
             buffer.freeze()
         };
 
@@ -662,18 +653,17 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        let current_call_frame = &mut self.current_call_frame;
         // 2. CREATE can't be called in a static context
-        if current_call_frame.is_static {
+        if self.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         // Clear callframe subreturn data
-        current_call_frame.sub_return_data = Bytes::new();
+        self.ret_data.clear();
 
         // Reserve gas for subcall
-        let gas_limit = max_message_call_gas(current_call_frame)?;
-        current_call_frame.increase_consumed_gas(gas_limit)?;
+        let gas_limit = max_message_call_gas(&self.current_call_frame)?;
+        self.current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
         let code = {
@@ -753,14 +743,13 @@ impl<'a> VM<'a> {
             new_address,
             code,
             value,
-            Bytes::new(),
+            0..0,
+            0..0,
             false,
             gas_limit,
             new_depth,
             true,
             true,
-            0,
-            0,
             stack,
             next_memory,
         );
@@ -794,14 +783,13 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        calldata: Bytes,
-        ret_offset: usize,
-        ret_size: usize,
+        calldata: Range<usize>,
+        ret_data: Range<usize>,
         bytecode: Bytes,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
-        self.current_call_frame.sub_return_data.clear();
+        self.ret_data.clear();
 
         // Validate sender has enough value
         if should_transfer_value && !value.is_zero() {
@@ -825,19 +813,20 @@ impl<'a> VM<'a> {
 
         if self.is_precompile(&code_address) && !is_delegation_7702 {
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
+            let (ctx_result, output) = Self::execute_precompile(
                 self.vm_type,
                 code_address,
-                &calldata,
+                self.current_call_frame
+                    .memory
+                    .as_slice(calldata.start, calldata.end - calldata.start),
                 gas_limit,
                 &mut gas_remaining,
             )?;
 
-            let call_frame = &mut self.current_call_frame;
-
             // Return gas left from subcontext
             if ctx_result.is_success() {
-                call_frame.gas_remaining = call_frame
+                self.current_call_frame.gas_remaining = self
+                    .current_call_frame
                     .gas_remaining
                     .checked_add(
                         gas_limit
@@ -848,34 +837,35 @@ impl<'a> VM<'a> {
             }
 
             // Store return data of sub-context
-            call_frame.memory.write(
-                ret_offset,
-                if ctx_result.output.len() >= ret_size {
-                    ctx_result
-                        .output
-                        .get(..ret_size)
+            self.current_call_frame.memory.write(
+                ret_data.start,
+                if output.len() >= ret_data.end - ret_data.start {
+                    output
+                        .get(..ret_data.end - ret_data.start)
                         .ok_or(ExceptionalHalt::OutOfBounds)?
                 } else {
-                    &ctx_result.output
+                    &output
                 },
             );
-            call_frame.sub_return_data = ctx_result.output.clone();
+            self.ret_data = output.clone();
 
             // What to do, depending on TxResult
-            call_frame.stack.push1(match &ctx_result.result {
-                TxResult::Success => SUCCESS,
-                TxResult::Revert(_) => FAIL,
-            })?;
+            self.current_call_frame
+                .stack
+                .push1(match &ctx_result.result {
+                    TxResult::Success => SUCCESS,
+                    TxResult::Revert(_) => FAIL,
+                })?;
 
             // Increment PC of the parent callframe after execution of the child.
-            call_frame.increment_pc_by(1)?;
+            self.current_call_frame.increment_pc_by(1)?;
 
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.tracer.exit_context(&ctx_result, false)?;
+            self.tracer.exit_context(&ctx_result, output, false)?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -889,13 +879,12 @@ impl<'a> VM<'a> {
                 bytecode,
                 value,
                 calldata,
+                ret_data,
                 is_static,
                 gas_limit,
                 new_depth,
                 should_transfer_value,
                 false,
-                ret_offset,
-                ret_size,
                 stack,
                 next_memory,
             );
@@ -950,8 +939,7 @@ impl<'a> VM<'a> {
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
-            ret_offset,
-            ret_size,
+            ret_data,
             ..
         } = executed_call_frame;
 
@@ -968,18 +956,15 @@ impl<'a> VM<'a> {
 
         // Store return data of sub-context
         parent_call_frame.memory.write(
-            ret_offset,
-            if ctx_result.output.len() >= ret_size {
-                ctx_result
-                    .output
-                    .get(..ret_size)
+            ret_data.start,
+            if self.ret_data.len() >= ret_data.end - ret_data.start {
+                self.ret_data
+                    .get(..ret_data.end - ret_data.start)
                     .ok_or(ExceptionalHalt::OutOfBounds)?
             } else {
-                &ctx_result.output
+                &self.ret_data
             },
         );
-
-        parent_call_frame.sub_return_data = ctx_result.output.clone();
 
         // What to do, depending on TxResult
         match &ctx_result.result {
@@ -992,7 +977,8 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        self.tracer
+            .exit_context(ctx_result, self.ret_data.clone(), false)?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -1031,16 +1017,17 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
-                // If revert we have to copy the return_data
-                if err.is_revert_opcode() {
-                    parent_call_frame.sub_return_data = ctx_result.output.clone();
-                }
+                // // If revert we have to copy the return_data
+                // if err.is_revert_opcode() {
+                //     self.ret_data = ctx_result.output.clone();
+                // }
 
                 parent_call_frame.stack.push1(FAIL)?;
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        self.tracer
+            .exit_context(ctx_result, self.ret_data.clone(), false)?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();

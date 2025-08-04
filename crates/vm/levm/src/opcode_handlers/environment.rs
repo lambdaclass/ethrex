@@ -6,6 +6,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use std::usize;
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -81,39 +82,57 @@ impl<'a> VM<'a> {
 
     // CALLDATALOAD operation
     pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
-
-        let offset = current_call_frame.stack.pop1()?;
+        let offset: usize = self
+            .current_call_frame
+            .stack
+            .pop1()?
+            .try_into()
+            .unwrap_or(usize::MAX);
 
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
-        if offset > calldata_size {
-            current_call_frame.stack.push1(U256::zero())?;
+        if offset
+            > self
+                .call_frames
+                .last()
+                .map(|_| {
+                    self.current_call_frame.calldata.end - self.current_call_frame.calldata.start
+                })
+                .unwrap_or(self.calldata.len())
+        {
+            self.current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
+
+        let calldata = self
+            .call_frames
+            .last()
+            .map(|call_frame| {
+                #[expect(clippy::unwrap_used)]
+                call_frame
+                    .memory
+                    .try_as_slice(
+                        self.current_call_frame.calldata.start,
+                        self.current_call_frame.calldata.end
+                            - self.current_call_frame.calldata.start,
+                    )
+                    .unwrap()
+            })
+            .unwrap_or(&self.calldata);
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
+        for (i, byte) in calldata.iter().skip(offset).take(32).enumerate() {
             if let Some(data_byte) = data.get_mut(i) {
                 *data_byte = *byte;
             }
         }
         let result = u256_from_big_endian_const(data);
 
-        current_call_frame.stack.push1(result)?;
+        self.current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -123,9 +142,12 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
-        current_call_frame
-            .stack
-            .push1(U256::from(current_call_frame.calldata.len()))?;
+        current_call_frame.stack.push1(U256::from(
+            self.call_frames
+                .last()
+                .map(|_| current_call_frame.calldata.end - current_call_frame.calldata.start)
+                .unwrap_or(self.calldata.len()),
+        ))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -154,10 +176,24 @@ impl<'a> VM<'a> {
             )?)?;
 
         if num_bytes != 0 {
+            let calldata = self
+                .call_frames
+                .last()
+                .map(|call_frame| {
+                    #[expect(clippy::unwrap_used)]
+                    call_frame
+                        .memory
+                        .try_as_slice(
+                            self.current_call_frame.calldata.start,
+                            self.current_call_frame.calldata.end
+                                - self.current_call_frame.calldata.start,
+                        )
+                        .unwrap()
+                })
+                .unwrap_or(&self.calldata);
+
             // Copy calldata region and zero-fill remaining space.
-            let data = self
-                .current_call_frame
-                .calldata
+            let data = calldata
                 .split_at_checked(calldata_offset)
                 .map(|(_, x)| x)
                 .unwrap_or_default();
@@ -165,6 +201,7 @@ impl<'a> VM<'a> {
                 Some(data) => self.current_call_frame.memory.write(memory_offset, data),
                 None => {
                     self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
                     self.current_call_frame
                         .memory
                         .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
@@ -222,6 +259,7 @@ impl<'a> VM<'a> {
                 Some(data) => self.current_call_frame.memory.write(memory_offset, data),
                 None => {
                     self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
                     self.current_call_frame
                         .memory
                         .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
@@ -298,6 +336,7 @@ impl<'a> VM<'a> {
                 Some(data) => self.current_call_frame.memory.write(memory_offset, data),
                 None => {
                     self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
                     self.current_call_frame
                         .memory
                         .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
@@ -310,12 +349,12 @@ impl<'a> VM<'a> {
 
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
-        current_call_frame
+        self.current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.sub_return_data.len()))?;
+            .push1(U256::from(self.ret_data.len()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -344,8 +383,7 @@ impl<'a> VM<'a> {
 
         // Copy return data region and zero-fill remaining space.
         let data = self
-            .current_call_frame
-            .sub_return_data
+            .ret_data
             .split_at_checked(returndata_offset)
             .ok_or(ExceptionalHalt::OutOfBounds)?
             .1;

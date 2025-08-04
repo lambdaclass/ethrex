@@ -236,7 +236,20 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
-    let calldata = vm.current_call_frame.calldata.clone();
+    let calldata = vm
+        .call_frames
+        .last()
+        .map(|call_frame| {
+            #[expect(clippy::unwrap_used)]
+            call_frame
+                .memory
+                .try_as_slice(
+                    vm.current_call_frame.calldata.start,
+                    vm.current_call_frame.calldata.end - vm.current_call_frame.calldata.start,
+                )
+                .unwrap()
+        })
+        .unwrap_or(&vm.calldata);
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     // calldata_cost = tokens_in_calldata * 4
@@ -474,7 +487,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Get bytecode and code_address for assigning those values to the callframe.
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
-        let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
+        let calldata = std::mem::take(&mut vm.ret_data);
         (calldata, vm.current_call_frame.to)
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.

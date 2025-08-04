@@ -9,12 +9,11 @@ use std::{
     alloc::{self, Layout},
     array,
     cell::UnsafeCell,
-    collections::BTreeMap,
     fmt,
     mem::{self, MaybeUninit},
     ops::Range,
     ptr,
-    rc::{Rc, Weak},
+    rc::Rc,
     slice,
 };
 
@@ -22,8 +21,6 @@ use std::{
 struct MemoryAllocatorImpl {
     buffer: *mut u8,
     len: usize,
-
-    tracker: BTreeMap<(usize, usize), Weak<CowSliceRef>>,
 
     #[cfg(debug_assertions)]
     memory_stack: Vec<usize>,
@@ -222,6 +219,7 @@ impl MemoryAllocator {
         let state = unsafe { &mut *self.0.get() };
 
         // Find the memory offset in the stack.
+        #[expect(clippy::expect_used)]
         let stack_offset = state
             .memory_stack
             .binary_search(&memory_offset)
@@ -237,8 +235,6 @@ impl Default for MemoryAllocator {
         Self(UnsafeCell::new(MemoryAllocatorImpl {
             buffer: ptr::null_mut(),
             len: 0,
-
-            tracker: BTreeMap::new(),
 
             #[cfg(debug_assertions)]
             memory_stack: Vec::new(),
@@ -290,7 +286,24 @@ impl Memory {
         self.allocator.as_slice(range.start, len)
     }
 
-    // TODO: try_as_slice().
+    pub fn try_as_slice(&self, offset: usize, len: usize) -> Option<&[u8]> {
+        if len == 0 {
+            return Some(&[]);
+        }
+
+        // Compute allocator buffer range.
+        let range = {
+            let offset = self.range.start + offset;
+            offset..offset + len
+        };
+
+        // Check memory bounds.
+        if range.end > self.range.end {
+            return None;
+        }
+
+        Some(self.allocator.as_slice(range.start, len))
+    }
 
     // TODO: get_slice().
     // TODO: try_get_slice().
@@ -710,12 +723,6 @@ impl Drop for Memory {
         self.allocator.drop_memory(self.range.start);
     }
 }
-
-pub struct CowSlice(CowSliceImpl);
-
-enum CowSliceImpl {}
-
-struct CowSliceRef(Rc<Memory>);
 
 /// When a memory expansion is triggered, only the additional bytes of memory
 /// must be paid for.
