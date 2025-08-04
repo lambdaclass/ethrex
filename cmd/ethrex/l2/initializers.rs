@@ -98,12 +98,13 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    let engine_type = if cfg!(feature = "rollup_storage_sql") {
-        EngineTypeRollup::SQL
-    } else {
-        EngineTypeRollup::InMemory
-    };
-
+cfg_if::cfg_if! {
+        if #[cfg(feature = "rollup_storage_sql")] {
+            let engine_type = EngineTypeRollup::SQL;
+        } else {
+            let engine_type = EngineTypeRollup::InMemory;
+        }
+    }
     let rollup_store =
         StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
