@@ -1,8 +1,12 @@
 use crate::{
     DEFAULT_L2_DATADIR,
-    cli::{self as ethrex_cli, Options as NodeOptions},
-    initializers::init_store,
-    l2::{self, init_l2, options::Options},
+    cli::remove_db,
+    initializers::{init_l1, init_store, init_tracing},
+    l2::{
+        self,
+        deployer::{DeployerOptions, deploy_l1_contracts},
+        options::Options,
+    },
     networks::Network,
     utils::{parse_private_key, set_datadir},
 };
@@ -32,6 +36,9 @@ use std::{
 };
 use tracing::info;
 
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
+
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -56,7 +63,33 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        init_l2(init_options).await
+        l2::init_tracing(&init_options);
+        let mut l2_options = init_options;
+
+        if l2_options.node_opts.dev {
+            println!("Removing L1 and L2 databases...");
+            remove_db(DB_ETHREX_DEV_L1, true);
+            remove_db(DB_ETHREX_DEV_L2, true);
+            println!("Initializing L1");
+            init_l1(crate::cli::Options::default_l1()).await?;
+            println!("Deploying contracts...");
+            let contract_addresses =
+                l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
+
+            l2_options = l2::options::Options {
+                node_opts: crate::cli::Options::default_l2(),
+                ..Default::default()
+            };
+            l2_options
+                .sequencer_opts
+                .committer_opts
+                .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
+            l2_options.sequencer_opts.watcher_opts.bridge_address =
+                Some(contract_addresses.bridge_address);
+            println!("Initializing L2");
+        }
+        l2::init_l2(l2_options).await?;
+        Ok(())
     }
 }
 
@@ -129,18 +162,19 @@ pub enum Command {
         )]
         datadir: String,
     },
+    #[command(about = "Deploy in L1 all contracts needed by an L2.")]
+    Deploy {
+        #[command(flatten)]
+        options: DeployerOptions,
+    },
 }
 
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
+        init_tracing(&crate::cli::Options::default());
         match self {
             Self::RemoveDB { datadir, force } => {
-                Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
-                        .await
-                })
-                .await?
+                remove_db(&datadir, force);
             }
             Command::BlobsSaver {
                 l1_eth_rpc,
@@ -428,6 +462,9 @@ impl Command {
                     call_contract(&client, &private_key, contract_address, "unpause()", vec![])
                         .await?;
                 }
+            }
+            Command::Deploy { options } => {
+                deploy_l1_contracts(options).await?;
             }
         }
         Ok(())

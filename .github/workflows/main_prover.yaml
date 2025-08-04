@@ -58,8 +58,8 @@ jobs:
       - name: Start L1 & Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
