@@ -12,6 +12,7 @@ use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
 use ethrex_common::{Address, U256, types::Fork};
+use tracing::info;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -373,6 +374,7 @@ impl<'a> VM<'a> {
     // STATICCALL operation
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
         // STACK
+        info!("Current Stack: {:?}", self.current_call_frame.stack);
         let (
             gas,
             address,
