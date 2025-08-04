@@ -761,6 +761,10 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
+        // channel to send the result of dumping accounts
+        let (dump_account_result_sender, mut dump_account_result_receiver) =
+            tokio::sync::mpsc::channel::<Result<(), AccountDumpError>>(1000);
+
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
@@ -817,8 +821,7 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                tokio::task::spawn(async move {
-                    if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
+                if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
                     .expect("Failed")
                 {
                     std::fs::create_dir_all(
@@ -826,7 +829,13 @@ impl PeerHandler {
                     )
                     .expect("Failed to create accounts_state_snapshot dir");
                 }
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
+
+                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                tokio::task::spawn(async move {
+                    let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
+                    // TODO: check the error type and handle it properly
+                    let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
+                    dump_account_result_sender_cloned.send(result).await;  
                 })
                 .await
                 .unwrap();
@@ -881,6 +890,25 @@ impl PeerHandler {
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });
+            }
+
+            // Check if any dump account task finished
+            // TODO: consider tracking in-flight (dump) tasks
+            if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
+                if let Err(dump_account_data) = dump_account_result {
+                    // If the dumping failed, retry it
+                    let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                    tokio::task::spawn(async move {
+                        let AccountDumpError { path, contents } = dump_account_data;
+                        // Dump the account data
+                        // TODO: check the error type and handle it properly
+                        let result = std::fs::write(path.clone(), contents.clone()).map_err(|_| AccountDumpError{path, contents});
+                        // Send the result through the channel
+                        dump_account_result_sender_cloned.send(result).await;  
+                    })
+                    .await
+                    .unwrap();
+                }
             }
 
             let peer_channels = self
@@ -2377,4 +2405,9 @@ pub enum RequestStateTrieNodesError {
     SendMessageError(SendMessageError),
     #[error("Invalid data")]
     InvalidData,
+}
+
+struct AccountDumpError {
+    pub path: String,
+    pub contents: Vec<u8>,
 }
