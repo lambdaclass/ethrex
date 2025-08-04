@@ -20,12 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use std::{fmt::Debug, sync::Mutex};
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -40,6 +40,9 @@ pub struct Store {
     engine: Arc<dyn StoreEngine>,
     chain_config: Arc<RwLock<ChainConfig>>,
     latest_block_header: Arc<RwLock<BlockHeader>>,
+    snapshot_block_hash: Arc<RwLock<H256>>,
+    accounts_snapshot_cache: Arc<RwLock<BTreeMap<H256, Option<AccountState>>>>,
+    accounts_storage_cache: Arc<RwLock<BTreeMap<(H256, H256), Option<U256>>>>,
 }
 
 #[allow(dead_code)]
@@ -63,6 +66,10 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
+    pub account_snapshot_updates: Vec<(H256, AccountState)>,
+    // account address hash, storage key hash, value
+    pub snapshot_storage_updates: Vec<(H256, H256, U256)>,
+    pub update_snapshot: bool,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -72,10 +79,48 @@ pub struct AccountUpdatesList {
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
+    pub account_snapshot_updates: Vec<(H256, AccountState)>,
+    // account address hash, storage key hash, value
+    pub snapshot_storage_updates: Vec<(H256, H256, U256)>,
 }
 
 impl Store {
-    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    pub async fn store_block_updates(
+        &self,
+        mut update_batch: UpdateBatch,
+    ) -> Result<(), StoreError> {
+        if let Some(block) = update_batch.blocks.last() {
+            let mut current = self
+                .snapshot_block_hash
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            // if current is not parent, dont update so we no longer use snapshot
+            if *current == block.header.parent_hash {
+                *current = block.hash();
+            } else {
+                update_batch.update_snapshot = false;
+            }
+        };
+
+        if update_batch.update_snapshot {
+            let mut acc_cache = self
+                .accounts_snapshot_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            let mut storage_cache = self
+                .accounts_storage_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+
+            for (address, state) in &update_batch.account_snapshot_updates {
+                acc_cache.insert(*address, Some(state.clone()));
+            }
+
+            for (account, storage_key, value) in &update_batch.snapshot_storage_updates {
+                storage_cache.insert((*account, *storage_key), Some(*value));
+            }
+        }
+
         self.engine.apply_updates(update_batch).await
     }
 
@@ -87,17 +132,26 @@ impl Store {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                snapshot_block_hash: Default::default(),
+                accounts_snapshot_cache: Default::default(),
+                accounts_storage_cache: Default::default(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                snapshot_block_hash: Default::default(),
+                accounts_snapshot_cache: Default::default(),
+                accounts_storage_cache: Default::default(),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                snapshot_block_hash: Default::default(),
+                accounts_snapshot_cache: Default::default(),
+                accounts_storage_cache: Default::default(),
             },
         };
 
@@ -136,6 +190,29 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return Ok(self
+                    .accounts_snapshot_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .get(&hash_address_fixed(&address))
+                    .cloned()
+                    .and_then(|acc| {
+                        acc.map(|acc| AccountInfo {
+                            balance: acc.balance,
+                            code_hash: acc.code_hash,
+                            nonce: acc.nonce,
+                        })
+                    }));
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -396,8 +473,11 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
+        let mut account_snapshot_updates = Vec::new();
+        let mut snapshot_storage_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
+            let hashed_address_h256 = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address)?;
@@ -426,6 +506,12 @@ impl Store {
                 )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
+                    // We handle if value is zero inside engine.
+                    snapshot_storage_updates.push((
+                        hashed_address_h256,
+                        *storage_key,
+                        *storage_value,
+                    ));
                     if storage_value.is_zero() {
                         storage_trie.remove(hashed_key)?;
                     } else {
@@ -438,6 +524,7 @@ impl Store {
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            account_snapshot_updates.push((hashed_address_h256, account_state));
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
@@ -446,6 +533,8 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
+            account_snapshot_updates,
+            snapshot_storage_updates,
         })
     }
 
@@ -512,8 +601,9 @@ impl Store {
     pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
-    ) -> Result<H256, StoreError> {
+    ) -> Result<(H256, BTreeMap<H256, (H256, H256)>), StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut storage_roots_and_code_hash: BTreeMap<H256, (H256, H256)> = BTreeMap::new();
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -537,9 +627,13 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            storage_roots_and_code_hash
+                .insert(H256::from_slice(&hashed_address), (storage_root, code_hash));
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        genesis_state_trie.hash().map_err(StoreError::Trie)
+        let hash = genesis_state_trie.hash().map_err(StoreError::Trie)?;
+
+        Ok((hash, storage_roots_and_code_hash))
     }
 
     pub async fn add_receipt(
@@ -593,6 +687,11 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
+        *self
+            .snapshot_block_hash
+            .write()
+            .map_err(|_| StoreError::LockError)? = genesis_hash;
+
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
@@ -622,8 +721,45 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        let (genesis_state_root, storage_roots_and_code_hash) =
+            self.setup_genesis_state_trie(genesis.alloc.clone()).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+
+        {
+            let mut acc_cache = self
+                .accounts_snapshot_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            let mut storage_cache = self
+                .accounts_storage_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+
+            for (address, acc) in &genesis.alloc {
+                let hash = hash_address_fixed(address);
+                let (storage_root, code_hash) =
+                    *storage_roots_and_code_hash.get(&hash).ok_or_else(|| {
+                        StoreError::Custom("Missing storage root and code hash".to_string())
+                    })?;
+                acc_cache.insert(
+                    hash,
+                    Some(AccountState {
+                        balance: acc.balance,
+                        code_hash,
+                        nonce: acc.nonce,
+                        storage_root,
+                    }),
+                );
+
+                for (key, value) in acc.storage.iter() {
+                    storage_cache
+                        .insert((hash, H256::from_slice(&key.to_big_endian())), Some(*value));
+                }
+            }
+        }
+
+        self.engine
+            .write_genesis_account_snapshot(&genesis.alloc, storage_roots_and_code_hash)?;
 
         // Store genesis block
         info!(
@@ -691,6 +827,24 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                // if value is zero it is actually None.
+                let value = self
+                    .accounts_storage_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .get(&(hash_address_fixed(&address), storage_key))
+                    .and_then(|v| v.and_then(|v| if v == U256::zero() { None } else { Some(v) }));
+                return Ok(value);
+            }
+        }
+
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -881,6 +1035,24 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return Ok(self
+                    .accounts_snapshot_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .get(&hash_address_fixed(&address))
+                    .cloned()
+                    .flatten());
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -892,6 +1064,23 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        {
+            let cur_snap_block_hash = *self
+                .snapshot_block_hash
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+
+            if block_hash == cur_snap_block_hash {
+                return Ok(self
+                    .accounts_snapshot_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .get(&hash_address_fixed(&address))
+                    .cloned()
+                    .flatten());
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1360,7 +1549,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
-fn hash_address_fixed(address: &Address) -> H256 {
+pub fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()
