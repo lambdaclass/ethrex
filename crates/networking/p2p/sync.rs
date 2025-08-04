@@ -307,8 +307,11 @@ impl Syncer {
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
+                info!("MY LOGS 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };
+
+            info!("MY LOGS 9: Received {} block headers", block_headers.len());
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {

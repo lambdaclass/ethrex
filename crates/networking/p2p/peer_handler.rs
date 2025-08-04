@@ -245,6 +245,7 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
 
         loop {
+            info!("MY LOGS 7: In request block headers loop");
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -390,6 +391,7 @@ impl PeerHandler {
 
             // run download_chunk_from_peer in a different Tokio task
             let _download_result = tokio::spawn(async move {
+                info!("MY LOGS 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}");
                 debug!(
                     "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
@@ -401,7 +403,7 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| debug!("{free_peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| info!("MY LOGS 6: {free_peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
                 tx.send((
