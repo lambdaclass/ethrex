@@ -38,7 +38,7 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    chain_config: ChainConfig,
+    chain_config: Arc<RwLock<ChainConfig>>,
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
@@ -85,18 +85,18 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
-                chain_config: ChainConfig::default(),
+                chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                chain_config: ChainConfig::default(),
+                chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                chain_config: ChainConfig::default(),
+                chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
@@ -701,13 +701,19 @@ impl Store {
             .transpose()
     }
 
-    pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.chain_config = *chain_config;
+    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        *self
+            .chain_config
+            .write()
+            .map_err(|_| StoreError::LockError)? = *chain_config;
         self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(self.chain_config)
+        Ok(*self
+            .chain_config
+            .read()
+            .map_err(|_| StoreError::LockError)?)
     }
 
     pub async fn update_earliest_block_number(
@@ -1712,7 +1718,7 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    async fn test_chain_config_storage(mut store: Store) {
+    async fn test_chain_config_storage(store: Store) {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config().unwrap();

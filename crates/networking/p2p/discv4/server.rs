@@ -833,7 +833,7 @@ pub(super) mod tests {
     }
 
     async fn setup_storage(blocks: u64) -> Result<Store, StoreError> {
-        let mut store = Store::new("test", EngineType::InMemory)?;
+        let store = Store::new("test", EngineType::InMemory)?;
 
         let config = ChainConfig {
             shanghai_time: Some(1),
