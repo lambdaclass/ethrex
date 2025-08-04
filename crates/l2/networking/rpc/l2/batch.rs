@@ -1,4 +1,5 @@
 use ethrex_common::types::{BlockHash, batch::Batch};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
@@ -55,48 +56,56 @@ fn get_block_hashes(
 }
 
 pub struct GetBatchByBatchNumberRequest {
-    pub batch_number: u64,
+    pub batch_id: BlockIdentifier,
     pub block_hashes: bool,
 }
 
 impl RpcHandler for GetBatchByBatchNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetBatchByBatchNumberRequest, RpcErr> {
-        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
-            "No params provided".to_owned(),
-        ))?;
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::BadParams(
+                "No params provided".to_owned(),
+            )))?;
         if params.len() != 2 {
-            return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 2 params".to_owned(),
-            ))?;
-        };
-        // Parse BatchNumber
-        let hex_str = serde_json::from_value::<String>(params[0].clone())
-            .map_err(|e| ethrex_rpc::RpcErr::BadParams(e.to_string()))?;
+            return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::BadParams(
+                "Expected exactly 2 params".to_owned(),
+            )));
+        }
 
-        // Check that the BatchNumber is 0x prefixed
-        let hex_str = hex_str
-            .strip_prefix("0x")
-            .ok_or(ethrex_rpc::RpcErr::BadHexFormat(0))?;
-
-        // Parse hex string
-        let batch_number =
-            u64::from_str_radix(hex_str, 16).map_err(|_| ethrex_rpc::RpcErr::BadHexFormat(0))?;
-
-        let block_hashes = serde_json::from_value(params[1].clone())?;
+        let batch_id = BlockIdentifier::parse(params[0].clone(), 0).map_err(RpcErr::L1RpcErr)?;
+        let block_hashes = serde_json::from_value(params[1].clone())
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
 
         Ok(GetBatchByBatchNumberRequest {
-            batch_number,
+            batch_id,
             block_hashes,
         })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested batch with number: {}", self.batch_number);
-        let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
-            return Ok(Value::Null);
-        };
-        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
+        info!("Requested batch with id: {}", self.batch_id);
 
-        serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
+        let batch_number = match &self.batch_id {
+            BlockIdentifier::Number(n) => *n,
+            // both latest and pending now return the “in-flight” batch
+            BlockIdentifier::Tag(BlockTag::Latest) | BlockIdentifier::Tag(BlockTag::Pending) => {
+                context.rollup_store.get_latest_batch().await?
+            }
+            other => {
+                return Err(RpcErr::Internal(format!(
+                    "unsupported batch tag: {:?}",
+                    other
+                )));
+            }
+        };
+
+        let batch = match context.rollup_store.get_batch(batch_number).await? {
+            Some(b) => b,
+            None => return Ok(Value::Null),
+        };
+
+        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
+        serde_json::to_value(rpc_batch).map_err(|e| RpcErr::Internal(e.to_string()))
     }
 }

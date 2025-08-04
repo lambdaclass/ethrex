@@ -321,6 +321,35 @@ impl StoreEngineRollup for SQLStore {
         Ok(None)
     }
 
+    /// Stores the batch number by a given block number.
+    async fn store_batch_number_by_block(
+        &self,
+        block_number: BlockNumber,
+        batch_number: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM blocks WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
+                "INSERT INTO blocks VALUES (?1, ?2)",
+                vec![block_number, batch_number].into_params()?,
+            ),
+        ])
+        .await
+    }
+
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        let mut rows = self
+            .query("SELECT COALESCE(MAX(batch), 0) FROM blocks", ())
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return read_from_row_int(&row, 0);
+        }
+        Ok(0)
+    }
+
     /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,

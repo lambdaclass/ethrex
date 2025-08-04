@@ -71,6 +71,22 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
+    async fn store_batch_number_by_block(
+        &self,
+        block_number: BlockNumber,
+        batch_number: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .batches_by_block
+            .insert(block_number, batch_number);
+        Ok(())
+    }
+
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        let inner = self.inner()?;
+        Ok(inner.batches_by_block.values().copied().max().unwrap_or(0))
+    }
+
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
