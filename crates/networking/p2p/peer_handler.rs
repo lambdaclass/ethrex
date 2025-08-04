@@ -40,6 +40,8 @@ pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+pub const SNAP_LIMIT: usize = 20;
+
 // Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
@@ -51,8 +53,8 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    peer_table: Kademlia,
-    peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
+    pub peer_table: Kademlia,
+    pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
 pub enum BlockRequestOrder {
@@ -103,6 +105,33 @@ impl PeerHandler {
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
     async fn record_peer_critical_failure(&self, _peer_id: H256) {}
+
+    /// TODO: docs
+    pub async fn get_peer_channel_with_highest_score(
+        &self,
+        capabilities: &[Capability],
+        scores: &mut HashMap<H256, i64>,
+    ) -> Option<(H256, PeerChannels)> {
+        let (mut free_peer_id, mut free_peer_channel) = self
+            .peer_table
+            .get_peer_channels(capabilities)
+            .await
+            .first()
+            .unwrap()
+            .clone();
+
+        let mut max_peer_id_score = i64::MIN;
+        for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
+            let peer_id_score = scores.entry(*peer_id).or_default();
+            if *peer_id_score >= max_peer_id_score {
+                free_peer_id = *peer_id;
+                max_peer_id_score = *peer_id_score;
+                free_peer_channel = channel.clone();
+            }
+        }
+
+        Some((free_peer_id, free_peer_channel.clone()))
+    }
 
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
@@ -785,7 +814,7 @@ impl PeerHandler {
                     let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
                     // TODO: check the error type and handle it properly
                     let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
-                    dump_account_result_sender_cloned.send(result).await;  
+                    dump_account_result_sender_cloned.send(result).await;
                 })
                 .await
                 .unwrap();
@@ -850,9 +879,10 @@ impl PeerHandler {
                         let AccountDumpError { path, contents } = dump_account_data;
                         // Dump the account data
                         // TODO: check the error type and handle it properly
-                        let result = std::fs::write(path.clone(), contents.clone()).map_err(|_| AccountDumpError{path, contents});
+                        let result = std::fs::write(path.clone(), contents.clone())
+                            .map_err(|_| AccountDumpError { path, contents });
                         // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;  
+                        dump_account_result_sender_cloned.send(result).await;
                     })
                     .await
                     .unwrap();
@@ -2051,6 +2081,55 @@ impl PeerHandler {
 
     // TODO: Implement the logic to remove a peer from the peer table
     pub async fn remove_peer(&self, _peer_id: H256) {}
+
+    pub async fn get_block_header(
+        &self,
+        peer_channel: &mut PeerChannels,
+        block_number: u64,
+    ) -> Option<BlockHeader> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(block_number),
+            limit: 1,
+            skip: 0,
+            reverse: false,
+        });
+        info!("get_block_header: requesting header with number {block_number}");
+
+        let mut receiver = peer_channel.receiver.lock().await;
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request.clone()))
+            .await
+            .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
+            .inspect_err(|err| error!(err))
+            .expect("############### Error peer_channel connection");
+        let response = tokio::time::timeout(Duration::from_secs(5), async move {
+            let response = receiver.recv().await;
+            if response.is_none() {
+                error!("############### Error Message");
+            };
+            response.unwrap()
+        })
+        .await;
+
+        match response {
+            Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+                if id == request_id && !block_headers.is_empty() {
+                    return Some(block_headers.last().expect("############### Error").clone());
+                }
+            }
+            Ok(_other_msgs) => {
+                info!("Received unexpected message from peer");
+            }
+            Err(_err) => {
+                info!("Timeout while waiting for sync head from peer");
+            }
+        }
+
+        None
+    }
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
