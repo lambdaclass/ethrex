@@ -159,6 +159,8 @@ impl Syncer {
         };
 
         loop {
+            info!("MY LOGS 1: In snap sync");
+            info!("MY LOGS 2: State block hashes len {}", block_sync_state.into_snap_block_hashes().len());
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -293,6 +295,10 @@ impl Syncer {
         };
 
         loop {
+            info!("MY LOGS 1: In Full Sync");
+            info!("MY LOGS 3: State current headears len {}", block_sync_state.current_headers.len());
+            info!("MY LOGS 4: State current blocks len {}", block_sync_state.current_blocks.len());
+            
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -493,10 +499,10 @@ impl BlockSyncState {
 
     /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
     /// If it is a FullSync state, returns an empty vector
-    pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
+    pub fn into_snap_block_hashes(&self) -> Vec<BlockHash> {
         match self {
             BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(state) => state.block_hashes,
+            BlockSyncState::Snap(state) => state.block_hashes.clone(),
         }
     }
 
