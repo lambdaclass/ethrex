@@ -254,7 +254,7 @@ impl GenServer for RLPxConnection {
             Err(err) => {
                 // Handshake failed, just log a debug message.
                 // No connection was established so no need to perform any other action
-                tracing::debug!("Failed Handshake on RLPx connection {err}");
+                debug!("Failed Handshake on RLPx connection {err}");
                 self.inner_state = InnerState::HandshakeFailed;
                 Ok(NoSuccess(self))
             }
