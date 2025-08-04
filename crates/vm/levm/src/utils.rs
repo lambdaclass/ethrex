@@ -1,5 +1,6 @@
 use crate::{
     EVMConfig, Environment,
+    account::{AccountStatus, LevmAccount},
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -20,7 +21,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, Transaction, tx_fields::*},
+    types::{Account, Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -666,5 +667,24 @@ impl<'a> VM<'a> {
                 Ok((created_address, true))
             }
         }
+    }
+}
+
+pub fn account_to_levm_account(account: &Account) -> (LevmAccount, Bytes) {
+    (
+        LevmAccount {
+            info: account.info.clone(),
+            storage: account.storage.clone(),
+            status: AccountStatus::Unmodified,
+        },
+        account.code.clone(),
+    )
+}
+
+pub fn levm_account_to_account(levm_account: &LevmAccount, code: &Bytes) -> Account {
+    Account {
+        info: levm_account.info.clone(),
+        storage: levm_account.storage.clone(),
+        code: code.clone(),
     }
 }

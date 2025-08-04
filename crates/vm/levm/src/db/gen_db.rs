@@ -15,6 +15,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 use std::collections::btree_map::Entry;
@@ -36,23 +37,17 @@ pub struct GeneralizedDatabase {
 }
 
 impl GeneralizedDatabase {
-    //TODO: The codes should be a parameter here, or at least extracted from current accoutnts state
     pub fn new(
         store: Arc<dyn Database>,
         current_accounts_state: BTreeMap<Address, Account>,
     ) -> Self {
         let mut codes = BTreeMap::new();
         let levm_accounts: BTreeMap<Address, LevmAccount> = current_accounts_state
-            .iter()
+            .into_iter()
             .map(|(address, account)| {
-                (*address, {
-                    codes.insert(account.info.code_hash, account.code.clone());
-                    LevmAccount {
-                        info: account.info.clone(),
-                        storage: account.storage.clone(),
-                        status: AccountStatus::Unmodified,
-                    }
-                })
+                let (levm_account, code) = account_to_levm_account(&account);
+                codes.insert(levm_account.info.code_hash, code);
+                (address, levm_account)
             })
             .collect();
         Self {
@@ -73,11 +68,7 @@ impl GeneralizedDatabase {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let info = self.store.get_account_info(address)?;
-                let account = LevmAccount {
-                    info,
-                    storage: BTreeMap::new(),
-                    status: AccountStatus::Unmodified,
-                };
+                let account = LevmAccount::from(info);
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }
