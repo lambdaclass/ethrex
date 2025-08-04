@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::common::{
-    accounts::get_rich_account, find_withdrawal_with_widget, get_contract_dependencies, l1_client, l2_client, test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_deposit_receipt, wait_for_verified_proof
+use crate::harness::{
+    find_withdrawal_with_widget, get_contract_dependencies, rich_pk_1, l1_client, l2_client, test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_deposit_receipt, wait_for_verified_proof
 };
 use ethrex_common::{Address, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
@@ -13,16 +13,11 @@ use ethrex_l2_sdk::{
     bridge_address, claim_erc20withdraw, compile_contract, deposit_erc20,
     wait_for_transaction_receipt, COMMON_BRIDGE_L2_ADDRESS,
 };
-use ethrex_rpc::clients::eth::EthClient;
-use secp256k1::SecretKey;
 
-mod common;
-
-#[tokio::test]
-async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
@@ -186,11 +181,10 @@ async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_erc20_failed_deposit() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_erc20_failed_deposit() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();

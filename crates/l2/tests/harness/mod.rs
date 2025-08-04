@@ -29,24 +29,15 @@ use hex::FromHexError;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_common::calldata::Value;
 
-use crate::common::accounts::PRIVATE_KEYS_FILE_PATH;
-
-pub mod accounts;
+pub mod contracts;
+pub mod erc20;
+pub mod eth;
 
 pub const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
+pub const PRIVATE_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
 
-const DEFAULT_L1_RPC: &str = "http://localhost:8545";
-const DEFAULT_L2_RPC: &str = "http://localhost:1729";
-// 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
-const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
-    0x94, 0x1e, 0x10, 0x33, 0x20, 0x61, 0x5d, 0x39, 0x4a, 0x55, 0x70, 0x8b, 0xe1, 0x3e, 0x45, 0x99,
-    0x4c, 0x7d, 0x93, 0xb9, 0x32, 0xb0, 0x64, 0xdb, 0xcb, 0x2b, 0x51, 0x1f, 0xe3, 0x25, 0x4e, 0x2e,
-]);
-// 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
-const DEFAULT_L2_RETURN_TRANSFER_PRIVATE_KEY: H256 = H256([
-    0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
-    0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
-]);
+pub const L1_RPC: &str = "http://localhost:8545";
+pub const L2_RPC: &str = "http://localhost:1729";
 // 0x0007a881CD95B1484fca47615B64803dad620C8d
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
@@ -155,12 +146,12 @@ pub async fn deposit(
 }
 
 pub fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
+    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(L1_RPC.to_string()))
         .unwrap()
 }
 
 pub fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
+    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(L2_RPC.to_string()))
         .unwrap()
 }
 
@@ -170,19 +161,23 @@ pub fn fees_vault() -> Address {
         .unwrap_or(DEFAULT_PROPOSER_COINBASE_ADDRESS)
 }
 
-pub fn l1_rich_wallet_private_key() -> SecretKey {
-    let l1_rich_wallet_pk = std::env::var("INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY")
-        .map(|pk| pk.parse().expect("Invalid l1 rich wallet pk"))
-        .unwrap_or(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY);
-    SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
+pub fn rich_wallet() -> Vec<SecretKey> {
+    std::fs::read_to_string(private_keys_file_path())
+        .unwrap()
+        .lines()
+        .map(|line| line.trim().to_string())
+        .map(|hex| hex.trim_start_matches("0x").to_string())
+        .map(|trimmed| hex::decode(trimmed).unwrap())
+        .map(|decoded| SecretKey::from_slice(&decoded).unwrap())
+        .collect()
 }
 
-pub fn l2_return_transfer_private_key() -> SecretKey {
-    let l2_return_deposit_private_key =
-        std::env::var("INTEGRATION_TEST_RETURN_TRANSFER_PRIVATE_KEY")
-            .map(|pk| pk.parse().expect("Invalid l1 rich wallet pk"))
-            .unwrap_or(DEFAULT_L2_RETURN_TRANSFER_PRIVATE_KEY);
-    SecretKey::from_slice(l2_return_deposit_private_key.as_bytes()).unwrap()
+pub fn rich_pk_1() -> SecretKey {
+    rich_wallet()[0]
+}
+
+pub fn rich_pk_2() -> SecretKey {
+    rich_wallet()[1]
 }
 
 pub async fn wait_for_l2_deposit_receipt(

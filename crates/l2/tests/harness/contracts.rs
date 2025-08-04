@@ -5,24 +5,15 @@ use ethrex_common::U256;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{bridge_address, compile_contract, get_erc1967_slot, COMMON_BRIDGE_L2_ADDRESS};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
-use ethrex_rpc::clients::eth::EthClient;
-use secp256k1::SecretKey;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use keccak_hash::keccak;
-use ethrex_common::Address;
-use ethrex_l2_sdk::{wait_for_transaction_receipt, L1ToL2TransactionData, send_l1_to_l2_tx};
-use crate::common::{fees_vault, test_call_to_contract_with_deposit};
+use crate::harness::{get_contract_dependencies, l1_client, l2_client, test_deploy, test_send, wait_for_l2_deposit_receipt, rich_pk_1, test_call_to_contract_with_deposit};
 
-use crate::common::{accounts::get_rich_account, get_contract_dependencies, l1_client, l2_client, test_deploy, test_send, wait_for_l2_deposit_receipt};
-
-mod common;
-
-#[tokio::test]
-async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing upgrade");
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let private_key = get_rich_account().await;
+    let private_key = rich_pk_1();
 
     println!("test upgrade: Downloading openzeppelin contracts");
 
@@ -90,11 +81,10 @@ async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
 /// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
 /// The deposit will trigger the call to the contract.
-#[tokio::test]
-async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     println!("ptx_with_contract_call: Deploying contract on L2");
 
     let init_code = hex::decode(std::fs::read(
@@ -195,11 +185,10 @@ async fn test_privileged_tx_with_contract_call() -> Result<(), Box<dyn std::erro
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
 /// The call to the contract should revert but the deposit should be successful.
-#[tokio::test]
-async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     let init_code = hex::decode(std::fs::read(
         "../../fixtures/contracts/payable/Payable.bin",
     )?)?;

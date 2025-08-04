@@ -1,10 +1,10 @@
-use crate::common::{
-    accounts::get_rich_account, fees_vault, find_withdrawal_with_widget, get_fees_details_l2, get_rich_accounts_balance, l1_client, l2_client, perform_transfer, test_deploy_l1, test_send, transfer_value, wait_for_l2_deposit_receipt, wait_for_verified_proof, L2_GAS_COST_MAX_DELTA
+use crate::harness::{
+    fees_vault, find_withdrawal_with_widget, get_fees_details_l2, rich_pk_1, get_rich_accounts_balance, l1_client, l2_client, perform_transfer, test_deploy_l1, test_send, transfer_value, wait_for_l2_deposit_receipt, wait_for_verified_proof, L2_GAS_COST_MAX_DELTA
 };
 use bytes::Bytes;
 use color_eyre::eyre;
 use ethrex_common::{
-    Address, H160, U256,
+     H160, U256,
 };
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
     L2ToL1MessageKind, L2ToL1MessageRow, L2ToL1MessageStatus,
@@ -13,16 +13,12 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
     bridge_address, calldata::encode_calldata, claim_withdraw, get_address_alias, get_address_from_secret_key, l1_to_l2_tx_data::L1ToL2TransactionData, wait_for_transaction_receipt, COMMON_BRIDGE_L2_ADDRESS
 };
-use ethrex_rpc::{clients::eth::from_hex_string_to_u256, types::block_identifier::{BlockIdentifier, BlockTag}, EthClient};
-use secp256k1::SecretKey;
+use ethrex_rpc::{ types::block_identifier::{BlockIdentifier, BlockTag}};
 
-use crate::common::{deposit, l2_return_transfer_private_key};
+use crate::harness::{deposit, rich_pk_2};
 
-mod common;
-
-#[tokio::test]
-async fn test_deposit() -> eyre::Result<()> {
-    let rich_wallet_private_key = get_rich_account().await;
+pub async fn test_deposit() -> eyre::Result<()> {
+    let rich_wallet_private_key = rich_pk_1();
     deposit(
         &l1_client(),
         &l2_client(),
@@ -33,11 +29,10 @@ async fn test_deposit() -> eyre::Result<()> {
 
 /// Tests that a withdrawal can be triggered by a privileged transaction
 /// This ensures the sequencer can't censor withdrawals without stopping the network
-#[tokio::test]
-async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     println!("Testing forced withdrawal");
     let rich_address = ethrex_l2_sdk::get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address");
@@ -64,7 +59,7 @@ async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> {
             transfer_value,
             Bytes::from(calldata),
         ),
-        &get_rich_account().await,
+        &rich_pk_1(),
         bridge_address()?,
         &l1_client,
     )
@@ -150,10 +145,9 @@ async fn test_forced_withdrawal() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_privileged_spammer() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_privileged_spammer() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
     )?)?;
@@ -171,11 +165,10 @@ async fn test_privileged_spammer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_transfer() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_transfer() -> Result<(), Box<dyn std::error::Error>> {
     let l2_client = l2_client();
-    let transferer_private_key = get_rich_account().await;
-    let returnerer_private_key = l2_return_transfer_private_key();
+    let transferer_private_key = rich_pk_1();
+    let returnerer_private_key = rich_pk_2();
     println!("test transfer: Transferring funds on L2");
     let transferer_address = get_address_from_secret_key(&transferer_private_key)?;
     let returner_address = get_address_from_secret_key(&returnerer_private_key)?;
@@ -209,12 +202,11 @@ async fn test_transfer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let transferer_private_key = get_rich_account().await;
-    let receiver_private_key = l2_return_transfer_private_key();
+    let transferer_private_key = rich_pk_1();
+    let receiver_private_key = rich_pk_2();
     println!("transfer_with_ptx: Transferring funds on L2 through a deposit");
     let transferer_address = get_address_from_secret_key(&transferer_private_key)?;
     let receiver_address = get_address_from_secret_key(&receiver_private_key)?;
@@ -271,10 +263,9 @@ async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-#[tokio::test]
-async fn test_gas_burning() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_gas_burning() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     println!("test_gas_burning: Transferring funds on L2 through a deposit");
     let rich_address = get_address_from_secret_key(&rich_wallet_private_key)?;
     let l2_gas_limit = 2_000_000;
@@ -302,12 +293,11 @@ async fn test_gas_burning() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
-    let receiver_private_key = l2_return_transfer_private_key();
+    let rich_wallet_private_key = rich_pk_1();
+    let receiver_private_key = rich_pk_2();
     println!("Starting test for privileged transaction with insufficient balance");
     let rich_address = get_address_from_secret_key(&rich_wallet_private_key)?;
     let receiver_address = get_address_from_secret_key(&receiver_private_key)?;
@@ -367,12 +357,11 @@ async fn test_privileged_tx_not_enough_balance() -> Result<(), Box<dyn std::erro
 }
 
 
-#[tokio::test]
-async fn test_n_withdraws() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_5_withdrawals() -> Result<(), Box<dyn std::error::Error>> {
     let n = 5;
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let withdrawer_private_key = get_rich_account().await;
+    let withdrawer_private_key = rich_pk_1();
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
     let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(&withdrawer_private_key)?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
@@ -459,7 +448,6 @@ async fn test_n_withdraws() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let mut withdraw_fees = U256::zero();
-    let mut withdraw_fees = U256::zero();
     for receipt in receipts {
         withdraw_fees += get_fees_details_l2(receipt, &l2_client).await.recoverable_fees;
     }
@@ -534,8 +522,7 @@ async fn test_n_withdraws() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_total_eth_l2() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_total_eth_l2() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
     println!("Checking total ETH on L2");
@@ -572,11 +559,10 @@ async fn test_total_eth_l2() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_aliasing() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_aliasing() -> Result<(), Box<dyn std::error::Error>> {
     let l1_client = l1_client();
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_rich_account().await;
+    let rich_wallet_private_key = rich_pk_1();
     println!("Testing aliasing");
     let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
