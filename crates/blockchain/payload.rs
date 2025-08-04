@@ -38,7 +38,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -444,7 +444,7 @@ impl Blockchain {
                     txs.shift()?;
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&tx_hash)?;
-                    warn!(
+                    debug!(
                         "Removed stale transaction: {tx_hash:x}, tx nonce: {tx}, account nonce: {state}"
                     );
                     _ = e;
