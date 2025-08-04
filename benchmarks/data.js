@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754322798628,
+  "lastUpdate": 1754324080068,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16329,6 +16329,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012111905626134302,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e6c47ec5c1d13c7f3a98fd44baf7b928f32c26f8",
+          "message": "fix(l1): allow some txs to be missing in GetPooledTransactions (#3921)\n\n**Motivation**\n\nWe're failing to respond `GetPooledTransactions` messages because we\ngive up when we can't find one of the hashes.\nThe spec states it's OK to simply skip that transaction in that case and\nthat it's better to send what we have.\nThis fixes the \"hash not in mempool\" messages, but mostly makes our\nclient more compliant.\n\n**Description**\n\nErrors in `Blockchain::get_p2p_transaction_by_hash` come from missing or\ninvalid transactions only. None of that is fatal for the ends of the\nwire protocol, so ignore those errors and return all valid transactions\nwe have matching the hashes.\n\nCloses #3928\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-08-04T15:02:19Z",
+          "tree_id": "46745705810064f56e102a843e411637ebf909d6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e6c47ec5c1d13c7f3a98fd44baf7b928f32c26f8"
+        },
+        "date": 1754324063763,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006295905660377359,
             "unit": "Mgas/s"
           }
         ]
