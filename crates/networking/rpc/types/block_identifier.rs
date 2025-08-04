@@ -87,6 +87,10 @@ impl BlockIdentifier {
             _ => Ok(None),
         }
     }
+
+    pub async fn latest() -> Self {
+        BlockIdentifier::Tag(BlockTag::Latest)
+    }
 }
 
 impl BlockIdentifierOrHash {
