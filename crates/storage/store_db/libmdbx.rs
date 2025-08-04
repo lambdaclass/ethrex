@@ -138,6 +138,19 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
 
+            for (address, state) in update_batch.account_snapshot_updates {
+                tx.upsert::<AccountSnapshot>(KeyBytes(address.0), AccountStateRLP::from(state))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            for (account, storage_key, value) in update_batch.snapshot_storage_updates {
+                tx.upsert::<AccountStorageSnapshot>(
+                    TupleKeyBytes((account.0, storage_key.0)),
+                    AccountStorageValueBytes(value.to_little_endian()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
             // store code updates
             for (hashed_address, code) in update_batch.code_updates {
                 tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
@@ -153,7 +166,9 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-            for block in update_batch.blocks {
+
+            let last = update_batch.blocks.len().saturating_sub(1);
+            for (i, block) in update_batch.blocks.into_iter().enumerate() {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
@@ -180,6 +195,11 @@ impl StoreEngine for Store {
 
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
+
+                if i == last {
+                    tx.upsert::<CurrentBlockHashSnapshot>(0, hash.into())
+                        .map_err(StoreError::LibmdbxError)?;
+                }
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
@@ -1073,6 +1093,35 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
+    fn write_account_snapshots(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_account_snapshot(&self, address: H256) -> Result<Option<AccountState>, StoreError> {
+        let Some(account_rlp) = self.read_sync::<AccountSnapshot>(KeyBytes(address.0))? else {
+            return Ok(None);
+        };
+
+        Ok(Some(AccountState::decode(account_rlp.bytes())?))
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let Some(value) = self
+            .read_sync::<AccountStorageSnapshot>(TupleKeyBytes((account_hash.0, storage_key.0)))?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(U256::from_little_endian(&value.0)))
+    }
+
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1288,6 +1337,25 @@ table!(
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
+// snapshot tables
+
+table!(
+    /// account Snapshot
+    ( AccountSnapshot ) KeyBytes => AccountStateRLP
+);
+
+table!(
+    /// storage snapshot
+    ( AccountStorageSnapshot ) TupleKeyBytes  => AccountStorageValueBytes
+);
+
+table!(
+    /// current block hash snapshot
+    ( CurrentBlockHashSnapshot ) u64  => Rlp<H256>
+);
+
+// --
+
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
@@ -1308,6 +1376,10 @@ table!(
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
 pub struct AccountStorageValueBytes(pub [u8; 32]);
 
+pub struct KeyBytes(pub [u8; 32]);
+
+pub struct TupleKeyBytes(pub ([u8; 32], [u8; 32]));
+
 impl Encodable for AccountStorageKeyBytes {
     type Encoded = [u8; 32];
 
@@ -1319,6 +1391,20 @@ impl Encodable for AccountStorageKeyBytes {
 impl Decodable for AccountStorageKeyBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageKeyBytes(b.try_into()?))
+    }
+}
+
+impl Encodable for KeyBytes {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.0
+    }
+}
+
+impl Decodable for KeyBytes {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        Ok(KeyBytes(b.try_into()?))
     }
 }
 
@@ -1357,6 +1443,22 @@ impl From<AccountStorageKeyBytes> for H256 {
 impl From<AccountStorageValueBytes> for U256 {
     fn from(value: AccountStorageValueBytes) -> Self {
         U256::from_big_endian(&value.0)
+    }
+}
+
+impl Encodable for TupleKeyBytes {
+    type Encoded = Vec<u8>;
+
+    fn encode(self) -> Self::Encoded {
+        [self.0.0, self.0.1].concat()
+    }
+}
+
+impl Decodable for TupleKeyBytes {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        let first = b[..32].try_into()?;
+        let second = b[32..64].try_into()?;
+        Ok(TupleKeyBytes((first, second)))
     }
 }
 

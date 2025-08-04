@@ -372,6 +372,9 @@ impl Blockchain {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates: account_updates_list.code_updates,
+            account_snapshot_updates: account_updates_list.account_snapshot_updates,
+            snapshot_storage_updates: account_updates_list.snapshot_storage_updates,
+            update_snapshot: true,
         };
 
         self.storage
@@ -562,6 +565,9 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            account_snapshot_updates: account_updates_list.account_snapshot_updates,
+            snapshot_storage_updates: account_updates_list.snapshot_storage_updates,
+            update_snapshot: true,
         };
 
         self.storage

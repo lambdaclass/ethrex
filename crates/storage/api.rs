@@ -385,6 +385,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
 
+    fn write_account_snapshots(&self, accounts: Vec<(H256, AccountState)>) -> Result<(), StoreError>;
+
+    fn get_account_snapshot(&self, address: H256) -> Result<Option<AccountState>, StoreError>;
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError>;
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///

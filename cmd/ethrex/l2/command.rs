@@ -304,6 +304,9 @@ impl Command {
                                 blocks: vec![],
                                 receipts: vec![],
                                 code_updates: vec![],
+                                account_snapshot_updates: account_updates_list.account_snapshot_updates,
+                                snapshot_storage_updates: account_updates_list.snapshot_storage_updates,
+                                update_snapshot: true,
                             };
 
                             store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");
