@@ -115,7 +115,7 @@ impl Store {
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let mut store = Self::new(store_path, engine_type)?;
+        let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -584,7 +584,7 @@ impl Store {
             .await
     }
 
-    pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -1437,7 +1437,7 @@ mod tests {
         run_test(test_genesis_block, engine_type).await;
     }
 
-    async fn test_genesis_block(mut store: Store) {
+    async fn test_genesis_block(store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
