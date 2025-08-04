@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754340933979,
+  "lastUpdate": 1754343385715,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7495,6 +7495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165049708380,
             "range": "± 350033969",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f30ef7bdaeabe07ae43e94631e2668e0f43ebdc6",
+          "message": "feat(l2): ethrex l2 --dev (#3836)\n\n**Motivation**\nWe want to be able to initialize the full l2 by running `ethrex l2\n--dev`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nMove all the logic for initializing the l2 to `cmd/ethrex`\nNow calling `ethrex l2 --dev` does the following\n\n- Remove L1 and L2 DBs\n- Initialize an L1\n- Deploy contracts\n- Initialize an L2\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-08-04T20:44:32Z",
+          "tree_id": "074c7abef322d7221ee15e42e6f9ef6f534ad8a2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f30ef7bdaeabe07ae43e94631e2668e0f43ebdc6"
+        },
+        "date": 1754343372085,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164573385374,
+            "range": "± 243385445",
             "unit": "ns/iter"
           }
         ]
