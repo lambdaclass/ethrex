@@ -1,13 +1,16 @@
 use crate::{
     cli::Options,
     networks::{self, Network, PublicNetwork},
-    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
+    utils::{
+        get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        set_datadir,
+    },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{P2PContext, public_key_from_signing_key},
+    network::{P2PContext, peer_table, public_key_from_signing_key},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -18,6 +21,8 @@ use ethrex_vm::EvmEngine;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
@@ -341,4 +346,106 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+#[cfg(feature = "sync-test")]
+async fn set_sync_block(store: &Store) {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
+        let block_number = block_number
+            .parse()
+            .expect("Block number provided by environment is not numeric");
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .expect("Could not get hash for block number provided by env variable")
+            .expect("Could not get hash for block number provided by env variable");
+        store
+            .update_latest_block_number(block_number)
+            .await
+            .expect("Failed to update latest block number");
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .expect("Failed to set latest canonical block");
+    }
+}
+
+pub async fn init_l1(
+    opts: Options,
+) -> eyre::Result<(
+    String,
+    CancellationToken,
+    Arc<Mutex<KademliaTable>>,
+    Arc<Mutex<NodeRecord>>,
+)> {
+    let data_dir = set_datadir(&opts.datadir);
+
+    let network = get_network(&opts);
+
+    let genesis = network.get_genesis()?;
+    let store = init_store(&data_dir, genesis).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
+
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+
+    let signer = get_signer(&data_dir);
+
+    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &data_dir,
+        &local_p2p_node,
+        &signer,
+    )));
+
+    let peer_table = peer_table(local_p2p_node.node_id());
+
+    // TODO: Check every module starts properly.
+    let tracker = TaskTracker::new();
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    init_rpc_api(
+        &opts,
+        peer_table.clone(),
+        local_p2p_node.clone(),
+        local_node_record.lock().await.clone(),
+        store.clone(),
+        blockchain.clone(),
+        cancel_token.clone(),
+        tracker.clone(),
+    )
+    .await;
+
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "dev")] {
+            init_dev_network(&opts, &store, tracker.clone()).await;
+        } else {
+            if opts.p2p_enabled {
+                init_network(
+                    &opts,
+                    &network,
+                    &data_dir,
+                    local_p2p_node,
+                    local_node_record.clone(),
+                    signer,
+                    peer_table.clone(),
+                    store.clone(),
+                    tracker.clone(),
+                    blockchain.clone(),
+                    None
+                )
+                .await;
+            } else {
+                info!("P2P is disabled");
+            }
+        }
+    }
+    Ok((data_dir, cancel_token, peer_table, local_node_record))
 }
