@@ -211,3 +211,6 @@ docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
+
+dummy_target:
+	echo
