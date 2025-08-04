@@ -1,23 +1,265 @@
-use crate::harness::{
-    L2_GAS_COST_MAX_DELTA, fees_vault, find_withdrawal_with_widget, get_fees_details_l2,
-    get_rich_accounts_balance, l1_client, l2_client, perform_transfer, rich_pk_1, test_deploy_l1,
-    test_send, transfer_value, wait_for_l2_ptx_receipt, wait_for_verified_proof,
-};
 use bytes::Bytes;
 use color_eyre::eyre;
-use ethrex_common::{H160, U256};
+use ethrex_common::{Address, H160, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
     L2ToL1MessageKind, L2ToL1MessageRow, L2ToL1MessageStatus,
 };
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::{
+    clients::send_eip1559_transaction,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_withdraw,
     get_address_alias, get_address_from_secret_key, l1_to_l2_tx_data::L1ToL2TransactionData,
     wait_for_transaction_receipt,
 };
-use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
+use ethrex_rpc::{
+    EthClient,
+    clients::eth::from_hex_string_to_u256,
+    types::{
+        block_identifier::{BlockIdentifier, BlockTag},
+        receipt::RpcReceipt,
+    },
+};
+use secp256k1::SecretKey;
 
-use crate::harness::{deposit, rich_pk_2};
+use crate::harness::{
+    contracts::test_deploy_l1,
+    utils::{
+        L2_GAS_COST_MAX_DELTA, fees_vault, find_withdrawal_with_widget, get_fees_details_l2,
+        get_rich_accounts_balance, l1_client, l2_client, rich_pk_1, rich_pk_2,
+        wait_for_l2_ptx_receipt, wait_for_verified_proof,
+    },
+};
+
+pub async fn deposit(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+    depositor_pk: SecretKey,
+    value: U256,
+) -> eyre::Result<()> {
+    println!("fetching initial balances on L1 and L2");
+    let depositor_address = ethrex_l2_sdk::get_address_from_secret_key(&depositor_pk)?;
+    let depositor_l1_initial_balance = l1_client
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let depositor_l2_initial_balance = l2_client
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert!(
+        depositor_l1_initial_balance >= value,
+        "L1 depositor doesn't have enough balance to deposit"
+    );
+
+    let bridge_initial_balance = l1_client
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let fee_vault_balance_before_deposit = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("depositing funds from L1 to L2");
+
+    let deposit_tx_hash =
+        ethrex_l2_sdk::deposit_through_transfer(value, depositor_address, &depositor_pk, l1_client)
+            .await?;
+
+    println!("waiting for L1 deposit transaction receipt");
+
+    let deposit_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
+
+    assert!(
+        deposit_tx_receipt.receipt.status,
+        "Deposit transaction failed"
+    );
+
+    println!("waiting for L2 deposit transaction receipt");
+    let l2_deposit_receipt = wait_for_l2_ptx_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        l1_client,
+        l2_client,
+    )
+    .await?;
+    assert!(
+        l2_deposit_receipt.receipt.status,
+        "L2 Deposit transaction failed"
+    );
+
+    let depositor_l1_balance_after_deposit = l1_client
+        .get_balance(depositor_address, BlockIdentifier::default())
+        .await?;
+    let depositor_l2_balance_after_deposit = l2_client
+        .get_balance(depositor_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let bridge_balance_after_deposit = l1_client
+        .get_balance(bridge_address()?, BlockIdentifier::default())
+        .await?;
+    let fee_vault_balance_after_deposit = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::default())
+        .await?;
+
+    assert_eq!(
+        depositor_l1_balance_after_deposit,
+        depositor_l1_initial_balance
+            - value
+            - deposit_tx_receipt.tx_info.gas_used * deposit_tx_receipt.tx_info.effective_gas_price,
+        "Depositor L1 balance didn't decrease as expected after deposit"
+    );
+    assert_eq!(
+        bridge_balance_after_deposit,
+        bridge_initial_balance + value,
+        "Bridge balance didn't increase as expected after deposit"
+    );
+    assert_eq!(
+        depositor_l2_balance_after_deposit,
+        depositor_l2_initial_balance + value,
+        "Deposit recipient L2 balance didn't increase as expected after deposit"
+    );
+    assert_eq!(
+        fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
+        "Fee vault balance should not change after deposit"
+    );
+
+    Ok(())
+}
+
+pub async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U256 {
+    let res = client
+        .call(
+            token,
+            encode_calldata("balanceOf(address)", &[Value::Address(user)])
+                .unwrap()
+                .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    from_hex_string_to_u256(&res).unwrap()
+}
+
+pub async fn test_send(
+    client: &EthClient,
+    private_key: &SecretKey,
+    to: Address,
+    signature: &str,
+    data: &[Value],
+) -> RpcReceipt {
+    let signer: Signer = LocalSigner::new(*private_key).into();
+    let mut tx = client
+        .build_eip1559_transaction(
+            to,
+            signer.address(),
+            encode_calldata(signature, data).unwrap().into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    tx.gas_limit *= 2; // tx reverts in some cases otherwise
+    let tx_hash = send_eip1559_transaction(client, &tx, &signer)
+        .await
+        .unwrap();
+    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
+        .await
+        .unwrap()
+}
+
+pub async fn perform_transfer(
+    l2_client: &EthClient,
+    transferer_private_key: &SecretKey,
+    transfer_recipient_address: Address,
+    transfer_value: U256,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
+
+    let transferer_initial_l2_balance = l2_client
+        .get_balance(transferer_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert!(
+        transferer_initial_l2_balance >= transfer_value,
+        "L2 transferer doesn't have enough balance to transfer"
+    );
+
+    let transfer_recipient_initial_balance = l2_client
+        .get_balance(
+            transfer_recipient_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    let fee_vault_balance_before_transfer = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let transfer_tx = ethrex_l2_sdk::transfer(
+        transfer_value,
+        transferer_address,
+        transfer_recipient_address,
+        transferer_private_key,
+        l2_client,
+    )
+    .await?;
+
+    let transfer_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, l2_client, 1000).await?;
+
+    assert!(
+        transfer_tx_receipt.receipt.status,
+        "Transfer transaction failed"
+    );
+
+    let recoverable_fees_vault_balance = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("Recoverable Fees Balance: {recoverable_fees_vault_balance}",);
+
+    println!("Checking balances on L2 after transfer");
+
+    let transferer_l2_balance_after_transfer = l2_client
+        .get_balance(transferer_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert!(
+        (transferer_initial_l2_balance - transfer_value)
+            .abs_diff(transferer_l2_balance_after_transfer)
+            < L2_GAS_COST_MAX_DELTA,
+        "L2 transferer balance didn't decrease as expected after transfer. Gas costs were {}/{L2_GAS_COST_MAX_DELTA}",
+        (transferer_initial_l2_balance - transfer_value)
+            .abs_diff(transferer_l2_balance_after_transfer)
+    );
+
+    let transfer_recipient_l2_balance_after_transfer = l2_client
+        .get_balance(
+            transfer_recipient_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    assert_eq!(
+        transfer_recipient_l2_balance_after_transfer,
+        transfer_recipient_initial_balance + transfer_value,
+        "L2 transfer recipient balance didn't increase as expected after transfer"
+    );
+
+    let fee_vault_balance_after_transfer = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let transfer_fees = get_fees_details_l2(transfer_tx_receipt, l2_client).await;
+
+    assert_eq!(
+        fee_vault_balance_after_transfer,
+        fee_vault_balance_before_transfer + transfer_fees.recoverable_fees,
+        "Fee vault balance didn't increase as expected after transfer"
+    );
+
+    Ok(())
+}
 
 pub async fn test_deposit() -> eyre::Result<()> {
     let rich_wallet_private_key = rich_pk_1();
@@ -184,6 +426,7 @@ pub async fn test_transfer() -> Result<(), Box<dyn std::error::Error>> {
     println!("test transfer: Transferring funds on L2");
     let transferer_address = get_address_from_secret_key(&transferer_private_key)?;
     let returner_address = get_address_from_secret_key(&returnerer_private_key)?;
+    let transfer_value = U256::from(100);
 
     println!(
         "test transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
@@ -193,11 +436,11 @@ pub async fn test_transfer() -> Result<(), Box<dyn std::error::Error>> {
         &l2_client,
         &transferer_private_key,
         returner_address,
-        transfer_value(),
+        transfer_value,
     )
     .await?;
     // Only return 99% of the transfer, other amount is for fees
-    let return_amount = (transfer_value() * 99) / 100;
+    let return_amount = (transfer_value * 99) / 100;
 
     println!(
         "test transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
@@ -222,6 +465,7 @@ pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error
     println!("transfer_with_ptx: Transferring funds on L2 through a deposit");
     let transferer_address = get_address_from_secret_key(&transferer_private_key)?;
     let receiver_address = get_address_from_secret_key(&receiver_private_key)?;
+    let transfer_value = U256::from(100);
 
     println!("transfer_with_ptx: Fetching receiver's initial balance on L2");
 
@@ -237,7 +481,7 @@ pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error
         transferer_address,
         Some(0),
         None,
-        L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value(), Bytes::new()),
+        L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &transferer_private_key,
         bridge_address()?,
         &l1_client,
@@ -269,7 +513,7 @@ pub async fn test_transfer_with_privileged_tx() -> Result<(), Box<dyn std::error
         .await?;
     assert_eq!(
         receiver_balance_after,
-        receiver_balance_before + transfer_value()
+        receiver_balance_before + transfer_value
     );
     Ok(())
 }

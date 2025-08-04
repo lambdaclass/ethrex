@@ -1,7 +1,6 @@
 mod harness;
 
 use crate::harness::{
-    clean_contracts_dir,
     contracts::{
         test_privileged_tx_with_contract_call, test_privileged_tx_with_contract_call_revert,
         test_upgrade,
@@ -12,7 +11,7 @@ use crate::harness::{
         test_privileged_spammer, test_privileged_tx_not_enough_balance, test_total_eth_l2,
         test_transfer, test_transfer_with_privileged_tx,
     },
-    read_env_file_by_config,
+    utils::{clean_contracts_dir, read_env_file_by_config},
 };
 
 #[tokio::test]

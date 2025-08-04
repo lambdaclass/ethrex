@@ -1,16 +1,110 @@
 use std::path::Path;
 
-use crate::harness::{
-    get_contract_dependencies, l1_client, l2_client, rich_pk_1,
-    test_call_to_contract_with_transfer, test_deploy, test_send, wait_for_l2_ptx_receipt,
-};
 use bytes::Bytes;
-use ethrex_common::U256;
+use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::clients::deploy;
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, bridge_address, compile_contract, get_erc1967_slot};
+use ethrex_l2_sdk::{
+    COMMON_BRIDGE_L2_ADDRESS, L1ToL2TransactionData, bridge_address, compile_contract,
+    get_erc1967_slot, wait_for_transaction_receipt,
+};
+use ethrex_rpc::EthClient;
+use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use keccak_hash::keccak;
+use secp256k1::SecretKey;
+
+use crate::harness::eth::test_send;
+use crate::harness::utils::{
+    fees_vault, get_contract_dependencies, get_fees_details_l2, l1_client, l2_client, rich_pk_1,
+    wait_for_l2_ptx_receipt,
+};
+
+pub async fn test_deploy_l1(
+    client: &EthClient,
+    init_code: &[u8],
+    private_key: &SecretKey,
+) -> Result<Address, Box<dyn std::error::Error>> {
+    println!("Deploying contract on L1");
+
+    let deployer_signer: Signer = LocalSigner::new(*private_key).into();
+
+    let (deploy_tx_hash, contract_address) = deploy(
+        client,
+        &deployer_signer,
+        init_code.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
+
+    ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 5).await?;
+
+    Ok(contract_address)
+}
+
+pub async fn test_deploy(
+    l2_client: &EthClient,
+    init_code: &[u8],
+    deployer_private_key: &SecretKey,
+) -> Result<Address, Box<dyn std::error::Error>> {
+    println!("Deploying contract on L2");
+
+    let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
+
+    let deployer_balance_before_deploy = l2_client
+        .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let fee_vault_balance_before_deploy = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let (deploy_tx_hash, contract_address) = deploy(
+        l2_client,
+        &deployer,
+        init_code.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
+
+    let deploy_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 5).await?;
+
+    let deploy_fees = get_fees_details_l2(deploy_tx_receipt, l2_client).await;
+
+    let deployer_balance_after_deploy = l2_client
+        .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert_eq!(
+        deployer_balance_after_deploy,
+        deployer_balance_before_deploy - deploy_fees.total_fees,
+        "Deployer L2 balance didn't decrease as expected after deploy"
+    );
+
+    let fee_vault_balance_after_deploy = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert_eq!(
+        fee_vault_balance_after_deploy,
+        fee_vault_balance_before_deploy + deploy_fees.recoverable_fees,
+        "Fee vault balance didn't increase as expected after deploy"
+    );
+
+    let deployed_contract_balance = l2_client
+        .get_balance(contract_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert!(
+        deployed_contract_balance.is_zero(),
+        "Deployed contract balance should be zero after deploy"
+    );
+
+    Ok(contract_address)
+}
 
 pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing upgrade");
@@ -195,6 +289,108 @@ pub async fn test_privileged_tx_with_contract_call_revert() -> Result<(), Box<dy
         true,
     )
     .await?;
+
+    Ok(())
+}
+pub async fn test_call_to_contract_with_transfer(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+    deployed_contract_address: Address,
+    calldata_to_contract: Bytes,
+    caller_private_key: &SecretKey,
+    value: U256,
+    should_revert: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let caller_address = ethrex_l2_sdk::get_address_from_secret_key(caller_private_key)
+        .expect("Failed to get address");
+
+    println!("Checking balances before call");
+
+    let caller_l1_balance_before_call = l1_client
+        .get_balance(caller_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let deployed_contract_balance_before_call = l2_client
+        .get_balance(
+            deployed_contract_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    let fee_vault_balance_before_call = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("Calling contract on L2 with transfer");
+
+    let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
+        caller_address,
+        Some(0),
+        None,
+        L1ToL2TransactionData::new(
+            deployed_contract_address,
+            21000 * 5,
+            value,
+            calldata_to_contract.clone(),
+        ),
+        caller_private_key,
+        bridge_address()?,
+        l1_client,
+    )
+    .await?;
+
+    println!("Waiting for L1 to L2 transaction receipt on L1");
+
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.receipt.status);
+
+    println!("Waiting for L1 to L2 transaction receipt on L2");
+
+    let _ = wait_for_l2_ptx_receipt(
+        l1_to_l2_tx_receipt.block_info.block_number,
+        l1_client,
+        l2_client,
+    )
+    .await?;
+
+    println!("Checking balances after call");
+
+    let caller_l1_balance_after_call = l1_client
+        .get_balance(caller_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert_eq!(
+        caller_l1_balance_after_call,
+        caller_l1_balance_before_call
+            - l1_to_l2_tx_receipt.tx_info.gas_used
+                * l1_to_l2_tx_receipt.tx_info.effective_gas_price,
+        "Caller L1 balance didn't decrease as expected after call"
+    );
+
+    let fee_vault_balance_after_call = l2_client
+        .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    assert_eq!(
+        fee_vault_balance_after_call, fee_vault_balance_before_call,
+        "Fee vault balance increased unexpectedly after call"
+    );
+
+    let deployed_contract_balance_after_call = l2_client
+        .get_balance(
+            deployed_contract_address,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    let value = if should_revert { U256::zero() } else { value };
+
+    assert_eq!(
+        deployed_contract_balance_before_call + value,
+        deployed_contract_balance_after_call,
+        "Deployed contract final balance was not expected"
+    );
 
     Ok(())
 }

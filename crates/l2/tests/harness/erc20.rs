@@ -1,9 +1,12 @@
 use std::path::Path;
 
 use crate::harness::{
-    find_withdrawal_with_widget, get_contract_dependencies, l1_client, l2_client, rich_pk_1,
-    test_balance_of, test_deploy, test_deploy_l1, test_send, wait_for_l2_ptx_receipt,
-    wait_for_verified_proof,
+    contracts::{test_deploy, test_deploy_l1},
+    eth::{test_balance_of, test_send},
+    utils::{
+        find_withdrawal_with_widget, get_contract_dependencies, l1_client, l2_client, rich_pk_1,
+        wait_for_l2_ptx_receipt, wait_for_verified_proof,
+    },
 };
 use ethrex_common::{Address, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{
