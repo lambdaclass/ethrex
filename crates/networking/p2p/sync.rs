@@ -1,3 +1,6 @@
+use crate::peer_handler::SNAP_LIMIT;
+use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::utils::current_unix_time;
 use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
@@ -716,9 +719,15 @@ impl Syncer {
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
-        let pivot_header = store
+        let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
+
+        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        while current_unix_time() > staleness_timestamp {
+            (pivot_header, staleness_timestamp) =
+                update_pivot(pivot_header.number, &self.peers).await;
+        }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
@@ -751,7 +760,7 @@ impl Syncer {
 
             let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                 account_states_snapshot.iter().cloned().unzip();
-            
+
             let account_storage_roots: Vec<(H256, H256)> = account_hashes
                 .iter()
                 .zip(account_states.iter())
@@ -761,12 +770,12 @@ impl Syncer {
                 .collect();
 
             downloaded_account_storages += account_storage_roots.len();
-    
-            chunk_index = self.peers
+
+            chunk_index = self
+                .peers
                 .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
                 .await;
         }
-
 
         info!("Starting to compute the state root...");
 
@@ -848,9 +857,10 @@ impl Syncer {
             let snapshot_contents = std::fs::read(&snapshot_path)
                 .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> = RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-            });
+            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                });
 
             let maybe_big_account_storage_state_roots_clone =
                 maybe_big_account_storage_state_roots.clone();
@@ -870,11 +880,11 @@ impl Syncer {
                             Entry::Occupied(occupied_entry) => *occupied_entry.get(),
                             Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
                         };
-    
+
                         let mut storage_trie = store
                             .open_storage_trie(account_hash, account_storage_root)
                             .unwrap_or_else(|_| panic!("Failed to open trie storage for account hash {account_hash}"));
-    
+
                         for (hashed_key, value) in key_value_pairs {
                             if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
                                 error!(
@@ -883,14 +893,14 @@ impl Syncer {
                                 continue;
                             }
                         }
-    
+
                         let (computed_state_root, changes) =
                             storage_trie.collect_changes_since_last_hash();
-    
+
                         maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
-    
+
                         METRICS.storage_tries_state_roots_computed.inc();
-    
+
                         sender.send((account_hash, changes)).expect("Failed to send changes");
                     });
 
@@ -964,6 +974,47 @@ impl Syncer {
         store.update_latest_block_number(pivot_number).await?;
 
         Ok(())
+    }
+}
+
+async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
+    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
+    // latest one, or a slot was missed
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
+    loop {
+        let mut scores = peers.peer_scores.lock().await;
+
+        let (peer_id, mut peer_channel) = peers
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
+            .await
+            .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
+            .expect("Error");
+
+        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+        info!(
+            "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
+        );
+        let Some(pivot) = peers
+            .get_block_header(&mut peer_channel, new_pivot_block_number)
+            .await
+        else {
+            // Penalize peer
+            scores.entry(peer_id).and_modify(|score| *score -= 1);
+            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            warn!(
+                "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
+            );
+            continue;
+        };
+
+        // Reward peer
+        scores.entry(peer_id).and_modify(|score| {
+            if *score < 10 {
+                *score += 1;
+            }
+        });
+        info!("Succesfully updated pivot");
+        return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12));
     }
 }
 
