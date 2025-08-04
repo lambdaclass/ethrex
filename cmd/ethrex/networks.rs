@@ -24,10 +24,9 @@ pub const MAINNET_GENESIS_CONTENTS: &str = include_str!("networks/mainnet/genesi
 const MAINNET_BOOTNODES_PATH: &str = "cmd/ethrex/networks/mainnet/bootnodes.json";
 
 pub const LOCAL_DEVNET_GENESIS_PATH: &str = "../../fixtures/genesis/l1-dev.json";
-#[cfg(feature = "dev")]
+pub const LOCAL_DEVNETL2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l1-dev.json");
-#[cfg(not(feature = "dev"))]
-pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = "";
+pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l2.json");
 
 lazy_static! {
     pub static ref HOLESKY_BOOTNODES: Vec<Node> = serde_json::from_reader(
@@ -52,6 +51,7 @@ lazy_static! {
 pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
+    LocalDevnetL2,
     GenesisPath(PathBuf),
 }
 
@@ -96,6 +96,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
+            Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
@@ -113,6 +114,7 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
             Network::PublicNetwork(PublicNetwork::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
             Network::LocalDevnet => Path::new(LOCAL_DEVNET_GENESIS_PATH),
+            Network::LocalDevnetL2 => Path::new(LOCAL_DEVNETL2_GENESIS_PATH),
             Network::GenesisPath(s) => s,
         }
     }
@@ -123,6 +125,7 @@ impl Network {
                 Ok(serde_json::from_str(get_genesis_contents(*public_network))?)
             }
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
+            Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }

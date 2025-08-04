@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -207,14 +209,24 @@ impl EthClient {
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
-            if maybe_response.is_ok() {
-                response = maybe_response;
+
+            if response.is_ok() {
+                continue;
             }
+
+            response = match &maybe_response {
+                Ok(RpcResponse::Success(_)) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+                }
+                Err(_) => maybe_response,
+            };
         }
+
         response
     }
 
@@ -258,13 +270,13 @@ impl EthClient {
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_eip1559(&self, tx: &mut EIP1559Transaction, percentage: u64) {
         tx.max_fee_per_gas = (tx.max_fee_per_gas * (100 + percentage)) / 100;
-        tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
+        tx.max_priority_fee_per_gas = (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_eip4844(&self, wrapped_tx: &mut WrappedEIP4844Transaction, percentage: u64) {
         wrapped_tx.tx.max_fee_per_gas = (wrapped_tx.tx.max_fee_per_gas * (100 + percentage)) / 100;
-        wrapped_tx.tx.max_priority_fee_per_gas +=
+        wrapped_tx.tx.max_priority_fee_per_gas =
             (wrapped_tx.tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
         let factor = 1 + (percentage / 100) * 10;
         wrapped_tx.tx.max_fee_per_blob_gas = wrapped_tx
@@ -277,7 +289,7 @@ impl EthClient {
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_privileged_l2(&self, tx: &mut PrivilegedL2Transaction, percentage: u64) {
         tx.max_fee_per_gas = (tx.max_fee_per_gas * (100 + percentage)) / 100;
-        tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
+        tx.max_priority_fee_per_gas = (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
     }
 
     pub async fn send_privileged_l2_transaction(
@@ -420,7 +432,7 @@ impl EthClient {
         }
     }
 
-    pub async fn get_max_priority_fee(&self) -> Result<u64, EthClientError> {
+    pub async fn get_max_priority_fee(&self) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
@@ -531,6 +543,25 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBlockByHashError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn peer_count(&self) -> Result<U256, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "net_peerCount".to_string(),
+            params: Some(vec![]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetPeerCountError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetPeerCountError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
@@ -1274,7 +1305,9 @@ impl EthClient {
         }
 
         if let Ok(priority_fee) = self.get_max_priority_fee().await {
-            return Ok(priority_fee);
+            if let Ok(priority_fee_u64) = priority_fee.try_into() {
+                return Ok(priority_fee_u64);
+            }
         }
 
         self.get_fee_from_override_or_get_gas_price(None).await

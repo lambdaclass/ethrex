@@ -442,7 +442,7 @@ pub async fn get_all_block_rpc_receipts(
             .map(|schedule| schedule.base_fee_update_fraction)
             .unwrap_or_default(),
     );
-
+    let base_fee_per_gas = header.base_fee_per_gas;
     // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipt for each tx in the block and add block and tx info
@@ -455,8 +455,13 @@ pub async fn get_all_block_rpc_receipts(
             _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
-        let tx_info =
-            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee)?;
+        let tx_info = RpcReceiptTxInfo::from_transaction(
+            tx.clone(),
+            index,
+            gas_used,
+            blob_base_fee,
+            base_fee_per_gas,
+        )?;
         let receipt = RpcReceipt::new(
             receipt.clone(),
             tx_info,

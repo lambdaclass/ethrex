@@ -9,7 +9,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address,
-    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
+    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType},
 };
 use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
@@ -23,12 +23,16 @@ use ethrex_metrics::{
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
+
+/// Max privileged tx to allow per batch
+const PRIVILEGED_TX_BUDGET: usize = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -37,6 +41,7 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
+    rollup_store: &StoreRollup,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -49,7 +54,7 @@ pub async fn build_payload(
         blockchain.r#type.clone(),
     )?;
 
-    fill_transactions(blockchain.clone(), &mut context, store).await?;
+    fill_transactions(blockchain.clone(), &mut context, store, rollup_store).await?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -94,6 +99,7 @@ pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
+    rollup_store: &StoreRollup,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + *BLOCK_HEADER_LEN + 2 + 2 + 2;
@@ -106,6 +112,8 @@ pub async fn fill_transactions(
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
     let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
+    // Inserting an excessive number may prevent the commitment from being sent
+    let mut privileged_range = rollup_store.precommit_privileged().await?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -126,6 +134,26 @@ pub async fn fill_transactions(
         let Some(head_tx) = txs.peek() else {
             break;
         };
+
+        // Check we don't have an excessive number of privileged transactions
+        if head_tx.tx_type() == TxType::Privileged {
+            let id = head_tx.nonce();
+            if let Some(range) = privileged_range.as_mut() {
+                if range.clone().count() > PRIVILEGED_TX_BUDGET {
+                    debug!("Ran out of space for privileged transactions");
+                    txs.pop();
+                    continue;
+                }
+                if id != range.end {
+                    debug!("Ignoring out-of-order privileged transaction");
+                    txs.pop();
+                    continue;
+                }
+                range.end += 1;
+            } else {
+                privileged_range = Some(id..(id + 1));
+            }
+        }
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
@@ -217,6 +245,10 @@ pub async fn fill_transactions(
         // Save receipt for hash calculation
         context.receipts.push(receipt);
     }
+
+    rollup_store
+        .update_precommit_privileged(privileged_range)
+        .await?;
 
     metrics!(
         context

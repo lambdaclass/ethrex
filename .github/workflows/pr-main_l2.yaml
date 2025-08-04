@@ -101,8 +101,8 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
@@ -160,8 +160,8 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
@@ -178,12 +178,13 @@ jobs:
           rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
+          git checkout 21763774e29e4566ccb831ea8154e94aa2ff7c0e
           make cli
           echo "rex install successfully at $(which rex)"
 
       - name: Register sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
 
@@ -191,14 +192,15 @@ jobs:
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
+          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+          rex call "$SEQUENCER_REGISTRY" "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
+          cd ../crates/l2
 
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
@@ -212,6 +214,7 @@ jobs:
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
 
@@ -240,8 +243,8 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
@@ -258,8 +261,7 @@ jobs:
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
-    # TODO: change name back to "Integration Test" after fixing https://github.com/lambdaclass/ethrex/issues/3828
-    name: not an Integration Test
+    name: Integration Test
     runs-on: ubuntu-latest
     needs: [integration-test, state-diff-test, integration-test-based]
     # Make sure this job runs even if the previous jobs failed or were skipped
