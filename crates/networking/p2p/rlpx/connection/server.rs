@@ -738,16 +738,28 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
+            // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
-                for tx in &txs.transactions {
+                for tx in txs.transactions {
+                    // Mark as broadcasted for the sender so we don't include it in the next
+                    // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
+                    // For broadcast itself, `handle_broadcast` filters by task id already.
+                    state.broadcasted_txs.insert(tx.compute_hash());
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
-                    valid_txs.push(tx.clone());
+                    valid_txs.push(tx);
                 }
+                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
+                // subset and send only the hashes to everyone else.
+                // Consider sending to the sqrt of the number of peers like geth does.
                 if !valid_txs.is_empty() {
+                    log_peer_debug(
+                        &state.node,
+                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
+                    );
                     broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
@@ -874,12 +886,28 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
-                // TODO(#1131): Avoid cloning this vector.
-                let cloned = txs.transactions.clone();
-                let new_msg = Message::Transactions(Transactions {
-                    transactions: cloned,
-                });
-                send(state, new_msg).await?;
+                let mut filtered = Vec::with_capacity(txs.transactions.len());
+                for tx in &txs.transactions {
+                    let tx_hash = tx.compute_hash();
+                    if state.broadcasted_txs.contains(&tx_hash) {
+                        continue;
+                    }
+                    filtered.push(tx.clone());
+                    state.broadcasted_txs.insert(tx_hash);
+                }
+                if !filtered.is_empty() {
+                    log_peer_debug(
+                        &state.node,
+                        &format!(
+                            "Sending {} transactions to peer from broadcast",
+                            filtered.len()
+                        ),
+                    );
+                    let new_msg = Message::Transactions(Transactions {
+                        transactions: filtered,
+                    });
+                    send(state, new_msg).await?;
+                }
             }
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
