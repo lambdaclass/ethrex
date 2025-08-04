@@ -25,14 +25,8 @@ const MAINNET_BOOTNODES_PATH: &str = "cmd/ethrex/networks/mainnet/bootnodes.json
 
 pub const LOCAL_DEVNET_GENESIS_PATH: &str = "../../fixtures/genesis/l1-dev.json";
 pub const LOCAL_DEVNETL2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
-#[cfg(feature = "dev")]
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l1-dev.json");
-#[cfg(feature = "dev")]
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l2.json");
-#[cfg(not(feature = "dev"))]
-pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = "";
-#[cfg(not(feature = "dev"))]
-pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = "";
 
 lazy_static! {
     pub static ref HOLESKY_BOOTNODES: Vec<Node> = serde_json::from_reader(
