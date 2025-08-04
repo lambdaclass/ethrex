@@ -16,7 +16,11 @@ use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{
+        CastResponse, GenServer, GenServerHandle,
+        InitResult::{self, NoSuccess, Success},
+        send_interval, spawn_listener,
+    },
 };
 use spawned_rt::tasks::BroadcastStream;
 use tokio::{
@@ -124,8 +128,23 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
 }
 
+impl Established {
+    async fn teardown(&self) {
+        // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
+        // Just logging a debug line if that's the case.
+        let _ = self
+            .sink
+            .lock()
+            .await
+            .close()
+            .await
+            .inspect_err(|err| debug!("Could not close the socket: {err}"));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum InnerState {
+    HandshakeFailed,
     Initiator(Initiator),
     Receiver(Receiver),
     Established(Established),
@@ -207,22 +226,38 @@ impl GenServer for RLPxConnection {
     type OutMsg = MsgResult;
     type Error = RLPxError;
 
-    async fn init(mut self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(self.inner_state).await?;
-        log_peer_debug(&established_state.node, "Starting RLPx connection");
+    async fn init(
+        mut self,
+        handle: &GenServerHandle<Self>,
+    ) -> Result<InitResult<Self>, Self::Error> {
+        match handshake::perform(self.inner_state).await {
+            Ok((mut established_state, stream)) => {
+                log_peer_debug(&established_state.node, "Starting RLPx connection");
 
-        if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
-            connection_failed(
-                &mut established_state,
-                "Failed to initialize RLPx connection",
-                reason,
-            )
-            .await;
-            Err(RLPxError::Disconnected())
-        } else {
-            // New state
-            self.inner_state = InnerState::Established(established_state);
-            Ok(self)
+                if let Err(reason) =
+                    initialize_connection(handle, &mut established_state, stream).await
+                {
+                    connection_failed(
+                        &mut established_state,
+                        "Failed to initialize RLPx connection",
+                        reason,
+                    )
+                    .await;
+                    self.inner_state = InnerState::Established(established_state);
+                    Ok(NoSuccess(self))
+                } else {
+                    // New state
+                    self.inner_state = InnerState::Established(established_state);
+                    Ok(Success(self))
+                }
+            }
+            Err(err) => {
+                // Handshake failed, just log a debug message.
+                // No connection was established so no need to perform any other action
+                debug!("Failed Handshake on RLPx connection {err}");
+                self.inner_state = InnerState::HandshakeFailed;
+                Ok(NoSuccess(self))
+            }
         }
     }
 
@@ -333,9 +368,9 @@ impl GenServer for RLPxConnection {
                     .lock()
                     .await
                     .replace_peer(established_state.node.node_id());
-                established_state.sink.lock().await.close().await?;
+                established_state.teardown().await;
             }
-            InnerState::Initiator(_) | InnerState::Receiver(_) => {
+            _ => {
                 // Nothing to do if the connection was not established
             }
         };
@@ -558,8 +593,6 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
 }
 
 async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
-    log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
-
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
@@ -571,6 +604,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         // already connected, don't discard it
         RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
+            log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
             log_peer_debug(&state.node, "Peer already connected, don't replace it");
         }
         _ => {
@@ -583,7 +617,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         }
     }
 
-    let _ = state.sink.lock().await.close().await;
+    state.teardown().await;
 }
 
 fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
