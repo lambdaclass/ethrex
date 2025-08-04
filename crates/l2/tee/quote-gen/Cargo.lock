@@ -2647,6 +2647,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-rlp",
+ "futures",
  "thiserror 2.0.12",
  "tracing",
 ]

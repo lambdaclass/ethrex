@@ -79,7 +79,6 @@ ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
-zkvm_interface = { path = "./crates/l2/prover/zkvm/interface" }
 
 # ----------------------------------------------------------------------------
 # Core & Infrastructure

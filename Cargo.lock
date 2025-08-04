@@ -4187,6 +4187,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-rlp",
+ "futures",
  "libmdbx",
  "libsql",
  "redb",
