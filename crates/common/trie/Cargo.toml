@@ -9,15 +9,10 @@ ethrex-rlp.workspace = true
 ethereum-types.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
-tracing.workspace = true
 thiserror.workspace = true
 sha3.workspace = true
 hex.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 libmdbx = { workspace = true, optional = true }
-smallvec = { workspace = true, features = ["const_generics", "union"] }
-digest.workspace = true
 lazy_static.workspace = true
 
 [features]
@@ -25,14 +20,11 @@ default = []
 libmdbx = ["dep:libmdbx"]
 
 [dev-dependencies]
-hex.workspace = true
 hex-literal.workspace = true
 proptest = "1.0.0"
-tempdir = "0.3.7"
 cita_trie = "4.0.0"          # used for proptest comparisons
 hasher = "0.1.4"             # cita_trie needs this
 criterion = "0.5.1"
-rand.workspace = true
 
 [lib]
 path = "./trie.rs"

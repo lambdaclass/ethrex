@@ -3974,8 +3974,6 @@ dependencies = [
  "ark-ff 0.5.0",
  "bls12_381 0.8.0",
  "bytes",
- "colored",
- "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
@@ -3992,10 +3990,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
- "spinoff",
  "strum 0.27.2",
  "thiserror 2.0.12",
- "walkdir",
 ]
 
 [[package]]
@@ -4099,9 +4095,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "hex",
  "hex-literal",
- "lazy_static",
  "snap",
  "thiserror 2.0.12",
  "tinyvec",
@@ -4215,7 +4209,6 @@ dependencies = [
  "bytes",
  "cita_trie",
  "criterion",
- "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-rlp",
  "hasher",
@@ -4224,14 +4217,8 @@ dependencies = [
  "lazy_static",
  "libmdbx",
  "proptest",
- "rand 0.8.5",
- "serde",
- "serde_json",
  "sha3",
- "smallvec",
- "tempdir",
  "thiserror 2.0.12",
- "tracing",
 ]
 
 [[package]]
@@ -4239,7 +4226,6 @@ name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if 1.0.1",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
@@ -5966,17 +5952,6 @@ checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "json5"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b0db21af676c1ce64250b5f40f3ce2cf27e4e47cb91ed91eb6fe9350b430c1"
-dependencies = [
- "pest",
- "pest_derive",
- "serde",
 ]
 
 [[package]]
@@ -9439,7 +9414,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
- "json5",
  "log",
  "num-bigint 0.4.6",
  "num-traits",

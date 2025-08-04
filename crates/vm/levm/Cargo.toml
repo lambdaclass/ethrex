@@ -17,8 +17,6 @@ serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 
 sha3.workspace = true
-datatest-stable.workspace = true
-walkdir.workspace = true
 secp256k1.workspace = true
 p256.workspace = true
 sha2.workspace = true
@@ -33,8 +31,6 @@ strum.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
-colored = "2.1.0"
-spinoff = "0.8.0"
 
 [features]
 default = []
