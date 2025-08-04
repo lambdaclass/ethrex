@@ -169,22 +169,6 @@ impl Account {
             storage,
         }
     }
-
-    pub fn has_nonce(&self) -> bool {
-        self.info.nonce != 0
-    }
-
-    pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_code_or_nonce(&self) -> bool {
-        self.has_code() || self.has_nonce()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.info.is_empty()
-    }
 }
 
 impl AccountInfo {
