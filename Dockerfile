@@ -40,6 +40,7 @@ COPY cmd ./cmd
 COPY metrics ./metrics
 COPY Cargo.* ./
 COPY fixtures ./fixtures
+COPY .git ./.git
 
 # Optional build flags
 ARG BUILD_FLAGS=""
