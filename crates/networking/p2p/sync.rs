@@ -133,7 +133,10 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
-            self.sync_cycle_snap(sync_head, store).await
+            *METRICS.snap_syncing.lock().await = true;
+            let sync_cycle_result = self.sync_cycle_snap(sync_head, store).await;
+            *METRICS.snap_syncing.lock().await = false;
+            sync_cycle_result
         } else {
             self.sync_cycle_full(sync_head, store).await
         }
@@ -731,8 +734,6 @@ impl Syncer {
         store: Store,
         block_sync_state: BlockSyncState,
     ) -> Result<(), SyncError> {
-        *METRICS.snap_syncing.lock().await = true;
-
         // // snap-sync: launch tasks to fetch blocks and state in parallel
         // // - Fetch each block's body and its receipt via eth p2p requests
         // // - Fetch the pivot block's state via snap p2p requests
@@ -992,8 +993,6 @@ impl Syncer {
 
         // store.mark_chain_as_canonical(&numbers_and_hashes).await?;
         // store.update_latest_block_number(pivot_number).await?;
-
-        *METRICS.snap_syncing.lock().await = false;
         Ok(())
     }
 }
