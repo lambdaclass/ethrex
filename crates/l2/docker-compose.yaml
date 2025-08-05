@@ -10,7 +10,6 @@ services:
     command: --network /genesis/l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --dev
 
   contract_deployer:
-    # platform: linux/amd64
     container_name: contract_deployer
     image: "ethrex:unstable"
     build: ../../
