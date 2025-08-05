@@ -261,7 +261,7 @@ impl LEVM {
             account_updates.push(account_update);
         }
         db.initial_accounts_state.clear();
-        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory.
+        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
         db.current_accounts_state.clear();
         db.codes.clear();
         Ok(account_updates)
