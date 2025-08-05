@@ -16,7 +16,7 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 pub struct Metrics {
     _registry: Registry,
     pub window_size: Duration,
-    pub snap_sync_finished: Arc<Mutex<bool>>,
+    pub snap_syncing: Arc<Mutex<bool>>,
 
     /// Nodes we've contacted over time.
     pub discovered_nodes: IntCounter,
@@ -486,7 +486,7 @@ impl Default for Metrics {
 
         Metrics {
             _registry: registry,
-            snap_sync_finished: Arc::new(Mutex::new(false)),
+            snap_syncing: Arc::new(Mutex::new(false)),
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
             window_size: Duration::from_secs(60),
 

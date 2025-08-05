@@ -731,6 +731,8 @@ impl Syncer {
         store: Store,
         block_sync_state: BlockSyncState,
     ) -> Result<(), SyncError> {
+        *METRICS.snap_syncing.lock().await = true;
+
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
@@ -990,7 +992,8 @@ impl Syncer {
 
         store.mark_chain_as_canonical(&numbers_and_hashes).await?;
         store.update_latest_block_number(pivot_number).await?;
-        *METRICS.snap_sync_finished.lock().await = true;
+
+        *METRICS.snap_syncing.lock().await = false;
         Ok(())
     }
 }
