@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754404327657,
+  "lastUpdate": 1754407267563,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7615,6 +7615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163435660250,
             "range": "± 1015882384",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53660242+samoht9277@users.noreply.github.com",
+            "name": "Tomás Casagrande",
+            "username": "samoht9277"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a4ad768392d29e73376e1eeadfc9901fc49c9237",
+          "message": "ci(l1): fix Docker Login CI. (#3935)\n\n**Motivation**\nExternal contributors who forked the repo were experiencing CI failures\nduring Docker Hub login because they didn’t have access to our Docker\ncredentials (stored as repository variables and secrets)\n\nThis PR fixes the issue by adding a conditional step to the GitHub\nAction workflow. It checks if Docker credentials are available, and if\nthey're not set (as in forks), the login step is skipped.",
+          "timestamp": "2025-08-05T14:30:48Z",
+          "tree_id": "bb68c4c75083700fcc3991f01e5fca3c9da84e21",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a4ad768392d29e73376e1eeadfc9901fc49c9237"
+        },
+        "date": 1754407253163,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164606725237,
+            "range": "± 460174691",
             "unit": "ns/iter"
           }
         ]
