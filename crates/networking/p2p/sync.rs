@@ -697,6 +697,11 @@ impl SnapBlockSyncState {
             )
             .await?;
         self.block_hashes.extend_from_slice(&block_hashes);
+        for header in &block_headers {
+            self.store
+                .add_block_number(header.hash(), header.number)
+                .await?;
+        }
         self.store.add_block_headers(block_headers).await?;
         Ok(())
     }
