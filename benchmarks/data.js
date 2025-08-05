@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754418637251,
+  "lastUpdate": 1754421154399,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17180,6 +17180,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006607584158415842,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5ec00e544af6f1d39f61a811d279c7be3b137b5f",
+          "message": "perf(l1): save chain config in vm,  cache latestblock header (#3878)\n\n**Motivation**\n\nOn samply, most of the work seems to be in validate_tx on the rpc.\n\nInside validate tx, get_block_header took 22% and latest_block_number\nabout 3%.\nThis pr turns those numbers into 0.2%. Now get account info takes 93%. \n\nPR based on #3865\n\nBefore (pr #3865):\n<img width=\"1008\" height=\"188\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/4de19499-aa0c-4a07-84ab-3d6c1403e6ea\"\n/>\n\n\nAfter:\n<img width=\"968\" height=\"194\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/3dba9a15-710d-4e8a-986e-273c23deb587\"\n/>\n\n\nmake load-test\n\nPrev(perf/aux_sender_nonce_mempool) gigas of first 4 blocks:\n0.6, 0.5, 0.4, 0.4, 0.4\n\nPR Gigagas of first 4 blocks:\n0.7, 0.56, 0.43, 0.42,\n\n\nSlightly improves ethrex transfers bench on gas benches (7.82%).\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-08-05T15:07:41Z",
+          "tree_id": "9d45a300c14ddfb48c171b18ff458dce16adf818",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5ec00e544af6f1d39f61a811d279c7be3b137b5f"
+        },
+        "date": 1754421153938,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001238155844155844,
             "unit": "Mgas/s"
           }
         ]
