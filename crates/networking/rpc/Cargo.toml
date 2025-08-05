@@ -34,7 +34,7 @@ secp256k1.workspace = true
 keccak-hash.workspace = true
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+hex-literal.workspace = true
 
 [lib]
 path = "./lib.rs"

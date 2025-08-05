@@ -45,7 +45,7 @@ tui-logger.workspace = true
 cfg-if.workspace = true
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+ethrex-metrics = { workspace = true, default-features = true }
 url.workspace = true
 
 [[bin]]

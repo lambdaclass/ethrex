@@ -28,3 +28,8 @@ jobs:
 
       - name: Run cargo-udeps
         run: cargo +nightly udeps --workspace --all-targets --features sql
+
+      - name: Check all dependencies are from workspace
+        run: |
+          chmod +x .github/scripts/use_workspace_depencencies.sh
+          .github/scripts/use_workspace_depencencies.sh

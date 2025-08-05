@@ -23,8 +23,8 @@ ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
-ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
-ethrex-sdk = { path = "./sdk" }
+ethrex-metrics = { workspace = true, default-features = false }
+ethrex-sdk.workspace = true
 ethrex-p2p.workspace = true
 hex.workspace = true
 bytes.workspace = true

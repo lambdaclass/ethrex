@@ -8,6 +8,7 @@ members = [
 
   # Core components
   "crates/blockchain",
+  "crates/blockchain/metrics",
   "crates/blockchain/dev",
   "crates/common",
   "crates/common/rlp",
@@ -62,6 +63,7 @@ debug = 2
 # ----------------------------------------------------------------------------
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
+ethrex-metrics = { path = "./crates/blockchain/metrics", default-features = false }
 ethrex-common = { path = "./crates/common" }
 ethrex-storage = { path = "./crates/storage" }
 ethrex-trie = { path = "./crates/common/trie" }
