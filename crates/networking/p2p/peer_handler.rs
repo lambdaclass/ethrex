@@ -12,6 +12,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use futures::stream::select_all;
 use rand::{random, seq::SliceRandom};
 use secp256k1::Message;
 use tokio::sync::Mutex;
@@ -67,6 +68,60 @@ struct TaskResultStorage {
 pub struct PeerHandler {
     pub peer_table: Kademlia,
     pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
+}
+
+pub enum BlockRequestOrder {
+    OldToNew,
+    NewToOld,
+}
+
+async fn ask_peer_head_number(
+    peer_id: H256,
+    peer_channel: &mut PeerChannels,
+    sync_head: H256,
+    retries: i32,
+) -> Result<u64, String> {
+    // TODO: Better error handling
+    trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
+    let request_id = rand::random();
+    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+        id: request_id,
+        startblock: HashOrNumber::Hash(sync_head),
+        limit: 1,
+        skip: 0,
+        reverse: false,
+    });
+
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(request.clone()))
+        .await
+        .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
+
+    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+
+    match tokio::time::timeout(Duration::from_secs(1), async move {
+        peer_channel.receiver.lock().await.recv().await
+    })
+    .await
+    {
+        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+            if id == request_id && !block_headers.is_empty() {
+                let sync_head_number = block_headers.last().unwrap().number;
+                trace!(
+                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
+                );
+                Ok(sync_head_number)
+            } else {
+                Err(format!("Received unexpected response from peer {peer_id}"))
+            }
+        }
+        Ok(None) => Err(format!("Error receiving message from peer {peer_id}")),
+        Ok(_other_msgs) => Err("Received unexpected message from peer {peer_id}".into()),
+        Err(_err) => Err(format!(
+            "Timeout while waiting for sync head from {peer_id}"
+        )),
+    }
 }
 
 impl PeerHandler {
@@ -172,7 +227,7 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
             .await;
 
-        let sync_head_number = Arc::new(Mutex::new(0_u64));
+        let mut sync_head_number = 0_u64;
 
         let sync_head_number_retrieval_start = SystemTime::now();
 
@@ -180,47 +235,18 @@ impl PeerHandler {
 
         let mut retries = 1;
 
-        while *sync_head_number.lock().await == 0 {
+        while sync_head_number == 0 {
             for (peer_id, mut peer_channel) in peers_table.clone() {
-                let sync_head_number = sync_head_number.clone();
-                tokio::spawn(async move {
-                    let request_id = rand::random();
-                    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                        id: request_id,
-                        startblock: HashOrNumber::Hash(sync_head),
-                        limit: 1,
-                        skip: 0,
-                        reverse: false,
-                    });
-
-                    peer_channel
-                        .connection
-                        .cast(CastMessage::BackendMessage(request.clone()))
-                        .await
-                        .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-                        .unwrap();
-
-                    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
-
-                    match tokio::time::timeout(Duration::from_secs(5), async move {
-                        peer_channel.receiver.lock().await.recv().await.unwrap()
-                    })
-                    .await
-                    {
-                        Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
-                            if id == request_id && !block_headers.is_empty() {
-                                *sync_head_number.lock().await =
-                                    block_headers.last().unwrap().number;
-                            }
-                        }
-                        Ok(_other_msgs) => {
-                            debug!("Received unexpected message from peer {peer_id}");
-                        }
-                        Err(_err) => {
-                            debug!("Timeout while waiting for sync head from {peer_id}");
-                        }
+                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
+                    Ok(number) => {
+                        sync_head_number = number;
                     }
-                });
+                    Err(err) => {
+                        trace!(
+                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
+                        );
+                    }
+                }
             }
 
             retries += 1;
@@ -234,11 +260,11 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
-        *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await + 1;
+        *METRICS.sync_head_block.lock().await = sync_head_number;
+        *METRICS.headers_to_download.lock().await = sync_head_number + 1;
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        let block_count = *sync_head_number.lock().await + 1 - start;
+        let block_count = sync_head_number + 1 - start;
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
@@ -420,6 +446,9 @@ impl PeerHandler {
 
             // run download_chunk_from_peer in a different Tokio task
             let _download_result = tokio::spawn(async move {
+                trace!(
+                    "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+                );
                 debug!(
                     "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
@@ -431,7 +460,9 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| debug!("{free_peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| {
+                    trace!("Sync Log 6: {free_peer_id} failed to download chunk: {err}")
+                })
                 .unwrap_or_default();
 
                 tx.send((
@@ -835,7 +866,7 @@ impl PeerHandler {
                     let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
                     // TODO: check the error type and handle it properly
                     let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
-                    dump_account_result_sender_cloned.send(result).await;  
+                    dump_account_result_sender_cloned.send(result).await;
                 })
                 .await
                 .unwrap();
@@ -902,9 +933,10 @@ impl PeerHandler {
                         let AccountDumpError { path, contents } = dump_account_data;
                         // Dump the account data
                         // TODO: check the error type and handle it properly
-                        let result = std::fs::write(path.clone(), contents.clone()).map_err(|_| AccountDumpError{path, contents});
+                        let result = std::fs::write(path.clone(), contents.clone())
+                            .map_err(|_| AccountDumpError { path, contents });
                         // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;  
+                        dump_account_result_sender_cloned.send(result).await;
                     })
                     .await
                     .unwrap();
@@ -2371,7 +2403,6 @@ impl PeerHandler {
             .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
             .inspect_err(|err| error!(err))
             .expect("############### Error peer_channel connection");
-
         let response = tokio::time::timeout(Duration::from_secs(5), async move {
             let response = receiver.recv().await;
             if response.is_none() {
