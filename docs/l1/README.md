@@ -22,6 +22,8 @@ mkdir -p ~/secrets
 openssl rand -hex 32 | tr -d "\n" | tee ~/secrets/jwt.hex
 ```
 
+We will pass this new file's path as an argument for both clients.
+
 * **Add bootnodes:** Run the following command to create the `cmd/ethrex/networks/hoodi/bootnodes.json` file:
 
 ```bash
@@ -50,8 +52,6 @@ Copy the following contents to the `cmd/ethrex/networks/hoodi/bootnodes.json` fi
   "enode://fd2760f45525b1e3a6d7d87e457f7f158540716da3755dcc4be6664d34ab50dea3a552414a60eb8787349faf45d68eb8081116aa42a6746fde616e5b6e934d82@202.137.165.13:47500"
 ]
 ```
-
-We will pass this new file’s path as an argument for both clients.
 
 * **Run lighthouse:** In a console, run `lighthouse` to sync with Hoodi:
 
