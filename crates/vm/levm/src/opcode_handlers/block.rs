@@ -152,7 +152,7 @@ impl<'a> VM<'a> {
             _ => {
                 self.current_call_frame.stack.push1(U256::zero())?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
-            },
+            }
         };
 
         //This should never fail because we check if the index fits above

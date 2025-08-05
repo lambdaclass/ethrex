@@ -273,19 +273,18 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
-
         let size: usize = u256_to_usize(size)?;
+
         let (dest_offset, src_offset) = if size == 0 {
             (0, 0)
         } else {
             (u256_to_usize(dest_offset)?, u256_to_usize(src_offset)?)
         };
 
-        let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
-        let new_memory_size_for_src = calculate_memory_size(src_offset, size)?;
+        let new_memory_size = calculate_memory_size(dest_offset.max(src_offset), size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-            new_memory_size_for_dest.max(new_memory_size_for_src),
+            new_memory_size,
             current_call_frame.memory.len(),
             size,
         )?)?;
