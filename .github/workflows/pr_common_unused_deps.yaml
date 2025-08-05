@@ -4,7 +4,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["**"]
-    
+
 permissions:
   contents: read
 
@@ -18,8 +18,7 @@ jobs:
       - name: Setup Rust Environment
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchains: stable, nightly
-          components: rustfmt, clippy
+          toolchain: ${{ vars.RUST_VERSION }}, nightly
 
       - name: Check workspace-level unused dependencies
         run: |
