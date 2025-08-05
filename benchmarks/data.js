@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754401741459,
+  "lastUpdate": 1754404327657,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16886,6 +16886,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006542803921568628,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5db9cc8dcec16d8831e83669068aa3a9ae0d57f4",
+          "message": "fix(l1): remove panics in blockchain tests, re run stateless as separate suite (#3872)\n\n**Motivation**\n\nThe logic that did stateless execution for blockchain tests had panics\nthat stopped the whole suite run instead of failing only that test.\n\n**Description**\n- Remove all panics from `re_run_stateless` function, `return Result<(),\nString>`\n- Modify `parse_and_execute` function to accept a boolean as parameter\nthat when set to true enables stateless execution\n- Add when running with levm, a new function\n`parse_and_execute_stateless_runner` that enables this flag as a second\nsuite of tests.\n\n**Examples**\n\nrunning a single test with levm\n```\ncargo test --release --features levm parse_and_execute_runner::prague/eip7002_el_triggerable_withdrawals/withdrawal_requests_during_fork/withdrawal_requests_during_fork.json\n```\nrunning a single test with levm with stateless execution\n```\ncargo test --release --features levm parse_and_execute_stateless_runner::prague/eip7002_el_triggerable_withdrawals/withdrawal_requests_during_fork/withdrawal_requests_during_fork.json -- --nocapture\n```\n\nCloses #3859",
+          "timestamp": "2025-08-05T12:31:33Z",
+          "tree_id": "f27b92121155d56708e9f1fd5c1c36216d03e491",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5db9cc8dcec16d8831e83669068aa3a9ae0d57f4"
+        },
+        "date": 1754404327156,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012485799812909262,
             "unit": "Mgas/s"
           }
         ]
