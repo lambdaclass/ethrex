@@ -157,14 +157,9 @@ impl Syncer {
         let current_head_number = match store.get_block_number(current_head).await {
             Ok(Some(number)) => number,
             _ => {
-                // HOTFIX: WE TEND TO ENTER HERE AFTER FIRST ROUND OF SNAP SYNC
-                // THIS SHOULD BE FIXED IN THE FUTURE
-                if let SyncMode::Snap = sync_mode {
-                    self.snap_sync(store, block_sync_state).await?;
-
-                    // Next sync will be full-sync
-                    self.snap_enabled.store(false, Ordering::Relaxed);
-                }
+                // For some reason we don't have the block number of our current head,
+                // skip current cycle and try again later
+                error!("Sync failed to get the block number of the current head, skipping cycle");
                 return Ok(());
             }
         };
