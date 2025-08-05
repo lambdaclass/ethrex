@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754429616254,
+  "lastUpdate": 1754430385111,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17268,6 +17268,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012591811320754717,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "032dbc9294c579ea18da5097c4cbae46901478cb",
+          "message": "fix(levm): fix tracing delegatecall (#3823)\n\n**Motivation**\n\n- The from in the DELEGATECALL trace was wrong.\n\n**Description**\n\nI wanted the trace of a transaction that made use of DELEGATECALL and I\nsaw that ethrex had a weird response, so I tried getting the same trace\nwith geth and the response was what I expected it to be. So that's how I\nrealized that we had a bug :)\n\n[Hoodi\ntransaction](https://hoodi.etherscan.io/tx/0x0bca10d4b752d3c630f4666a226a37d57a08b0b042b18888dbcb34de73679cf0)\n```\ncurl <rpc_hoodi_node> \\\n-X POST \\\n-H \"Content-Type: application/json\" \\\n--data '{\"method\":\"debug_traceTransaction\",\"params\":[\"0x0bca10d4b752d3c630f4666a226a37d57a08b0b042b18888dbcb34de73679cf0\", {\"tracer\": \"callTracer\"}], \"id\":1,\"jsonrpc\":\"2.0\"}'\n```\n\nBasically if our trace was used in a block explorer (be it blockscout or\netherscan) the delegatecall \"From\" field would be the EOA and that is\nwrong! Check the actual tracing in etherscan\n[here](https://hoodi.etherscan.io/tx/0x0bca10d4b752d3c630f4666a226a37d57a08b0b042b18888dbcb34de73679cf0#internal)",
+          "timestamp": "2025-08-05T16:44:50Z",
+          "tree_id": "926e92b4631cdacfb93533cefbad13e093221ad5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/032dbc9294c579ea18da5097c4cbae46901478cb"
+        },
+        "date": 1754430384636,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006542803921568628,
             "unit": "Mgas/s"
           }
         ]
