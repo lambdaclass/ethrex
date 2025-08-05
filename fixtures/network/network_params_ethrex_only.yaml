@@ -1,5 +1,6 @@
 participants:
   - el_type: ethrex
+    el_image: ethrex:latest
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
@@ -8,7 +9,6 @@ participants:
 network_params:
   # The address of the staking contract address on the Eth1 chain
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
-  electra_fork_epoch: 0 # This field won't be needed when ethereum-package is merged
 
 additional_services:
   - assertoor
