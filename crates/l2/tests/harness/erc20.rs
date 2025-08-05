@@ -51,7 +51,7 @@ pub async fn test_erc20_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         Some(&remappings),
-        &[contracts_path]
+        &[contracts_path],
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",

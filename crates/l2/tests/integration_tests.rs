@@ -14,7 +14,7 @@ use crate::harness::{
         test_privileged_spammer, test_privileged_tx_not_enough_balance, test_total_eth_l2,
         test_transfer, test_transfer_with_privileged_tx,
     },
-    utils::{read_env_file_by_config, clean_contracts_dir},
+    utils::{clean_contracts_dir, read_env_file_by_config},
 };
 
 #[tokio::test]

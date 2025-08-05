@@ -24,7 +24,12 @@ use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
-    fs, net::{Ipv4Addr, SocketAddr}, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::{SystemTime, UNIX_EPOCH}
+    fs,
+    net::{Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};

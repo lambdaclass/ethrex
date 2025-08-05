@@ -131,7 +131,7 @@ pub async fn test_upgrade() -> Result<(), Box<dyn std::error::Error>> {
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
         false,
         Some(&remappings),
-        &[contracts_path]
+        &[contracts_path],
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
