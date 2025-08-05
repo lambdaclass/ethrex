@@ -173,6 +173,7 @@ pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
         let snap_syncing = *METRICS.snap_syncing.lock().await;
+        dbg!(&snap_syncing);
         // Show the logs only when snap syncing
         if !snap_syncing {
             continue;

@@ -133,9 +133,9 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
-            *METRICS.snap_syncing.lock().await = true;
+            METRICS.enable().await;
             let sync_cycle_result = self.sync_cycle_snap(sync_head, store).await;
-            *METRICS.snap_syncing.lock().await = false;
+            METRICS.disable().await;
             sync_cycle_result
         } else {
             self.sync_cycle_full(sync_head, store).await

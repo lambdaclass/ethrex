@@ -7,6 +7,7 @@ use std::{
 use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
+use tracing::info;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
 
@@ -105,6 +106,16 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    pub async fn enable(&self) {
+        info!("Enabling metrics");
+        *self.snap_syncing.lock().await = true;
+    }
+
+    pub async fn disable(&self) {
+        info!("Disabling metrics");
+        *self.snap_syncing.lock().await = false;
+    }
+
     pub async fn record_new_discovery(&self) {
         let mut events = self.new_contacts_events.lock().await;
 
