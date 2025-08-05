@@ -54,6 +54,7 @@ services:
     command: >
       l2
       deploy
+      --randomize-contract-deployment
 
   ethrex_l2:
     container_name: ethrex_l2
