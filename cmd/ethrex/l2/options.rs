@@ -496,7 +496,6 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
-        required_unless_present = "dev"
     )]
     pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
