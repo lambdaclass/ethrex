@@ -15,12 +15,13 @@ contract RewardVault is Initializable, ReentrancyGuardUpgradeable {
     // TODO: we should replace this value with a mechanism that changes over time.
     uint256 public tokensUnlockedPerDay;
 
+    // TODO: Consider moving this to OnChainProposer (it can be part of the VerifiedBatchInfo struct)
     /// @notice Keep record of which batches have been claimed.
     mapping(uint256 => bool) public claimedBatches;
 
-    function initialize(address _onChainProposer /* address _rewardToken */) public initializer {
+    function initialize(address _onChainProposer, address _rewardToken) public initializer {
         onChainProposer = IOnChainProposer(_onChainProposer);
-        // rewardToken = IERC20(_rewardToken);
+        rewardToken = _rewardToken;
         // TODO: change this value to a mechanism that changes over time.
         tokensUnlockedPerDay = 1_000_000;
     }
@@ -36,6 +37,7 @@ contract RewardVault is Initializable, ReentrancyGuardUpgradeable {
             uint256 batchNumber = _batchNumbers[i];
             VerifiedBatchInfo memory verifiedBatchInfo = onChainProposer.verifiedBatches(batchNumber);
             require(verifiedBatchInfo.prover == sender, "Sender must be the prover address");
+            // TODO: move claimed value to verifiedBatchInfo
             require(!claimedBatches[batchNumber], "Batch already claimed");
             gasProvenByClaimer += verifiedBatchInfo.gasProven;
         }
@@ -45,11 +47,12 @@ contract RewardVault is Initializable, ReentrancyGuardUpgradeable {
         uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** IERC20Metadata(rewardToken).decimals();
         uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
 
+        // TODO: transfer the tokens
+
         // mark the batches as claimed, so they cannot be claimed again
         for (uint256 i = 0; i < numberOfBatches; i++) {
             claimedBatches[_batchNumbers[i]] = true;
         }
 
-        // TODO: transfer the tokens
     }
 }

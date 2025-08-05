@@ -50,6 +50,7 @@ pub struct ContractAddresses {
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
     pub reward_vault_address: Address,
+    pub test_based_token_address: Address,
 }
 
 #[tokio::main]
@@ -104,10 +105,20 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     )?;
     if opts.deploy_based_contracts {
         info!("Compiling based contracts");
+
+        // This contract is used by the RewardVault contract.
+        // TODO: Consider moving this to another function (and gating it behind a flag).
         compile_contract(
             &opts.contracts_path,
             "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol",
-            false
+            false,
+        )?;
+        // This contract is used by the RewardVault contract.
+        // TODO: Consider moving this to another function (and gating it behind a flag).
+        compile_contract(
+            &opts.contracts_path,
+            "src/l1/based/TestBasedToken.sol",
+            false,
         )?;
         compile_contract(
             &opts.contracts_path,
@@ -171,6 +182,18 @@ async fn deploy_contracts(
         on_chain_proposer_deployment.implementation_address,
         on_chain_proposer_deployment.implementation_tx_hash,
     );
+
+    info!("Deploying TestBasedToken ERC20");
+    let (test_based_token_tx_hash, test_based_token_address) = deploy_contract(
+        &[],
+        &opts.contracts_path.join("solc_out/TestBasedToken.bin"),
+        deployer,
+        &salt,
+        eth_client,
+    )
+    .await?;
+
+    info!(address = %format!("{test_based_token_address:#x}"), tx_hash = %format!("{test_based_token_tx_hash:#x}"), "TestBasedToken deployed");
 
     info!("Deploying RewardVault");
 
@@ -291,6 +314,7 @@ async fn deploy_contracts(
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
         aligned_aggregator_address: opts.aligned_aggregator_address,
         reward_vault_address: reward_vault_deployment.proxy_address,
+        test_based_token_address,
     })
 }
 
@@ -415,14 +439,18 @@ async fn initialize_contracts(
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
 
-        info!("Deploying RewardVault...");
+        // TODO: Consider moving this to another function (and gating it behind a flag).
+        // info!("Deploying ERC20 token used for reward distrubution.");
+        // let erc20_address = initialize_contract(eth_client, &deployer).await?;
 
-        let reward_vault_calldata = encode_calldata("initialize(address)", &[
-            Value::Address(contract_addresses.on_chain_proposer_address),
-            // Value::Address(Default::default()), /* TODO: set the reward token address */
-        ])?;
-
-        info!("Initializing RewardVault");
+        info!("Initializing RewardVault contract");
+        let reward_vault_calldata = encode_calldata(
+            "initialize(address,address)",
+            &[
+                Value::Address(contract_addresses.on_chain_proposer_address),
+                Value::Address(contract_addresses.test_based_token_address),
+            ],
+        )?;
 
         let reward_vault_initialize_tx_hash = initialize_contract(
             contract_addresses.reward_vault_address,
