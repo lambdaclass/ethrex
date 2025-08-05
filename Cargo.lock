@@ -3854,7 +3854,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
- "url",
 ]
 
 [[package]]
