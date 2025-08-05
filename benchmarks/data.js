@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754407267563,
+  "lastUpdate": 1754407599671,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7645,6 +7645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164606725237,
             "range": "± 460174691",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41284bd7bc077cecb601042269fd99fbf3f86755",
+          "message": "refactor(l2): use logs from receipt for the integration tests (#3937)\n\n**Motivation**\n\nWe are currently using the logs of the receipt to get the block number\nto requests again the logs.\n\n**Description**\n\nUse the same logs from the receipts and remove the request to the client\nfor the logs\n\nCloses #3876",
+          "timestamp": "2025-08-05T14:34:50Z",
+          "tree_id": "ebac3197320cb8240c0403e4faaab0e0c051fef5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/41284bd7bc077cecb601042269fd99fbf3f86755"
+        },
+        "date": 1754407584290,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166099484279,
+            "range": "± 476294503",
             "unit": "ns/iter"
           }
         ]
