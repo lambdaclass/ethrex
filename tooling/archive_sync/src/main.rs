@@ -18,9 +18,11 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Write};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -33,20 +35,21 @@ const MAX_ACCOUNTS: usize = 256;
 /// Amount of blocks before the target block to request hashes for. These may be needed to execute the next block after the target block.
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 struct Dump {
     #[serde(rename = "root")]
     state_root: H256,
-    #[serde(deserialize_with = "deser_account_dump_map")]
-    accounts: BTreeMap<H256, DumpAccount>,
+    // #[serde(deserialize_with = "deser_account_dump_map")]
+    /// Map from address (unhashed) to dump account
+    accounts: HashMap<Address, DumpAccount>,
     #[serde(default)]
     next: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DumpAccount {
-    #[serde(deserialize_with = "serde_utils::u256::deser_dec_str")]
+    #[serde(with = "serde_utils::u256::dec_str")]
     balance: U256,
     nonce: u64,
     #[serde(rename = "root")]
@@ -62,26 +65,27 @@ struct DumpAccount {
 }
 
 pub async fn archive_sync(
-    archive_ipc_path: &str,
+    archive_ipc_path: Option<String>,
     block_number: BlockNumber,
+    output_dir: Option<String>,
+    input_dir: Option<String>,
+    no_sync: bool,
     store: Store,
 ) -> eyre::Result<()> {
-    let sync_start = Instant::now();
-    let mut stream = UnixStream::connect(archive_ipc_path).await?;
-    let mut start = H256::zero();
+    let sync_start: Instant = Instant::now();
+    let mut dump_reader = if let Some(ipc_path) = archive_ipc_path {
+        DumpReader::new_from_ipc(&ipc_path, block_number).await?
+    } else {
+        DumpReader::new_from_dir(input_dir.unwrap())?
+    };
+    let mut dump_writer = output_dir
+        .map(|filename| DumpDirWriter::new(filename))
+        .transpose()?;
     let mut state_trie_root = *EMPTY_TRIE_HASH;
     let mut should_continue = true;
     let mut state_root = None;
     while should_continue {
-        // [debug_accountRange](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugaccountrange)
-        let request = &json!({
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "debug_accountRange",
-        "params": [format!("{block_number:#x}"), format!("{start:#x}"), MAX_ACCOUNTS, false, false, false]
-        });
-        let response = send_ipc_json_request(&mut stream, request).await?;
-        let dump: Dump = serde_json::from_value(response)?;
+        let dump = dump_reader.read_dump().await?;
         // Sanity check
         if *state_root.get_or_insert(dump.state_root) != dump.state_root {
             return Err(eyre::ErrReport::msg(
@@ -89,43 +93,47 @@ pub async fn archive_sync(
             ));
         }
         should_continue = dump.next.is_some();
-        if should_continue {
-            start = hash_next(*dump.accounts.last_key_value().unwrap().0);
+        // Write dump if we have an output
+        if let Some(dump_writer) = dump_writer.as_mut() {
+            dump_writer.write_dump(&dump)?;
         }
         // Process dump
+        if !no_sync {
         let instant = Instant::now();
         state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
         info!(
             "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
             mseconds_to_readable(instant.elapsed().as_millis())
         );
+        }
     }
     // Request block so we can store it and mark it as canonical
-    let request = &json!({
-    "id": 1,
-    "jsonrpc": "2.0",
-    "method": "debug_getRawBlock",
-    "params": [format!("{block_number:#x}")]
-    });
-    let response = send_ipc_json_request(&mut stream, request).await?;
-    let rlp_block_str: String = serde_json::from_value(response)?;
-    let rlp_block = hex::decode(rlp_block_str.trim_start_matches("0x"))?;
+    let rlp_block = dump_reader.read_rlp_block().await?;
     let block = Block::decode(&rlp_block)?;
-    if state_trie_root != block.header.state_root {
+    let block_hash = block.hash();
+    if let Some(dump_writer) = dump_writer.as_mut() {
+        dump_writer.write_rlp_block(rlp_block)?;
+    }
+    if !no_sync && state_trie_root != block.header.state_root {
         return Err(eyre::ErrReport::msg(
             "State root doesn't match the one in the header after archive sync",
         ));
     }
-    let block_number = block.header.number;
-    let block_hash = block.hash();
-    store.add_block(block).await?;
-    store.set_canonical_block(block_number, block_hash).await?;
-    store.update_latest_block_number(block_number).await?;
-    fetch_block_hashes(block_number, &mut stream, store).await?;
+    let block_hashes = dump_reader.read_block_hashes().await?;
+    if !no_sync {
+        store.add_block(block).await?;
+        store.set_canonical_block(block_number, block_hash).await?;
+        store.update_latest_block_number(block_number).await?;
+        store.mark_chain_as_canonical(&block_hashes).await?;
+    }
+    if let Some(dump_writer) = dump_writer.as_mut() {
+        dump_writer.write_hashes_file(block_hashes)?;
+    }
     let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
-    info!(
-        "Archive Sync complete in {sync_time}.\nHead of local chain is now block {block_number} with hash {block_hash}"
-    );
+    info!("Archive Sync complete in {sync_time}");
+    if !no_sync {
+        info!("Head of local chain is now block {block_number} with hash {block_hash}");
+    }
     Ok(())
 }
 
@@ -134,7 +142,8 @@ pub async fn archive_sync(
 async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
     let mut storage_tasks = JoinSet::new();
     let mut state_trie = store.open_state_trie(current_root)?;
-    for (hashed_address, dump_account) in dump.accounts.into_iter() {
+    for (address, dump_account) in dump.accounts.into_iter() {
+        let hashed_address = dump_account.hashed_address.unwrap_or_else(|| keccak(address));
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -204,29 +213,6 @@ fn hash_next(hash: H256) -> H256 {
     H256::from_uint(&(hash.into_uint() + 1))
 }
 
-/// Deserializes a map of Address -> DumpAccount into a sorted map of HashedAddress -> DumpAccount
-/// This is necessary as `debug_getAccountRange` sorts accounts by hashed address
-fn deser_account_dump_map<'de, D>(d: D) -> Result<BTreeMap<H256, DumpAccount>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let map = HashMap::<Address, DumpAccount>::deserialize(d)?;
-    // Order dump accounts by hashed address
-    map.into_iter()
-        .map(|(addr, acc)| {
-            // Sanity check
-            if acc.address.is_some_and(|acc_addr| acc_addr != addr) {
-                Err(serde::de::Error::custom(
-                    "DumpAccount address field doesn't match it's key in the Dump".to_string(),
-                ))
-            } else {
-                let hashed_addr = acc.hashed_address.unwrap_or_else(|| keccak(addr));
-                Ok((hashed_addr, acc))
-            }
-        })
-        .collect()
-}
-
 impl DumpAccount {
     fn get_account_state(&self) -> AccountState {
         AccountState {
@@ -261,38 +247,194 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
     res
 }
 
-/// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPTH` blocks before the current one
-/// This is necessary in order to propperly execute the following blocks
-async fn fetch_block_hashes(
-    current_block_number: BlockNumber,
-    stream: &mut UnixStream,
-    store: Store,
-) -> eyre::Result<()> {
-    for offset in 1..BLOCK_HASH_LOOKUP_DEPTH {
-        let Some(block_number) = current_block_number.checked_sub(offset) else {
-            break;
-        };
+struct DumpDirWriter {
+    dirname: String,
+    current_file: usize,
+}
+
+enum DumpReader {
+    Dir(DumpDirReader),
+    Ipc(DumpIpcReader),
+}
+
+struct DumpDirReader {
+    dirname: String,
+    current_file: usize,
+}
+
+struct DumpIpcReader {
+    stream: UnixStream,
+    block_number: BlockNumber,
+    start: H256,
+}
+
+impl DumpReader {
+    fn new_from_dir(dirname: String) -> eyre::Result<Self> {
+        Ok(Self::Dir(DumpDirReader::new(dirname)?))
+    }
+
+    async fn new_from_ipc(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<Self> {
+        Ok(Self::Ipc(
+            DumpIpcReader::new(archive_ipc_path, block_number).await?,
+        ))
+    }
+
+    async fn read_dump(&mut self) -> eyre::Result<Dump> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_dump(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_dump().await,
+        }
+    }
+
+    async fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_rlp_block(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_rlp_block().await,
+        }
+    }
+
+    async fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_block_hashes(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_block_hashes().await,
+        }
+    }
+}
+
+impl DumpDirWriter {
+    fn new(dirname: String) -> eyre::Result<DumpDirWriter> {
+        if !std::path::Path::new(&dirname).exists() {
+            std::fs::create_dir(&dirname)?;
+        }
+        Ok(Self {
+            dirname,
+            current_file: 0,
+        })
+    }
+
+    fn write_dump(&mut self, dump: &Dump) -> eyre::Result<()> {
+        let dump_file = File::create(
+            std::path::Path::new(&self.dirname).join(format!("dump_{}.json", self.current_file)),
+        )?;
+        serde_json::to_writer(dump_file, dump)?;
+        self.current_file += 1;
+        Ok(())
+    }
+
+    fn write_rlp_block(&mut self, rlp: Vec<u8>) -> eyre::Result<()> {
+        let mut block_file: File = File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
+        block_file.write_all(&rlp)?;
+        Ok(())
+    }
+
+    fn write_hashes_file(
+        &mut self,
+        block_hashes: Vec<(BlockNumber, BlockHash)>,
+    ) -> eyre::Result<()> {
+        let block_hashes_file =
+            File::create(std::path::Path::new(&self.dirname).join("block_hashes.json"))?;
+        serde_json::to_writer(block_hashes_file, &block_hashes)?;
+        Ok(())
+    }
+}
+
+impl DumpDirReader {
+    fn new(dirname: String) -> eyre::Result<DumpDirReader> {
+        if !std::path::Path::new(&dirname).exists() {
+            return Err(eyre::Error::msg("Input directory doesn't exist"));
+        }
+        Ok(Self {
+            dirname,
+            current_file: 0,
+        })
+    }
+
+    fn read_dump(&mut self) -> eyre::Result<Dump> {
+        let dump_file = File::open(
+            std::path::Path::new(&self.dirname).join(format!("dump_{}.json", self.current_file)),
+        )?;
+        self.current_file += 1;
+        Ok(serde_json::from_reader(dump_file)?)
+    }
+
+    fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
+        let mut block_file = File::open(std::path::Path::new(&self.dirname).join("block.rlp"))?;
+        let mut buffer = Vec::<u8>::new();
+        block_file.read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
+        let hashes_file =
+            File::open(std::path::Path::new(&self.dirname).join("block_hashes.json"))?;
+        Ok(serde_json::from_reader(hashes_file)?)
+    }
+}
+
+impl DumpIpcReader {
+    async fn new(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<DumpIpcReader> {
+        let stream = UnixStream::connect(archive_ipc_path).await?;
+        Ok(Self {
+            stream,
+            block_number,
+            start: H256::zero(),
+        })
+    }
+
+    async fn read_dump(&mut self) -> eyre::Result<Dump> {
+        // [debug_accountRange](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugaccountrange)
         let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
-        "method": "debug_dbAncient",
-        "params": ["hashes", block_number]
+        "method": "debug_accountRange",
+        "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, false]
         });
-        let response = send_ipc_json_request(stream, request).await?;
-        let block_hash: BlockHash = serde_json::from_value(response)?;
-        store.set_canonical_block(block_number, block_hash).await?;
+        let response = send_ipc_json_request(&mut self.stream, request).await?;
+        let dump: Dump = serde_json::from_value(response)?;
+        // Find the next hash
+        let last_key = dump.accounts.iter().map(|(addr, acc)|acc.hashed_address.unwrap_or_else(|| keccak(addr))).max().unwrap_or_default();
+        self.start = hash_next(last_key);
+        Ok(dump)
     }
-    Ok(())
+
+    async fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
+        // Request block so we can store it and mark it as canonical
+        let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_getRawBlock",
+        "params": [format!("{:#x}", self.block_number)]
+        });
+        let response = send_ipc_json_request(&mut self.stream, request).await?;
+        let rlp_block_str: String = serde_json::from_value(response)?;
+        let rlp_block = hex::decode(rlp_block_str.trim_start_matches("0x"))?;
+        Ok(rlp_block)
+    }
+
+    /// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPTH` blocks before the current one
+    /// This is necessary in order to propperly execute the following blocks
+    async fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
+        let mut res = Vec::new();
+        for offset in 1..BLOCK_HASH_LOOKUP_DEPTH {
+            let Some(block_number) = self.block_number.checked_sub(offset) else {
+                break;
+            };
+            let request = &json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "debug_dbAncient",
+            "params": ["hashes", block_number]
+            });
+            let response = send_ipc_json_request(&mut self.stream, request).await?;
+            let block_hash: BlockHash = serde_json::from_value(response)?;
+            res.push((block_number, block_hash));
+        }
+        Ok(res)
+    }
 }
 
 #[derive(Parser)]
 struct Args {
-    #[arg(
-        required = true,
-        value_name = "IPC_PATH",
-        help = "Path to the ipc of the archive node."
-    )]
-    archive_node_ipc: String,
     #[arg(
         required = true,
         value_name = "NUMBER",
@@ -300,16 +442,39 @@ struct Args {
     )]
     block_number: BlockNumber,
     #[arg(
+        long = "ipc_path",
+        value_name = "IPC_PATH",
+        help = "Path to the ipc of the archive node."
+    )]
+    archive_node_ipc: Option<String>,
+    #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = DEFAULT_DATADIR,
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
     pub datadir: String,
+    #[arg(
+        long = "output_dir",
+        value_name = "OUTPUT_DIRECTORY",
+        help = "Receives the name of the directory where the State Dump will be written to."
+    )]
+    pub output_dir: Option<String>,
+    #[arg(
+        long = "input_dir",
+        value_name = "OUTPUT_DIRECTORY",
+        help = "Receives the name of the directory where the State Dump will be read from."
+    )]
+    pub input_dir: Option<String>,
+    #[arg(
+        long = "no_sync",
+        value_name = "NO_SYNC",
+        help = "If enabled, the node will not process the incoming state. Only usable if --output_dir is set",
+        requires = "output_dir"
+    )]
+    pub no_sync: bool
 }
 
 #[tokio::main]
@@ -319,5 +484,23 @@ pub async fn main() -> eyre::Result<()> {
         .expect("setting default subscriber failed");
     let data_dir = set_datadir(&args.datadir);
     let store = open_store(&data_dir);
-    archive_sync(&args.archive_node_ipc, args.block_number, store).await
+    if args.archive_node_ipc.is_none() && args.input_dir.is_none() {
+        return Err(eyre::ErrReport::msg(
+            "Either ipc_path or input_dir need to be specified",
+        ));
+    }
+    if args.archive_node_ipc.is_some() && args.input_dir.is_some() {
+        return Err(eyre::ErrReport::msg(
+            "Both ipc_path and input_dir cannot be specified",
+        ));
+    }
+    archive_sync(
+        args.archive_node_ipc,
+        args.block_number,
+        args.output_dir,
+        args.input_dir,
+        args.no_sync,
+        store,
+    )
+    .await
 }
