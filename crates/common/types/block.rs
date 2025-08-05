@@ -450,10 +450,14 @@ pub fn calculate_base_fee_per_gas(
             let parent_fee_gas_delta = U256::from(parent_base_fee_per_gas) * gas_used_delta;
             let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
 
-            let base_fee_per_gas_delta =
-                max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, U256::one());
+            let base_fee_per_gas_delta = max(
+                target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR,
+                U256::one(),
+            );
 
-            (base_fee_per_gas_delta + parent_base_fee_per_gas).try_into().ok()
+            (base_fee_per_gas_delta + parent_base_fee_per_gas)
+                .try_into()
+                .ok()
         }
         Ordering::Less => {
             let gas_used_delta = parent_gas_target - parent_gas_used;
@@ -463,7 +467,9 @@ pub fn calculate_base_fee_per_gas(
 
             let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
 
-            (U256::from(parent_base_fee_per_gas) - base_fee_per_gas_delta).try_into().ok()
+            (U256::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
     }
 }
@@ -874,7 +880,13 @@ mod test {
         let parent_gas_limit = 30000000;
         let parent_gas_used = 1981764;
         let parent_base_fee_per_gas = 1478077008012;
-        let calc_base_fee = calculate_base_fee_per_gas(block_gas_limit, parent_gas_limit, parent_gas_used, parent_base_fee_per_gas, ELASTICITY_MULTIPLIER);
+        let calc_base_fee = calculate_base_fee_per_gas(
+            block_gas_limit,
+            parent_gas_limit,
+            parent_gas_used,
+            parent_base_fee_per_gas,
+            ELASTICITY_MULTIPLIER,
+        );
         assert_eq!(calc_base_fee, expected_base_fee)
     }
 }
