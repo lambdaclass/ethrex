@@ -99,12 +99,12 @@ pub async fn archive_sync(
         }
         // Process dump
         if !no_sync {
-        let instant = Instant::now();
-        state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
-        info!(
-            "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
-            mseconds_to_readable(instant.elapsed().as_millis())
-        );
+            let instant = Instant::now();
+            state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
+            info!(
+                "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
+                mseconds_to_readable(instant.elapsed().as_millis())
+            );
         }
     }
     // Request block so we can store it and mark it as canonical
@@ -143,7 +143,9 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
     let mut storage_tasks = JoinSet::new();
     let mut state_trie = store.open_state_trie(current_root)?;
     for (address, dump_account) in dump.accounts.into_iter() {
-        let hashed_address = dump_account.hashed_address.unwrap_or_else(|| keccak(address));
+        let hashed_address = dump_account
+            .hashed_address
+            .unwrap_or_else(|| keccak(address));
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -322,7 +324,8 @@ impl DumpDirWriter {
     }
 
     fn write_rlp_block(&mut self, rlp: Vec<u8>) -> eyre::Result<()> {
-        let mut block_file: File = File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
+        let mut block_file: File =
+            File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
         block_file.write_all(&rlp)?;
         Ok(())
     }
@@ -392,7 +395,12 @@ impl DumpIpcReader {
         let response = send_ipc_json_request(&mut self.stream, request).await?;
         let dump: Dump = serde_json::from_value(response)?;
         // Find the next hash
-        let last_key = dump.accounts.iter().map(|(addr, acc)|acc.hashed_address.unwrap_or_else(|| keccak(addr))).max().unwrap_or_default();
+        let last_key = dump
+            .accounts
+            .iter()
+            .map(|(addr, acc)| acc.hashed_address.unwrap_or_else(|| keccak(addr)))
+            .max()
+            .unwrap_or_default();
         self.start = hash_next(last_key);
         Ok(dump)
     }
@@ -474,7 +482,7 @@ struct Args {
         help = "If enabled, the node will not process the incoming state. Only usable if --output_dir is set",
         requires = "output_dir"
     )]
-    pub no_sync: bool
+    pub no_sync: bool,
 }
 
 #[tokio::main]
