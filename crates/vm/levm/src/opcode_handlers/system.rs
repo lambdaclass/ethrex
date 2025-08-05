@@ -222,14 +222,12 @@ impl<'a> VM<'a> {
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let size = u256_to_usize(size)?;
 
-        if size == 0 {
+        if size.is_zero() {
             return Ok(OpcodeResult::Halt);
         }
 
-        let offset: usize = u256_to_usize(offset)?;
-
+        let (size, offset) = size_offset_to_usize(size, offset)?;
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
