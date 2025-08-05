@@ -107,12 +107,10 @@ pub struct Metrics {
 
 impl Metrics {
     pub async fn enable(&self) {
-        info!("Enabling metrics");
         *self.snap_syncing.lock().await = true;
     }
 
     pub async fn disable(&self) {
-        info!("Disabling metrics");
         *self.snap_syncing.lock().await = false;
     }
 
