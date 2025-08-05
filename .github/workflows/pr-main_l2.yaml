@@ -47,6 +47,11 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
+      - name: Create placeholder SP1 ELF
+        run: |
+          mkdir -p crates/l2/prover/zkvm/interface/sp1/out
+          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+
       - name: Run cargo check
         run: cargo check --workspace
 
