@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754360748434,
+  "lastUpdate": 1754361634042,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16798,6 +16798,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012509203373945643,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8f7a3bb6a69f96ec186ff8e698409d287618cff8",
+          "message": "chore(l1): downgrade rpc api read requests to debug. (#3923)\n\n**Motivation**\nWe don't want to spam the logs with getters. Only relevant things should\nbe logged with info or above.\n\n**Description**\n- Downgraded read RPC requests to `debug`.\n- Changed some log levels that were inappropriate\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-08-04T22:00:20Z",
+          "tree_id": "530037b1ecc7f4be0a1ee22c97d77368f8b65675",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8f7a3bb6a69f96ec186ff8e698409d287618cff8"
+        },
+        "date": 1754361633348,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0061793148148148146,
             "unit": "Mgas/s"
           }
         ]
