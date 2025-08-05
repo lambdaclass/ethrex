@@ -176,6 +176,7 @@ pub async fn periodically_show_peer_stats() {
         dbg!(&snap_syncing);
         // Show the logs only when snap syncing
         if !snap_syncing {
+            tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
