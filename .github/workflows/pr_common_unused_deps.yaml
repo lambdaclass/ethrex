@@ -16,9 +16,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Setup Rust Environment
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}, nightly
+        uses: ./.github/actions/setup-rust
 
       - name: Check workspace-level unused dependencies
         run: |
