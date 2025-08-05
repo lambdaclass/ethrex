@@ -172,9 +172,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
-        let snap_syncing = *METRICS.snap_syncing.lock().await;
-        // Show the logs only when snap syncing
-        if !snap_syncing {
+        let metrics_enabled = *METRICS.enabled.lock().await;
+        // Show the metrics only when these are enabled
+        if !metrics_enabled {
             tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
