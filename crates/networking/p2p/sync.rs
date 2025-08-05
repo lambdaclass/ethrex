@@ -3,7 +3,7 @@ mod storage_healing;
 
 use crate::metrics::METRICS;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-use crate::sync::state_healing::{heal_state_trie, SHOW_PROGRESS_INTERVAL_DURATION};
+use crate::sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, heal_state_trie};
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler, SNAP_LIMIT},
@@ -20,10 +20,10 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
 use futures::FutureExt;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::thread::Scope;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     array,
     cmp::min,
@@ -171,6 +171,11 @@ impl Syncer {
         };
 
         loop {
+            debug!("Sync Log 1: In snap sync");
+            debug!(
+                "Sync Log 2: State block hashes len {}",
+                block_sync_state.into_snap_block_hashes().len()
+            );
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -305,6 +310,16 @@ impl Syncer {
         };
 
         loop {
+            debug!("Sync Log 1: In Full Sync");
+            debug!(
+                "Sync Log 3: State current headears len {}",
+                block_sync_state.current_headers.len()
+            );
+            debug!(
+                "Sync Log 4: State current blocks len {}",
+                block_sync_state.current_blocks.len()
+            );
+
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -313,8 +328,11 @@ impl Syncer {
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
+                debug!("Sync Log 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };
+
+            debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
@@ -415,6 +433,7 @@ impl Syncer {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
+
 
     async fn snap_sync(
         &mut self,
@@ -535,9 +554,8 @@ impl Syncer {
                     }
                     info!("We have finished inserting in the trie, getting the hash");
                     let current_state_root = trie.hash().unwrap();
-                    // TODO: readd this, potentialy in another place
-                    // bytecode_hashes.sort();
-                    // bytecode_hashes.dedup();
+                    bytecode_hashes.sort();
+                    bytecode_hashes.dedup();
                     (current_state_root, bytecode_hashes)
                 })
                 .await
@@ -545,7 +563,7 @@ impl Syncer {
 
             info!("We have finished computing the current state root {current_state_root}");
             computed_state_root = current_state_root;
-            //bytecode_hashes.extend(&current_bytecode_hashes);
+            bytecode_hashes.extend(&current_bytecode_hashes);
         }
 
         *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
@@ -705,9 +723,31 @@ impl Syncer {
             .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
             .await?;
 
+        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone())
+            .await
+            .unwrap();
+
+        let block = store
+            .get_block_by_hash(pivot_hash)
+            .await?
+            .ok_or(SyncError::CorruptDB)?;
+
+        store.add_block(block).await?;
+
+        let numbers_and_hashes = all_block_hashes
+            .into_iter()
+            .rev()
+            .enumerate()
+            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .collect::<Vec<_>>();
+
+        store.mark_chain_as_canonical(&numbers_and_hashes).await?;
+        store.update_latest_block_number(pivot_number).await?;
+
         Ok(())
     }
 }
+
 
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
@@ -797,10 +837,10 @@ impl BlockSyncState {
 
     /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
     /// If it is a FullSync state, returns an empty vector
-    pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
+    pub fn into_snap_block_hashes(&self) -> Vec<BlockHash> {
         match self {
             BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(state) => state.block_hashes,
+            BlockSyncState::Snap(state) => state.block_hashes.clone(),
         }
     }
 
@@ -1032,7 +1072,6 @@ async fn heal_state_trie_wrap(
     info!("Stopped state healing");
     Ok(healing_done)
 }
-
 
 async fn heal_storage_trie_wrap(
     state_root: H256,
