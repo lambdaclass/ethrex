@@ -126,8 +126,6 @@ pub enum SequencerOptionsError {
     NoCoinbaseAddress,
     #[error("No on-chain proposer address was provided")]
     NoOnChainProposerAddress,
-    #[error("No proof coordinator TDX private key was provided")]
-    NoProofCoorditanorTdxPrivateKey,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -195,8 +193,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key
-                    .ok_or(SequencerOptionsError::NoProofCoorditanorTdxPrivateKey)?,
+                    .proof_coordinator_tdx_private_key,
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -233,7 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
@@ -298,8 +295,8 @@ impl Default for EthOptions {
     fn default() -> Self {
         Self {
             rpc_url: vec!["http://localhost:8545".to_string()],
-            maximum_allowed_max_fee_per_gas: 10000000000,
-            maximum_allowed_max_fee_per_blob_gas: 10000000000,
+            maximum_allowed_max_fee_per_gas: Default::default(),
+            maximum_allowed_max_fee_per_blob_gas: Default::default(),
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
