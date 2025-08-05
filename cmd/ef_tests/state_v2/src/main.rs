@@ -17,8 +17,8 @@ pub async fn main() -> Result<(), RunnerError> {
     run_tests(tests).await?;
     println!(
         "\nTests finished running.
-    Find successful tests (if any) report at: './runner_v2/success_report.txt'.
-    Find failing    tests (if any) report at: './runner_v2/failure_report.txt'.
+    Find successful tests (if any) report at: './success_report.txt'.
+    Find failing    tests (if any) report at: './failure_report.txt'.
     "
     );
     Ok(())
