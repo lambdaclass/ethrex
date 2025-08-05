@@ -7,7 +7,6 @@ use std::{
 use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
-use tracing::info;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
 
