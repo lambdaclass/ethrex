@@ -447,27 +447,27 @@ pub fn calculate_base_fee_per_gas(
         Ordering::Greater => {
             let gas_used_delta = parent_gas_used - parent_gas_target;
 
-            let parent_fee_gas_delta = U256::from(parent_base_fee_per_gas) * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta = max(
-                target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR,
-                U256::one(),
-            );
+            let base_fee_per_gas_delta =
+                max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
 
-            (base_fee_per_gas_delta + parent_base_fee_per_gas)
+            (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
                 .try_into()
                 .ok()
         }
         Ordering::Less => {
             let gas_used_delta = parent_gas_target - parent_gas_used;
 
-            let parent_fee_gas_delta = U256::from(parent_base_fee_per_gas) * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
 
-            (U256::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
+            (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
                 .try_into()
                 .ok()
         }
