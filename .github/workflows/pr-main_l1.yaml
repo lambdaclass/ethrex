@@ -71,6 +71,9 @@ jobs:
           if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
             echo "DOCKER_CREDS_EXISTS=false" >> $GITHUB_ENV
             echo "No credentials provided. Skipping DockerHub login..."
+          else
+            echo "DOCKER_CREDS_EXISTS=true" >> $GITHUB_ENV
+            echo "Credentials were provided!"
           fi
 
       - name: Login to Docker Hub
