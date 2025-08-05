@@ -10,11 +10,11 @@ services:
       context: ../../
       args:
         - BUILDPLATFORM=linux/amd64
-      dockerfile: ./crates/l2/contracts/Dockerfile
+      dockerfile: ./crates/l2/Dockerfile
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
-      - ./.env:${CI_ETHREX_WORKDIR}/.env
+      - ../../cmd/.env:${CI_ETHREX_WORKDIR}/.env
       - ../../fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
@@ -49,6 +49,9 @@ services:
       - COMPILE_CONTRACTS=true
     depends_on:
       - ethrex
+    command: >
+      l2
+      deploy
 
   ethrex_l2:
     restart: always
@@ -73,9 +76,11 @@ services:
       - ETHREX_BASED=${ETHREX_BASED:-false}
       - ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=${ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY:-0x0000000000000000000000000000000000000000}
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
+    env_file:
+      - ../../cmd/.env
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
-      - ./.env:/.env:ro
+      - ../../cmd/.env:/.env:ro
       - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
@@ -86,8 +91,6 @@ services:
       --authrpc.port 8552
       --evm levm
       --proof-coordinator.addr 0.0.0.0
-      --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
-      --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d

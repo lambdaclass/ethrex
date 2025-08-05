@@ -21,7 +21,10 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
 
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+    && chmod +x /usr/bin/solc
 COPY . .
+ENV COMPILE_CONTRACTS=true
 RUN cargo build --release --features "rollup_storage_libmdbx"
 
 FROM ubuntu:24.04
