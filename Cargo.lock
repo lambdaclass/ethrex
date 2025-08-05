@@ -3858,6 +3858,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
+ "genesis-tool",
  "hex",
  "itertools 0.14.0",
  "keccak-hash",
@@ -4381,35 +4382,6 @@ dependencies = [
  "sha3",
  "thiserror 2.0.12",
  "tracing",
-]
-
-[[package]]
-name = "ethrex_l2-contracts"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.40",
- "clap_complete",
- "colored",
- "ethereum-types 0.15.1",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-l2-common",
- "ethrex-l2-rpc",
- "ethrex-rpc",
- "ethrex-sdk",
- "eyre",
- "genesis-tool",
- "hex",
- "keccak-hash",
- "lazy_static",
- "reqwest 0.12.20",
- "secp256k1",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -11127,9 +11099,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36bfc580e2c0cf6ebb73f7103f315309124cbb85e3484d526088d12a466bd354"
+checksum = "632387372394c445aeb504bcff82918a5a3963b54168d5efc7531e9db17adc26"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11139,9 +11111,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81a7fb722e293601d83f2affdedf3b65b4e26a3bd918ae43320a64190d090edb"
+checksum = "c29e9b02f1ed35706a607a20da5b5568eadc023ab2372e175cb654cd2347e307"
 dependencies = [
  "crossbeam",
  "tokio",

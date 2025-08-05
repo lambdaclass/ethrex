@@ -35,15 +35,21 @@ FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+    && chmod +x /usr/bin/solc
+
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
+COPY tooling ./tooling
+COPY fixtures/genesis ./fixtures/genesis
 COPY Cargo.* ./
 COPY fixtures ./fixtures
 COPY .git ./.git
 
 # Optional build flags
 ARG BUILD_FLAGS=""
+ENV COMPILE_CONTRACTS=true
 RUN cargo build --release $BUILD_FLAGS
 
 # --- Final Image ---
