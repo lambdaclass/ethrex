@@ -469,6 +469,59 @@ pub fn calculate_base_fee_per_gas(
     })
 }
 
+// Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
+// Returns None if the block gas limit is not valid in relation to its parent's gas limit
+pub fn calculate_base_fee_per_gas_verbose(
+    block_gas_limit: u64,
+    parent_gas_limit: u64,
+    parent_gas_used: u64,
+    parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
+) -> Option<u64> {
+    // Check gas limit, if the check passes we can also rest assured that none of the
+    // following divisions will have zero as a divider
+    if !check_gas_limit(block_gas_limit, parent_gas_limit) {
+        return None;
+    }
+
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
+    info!("Parent gas target: {parent_gas_target}");
+    info!("Parent gas used vs target: {:?}", parent_gas_used.cmp(&parent_gas_target));
+
+    Some(match parent_gas_used.cmp(&parent_gas_target) {
+        Ordering::Equal => parent_base_fee_per_gas,
+        Ordering::Greater => {
+            let gas_used_delta = parent_gas_used - parent_gas_target;
+            info!("Gas used delta: {gas_used_delta}");
+
+            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
+            info!("Parent fee gas delta: {parent_fee_gas_delta}");
+            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            info!("Target fee gas delta: {target_fee_gas_delta}");
+
+            let base_fee_per_gas_delta =
+                max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
+            info!("Base fee per gas delta: {base_fee_per_gas_delta}");
+
+            parent_base_fee_per_gas + base_fee_per_gas_delta
+        }
+        Ordering::Less => {
+            let gas_used_delta = parent_gas_target - parent_gas_used;
+            info!("Gas used delta: {gas_used_delta}");
+
+            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
+            info!("Parent fee gas delta: {parent_fee_gas_delta}");
+            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            info!("Target fee gas delta: {target_fee_gas_delta}");
+
+            let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
+            info!("Base fee per gas delta: {base_fee_per_gas_delta}");
+
+            parent_base_fee_per_gas - base_fee_per_gas_delta
+        }
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockHeaderError {
     #[error("Gas used is greater than gas limit")]
@@ -571,6 +624,15 @@ pub fn validate_block_header(
             parent_header.gas_used,
             parent_header.base_fee_per_gas
         );
+        // Run calc again in verbose mode:
+        calculate_base_fee_per_gas_verbose(
+            header.gas_limit,
+            parent_header.gas_limit,
+            parent_header.gas_used,
+            parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+            elasticity_multiplier,
+        );
+
         return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
     }
 
