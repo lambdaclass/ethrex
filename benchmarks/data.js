@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754432711106,
+  "lastUpdate": 1754436837143,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17356,6 +17356,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006607584158415842,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53660242+samoht9277@users.noreply.github.com",
+            "name": "Tomás Casagrande",
+            "username": "samoht9277"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c9912cce64b46779d621788a737d9053262d92cf",
+          "message": "ci(l1): fix typo in Docker Login CI. (#3956)\n\n**Motivation**\nWhen credentials were present, `DOCKER_CREDS_EXISTS` was never set to\ntrue, meaning the Docker login step was always skipped, even when creds\nwere there. This PR fixes this.",
+          "timestamp": "2025-08-05T18:48:35Z",
+          "tree_id": "d1aaf535e6423409f640ab652c62e17aa26c09d4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c9912cce64b46779d621788a737d9053262d92cf"
+        },
+        "date": 1754436821905,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001249749063670412,
             "unit": "Mgas/s"
           }
         ]
