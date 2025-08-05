@@ -67,7 +67,8 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    init_tracing(&opts);
+    // init_tracing(&opts);
+    console_subscriber::init();
 
     let data_dir = set_datadir(&opts.datadir);
 

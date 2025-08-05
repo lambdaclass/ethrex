@@ -49,6 +49,7 @@ cfg-if = "1.0.0"
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
+console-subscriber = "0.4.1"
 
 [[bin]]
 name = "ethrex"
