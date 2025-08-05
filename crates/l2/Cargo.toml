@@ -26,7 +26,7 @@ ethrex-l2-rpc.workspace = true
 ethrex-metrics = { workspace = true, default-features = false }
 ethrex-sdk.workspace = true
 ethrex-p2p.workspace = true
-hex.workspace = true
+hex = "0.4.3"
 bytes.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
