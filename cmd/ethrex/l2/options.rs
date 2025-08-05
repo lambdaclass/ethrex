@@ -570,12 +570,7 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: true,
-            proof_coordinator_tdx_private_key: Some(
-                utils::parse_private_key(
-                    "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-                )
-                .unwrap(),
-            ),
+            proof_coordinator_tdx_private_key: None,
         }
     }
 }
