@@ -54,7 +54,7 @@ jobs:
 
       - name: Build L2
         run: |
-          cargo build --release --bin ethrex --features rollup_storage_libmdbx,metrics
+          cargo build --release --bin ethrex
 
       - name: Install rex
         run: |
@@ -70,8 +70,6 @@ jobs:
           context: .
           tags: ethrex:unstable
           push: false
-          build-args: |
-            BUILD_FLAGS=--features dev
 
       - name: Start L1 & Deploy contracts
         run: |

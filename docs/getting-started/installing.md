@@ -58,7 +58,6 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
     --tag <LATEST_VERSION_HERE> \
-    --features dev,rollup_storage_sql,metrics
 ```
 
 This installs the `ethrex` binary.
@@ -95,7 +94,7 @@ git clone --branch <LATEST_VERSION_HERE> --depth 1 https://github.com/lambdaclas
 After that, you can run the following command inside the cloned repo to build the client:
 
 ```sh
-cargo build --bin ethrex --release --features dev,rollup_storage_sql,metrics
+cargo build --bin ethrex --release
 ```
 
 You can find the built binary inside `target/release` directory:

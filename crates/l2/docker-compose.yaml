@@ -2,10 +2,7 @@ services:
   ethrex_l1:
     container_name: ethrex_l1
     image: "ethrex:unstable"
-    build:
-      context: ../../
-      args:
-        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
+    build: ../../
     ports:
       - 127.0.0.1:8545:8545
     volumes:
@@ -16,10 +13,7 @@ services:
     # platform: linux/amd64
     container_name: contract_deployer
     image: "ethrex:unstable"
-    build:
-      context: ../../
-      args:
-        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
+    build: ../../
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
@@ -65,10 +59,7 @@ services:
   ethrex_l2:
     container_name: ethrex_l2
     image: "ethrex:unstable"
-    build:
-      context: ../../
-      args:
-        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
+    build: ../../
     ports:
       # RPC
       - 127.0.0.1:1729:1729
@@ -111,10 +102,7 @@ services:
   ethrex_prover:
     container_name: ethrex_prover
     image: "ethrex:unstable"
-    build:
-      context: ../../
-      args:
-        BUILD_FLAGS: "--features dev,rollup_storage_sql,metrics"
+    build: ../../
     command: >
       l2 prover
       --backend exec

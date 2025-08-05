@@ -30,6 +30,7 @@ jobs:
           - platform: macos-latest
             os: macos
             arch: aarch64
+            prover_features: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -81,7 +82,7 @@ jobs:
 
       - name: Build ethrex
         run: |
-          RUSTFLAGS='-C target-cpu=native' NVCC_PREPEND_FLAGS='-arch=sm_70' cargo build --release --features dev,rollup_storage_sql,metrics,${{ matrix.prover_features }} --bin ethrex
+          RUSTFLAGS='-C target-cpu=native' NVCC_PREPEND_FLAGS='-arch=sm_70' cargo build --release --features ${{ matrix.prover_features }} --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Copy verification keys
@@ -144,8 +145,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
-          build-args: |
-            BUILD_FLAGS=--features dev,rollup_storage_sql,metrics
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:

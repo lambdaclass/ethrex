@@ -40,8 +40,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:unstable
-          build-args: |
-            BUILD_FLAGS=--features dev,rollup_storage_sql,metrics
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2

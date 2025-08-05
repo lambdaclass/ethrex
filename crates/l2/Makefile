@@ -66,7 +66,7 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -117,7 +117,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -138,7 +138,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics,dev" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 --dev
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
@@ -193,7 +193,7 @@ build-prover:
 	cargo build --release \
 		--manifest-path ../../Cargo.toml \
 		--bin ethrex \
-		--features "$$PROVER$$GPU,rollup_storage_sql,metrics"
+		--features "$$PROVER$$GPU"
 
 # ==============================================================================
 # TEE
