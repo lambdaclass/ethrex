@@ -98,3 +98,10 @@ harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+ethrex-sdk.workspace = true
+hex.workspace = true
+bytes.workspace = true
+ethrex-common.workspace = true
+serde_json.workspace = true
+genesis-tool = { path = "../../tooling/genesis" }
+thiserror.workspace = true
