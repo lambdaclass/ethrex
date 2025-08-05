@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -15,14 +16,12 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
-    pub initial_accounts_state: HashMap<Address, Account>,
+    pub initial_accounts_state: BTreeMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
@@ -71,6 +70,11 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
+        // If the account was destroyed then we cannot rely on the DB to obtain its previous value
+        // This is critical when executing blocks in batches, as an account may be destroyed and created within the same batch
+        if self.destroyed_accounts.contains(&address) {
+            return Ok(Default::default());
+        }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
@@ -127,8 +131,8 @@ impl<'a> VM<'a> {
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
         let account = match self.db.current_accounts_state.entry(address) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
                 let account = self.db.store.get_account(address)?;
                 self.db
                     .initial_accounts_state
@@ -138,9 +142,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
 
@@ -181,8 +183,11 @@ impl<'a> VM<'a> {
         to: Address,
         value: U256,
     ) -> Result<(), InternalError> {
-        self.decrease_account_balance(from, value)?;
-        self.increase_account_balance(to, value)?;
+        if value != U256::zero() {
+            self.decrease_account_balance(from, value)?;
+            self.increase_account_balance(to, value)?;
+        }
+
         Ok(())
     }
 
@@ -214,9 +219,7 @@ impl<'a> VM<'a> {
         address: Address,
         account: Account,
     ) -> Result<(), InternalError> {
-        self.call_frames
-            .last_mut()
-            .ok_or(InternalError::CallFrame)?
+        self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, &account)?;
 
@@ -263,6 +266,7 @@ impl<'a> VM<'a> {
     }
 
     /// Gets storage value of an account, caching it if not already cached.
+    #[inline(always)]
     pub fn get_storage_value(
         &mut self,
         address: Address,
@@ -292,8 +296,9 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
         new_value: U256,
+        current_value: U256,
     ) -> Result<(), InternalError> {
-        self.backup_storage_slot(address, key)?;
+        self.backup_storage_slot(address, key, current_value)?;
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
@@ -304,25 +309,15 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        current_value: U256,
     ) -> Result<(), InternalError> {
-        let account_storage_backup = self
-            .current_call_frame_mut()?
+        self.current_call_frame
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_insert(HashMap::new());
-
-        if !account_storage_backup.contains_key(&key) {
-            // We avoid getting the storage value again if its already backed up.
-            let value = self.get_storage_value(address, key)?;
-            self.current_call_frame_mut()?
-                .call_frame_backup
-                .original_account_storage_slots
-                .entry(address)
-                .and_modify(|x| {
-                    x.insert(key, value);
-                });
-        }
+            .or_default()
+            .entry(key)
+            .or_insert(current_value);
 
         Ok(())
     }
