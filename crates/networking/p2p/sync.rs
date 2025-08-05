@@ -163,7 +163,10 @@ impl Syncer {
 
         loop {
             info!("Sync Log 1: In snap sync");
-            info!("Sync Log 2: State block hashes len {}", block_sync_state.into_snap_block_hashes().len());
+            info!(
+                "Sync Log 2: State block hashes len {}",
+                block_sync_state.into_snap_block_hashes().len()
+            );
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -299,9 +302,15 @@ impl Syncer {
 
         loop {
             info!("Sync Log 1: In Full Sync");
-            info!("Sync Log 3: State current headears len {}", block_sync_state.current_headers.len());
-            info!("Sync Log 4: State current blocks len {}", block_sync_state.current_blocks.len());
-            
+            info!(
+                "Sync Log 3: State current headears len {}",
+                block_sync_state.current_headers.len()
+            );
+            info!(
+                "Sync Log 4: State current blocks len {}",
+                block_sync_state.current_blocks.len()
+            );
+
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -981,7 +990,7 @@ impl Syncer {
 
         store.mark_chain_as_canonical(&numbers_and_hashes).await?;
         store.update_latest_block_number(pivot_number).await?;
-
+        *METRICS.snap_sync_finished.lock().await = true;
         Ok(())
     }
 }

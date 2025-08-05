@@ -172,6 +172,10 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
+        let snap_sync_finished = METRICS.snap_sync_finished.lock().await;
+        if *snap_sync_finished {
+            break;
+        }
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
 
         let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
