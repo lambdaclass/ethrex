@@ -122,18 +122,18 @@ impl<E: Display> From<RevmError<E>> for EvmError {
 
 impl From<VMError> for EvmError {
     fn from(value: VMError) -> Self {
-        if value.should_propagate() {
-            EvmError::Custom(value.to_string())
-        } else if let VMError::TxValidation(TxValidationError::NonceMismatch { expected, actual }) =
-            value
-        {
-            EvmError::Nonce {
-                state: expected,
-                tx: actual,
+        match value {
+            v if v.should_propagate() => EvmError::Custom(v.to_string()),
+            VMError::TxValidation(TxValidationError::NonceMismatch { expected, actual }) => {
+                EvmError::Nonce {
+                    state: expected,
+                    tx: actual,
+                }
             }
-        } else {
-            // If an error is not internal it means it is a transaction validation error.
-            EvmError::Transaction(value.to_string())
+            other => {
+                // If an error is not internal it means it is a transaction validation error.
+                EvmError::Transaction(other.to_string())
+            }
         }
     }
 }
