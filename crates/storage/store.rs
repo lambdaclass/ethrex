@@ -20,9 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::RwLock,
+};
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -35,6 +38,8 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    chain_config: Arc<RwLock<ChainConfig>>,
+    latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 #[allow(dead_code)]
@@ -80,15 +85,22 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
+
         info!("Started store engine");
         Ok(store)
     }
@@ -158,6 +170,14 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_number == latest.number {
+            return Ok(Some(latest));
+        }
         self.engine.get_block_header(block_number)
     }
 
@@ -165,6 +185,14 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_hash == latest.hash() {
+            return Ok(Some(latest));
+        }
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -243,6 +271,7 @@ impl Store {
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
         let chain_config = self.get_chain_config()?;
         let genesis_header = self
+            .engine
             .get_block_header(0)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_number = self.get_latest_block_number().await?;
@@ -567,12 +596,28 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
-        if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.hash() == genesis_hash {
+        let mut latest_block_number_set = false;
+        if let Some(number) = self.engine.get_latest_block_number().await? {
+            *self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)? = self
+                .engine
+                .get_block_header(number)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+            latest_block_number_set = true;
+        }
+
+        match self.engine.get_block_header(genesis_block_number)? {
+            Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
-            } else {
-                panic!("{GENESIS_DIFF_PANIC_MESSAGE}");
+            }
+            Some(_) => panic!("{GENESIS_DIFF_PANIC_MESSAGE}"),
+            None => {
+                self.engine
+                    .add_block_header(genesis_hash, genesis_block.header.clone())
+                    .await?
             }
         }
         // Store genesis accounts
@@ -589,10 +634,15 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.update_latest_block_number(genesis_block_number)
-            .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
-            .await
+            .await?;
+
+        if !latest_block_number_set {
+            self.update_latest_block_number(genesis_block_number)
+                .await?;
+        }
+
+        Ok(())
     }
 
     pub async fn get_transaction_by_hash(
@@ -652,11 +702,18 @@ impl Store {
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        *self
+            .chain_config
+            .write()
+            .map_err(|_| StoreError::LockError)? = *chain_config;
         self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        self.engine.get_chain_config()
+        Ok(*self
+            .chain_config
+            .read()
+            .map_err(|_| StoreError::LockError)?)
     }
 
     pub async fn update_earliest_block_number(
@@ -701,14 +758,23 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number).await
+        self.engine.update_latest_block_number(block_number).await?;
+        *self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)? = self
+            .engine
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+        Ok(())
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        self.engine
-            .get_latest_block_number()
-            .await?
-            .ok_or(StoreError::MissingLatestBlockNumber)
+        Ok(self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .number)
     }
 
     pub async fn update_pending_block_number(
@@ -727,22 +793,46 @@ impl Store {
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash).await
+        self.engine.set_canonical_block(number, hash).await?;
+
+        {
+            let mut last = self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            if last.number == number {
+                *last = self.engine.get_block_header(number)?.ok_or_else(|| {
+                    StoreError::Custom("missing canonical block header".to_string())
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        {
+            let last = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if last.number == block_number {
+                return Ok(Some(last.hash()));
+            }
+        }
         self.engine.get_canonical_block_hash(block_number).await
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        let latest_block_number = match self.engine.get_latest_block_number().await {
-            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
-            Err(e) => return Err(e),
-        };
-        self.get_canonical_block_hash(latest_block_number).await
+        Ok(Some(
+            self.latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .hash(),
+        ))
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.
@@ -1576,6 +1666,23 @@ mod tests {
         let latest_block_number = 8;
         let pending_block_number = 9;
 
+        let (mut block_header, block_body) = create_block_for_testing();
+        block_header.number = latest_block_number;
+        let hash = block_header.hash();
+
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store
+            .add_block_body(hash, block_body.clone())
+            .await
+            .unwrap();
+        store
+            .set_canonical_block(latest_block_number, hash)
+            .await
+            .unwrap();
+
         store
             .update_earliest_block_number(earliest_block_number)
             .await
@@ -1600,8 +1707,8 @@ mod tests {
         let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
         let stored_finalized_block_number =
             store.get_finalized_block_number().await.unwrap().unwrap();
-        let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
         let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
+        let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
         let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
 
         assert_eq!(earliest_block_number, stored_earliest_block_number);
