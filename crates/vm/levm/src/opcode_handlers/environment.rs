@@ -2,7 +2,7 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::calculate_memory_size,
-    utils::{u256_into_usize, word_to_address},
+    utils::{size_offset_to_usize, u256_to_usize, word_to_address},
     vm::VM,
 };
 use ethrex_common::{U256, utils::u256_from_big_endian_const};
@@ -134,10 +134,8 @@ impl<'a> VM<'a> {
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
-
-        let size = u256_into_usize(size);
-        let dest_offset = u256_into_usize(dest_offset);
-        let calldata_offset = calldata_offset.try_into().unwrap_or(usize::MAX);
+        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
+        let calldata_offset = u256_to_usize(calldata_offset).unwrap_or(usize::MAX);
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -188,13 +186,11 @@ impl<'a> VM<'a> {
     pub fn op_codecopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
 
-        let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
+        let [dest_offset, code_offset, size] = *current_call_frame.stack.pop()?;
+        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
+        let code_offset = u256_to_usize(code_offset).unwrap_or(usize::MAX);
 
-        let size = u256_into_usize(size);
-        let destination_offset = u256_into_usize(destination_offset);
-        let code_offset = code_offset.try_into().unwrap_or(usize::MAX);
-
-        let new_memory_size = calculate_memory_size(destination_offset, size)?;
+        let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::codecopy(
             new_memory_size,
@@ -215,9 +211,7 @@ impl<'a> VM<'a> {
                         .bytecode
                         .get_unchecked(code_offset..code_offset_end)
                 };
-                current_call_frame
-                    .memory
-                    .store_data(destination_offset, slice)?;
+                current_call_frame.memory.store_data(dest_offset, slice)?;
 
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
@@ -236,9 +230,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        current_call_frame
-            .memory
-            .store_data(destination_offset, &data)?;
+        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -275,9 +267,8 @@ impl<'a> VM<'a> {
         let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
 
         let address = word_to_address(address);
-        let size = u256_into_usize(size);
-        let dest_offset = u256_into_usize(dest_offset);
-        let offset = offset.try_into().unwrap_or(usize::MAX);
+        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
+        let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
 
         let current_memory_size = call_frame.memory.len();
         let address_was_cold = self.substate.accessed_addresses.insert(address);
@@ -332,9 +323,9 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
 
-        let size = u256_into_usize(size);
-        let dest_offset = u256_into_usize(dest_offset);
-        let returndata_offset = returndata_offset.try_into().unwrap_or(usize::MAX);
+        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
+        let returndata_offset =
+            u256_to_usize(returndata_offset).map_err(|_| ExceptionalHalt::OutOfBounds)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 

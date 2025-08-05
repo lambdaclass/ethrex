@@ -145,7 +145,7 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
 
-        let index = u256_into_usize(self.current_call_frame.stack.pop1()?);
+        let index = u256_to_usize(self.current_call_frame.stack.pop1()?)?;
         let blob_hashes = &self.env.tx_blob_hashes;
 
         if index >= blob_hashes.len() {
