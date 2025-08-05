@@ -151,7 +151,20 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store.get_block_number(current_head).await.unwrap().unwrap();
+        let current_head_number = match store.get_block_number(current_head).await {
+            Ok(Some(number)) => number,
+            _ => {
+                // HOTFIX: WE TEND TO ENTER HERE AFTER FIRST ROUND OF SNAP SYNC
+                // THIS SHOULD BE FIXED IN THE FUTURE
+                if let SyncMode::Snap = sync_mode {
+                    self.snap_sync(store, block_sync_state).await?;
+
+                    // Next sync will be full-sync
+                    self.snap_enabled.store(false, Ordering::Relaxed);
+                }
+                return Ok(());
+            }
+        };
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
