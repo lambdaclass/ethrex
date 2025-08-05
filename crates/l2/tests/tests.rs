@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
-use ethrex_common::types::BlockNumber;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
@@ -225,8 +224,7 @@ async fn test_upgrade(
 
     assert!(tx_receipt.receipt.status, "Upgrade transaction failed");
 
-    let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
-        .await?;
+    let _ = wait_for_l2_deposit_receipt(&tx_receipt, l1_client, l2_client).await?;
     let final_impl = l2_client
         .get_storage_at(
             COMMON_BRIDGE_L2_ADDRESS,
@@ -467,7 +465,7 @@ async fn test_erc20_roundtrip(
     assert!(res.receipt.status);
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L2");
-    wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
+    wait_for_l2_deposit_receipt(&res, l1_client, l2_client)
         .await
         .unwrap();
     let remaining_l1_balance = test_balance_of(l1_client, token_l1, rich_address).await;
@@ -587,10 +585,9 @@ async fn test_aliasing(
 
     assert!(receipt_l1.receipt.status);
 
-    let receipt_l2 =
-        wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
-            .await
-            .unwrap();
+    let receipt_l2 = wait_for_l2_deposit_receipt(&receipt_l1, l1_client, l2_client)
+        .await
+        .unwrap();
     println!(
         "alising {:#x} to {:#x}",
         get_address_alias(caller_l1),
@@ -661,7 +658,7 @@ async fn test_erc20_failed_deposit(
 
     println!("test_erc20_failed_deposit: Waiting for deposit transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
+    let res = wait_for_l2_deposit_receipt(&res, l1_client, l2_client)
         .await
         .unwrap();
 
@@ -734,12 +731,7 @@ async fn test_forced_withdrawal(
         l1_to_l2_tx_receipt.tx_info.gas_used * l1_to_l2_tx_receipt.tx_info.effective_gas_price;
     println!("forced_withdrawal: Waiting for L1 to L2 transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let res = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     let withdrawal_tx_hash = res.tx_info.transaction_hash;
     assert_eq!(
@@ -924,12 +916,7 @@ async fn test_deposit(
 
     println!("test deposit: Waiting for L2 deposit tx receipt");
 
-    let _ = wait_for_l2_deposit_receipt(
-        deposit_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&deposit_tx_receipt, l1_client, l2_client).await?;
 
     let deposit_recipient_l2_balance_after_deposit = l2_client
         .get_balance(
@@ -1055,12 +1042,7 @@ async fn test_transfer_with_privileged_tx(
 
     println!("transfer_with_ptx: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("transfer_with_ptx: Checking balances after transfer");
 
@@ -1151,12 +1133,7 @@ async fn test_privileged_tx_not_enough_balance(
 
     println!("ptx_not_enough_balance: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("ptx_not_enough_balance: Checking balances after transfer");
 
@@ -1604,12 +1581,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("Checking balances after call");
 
@@ -1714,20 +1686,20 @@ fn l2_return_transfer_private_key() -> SecretKey {
 }
 
 async fn wait_for_l2_deposit_receipt(
-    l1_receipt_block_number: BlockNumber,
+    rpc_receipt: &RpcReceipt,
     l1_client: &EthClient,
     l2_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let topic = keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
-    let logs = l1_client
-        .get_logs(
-            U256::from(l1_receipt_block_number),
-            U256::from(l1_receipt_block_number),
-            bridge_address()?,
-            vec![topic],
-        )
-        .await?;
-    let data = PrivilegedTransactionData::from_log(logs.first().unwrap().log.clone())?;
+    let data = rpc_receipt
+        .logs
+        .iter()
+        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
+        .ok_or_else(|| {
+            format!(
+                "RpcReceipt for transaction {:?} contains no valid logs",
+                rpc_receipt.tx_info.transaction_hash
+            )
+        })?;
 
     let l2_deposit_tx_hash = data
         .into_tx(
