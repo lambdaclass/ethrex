@@ -13,7 +13,7 @@ use tracing::{info, trace};
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// This struct stores the metadata we need when we request a node
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NodeRequest {
     /// What account this belongs too (so what is the storage tree)
     acc_path: Nibbles,
@@ -26,7 +26,7 @@ pub struct NodeRequest {
 }
 
 /// This struct stores the metadata we need when we request a node
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NodeResponse {
     /// Who is this node
     node: Node,
@@ -134,10 +134,17 @@ fn process_data(
             membatch.insert(
                 key,
                 MembatchEntry {
-                    node_response: node_response,
+                    node_response: node_response.clone(),
                     missing_children_count: missing_children_count,
                 },
             );
+            download_queue.extend(missing_children_nibbles.iter().map(|children_key| {
+                NodeRequest {
+                    acc_path: children_key.0.clone(),
+                    storage_path: children_key.1.clone(),
+                    parent: node_response.node_request.storage_path.clone(),
+                }
+            }));
         }
     }
 
@@ -248,7 +255,9 @@ fn commit_node(
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
-        trace!("We have the parent of an account");
+        trace!(
+            "We have the parent of an account, this means we are the root. Storage healing should end."
+        );
         return Ok(());
     }
 
