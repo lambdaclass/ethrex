@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::peer_handler::PeerHandler;
+use crate::{peer_handler::PeerHandler, utils::current_unix_time};
 use ethrex_common::H256;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
@@ -66,7 +66,7 @@ pub fn storage_heal_trie(
     store: Store,
     membatch: &mut Membatch,
     staleness_timestamp: u64,
-) {
+) -> bool {
     // Logging stuff, we log during a given interval
     let mut last_update = Instant::now();
 
@@ -79,6 +79,10 @@ pub fn storage_heal_trie(
 
     loop {
         log_storage_heal(&mut last_update);
+
+        if current_unix_time() > staleness_timestamp {
+            return false;
+        }
 
         // we request the trie nodes
         spawn_downloader_task(task_sender.clone(), &mut download_queue, &peers);
@@ -95,6 +99,10 @@ pub fn storage_heal_trie(
             store.clone(),
             membatch,
         );
+
+        if download_queue.is_empty() {
+            return true;
+        }
     }
 }
 
@@ -267,9 +275,7 @@ fn commit_node(
     );
 
     if !membatch.contains_key(&parent_key) {
-        return Err(StoreError::Custom(
-            "We are missing the parent from the membatch!".to_string(),
-        ));
+        return Ok(());
     }
 
     let mut parent_entry = membatch
