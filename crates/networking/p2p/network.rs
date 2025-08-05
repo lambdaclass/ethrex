@@ -227,7 +227,7 @@ pub async fn periodically_show_peer_stats() {
                 .map(|start_time| {
                     end_time
                         .duration_since(start_time)
-                        .expect("Failed to get account tries download time")
+                        .unwrap_or(Duration::from_secs(0))
                 })
         };
 
@@ -245,7 +245,7 @@ pub async fn periodically_show_peer_stats() {
                 .map(|start_time| {
                     end_time
                         .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
+                        .unwrap_or(Duration::from_secs(0))
                 })
         };
 
