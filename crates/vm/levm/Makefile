@@ -1,4 +1,4 @@
-.PHONY: all test lint fmt usage run-state-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches samply-run-bench
+.PHONY: all test lint fmt usage run-state-tests render-benches samply-run-bench
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -19,14 +19,6 @@ download-state-tests: ## 📥 Download EF Tests.
 run-state-tests: ## 🏃‍♂️ Run EF Tests. e.g. make run-state-tests flags="--tests ZeroKnowledge"
 	cd $(EFTEST_DIR) &&\
 	make run-state-tests flags="$(flags)"
-
-flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
-	cd $(EFTEST_DIR) &&\
-	$(MAKE) flamegraph-run-ef-tests
-
-samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
-	cd $(EFTEST_DIR) && \
-	$(MAKE) samply-run-ef-tests
 
 
 ###### Benchmarks REVM Comparison ######
