@@ -21,6 +21,7 @@ use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use std::cmp::{Ordering, max};
 
@@ -539,10 +540,37 @@ pub fn validate_block_header(
     ) {
         base_fee
     } else {
+        info!(
+            "Failed to calculate base fee per gas: 
+            header_gas_limit: {},
+            parent_gas_limit: {},
+            parent_gas_used: {},
+            parent_base_fee_per_gas: {:?},
+            elasticity_multiplier: {elasticity_multiplier}",
+            header.gas_limit,
+            parent_header.gas_limit,
+            parent_header.gas_used,
+            parent_header.base_fee_per_gas
+        );
         return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
     };
 
     if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
+        info!(
+            "Mismatch in base fee per gas:
+            expectd: {expected_base_fee_per_gas} 
+            actual: {:?}
+            header_gas_limit: {},
+            parent_gas_limit: {},
+            parent_gas_used: {},
+            parent_base_fee_per_gas: {:?},
+            elasticity_multiplier: {elasticity_multiplier}",
+            header.base_fee_per_gas,
+            header.gas_limit,
+            parent_header.gas_limit,
+            parent_header.gas_used,
+            parent_header.base_fee_per_gas
+        );
         return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
     }
 
