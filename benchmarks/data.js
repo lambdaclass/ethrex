@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754353579423,
+  "lastUpdate": 1754358226162,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16740,6 +16740,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006640457711442786,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2775a126bf5c55f4430287104a19df44c6656d2a",
+          "message": "ci(l1): set project status automatically for `ethrex_l1`. (#3567)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nThis affects only PRs and issues of the project `ethrex_l1`. If this PR\ndoesn't belong to that project then it will exit early.\n\n- Automatically change the project status of a PR in cases in which we\ncan determine it with 100% accuracy:\n- `In Progress`: PR is **moved** to **draft** (or opened in draft too).\n  - `In Review`: PR is **opened** for review.\n- `Requested Changes`: Reviewer submitted a **review requesting\nchanges**. (changed: now this puts pr `in Progress`)\n- The `Approved` status is not worth being determined in the CI because\nfor it to know this all the other CI checks must have run, and it\ndefeats the purpose of the status itself, because we only want to use\nthis status for knowing when not to review a PR that has already reached\napproval status, it's just for efficiency. So manual intervention would\nmake much more sense in this case.\n- Sync the status of the issues that the PR closes with the status of\nthe PR. Note that the sync won't be triggered if the status is manually\nchanged, but changing status manually should be reserved for special\noccasions.\n\n\nConcrete example:\nIf I had a PR that was `In Review` and somebody requested changes then\nthe state would change to `Requested Changes`. If I then put the PR in\ndraft it would change to `In Progress` and if I re-open the PR it would\nbe `In Review` once again. Then imagine somebody manually changes the\nstate to `Approved` because the PR is ready to be merged but then comes\nanother person that sees that something is wrong and requests changes,\nthe PR state is going to be `Requested Changes` once again. Remember\nthat in this process the issues linked to the PR mimic its state, so\nthat info is updated in both ends.\n\nEdit: `Requested Changes` state was removed, when changes are requested\nthe PR is put `In Progress`, the rest of the example remains the same.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3585\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-08-04T21:47:22Z",
+          "tree_id": "038ca816cf78c86e842121260ddb99cb38eba5d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2775a126bf5c55f4430287104a19df44c6656d2a"
+        },
+        "date": 1754358225462,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012046317689530686,
             "unit": "Mgas/s"
           }
         ]
