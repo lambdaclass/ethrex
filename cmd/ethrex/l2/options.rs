@@ -230,7 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
@@ -295,8 +295,8 @@ impl Default for EthOptions {
     fn default() -> Self {
         Self {
             rpc_url: vec!["http://localhost:8545".to_string()],
-            maximum_allowed_max_fee_per_gas: Default::default(),
-            maximum_allowed_max_fee_per_blob_gas: Default::default(),
+            maximum_allowed_max_fee_per_gas: 10000000000,
+            maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
