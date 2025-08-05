@@ -26,7 +26,6 @@ ethrex-l2-rpc.workspace = true
 ethrex-metrics = { workspace = true, default-features = false }
 ethrex-sdk.workspace = true
 ethrex-p2p.workspace = true
-zkvm_interface.workspace = true
 hex.workspace = true
 bytes.workspace = true
 secp256k1.workspace = true
@@ -62,4 +61,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["zkvm_interface/l2"]
+l2 = []

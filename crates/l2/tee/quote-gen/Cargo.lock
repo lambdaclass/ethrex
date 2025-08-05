@@ -2428,7 +2428,6 @@ dependencies = [
  "tracing",
  "tui-logger",
  "vergen-git2",
- "zkvm_interface",
 ]
 
 [[package]]
