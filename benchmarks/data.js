@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754417039934,
+  "lastUpdate": 1754417872060,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17122,6 +17122,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012520938086303941,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41284bd7bc077cecb601042269fd99fbf3f86755",
+          "message": "refactor(l2): use logs from receipt for the integration tests (#3937)\n\n**Motivation**\n\nWe are currently using the logs of the receipt to get the block number\nto requests again the logs.\n\n**Description**\n\nUse the same logs from the receipts and remove the request to the client\nfor the logs\n\nCloses #3876",
+          "timestamp": "2025-08-05T14:34:50Z",
+          "tree_id": "ebac3197320cb8240c0403e4faaab0e0c051fef5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/41284bd7bc077cecb601042269fd99fbf3f86755"
+        },
+        "date": 1754417871351,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006510887804878049,
             "unit": "Mgas/s"
           }
         ]
