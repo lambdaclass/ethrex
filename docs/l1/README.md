@@ -30,7 +30,13 @@ We will pass this new file’s path as an argument for both clients.
 ./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://hoodi-checkpoint-sync.attestant.io/ --purge-db
 ```
 
-* **Run ethrex:** In a different console, having the binary executable in the same directory, run the following command:
+* **Run ethrex:** Make the `ethrex` binary executable by running the following command
+
+```bash
+chmod +x ethrex
+```
+
+After that, run the binary:
 
 In linux:
 
