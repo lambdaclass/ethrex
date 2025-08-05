@@ -1,6 +1,6 @@
 #![no_main]
 
-use zkvm_interface::{execution::execution_program, input::JSONProgramInput};
+use ethrex_zkvm::{execution::execution_program, input::JSONProgramInput};
 
 sp1_zkvm::entrypoint!(main);
 

@@ -1,6 +1,7 @@
 use crate::{config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
+use ethrex_zkvm::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -8,7 +9,6 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
-use zkvm_interface::input::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
     let prover_worker = Prover::new(config);

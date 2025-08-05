@@ -1,5 +1,5 @@
 [package]
-name = "zkvm_interface"
+name = "ethrex-zkvm"
 version = "0.1.0"
 edition = "2024"
 
@@ -25,7 +25,7 @@ sp1-build = { version = "=5.0.8", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
 
 [package.metadata.risc0]
-methods = ["risc0"]
+methods = ["../../src/guest_program/risc0"]
 
 [features]
 default = []

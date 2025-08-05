@@ -4,16 +4,15 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use ethrex_zkvm::input::{JSONProgramInput, ProgramInput};
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
-use tracing::info;
-use zkvm_interface::input::{JSONProgramInput, ProgramInput};
 use std::time::Instant;
+use tracing::info;
 
-static PROGRAM_ELF: &[u8] =
-    include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
+static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
     client: EnvProver,

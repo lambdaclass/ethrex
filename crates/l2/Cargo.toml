@@ -47,7 +47,7 @@ ethers = "2.0"
 cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
-crossterm = {version = "0.29.0", features = ["event-stream"]}
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
 tui-scrollview = "0.5.1"
@@ -55,7 +55,7 @@ tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 
-zkvm_interface = { path = "./prover/src/guest_program/" }
+ethrex-zkvm = { path = "./prover/src/zkvm/" }
 
 
 [build-dependencies]
@@ -75,4 +75,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["zkvm_interface/l2"]
+l2 = ["ethrex-zkvm/l2"]
