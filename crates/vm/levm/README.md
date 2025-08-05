@@ -18,7 +18,7 @@ We have a runner for running custom transactions, for using it start [here](./ru
 ## Ethereum Foundation Tests (EF Tests)
 
 ```
-make download-evm-ef-tests run-state-tests
+make download-state-tests run-state-tests
 ```
 
 For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).

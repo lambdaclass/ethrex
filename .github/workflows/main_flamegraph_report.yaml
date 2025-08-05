@@ -87,7 +87,7 @@ jobs:
         run: |
           if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
             cd cmd/ef_tests/state
-            make download-evm-ef-tests
+            make download-state-tests
           fi
 
       - name: Generate Flamegraph data for ${{ matrix.name }}

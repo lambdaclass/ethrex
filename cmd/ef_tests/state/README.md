@@ -18,14 +18,14 @@ All tests are first run on levm for the most recent forks (Merge,Shangai,Cancun 
 ## Setting up the tests if you are running flamegraphs
 
 ```bash
-make download-evm-ef-tests
+make download-state-tests
 ```
 
 ## Refreshing tests when outdated
 
 Sometimes we update the version of tests we run, for removing the old files and downloading the new ones you can use this command:
 ```bash
-make refresh-evm-ef-tests
+make refresh-state-tests
 ```
 
 ### Flags

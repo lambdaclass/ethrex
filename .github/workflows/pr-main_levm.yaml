@@ -33,7 +33,7 @@ jobs:
       - name: Download EF Tests
         run: |
           cd cmd/ef_tests/state
-          make download-evm-ef-tests
+          make download-state-tests
 
       - name: Run tests
         run: |
@@ -78,7 +78,7 @@ jobs:
       - name: Download EF Tests
         run: |
           cd cmd/ef_tests/state
-          make download-evm-ef-tests
+          make download-state-tests
 
       - name: Run tests
         run: |

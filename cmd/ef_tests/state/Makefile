@@ -1,4 +1,4 @@
-.PHONY: download-evm-ef-tests clean-evm-ef-tests run-state-tests test-levm test-revm flamegraph-run-ef-tests samply-run-ef-tests
+.PHONY: download-state-tests clean-state-tests run-state-tests test-levm test-revm flamegraph-run-ef-tests samply-run-ef-tests
 
 FIXTURES_FILE := .fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
@@ -14,7 +14,7 @@ COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 $(STATETEST_ARTIFACT): $(FIXTURES_FILE)
-	$(MAKE) clean-evm-ef-tests
+	$(MAKE) clean-state-tests
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 
 $(VECTORS_DIR): $(STATETEST_ARTIFACT)
@@ -40,14 +40,14 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
-download-evm-ef-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
+download-state-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
 
-clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
+clean-state-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)
 	rm -rf $(TMP_DIR)
 	rm -f $(STATETEST_ARTIFACT)
 
-refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
+refresh-state-tests: clean-state-tests download-state-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
 run-state-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
@@ -58,7 +58,7 @@ run-state-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-with-debug -- $(flags);\
 	fi
 
-run-state-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-state-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM for CI.
 	time cargo test -p ef_tests-state --test all --profile release-with-debug -- --summary
 
 test-levm: $(VECTORS_DIR)
