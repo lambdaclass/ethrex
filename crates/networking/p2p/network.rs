@@ -172,6 +172,12 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
+        let metrics_enabled = *METRICS.enabled.lock().await;
+        // Show the metrics only when these are enabled
+        if !metrics_enabled {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        }
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
 
         let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
@@ -223,7 +229,7 @@ pub async fn periodically_show_peer_stats() {
                 .map(|start_time| {
                     end_time
                         .duration_since(start_time)
-                        .expect("Failed to get account tries download time")
+                        .unwrap_or(Duration::from_secs(0))
                 })
         };
 
@@ -241,7 +247,7 @@ pub async fn periodically_show_peer_stats() {
                 .map(|start_time| {
                     end_time
                         .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
+                        .unwrap_or(Duration::from_secs(0))
                 })
         };
 
