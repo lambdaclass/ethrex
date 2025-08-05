@@ -80,6 +80,7 @@ impl GeneralizedDatabase {
     }
 
     /// Gets mutable reference of an account
+    /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         self.load_account(address)
     }
