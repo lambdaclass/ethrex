@@ -10,7 +10,7 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-prover.workspace = true
-zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
+zkvm_interface.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

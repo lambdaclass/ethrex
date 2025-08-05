@@ -9,7 +9,7 @@ ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
-zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }
+zkvm_interface.workspace = true
 ethrex-prover.workspace = true
 
 serde.workspace = true
