@@ -182,13 +182,11 @@ impl GetPooledTransactions {
         let txs = self
             .transaction_hashes
             .iter()
-            .map(|hash| blockchain.get_p2p_transaction_by_hash(hash))
-            // Return an error in case anything failed.
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
-            // taken out of the mempool due to payload building after being advertised.
-            .collect();
+            // As per the spec, skipping unavailable transactions is perfectly acceptable,
+            // for example if a transaction was taken out of the mempool due to payload
+            // building after being advertised.
+            .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
+            .collect::<Vec<_>>();
 
         Ok(PooledTransactions {
             id: self.id,

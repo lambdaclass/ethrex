@@ -209,14 +209,24 @@ impl EthClient {
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
-            if maybe_response.is_ok() {
-                response = maybe_response;
+
+            if response.is_ok() {
+                continue;
             }
+
+            response = match &maybe_response {
+                Ok(RpcResponse::Success(_)) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+                }
+                Err(_) => maybe_response,
+            };
         }
+
         response
     }
 
