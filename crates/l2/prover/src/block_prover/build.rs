@@ -58,9 +58,9 @@ fn build_sp1_program() {
     };
 
     sp1_build::build_program_with_args(
-        "./src/sp1",
+        "../guest_program/sp1",
         sp1_build::BuildArgs {
-            output_directory: Some("./src/sp1/out".to_string()),
+            output_directory: Some("../guest_program/sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: true,
@@ -72,7 +72,7 @@ fn build_sp1_program() {
 
     // Get verification key
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
-    let elf = std::fs::read("./src/sp1/out/riscv32im-succinct-zkvm-elf")
+    let elf = std::fs::read("../guest_program/sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
@@ -82,14 +82,14 @@ fn build_sp1_program() {
     if aligned_mode == "true" {
         let vk = vk.vk.hash_bytes();
         std::fs::write(
-            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
+            "../guest_program/sp1/out/riscv32im-succinct-zkvm-vk",
             format!("0x{}\n", hex::encode(vk)),
         )
         .expect("could not write SP1 vk to file");
     } else {
         let vk = vk.vk.bytes32();
         std::fs::write(
-            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
+            "../guest_program/sp1/out/riscv32im-succinct-zkvm-vk",
             format!("{}\n", vk),
         )
         .expect("could not write SP1 vk to file");

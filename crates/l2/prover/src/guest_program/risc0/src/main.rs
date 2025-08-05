@@ -1,5 +1,5 @@
+use ethrex_block_prover::{execution::execution_program, input::JSONProgramInput};
 use risc0_zkvm::guest::env;
-use zkvm_interface::{execution::execution_program, input::JSONProgramInput};
 
 fn main() {
     let input: JSONProgramInput = env::read();

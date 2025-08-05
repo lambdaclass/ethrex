@@ -1,8 +1,8 @@
+use ethrex_block_prover::io::ProgramInput;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use ethrex_l2_common::prover::{BatchProof, ProverType};
