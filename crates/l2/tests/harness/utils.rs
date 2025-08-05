@@ -1,3 +1,7 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::indexing_slicing)]
+
 use bytes::Bytes;
 use color_eyre::eyre;
 use ethrex_common::{Address, H160, H256, U256, types::BlockNumber};
