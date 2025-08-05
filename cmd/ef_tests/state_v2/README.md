@@ -27,7 +27,7 @@ make run-new-runner
 
 This will parse and execute everything in the `./vectors` directory by default.
 
-> You can also run `cargo test --package ef_tests-state --test new_runner --release`
+> You can also run `cargo test --package ef_tests-statev2 --test new_runner --release`
 
 ## Execution options
 In case you do not want to parse and execute everything in the `vectors/` directory there are three flags that can be used to specify files to be run:

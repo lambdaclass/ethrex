@@ -1,6 +1,6 @@
 use std::{fmt, fs::OpenOptions, io::Write, path::PathBuf};
 
-use crate::runner_v2::{error::RunnerError, result_check::PostCheckResult, types::Test};
+use crate::modules::{error::RunnerError, result_check::PostCheckResult, types::Test};
 
 pub fn add_test_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
     let (test, failed_test_cases) = test_result;

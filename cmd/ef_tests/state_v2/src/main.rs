@@ -1,5 +1,5 @@
 use clap::Parser;
-use ef_tests_state::runner_v2::{
+use ef_tests_statev2::modules::{
     error::RunnerError,
     parser::{RunnerOptions, parse_tests},
     runner::run_tests,

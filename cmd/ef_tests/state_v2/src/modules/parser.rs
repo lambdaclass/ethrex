@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     types::{Test, Tests},
 };
@@ -11,7 +11,8 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 pub struct RunnerOptions {
     /// For running tests in a specific file (could be either a directory or a .json)
-    #[arg(short, long, value_name = "PATH", default_value = "./vectors")]
+    //TODO: Change default path to ./vectors when the other EFTests are replaced by this runner
+    #[arg(short, long, value_name = "PATH", default_value = "../state/vectors")]
     pub path: PathBuf,
     /// For running tests in specific .json files. If this is not empty, "path" flag will be ignored.
     #[arg(short, long, value_name = "JSON_FILES", value_delimiter = ',')]

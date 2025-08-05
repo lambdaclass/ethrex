@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     report::add_test_to_report,
     result_check::check_test_case_results,
