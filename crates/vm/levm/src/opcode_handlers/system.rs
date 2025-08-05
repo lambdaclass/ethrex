@@ -351,8 +351,9 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_start_offset, args_size)?;
 
+        // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
-            .enter(DELEGATECALL, from, code_address, value, gas_limit, &data);
+            .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
