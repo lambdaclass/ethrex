@@ -9,7 +9,7 @@ ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
-ethrex-zkvm = { path = "../../crates/l2/prover/src/zkvm", default-features = false }
+ethrex-block-prover = { path = "../../crates/l2/prover/src/block_prover", default-features = false }
 ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
 
 serde.workspace = true
@@ -26,9 +26,9 @@ charming = { version = "0.4.0", features = ["ssr"] }
 
 
 [features]
-risc0 = ["ethrex-zkvm/risc0", "ethrex-prover/risc0"]
-sp1 = ["ethrex-zkvm/sp1", "ethrex-prover/sp1"]
+risc0 = ["ethrex-block-prover/risc0", "ethrex-prover/risc0"]
+sp1 = ["ethrex-block-prover/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
-l2 = ["ethrex-zkvm/l2", "ethrex-prover/l2"]
+l2 = ["ethrex-block-prover/l2", "ethrex-prover/l2"]
 profiling = ["ethrex-prover/profiling"]
 ci = []

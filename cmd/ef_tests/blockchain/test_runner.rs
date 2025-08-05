@@ -20,7 +20,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
-use ethrex_zkvm::input::ProgramInput;
+use ethrex_block_prover::input::ProgramInput;
 use regex::Regex;
 
 pub fn parse_and_execute(

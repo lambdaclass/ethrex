@@ -3216,13 +3216,13 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "datatest-stable",
+ "ethrex-block-prover",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "ethrex-zkvm",
  "hex",
  "lazy_static",
  "regex",
@@ -3880,6 +3880,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-block-prover"
+version = "0.1.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "risc0-build",
+ "risc0-zkvm",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sp1-build",
+ "sp1-sdk",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
@@ -3968,6 +3990,7 @@ dependencies = [
  "envy",
  "ethereum-types 0.15.1",
  "ethers",
+ "ethrex-block-prover",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-dev",
@@ -3983,7 +4006,6 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
- "ethrex-zkvm",
  "hex",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
@@ -4150,6 +4172,7 @@ dependencies = [
  "cfg-if 1.0.1",
  "clap 4.5.40",
  "ethereum-types 0.15.1",
+ "ethrex-block-prover",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2",
@@ -4158,7 +4181,6 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-vm",
- "ethrex-zkvm",
  "hex",
  "kzg-rs",
  "risc0-zkp",
@@ -4180,12 +4202,12 @@ version = "0.1.0"
 dependencies = [
  "charming",
  "clap 4.5.40",
+ "ethrex-block-prover",
  "ethrex-common",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rpc",
  "ethrex-vm",
- "ethrex-zkvm",
  "eyre",
  "hex",
  "reqwest 0.12.20",
@@ -4379,28 +4401,6 @@ dependencies = [
  "sha3",
  "thiserror 2.0.12",
  "tracing",
-]
-
-[[package]]
-name = "ethrex-zkvm"
-version = "0.1.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "risc0-build",
- "risc0-zkvm",
- "serde",
- "serde_json",
- "serde_with",
- "sp1-build",
- "sp1-sdk",
- "thiserror 2.0.12",
 ]
 
 [[package]]

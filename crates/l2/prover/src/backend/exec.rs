@@ -1,12 +1,12 @@
 use std::time::Instant;
 use tracing::{info, warn};
 
+use ethrex_block_prover::input::ProgramInput;
+use ethrex_block_prover::output::ProgramOutput;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
-use ethrex_zkvm::input::ProgramInput;
-use ethrex_zkvm::output::ProgramOutput;
 
 pub struct ProveOutput(pub ProgramOutput);
 
@@ -49,5 +49,5 @@ pub fn to_batch_proof(
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-    ethrex_zkvm::execution::execution_program(input).map_err(|e| e.into())
+    ethrex_block_prover::execution::execution_program(input).map_err(|e| e.into())
 }

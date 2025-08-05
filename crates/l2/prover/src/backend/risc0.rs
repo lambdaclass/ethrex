@@ -2,7 +2,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
-use ethrex_zkvm::{
+use ethrex_block_prover::{
     input::{JSONProgramInput, ProgramInput},
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };

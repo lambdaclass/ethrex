@@ -8,7 +8,7 @@ use ethrex_levm::{
     vm::VMType,
 };
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
-use ethrex_zkvm::input::ProgramInput;
+use ethrex_block_prover::input::ProgramInput;
 use eyre::Ok;
 use std::sync::Arc;
 
@@ -85,8 +85,8 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
-            // 'ethrex-zkvm' is active (due to workspace compilation).
-            // If 'ethrex-zkvm' is compiled without 'l2' (e.g. standalone build),
+            // 'ethrex-block-prover' is active (due to workspace compilation).
+            // If 'ethrex-block-prover' is compiled without 'l2' (e.g. standalone build),
             // these fields won't exist in ProgramInput, and ..Default::default()
             // will correctly not try to fill them.
             // A better solution would involve rethinking the `l2` feature or the

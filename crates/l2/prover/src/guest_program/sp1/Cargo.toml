@@ -7,7 +7,7 @@ edition = "2024"
 
 [dependencies]
 sp1-zkvm = "=5.0.8"
-ethrex-zkvm = { path = "../../zkvm" }
+ethrex-block-prover = { path = "../../zkvm" }
 
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }
@@ -35,4 +35,4 @@ k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k2
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-fp-struct" }
 
 [features]
-l2 = ["ethrex-zkvm/l2"]
+l2 = ["ethrex-block-prover/l2"]

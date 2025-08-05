@@ -4,7 +4,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
-use ethrex_zkvm::input::{JSONProgramInput, ProgramInput};
+use ethrex_block_prover::input::{JSONProgramInput, ProgramInput};
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,

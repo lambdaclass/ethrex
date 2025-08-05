@@ -1,4 +1,4 @@
-use ethrex_zkvm::io::ProgramInput;
+use ethrex_block_prover::io::ProgramInput;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,

@@ -1,4 +1,4 @@
-use ethrex_zkvm::{execution::execution_program, input::JSONProgramInput};
+use ethrex_block_prover::{execution::execution_program, input::JSONProgramInput};
 use risc0_zkvm::guest::env;
 
 fn main() {
