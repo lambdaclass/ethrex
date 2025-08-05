@@ -759,7 +759,7 @@ pub struct ProverClientOptions {
         value_name = "URL",
         env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
         help_heading = "Prover client options",
-        help = "URL of the sequencer's proof coordintor"
+        help = "URL of the sequencer's proof coordinator"
     )]
     pub proof_coordinator_endpoint: Url,
     #[arg(
