@@ -72,7 +72,9 @@ pub fn to_batch_proof(
     proof: Receipt,
     _aligned_mode: bool,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    Ok(to_calldata(proof).map(BatchProof::ProofCalldata)?)
+    to_calldata(proof)
+        .map(BatchProof::ProofCalldata)
+        .map_err(Into::into)
 }
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
