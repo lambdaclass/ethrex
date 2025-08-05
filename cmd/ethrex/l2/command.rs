@@ -319,7 +319,8 @@ impl Command {
                 rollup_store
                     .init()
                     .await
-                    .expect("Failed to init rollup store");
+                    .map_err(|e| format!("Failed to init rollup store: {e}"))
+                    .unwrap();
 
                 // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
@@ -327,7 +328,7 @@ impl Command {
 
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
-                    .expect("Cannot open state trie");
+                    .expect("Genesis block not found");
 
                 let mut last_block_number = 0;
 
@@ -354,7 +355,8 @@ impl Command {
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
                         .await
-                        .expect("Error applying account updates");
+                        .map_err(|e| format!("Error applying account updates: {e}"))
+                        .unwrap();
 
                     let (new_state_root, state_updates, accounts_updates) = (
                         account_updates_list.state_trie_hash,
@@ -373,11 +375,13 @@ impl Command {
                     store
                         .store_block_updates(pseudo_update_batch)
                         .await
-                        .expect("Error storing trie updates");
+                        .map_err(|e| format!("Error storing trie updates: {e}"))
+                        .unwrap();
 
                     new_trie = store
                         .open_state_trie(new_state_root)
-                        .expect("Error opening new state trie");
+                        .map_err(|e| format!("Error opening new state trie: {e}"))
+                        .unwrap();
 
                     // Get withdrawal hashes
                     let message_hashes = state_diff
@@ -393,7 +397,10 @@ impl Command {
                     // Note that its state_root is the root of new_trie.
                     let new_block = BlockHeader {
                         coinbase,
-                        state_root: new_trie.hash().expect("Error committing state"),
+                        state_root: new_trie
+                            .hash()
+                            .map_err(|e| format!("Error committing state: {e}"))
+                            .unwrap(),
                         ..state_diff.last_header
                     };
 
@@ -431,7 +438,8 @@ impl Command {
                     rollup_store
                         .seal_batch(batch)
                         .await
-                        .expect("Error storing batch");
+                        .map_err(|e| format!("Error storing batch: {e}"))
+                        .unwrap();
                 }
                 store.update_latest_block_number(last_block_number).await?;
             }
