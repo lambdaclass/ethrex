@@ -1,0 +1,32 @@
+name: Unused Dependencies
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+  paths:
+    - "**"  
+
+jobs:
+  unused-deps:
+    name: Check for unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchains: stable, nightly
+          components: rustfmt, clippy
+
+      - name: Check workspace-level unused dependencies
+        run: |
+          chmod +x .github/scripts/find_unused_deps.sh
+          .github/scripts/find_unused_deps.sh
+
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+
+      - name: Run cargo-udeps
+        run: cargo +nightly udeps --workspace --all-targets --features sql
