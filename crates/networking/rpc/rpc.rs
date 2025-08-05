@@ -41,7 +41,7 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
     TypedHeader,
@@ -65,7 +65,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -150,9 +150,9 @@ pub async fn start_api(
         let filters = active_filters.clone();
         loop {
             interval.tick().await;
-            tracing::info!("Running filter clean task");
+            tracing::debug!("Running filter clean task");
             filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::info!("Filter clean task complete");
+            tracing::debug!("Filter clean task complete");
         }
     });
 
@@ -177,7 +177,11 @@ pub async fn start_api(
     let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
-        .with_state(service_context);
+        .with_state(service_context)
+        // Bump the body limit for the engine API to 256MB
+        // This is needed to receive payloads bigger than the default limit of 2MB
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
+
     let authrpc_listener = TcpListener::bind(authrpc_addr)
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
@@ -187,7 +191,7 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+        .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
 
     Ok(())
 }
