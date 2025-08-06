@@ -183,4 +183,12 @@ mod tests {
             "d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
         );
     }
+
+    #[test]
+    fn test_get_bootnodes_works_for_public_networks() {
+        Network::PublicNetwork(PublicNetwork::Holesky).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+    }
 }
