@@ -34,7 +34,7 @@ pub enum DiscoverySideCarError {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscoverySideCarState {
+pub struct DiscoverySideCar {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
@@ -61,7 +61,7 @@ pub struct DiscoverySideCarState {
     kademlia: Kademlia,
 }
 
-impl DiscoverySideCarState {
+impl DiscoverySideCar {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
@@ -170,9 +170,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct DiscoverySideCar;
-
 impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
@@ -189,9 +186,9 @@ impl DiscoverySideCar {
         ));
 
         let state =
-            DiscoverySideCarState::new(local_node, local_node_record, signer, udp_socket, kademlia);
+            Self::new(local_node, local_node_record, signer, udp_socket, kademlia);
 
-        let mut server = DiscoverySideCar::start(state.clone());
+        let mut server = Self::start(state.clone());
 
         send_interval(
             state.revalidation_check_interval,
@@ -205,132 +202,126 @@ impl DiscoverySideCar {
 
         Ok(())
     }
+
+    async fn revalidate(&self) {
+        for contact in self.kademlia.table.lock().await.values_mut() {
+            if contact.disposable || !self.is_validation_needed(contact) {
+                continue;
+            }
+
+            match self.ping(&contact.node).await {
+                Ok(ping_hash) => {
+                    METRICS.record_ping_sent().await;
+                    contact.validation_timestamp = Some(Instant::now());
+                    contact.ping_hash = Some(ping_hash);
+                }
+                Err(err) => {
+                    error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+
+                    contact.disposable = true;
+
+                    METRICS.record_new_discarded_node().await;
+                }
+            }
+        }
+    }
+
+    fn is_validation_needed(&self, contact: &Contact) -> bool {
+        let sent_ping_ttl = Duration::from_secs(30);
+
+        let validation_is_stale = !contact.was_validated()
+            || contact
+                .validation_timestamp
+                .map(|ts| Instant::now().saturating_duration_since(ts) > self.revalidation_interval)
+                .unwrap_or(false);
+
+        let sent_ping_is_stale = contact
+            .validation_timestamp
+            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
+            .unwrap_or(false);
+
+        validation_is_stale || sent_ping_is_stale
+    }
+
+    async fn lookup(&self) {
+        for contact in self.kademlia.table.lock().await.values_mut() {
+            if contact.n_find_node_sent == 20 || contact.disposable {
+                continue;
+            }
+
+            if let Err(err) = self.send_find_node(&contact.node).await {
+                error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+                contact.disposable = true;
+                METRICS.record_new_discarded_node().await;
+            }
+
+            contact.n_find_node_sent += 1;
+        }
+    }
+
+    async fn get_lookup_interval(&self) -> Duration {
+        let number_of_contacts = self.kademlia.table.lock().await.len() as u64;
+        let number_of_peers = self.kademlia.peers.lock().await.len() as u64;
+        if number_of_peers < self.target_peers && number_of_contacts < self.target_contacts {
+            self.initial_lookup_interval
+        } else {
+            info!("Reached target number of peers or contacts. Using longer lookup interval.");
+            self.lookup_interval
+        }
+    }
+
+    async fn prune(&self) {
+        let mut contacts = self.kademlia.table.lock().await;
+        let mut discarded_contacts = self.kademlia.discarded_contacts.lock().await;
+
+        let disposable_contacts = contacts
+            .iter()
+            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+            .collect::<Vec<_>>();
+
+        for contact_to_discard_id in disposable_contacts {
+            contacts.remove(&contact_to_discard_id);
+            discarded_contacts.insert(contact_to_discard_id);
+        }
+    }
 }
 
 impl GenServer for DiscoverySideCar {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = DiscoverySideCarState;
     type Error = DiscoverySideCarError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Revalidate => {
                 debug!(received = "Revalidate");
 
-                revalidate(&state).await;
+                self.revalidate().await;
 
-                CastResponse::NoReply(state)
+                CastResponse::NoReply(self)
             }
             Self::CastMsg::Lookup => {
                 debug!(received = "Lookup");
 
-                lookup(&state).await;
+                self.lookup().await;
 
-                let interval = get_lookup_interval(&state).await;
+                let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
 
-                CastResponse::NoReply(state)
+                CastResponse::NoReply(self)
             }
             Self::CastMsg::Prune => {
                 debug!(received = "Prune");
 
-                prune(&state).await;
+                self.prune().await;
 
-                CastResponse::NoReply(state)
+                CastResponse::NoReply(self)
             }
         }
-    }
-}
-
-async fn revalidate(state: &DiscoverySideCarState) {
-    for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.disposable || !is_validation_needed(state, contact) {
-            continue;
-        }
-
-        match state.ping(&contact.node).await {
-            Ok(ping_hash) => {
-                METRICS.record_ping_sent().await;
-                contact.validation_timestamp = Some(Instant::now());
-                contact.ping_hash = Some(ping_hash);
-            }
-            Err(err) => {
-                error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
-
-                contact.disposable = true;
-
-                METRICS.record_new_discarded_node().await;
-            }
-        }
-    }
-}
-
-async fn lookup(state: &DiscoverySideCarState) {
-    for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.n_find_node_sent == 20 || contact.disposable {
-            continue;
-        }
-
-        if let Err(err) = state.send_find_node(&contact.node).await {
-            error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
-            contact.disposable = true;
-            METRICS.record_new_discarded_node().await;
-        }
-
-        contact.n_find_node_sent += 1;
-    }
-}
-
-async fn prune(state: &DiscoverySideCarState) {
-    let mut contacts = state.kademlia.table.lock().await;
-    let mut discarded_contacts = state.kademlia.discarded_contacts.lock().await;
-
-    let disposable_contacts = contacts
-        .iter()
-        .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
-        .collect::<Vec<_>>();
-
-    for contact_to_discard_id in disposable_contacts {
-        contacts.remove(&contact_to_discard_id);
-        discarded_contacts.insert(contact_to_discard_id);
-    }
-}
-
-fn is_validation_needed(state: &DiscoverySideCarState, contact: &Contact) -> bool {
-    let sent_ping_ttl = Duration::from_secs(30);
-
-    let validation_is_stale = !contact.was_validated()
-        || contact
-            .validation_timestamp
-            .map(|ts| Instant::now().saturating_duration_since(ts) > state.revalidation_interval)
-            .unwrap_or(false);
-
-    let sent_ping_is_stale = contact
-        .validation_timestamp
-        .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
-        .unwrap_or(false);
-
-    validation_is_stale || sent_ping_is_stale
-}
-
-async fn get_lookup_interval(state: &DiscoverySideCarState) -> Duration {
-    let number_of_contacts = state.kademlia.table.lock().await.len() as u64;
-    let number_of_peers = state.kademlia.peers.lock().await.len() as u64;
-    if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
-        state.initial_lookup_interval
-    } else {
-        info!("Reached target number of peers or contacts. Using longer lookup interval.");
-        state.lookup_interval
     }
 }

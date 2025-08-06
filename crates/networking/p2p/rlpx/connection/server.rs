@@ -67,7 +67,6 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_p2p::kademlia::KademliaTable;
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);

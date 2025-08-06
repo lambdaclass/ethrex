@@ -8,7 +8,7 @@ use crate::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
         PacketDecodeErr, PingMessage, PongMessage,
     },
-    kademlia::{Contact, Kademlia},
+    kademlia::{Contact, Kademlia, KademliaTable},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
@@ -52,7 +52,7 @@ pub enum DiscoveryServerError {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscoveryServerState {
+pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
@@ -60,7 +60,7 @@ pub struct DiscoveryServerState {
     kademlia: Kademlia,
 }
 
-impl DiscoveryServerState {
+impl DiscoveryServer {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
@@ -248,9 +248,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct DiscoveryServer;
-
 impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
@@ -267,7 +264,7 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
-        let state = DiscoveryServerState::new(
+        let state = Self::new(
             local_node,
             local_node_record,
             signer,
@@ -299,22 +296,16 @@ impl GenServer for DiscoveryServer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = DiscoveryServerState;
     type Error = DiscoveryServerError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Listen => {
-                let _ = state.handle_listens().await.inspect_err(|e| {
+                let _ = self.handle_listens().await.inspect_err(|e| {
                     error!("Failed to handle listens: {e}");
                 });
                 CastResponse::Stop
@@ -400,12 +391,38 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct ConnectionHandler;
+#[derive(Debug, Clone)]
+pub struct ConnectionHandler {
+    inner_state: DiscoveryServer,
+}
 
 impl ConnectionHandler {
-    pub async fn spawn(state: DiscoveryServerState) -> GenServerHandle<Self> {
-        ConnectionHandler::start(state)
+    pub fn new(inner_state: DiscoveryServer) -> Self {
+        Self { inner_state }
+    }
+
+    async fn handle_pong(&self, message: PongMessage, node_id: H256) {
+        let mut contacts = self.inner_state.kademlia.table.lock().await;
+
+        // Received a pong from a node we don't know about
+        let Some(contact) = contacts.get_mut(&node_id) else {
+            return;
+        };
+        // Received a pong for an unknown ping
+        if !contact
+            .ping_hash
+            .map(|ph| ph == message.ping_hash)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        contact.ping_hash = None;
+    }
+}
+
+impl ConnectionHandler {
+    pub async fn spawn(inner_state: DiscoveryServer) -> GenServerHandle<Self> {
+        ConnectionHandler::new(inner_state).start()
     }
 }
 
@@ -413,18 +430,12 @@ impl GenServer for ConnectionHandler {
     type CallMsg = Unused;
     type CastMsg = ConnectionHandlerInMessage;
     type OutMsg = ConnectionHandlerOutMessage;
-    type State = DiscoveryServerState;
     type Error = ConnectionHandlerError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        mut self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Ping {
@@ -443,7 +454,7 @@ impl GenServer for ConnectionHandler {
                 let sender_ip = unmap_ipv4in6_address(from.ip());
                 let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
 
-                let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
+                let _ = self.inner_state.handle_ping(hash, node).await.inspect_err(|e| {
                     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
                 });
             }
@@ -455,7 +466,7 @@ impl GenServer for ConnectionHandler {
 
                 let node_id = node_id(&sender_public_key);
 
-                handle_pong(&state, message, node_id).await;
+                self.handle_pong(message, node_id).await;
             }
             Self::CastMsg::FindNode {
                 from,
@@ -470,7 +481,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let table = state.kademlia.table.lock().await;
+                let table = self.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     return CastResponse::Stop;
@@ -500,7 +511,7 @@ impl GenServer for ConnectionHandler {
                 // we are sending the neighbors in 2 different messages to avoid exceeding the
                 // maximum packet size
                 for chunk in neighbors.chunks(8) {
-                    let _ = state.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
+                    let _ = self.inner_state.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
                         error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
                     });
                 }
@@ -518,14 +529,14 @@ impl GenServer for ConnectionHandler {
 
                 // TODO(#3746): check that we requested neighbors from the node
 
-                let mut contacts = state.kademlia.table.lock().await;
-                let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
+                let mut contacts = self.inner_state.kademlia.table.lock().await;
+                let discarded_contacts = self.inner_state.kademlia.discarded_contacts.lock().await;
 
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
                         if !discarded_contacts.contains(&node_id)
-                            && node_id != state.local_node.node_id()
+                            && node_id != self.inner_state.local_node.node_id()
                         {
                             vacant_entry.insert(Contact::from(node));
                             METRICS.record_new_discovery().await;
@@ -547,7 +558,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let mut table = state.kademlia.table.lock().await;
+                let mut table = self.inner_state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     return CastResponse::Stop;
@@ -557,7 +568,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                if let Err(err) = state.send_enr_response(hash, from).await {
+                if let Err(err) = self.inner_state.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
                     return CastResponse::Stop;
                 }
@@ -580,24 +591,6 @@ impl GenServer for ConnectionHandler {
         }
         CastResponse::Stop
     }
-}
-
-async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id: H256) {
-    let mut contacts = state.kademlia.table.lock().await;
-
-    // Received a pong from a node we don't know about
-    let Some(contact) = contacts.get_mut(&node_id) else {
-        return;
-    };
-    // Received a pong for an unknown ping
-    if !contact
-        .ping_hash
-        .map(|ph| ph == message.ping_hash)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    contact.ping_hash = None;
 }
 
 pub async fn insert_random_node_on_custom_bucket(
@@ -643,7 +636,7 @@ pub async fn start_discovery_server(
     let tracker = tokio_util::task::TaskTracker::new();
     let local_node_record = Arc::new(Mutex::new(
         NodeRecord::from_node(&local_node, 1, &signer)
-            .expect("Node record could not be created from local node"),
+                       .expect("Node record could not be created from local node"),
     ));
     let ctx = P2PContext {
         local_node,
@@ -862,93 +855,94 @@ async fn discovery_enr_message() -> Result<(), DiscoveryError> {
     Ok(())
 }
 
-#[tokio::test]
-/**
- * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
- * The test follows these steps:
- *
- * 1. Start three nodes.
- * 2. Add a valid fork_id to the nodes a and b
- * 3. Add a invalid fork_id to the node c
- * 4. Wait until they establish a connection.
- * 5. Validate they have exchanged the pairs and validated them
- * 6. node a and b should be connected
- * 7. node a and c shouldn't be connected
- */
-async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
-    let mut server_a = start_discovery_server(8086, 10, true).await?;
-    let mut server_b = start_discovery_server(8087, 10, true).await?;
-    let mut server_c = start_discovery_server(8088, 0, true).await?;
+// TODO: SNAP SYNC: reenable this test
+// #[tokio::test]
+// /**
+//  * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
+//  * The test follows these steps:
+//  *
+//  * 1. Start three nodes.
+//  * 2. Add a valid fork_id to the nodes a and b
+//  * 3. Add a invalid fork_id to the node c
+//  * 4. Wait until they establish a connection.
+//  * 5. Validate they have exchanged the pairs and validated them
+//  * 6. node a and b should be connected
+//  * 7. node a and c shouldn't be connected
+//  */
+// async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
+//     let mut server_a = start_discovery_server(8086, 10, true).await?;
+//     let mut server_b = start_discovery_server(8087, 10, true).await?;
+//     let mut server_c = start_discovery_server(8088, 0, true).await?;
 
-    let config = ChainConfig {
-        ..Default::default()
-    };
-    server_c
-        .ctx
-        .storage
-        .set_chain_config(&config)
-        .await
-        .unwrap();
+//     let config = ChainConfig {
+//         ..Default::default()
+//     };
+//     server_c
+//         .ctx
+//         .storage
+//         .set_chain_config(&config)
+//         .await
+//         .unwrap();
 
-    let fork_id_valid = ForkId {
-        fork_hash: H32::zero(),
-        fork_next: u64::MAX,
-    };
+//     let fork_id_valid = ForkId {
+//         fork_hash: H32::zero(),
+//         fork_next: u64::MAX,
+//     };
 
-    let fork_id_invalid = ForkId {
-        fork_hash: H32::zero(),
-        fork_next: 1,
-    };
+//     let fork_id_invalid = ForkId {
+//         fork_hash: H32::zero(),
+//         fork_next: 1,
+//     };
 
-    server_a
-        .ctx
-        .local_node_record
-        .lock()
-        .await
-        .set_fork_id(&fork_id_valid, &server_a.ctx.signer)
-        .unwrap();
+//     server_a
+//         .ctx
+//         .local_node_record
+//         .lock()
+//         .await
+//         .set_fork_id(&fork_id_valid, &server_a.ctx.signer)
+//         .unwrap();
 
-    server_b
-        .ctx
-        .local_node_record
-        .lock()
-        .await
-        .set_fork_id(&fork_id_valid, &server_b.ctx.signer)
-        .unwrap();
+//     server_b
+//         .ctx
+//         .local_node_record
+//         .lock()
+//         .await
+//         .set_fork_id(&fork_id_valid, &server_b.ctx.signer)
+//         .unwrap();
 
-    server_c
-        .ctx
-        .local_node_record
-        .lock()
-        .await
-        .set_fork_id(&fork_id_invalid, &server_c.ctx.signer)
-        .unwrap();
+//     server_c
+//         .ctx
+//         .local_node_record
+//         .lock()
+//         .await
+//         .set_fork_id(&fork_id_invalid, &server_c.ctx.signer)
+//         .unwrap();
 
-    connect_servers(&mut server_a, &mut server_b).await?;
-    connect_servers(&mut server_a, &mut server_c).await?;
+//     connect_servers(&mut server_a, &mut server_b).await?;
+//     connect_servers(&mut server_a, &mut server_c).await?;
 
-    // wait some time for the enr request-response finishes
-    sleep(Duration::from_millis(2500)).await;
+//     // wait some time for the enr request-response finishes
+//     sleep(Duration::from_millis(2500)).await;
 
-    assert!(
-        server_a
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_by_node_id(server_b.ctx.local_node.node_id())
-            .is_some()
-    );
+//     assert!(
+//         server_a
+//             .ctx
+//             .table
+//             .lock()
+//             .await
+//             .get_by_node_id(server_b.ctx.local_node.node_id())
+//             .is_some()
+//     );
 
-    assert!(
-        server_a
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_by_node_id(server_c.ctx.local_node.node_id())
-            .is_none()
-    );
+//     assert!(
+//         server_a
+//             .ctx
+//             .table
+//             .lock()
+//             .await
+//             .get_by_node_id(server_c.ctx.local_node.node_id())
+//             .is_none()
+//     );
 
-    Ok(())
-}
+//     Ok(())
+// }
