@@ -784,7 +784,7 @@ impl Store {
             .write()
             .map_err(|_| StoreError::LockError)? = self
             .engine
-            .get_block_header(head_number)?
+            .get_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.engine
             .forkchoice_update(
@@ -1545,6 +1545,11 @@ mod tests {
             .unwrap();
 
         store
+            .add_block_header(block_hash, BlockHeader::default())
+            .await
+            .unwrap();
+
+        store
             .forkchoice_update(None, block_number, block_hash, None, None)
             .await
             .unwrap();
@@ -1560,17 +1565,29 @@ mod tests {
 
     async fn test_store_transaction_location_not_canonical(store: Store) {
         let transaction_hash = H256::random();
-        let block_hash = H256::random();
+        let block_header = BlockHeader::default();
+        let random_hash = H256::random();
         let block_number = 6;
         let index = 3;
 
         store
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .add_transaction_location(transaction_hash, block_number, block_header.hash(), index)
             .await
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, H256::random(), None, None)
+            .add_block_header(block_header.hash(), block_header.clone())
+            .await
+            .unwrap();
+
+        // Store random block hash
+        store
+            .add_block_header(random_hash, block_header)
+            .await
+            .unwrap();
+
+        store
+            .forkchoice_update(None, block_number, random_hash, None, None)
             .await
             .unwrap();
 
@@ -1592,15 +1609,20 @@ mod tests {
         };
         let block_number = 6;
         let index = 4;
-        let block_hash = H256::random();
+        let block_header = BlockHeader::default();
 
         store
-            .add_receipt(block_hash, index, receipt.clone())
+            .add_receipt(block_header.hash(), index, receipt.clone())
             .await
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .add_block_header(block_header.hash(), block_header.clone())
+            .await
+            .unwrap();
+
+        store
+            .forkchoice_update(None, block_number, block_header.hash(), None, None)
             .await
             .unwrap();
 
@@ -1659,7 +1681,7 @@ mod tests {
             .forkchoice_update(
                 None,
                 latest_block_number,
-                H256::random(),
+                hash,
                 Some(safe_block_number),
                 Some(finalized_block_number),
             )
