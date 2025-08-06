@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754436837143,
+  "lastUpdate": 1754441028930,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17385,6 +17385,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001249749063670412,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc75e72075f48a2f8f01c4f63b99e0f3d9b319f8",
+          "message": "refactor(l2): reduce lines in eth client (#3957)\n\n**Motivation**\n\nCreating a `RpcRequest` required ~6 lines of duplicated code in each\nmethod.\nWe were also matching on `Result` instead of using the `?` operator.\n\n**Description**\n\n- Adds a `RpcRequest::new()` method.  \n- Improves error handling.\n\n\nCloses None",
+          "timestamp": "2025-08-05T21:22:50Z",
+          "tree_id": "fdf48d3eaf08edf27f27312eb7b02807027f7801",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc75e72075f48a2f8f01c4f63b99e0f3d9b319f8"
+        },
+        "date": 1754441028058,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006640457711442786,
             "unit": "Mgas/s"
           }
         ]
