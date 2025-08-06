@@ -71,7 +71,3 @@ For general documentation, see:
 - [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts.
 - [Components](./components.md) for more detailed documentation on each off-chain component.
 - [Based roadmap (draft)](./roadmap.md) contains ethrex's roadmap for becoming based.
-
-## Developer documentation
-
-Documentation useful for ethrex development can be found in the ["Developers"](../developers) section.

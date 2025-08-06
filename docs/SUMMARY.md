@@ -1,16 +1,23 @@
 # Summary
-
+# Introduction
 - [Getting started](./getting-started/README.md)
-  - [Installing ethrex](./getting-started/installing.md)
-  - [Running a node](./getting-started/running.md)
-  - [Migrating from another client]()
-
+- [Installation](./getting-started/installation/README.md)
+  - [Binary distribution](./getting-started/installation/binary_distribution.md)
+  - [Package manager](./getting-started/installation/package_manager.md)
+  - [Docker image](./getting-started/installation/docker_images.md)
+  - [Building from source](./getting-started/installation/building_from_source.md)
 - [Roadmap](./getting-started/roadmap.md)
 
-- [Layer 1](./l1/README.md)
-  - [Quick start L1](./l1/quick-start-l1.md)
-  - [Developer setup L1](./l1/dev-setup-l1.md)
+# Ethrex for L1 operators
+- [Running a node](./l1/running/README.md)
+  - [mainnet](./l1/running/mainnet.md)
+  - [testnets](./l1/running/testnet.md)
+  - [dev mode](./l1/running/dev_mode.md)
 
+# Ethrex for developers
+- [Installing](./developers/installing/README.md)
+- [Kurtosis localnet](./l1/quick-start-l1.md)
+- [Developer setup L1](./l1/dev-setup-l1.md)
 - [Fundamentals]()
   - [Metrics]()
   - [Logs]()
@@ -38,8 +45,6 @@
     - [Aligned mode](./l2/aligned_mode.md)
     - [TDX execution module](./l2/tdx.md)
   - [Based roadmap (draft)](./l2/roadmap.md)
-
-- [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
   - [L2](./developers/l2/README.md)
     - [load-tests](./developers/l2/load_tests.md)
@@ -51,6 +56,3 @@
 # Other resources
 
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
-
-- [Performance reports](./perf_reports/README.md)
-  - [2025-04-03](./perf_reports/2025-04-03.md)
