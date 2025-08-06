@@ -1,6 +1,6 @@
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
+    peer_handler::{MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PeerHandler},
     rlpx::{
         connection::server::CastMessage,
         message::Message,
@@ -77,6 +77,7 @@ pub enum StorageHealerMsg {
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
     peer_id: H256,
+    sent_time: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -114,8 +115,15 @@ pub struct StorageHealerState {
     /// When we ask if we have finished, we check is the staleness
     /// If stale we stop
     staleness_timestamp: u64,
-    /// What state tree is our parent
+    /// What state tree is our pivot at
     state_root: H256,
+
+    /// Data for analytics
+    maximum_length_seen: usize,
+    leafs_healed: usize,
+    roots_healed: usize,
+    succesful_downloads: usize,
+    failed_downloads: usize,
 }
 
 #[derive(Debug)]
@@ -167,6 +175,22 @@ impl GenServer for StorageHealer {
     ) -> CastResponse<Self> {
         match message {
             StorageHealerMsg::CheckUp => {
+                info!(
+                    "We are state healing. Inflight tasks {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                    state.requests.len(),
+                    state.maximum_length_seen,
+                    state.leafs_healed,
+                    state.roots_healed,
+                    state.succesful_downloads as f64 / state.failed_downloads as f64
+                );
+                state.succesful_downloads = 0;
+                state.failed_downloads = 0;
+                clear_inflight_requests(
+                    &mut state.requests,
+                    &mut state.scored_peers,
+                    &mut state.download_queue,
+                    &mut state.failed_downloads,
+                );
                 ask_peers_for_nodes(
                     &mut state.download_queue,
                     &mut state.requests,
@@ -182,14 +206,24 @@ impl GenServer for StorageHealer {
                     &mut state.scored_peers,
                     &mut state.download_queue,
                     trie_nodes,
+                    &mut state.succesful_downloads,
+                    &mut state.failed_downloads,
                 ) {
                     process_node_responses(
                         &mut nodes_from_peer,
                         &mut state.download_queue,
                         state.store.clone(),
                         &mut state.membatch,
+                        &mut state.leafs_healed,
+                        &mut state.roots_healed,
                     );
                 };
+                clear_inflight_requests(
+                    &mut state.requests,
+                    &mut state.scored_peers,
+                    &mut state.download_queue,
+                    &mut state.failed_downloads,
+                );
                 ask_peers_for_nodes(
                     &mut state.download_queue,
                     &mut state.requests,
@@ -238,6 +272,30 @@ pub fn storage_heal_trie(
     todo!()
 }
 
+async fn clear_inflight_requests(
+    requests: &mut HashMap<u64, InflightRequest>,
+    scored_peers: &mut HashMap<H256, PeerScore>,
+    download_queue: &mut VecDeque<NodeRequest>,
+    failed_downloads: &mut usize,
+) {
+    // Inneficiant use extract_if when available for people (rust 1.88)
+    requests.retain(|req_id, inflight_request| {
+        if inflight_request.sent_time.elapsed() > PEER_REPLY_TIMEOUT {
+            *failed_downloads += 1;
+            download_queue.extend(inflight_request.requests.clone());
+            scored_peers
+                .entry(inflight_request.peer_id)
+                .and_modify(|entry| {
+                    entry.in_flight = false;
+                    entry.score -= 1;
+                });
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// it grabs N peers to ask for data
 async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
@@ -262,6 +320,7 @@ async fn ask_peers_for_nodes(
             InflightRequest {
                 requests: download_chunk.clone().into(),
                 peer_id: peer.0,
+                sent_time: Instant::now(),
             },
         );
         peer.1
@@ -293,6 +352,8 @@ fn zip_requeue_node_responses_score_peer(
     scored_peers: &mut HashMap<H256, PeerScore>,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
+    succesful_downloads: &mut usize,
+    failed_downloads: &mut usize,
 ) -> Option<Vec<NodeResponse>> {
     trace!(
         "We are processing the nodes, we received {} nodes from our peer",
@@ -325,11 +386,13 @@ fn zip_requeue_node_responses_score_peer(
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
+        *succesful_downloads += 1;
         if peer.score < 10 {
             peer.score += 1;
         }
         Some(nodes)
     } else {
+        *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests.into_iter());
         None
@@ -341,9 +404,15 @@ fn process_node_responses(
     download_queue: &mut VecDeque<NodeRequest>,
     store: Store,
     membatch: &mut Membatch,
+    leafs_healed: &mut usize,
+    roots_healed: &mut usize,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
+        match &node_response.node {
+            Node::Leaf(_) => *leafs_healed += 1,
+            _ => {}
+        };
 
         let (missing_children_nibbles, missing_children_count) =
             determine_missing_children(&node_response, store.clone(), membatch)?;

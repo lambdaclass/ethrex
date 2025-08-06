@@ -764,7 +764,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             if let Some(receiver) = state.backend_table.get(&id) {
                 receiver
                     .clone()
-                    .cast(StorageHealerMsg::TrieNodes(resp.clone()));
+                    .cast(StorageHealerMsg::TrieNodes(resp.clone()))
+                    .await;
             } else {
                 log_peer_debug(
                     &state.node,
