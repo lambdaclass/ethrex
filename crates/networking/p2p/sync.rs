@@ -1,6 +1,8 @@
 use crate::peer_handler::SNAP_LIMIT;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-use crate::utils::current_unix_time;
+use crate::utils::{
+    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
+};
 use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
@@ -764,7 +766,9 @@ impl Syncer {
 
         let mut chunk_index = 0;
         let mut downloaded_account_storages = 0;
-        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+
+        let account_state_snapshots_dir = get_account_state_snapshots_dir();
+        for entry in std::fs::read_dir(&account_state_snapshots_dir)
             .expect("Failed to read account_state_snapshots dir")
         {
             let entry = entry.expect("Failed to read dir entry");
@@ -805,7 +809,7 @@ impl Syncer {
         let mut computed_state_root = *EMPTY_TRIE_HASH;
         let mut bytecode_hashes = Vec::new();
 
-        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+        for entry in std::fs::read_dir(&account_state_snapshots_dir)
             .expect("Failed to read account_state_snapshots dir")
         {
             let entry = entry.expect("Failed to read dir entry");
@@ -867,9 +871,9 @@ impl Syncer {
         let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        for entry in
-            std::fs::read_dir("/home/admin/.local/share/ethrex/account_storages_snapshots/")
-                .expect("Failed to read account_storages_snapshots dir")
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir();
+        for entry in std::fs::read_dir(&account_storages_snapshots_dir)
+            .expect("Failed to read account_storages_snapshots dir")
         {
             let entry = entry.expect("Failed to read dir entry");
 
