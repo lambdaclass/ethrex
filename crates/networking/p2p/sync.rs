@@ -767,7 +767,8 @@ impl Syncer {
         let mut chunk_index = 0;
         let mut downloaded_account_storages = 0;
 
-        let account_state_snapshots_dir = get_account_state_snapshots_dir();
+        let account_state_snapshots_dir = get_account_state_snapshots_dir()
+            .expect("Failed to get account_state_snapshots directory");
         for entry in std::fs::read_dir(&account_state_snapshots_dir)
             .expect("Failed to read account_state_snapshots dir")
         {
@@ -871,7 +872,8 @@ impl Syncer {
         let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir();
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
+            .expect("Failed to get account_storages_snapshots directory");
         for entry in std::fs::read_dir(&account_storages_snapshots_dir)
             .expect("Failed to read account_storages_snapshots dir")
         {

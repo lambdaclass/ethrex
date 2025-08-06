@@ -47,16 +47,18 @@ pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
     addr
 }
 
-// TODO: handle unwraps
-pub fn get_account_storages_snapshots_dir() -> String {
-    let home_dir = std::env::home_dir().unwrap();
-    let home_dir = home_dir.to_str().unwrap();
-    format!("{home_dir}/.local/share/ethrex/account_storages_snapshots")
+pub fn get_account_storages_snapshots_dir() -> Option<String> {
+    let home_dir = std::env::home_dir()?;
+    let home_dir = home_dir.to_str()?;
+    let account_storages_snapshots_dir =
+        format!("{home_dir}/.local/share/ethrex/account_storages_snapshots");
+    Some(account_storages_snapshots_dir)
 }
 
-// TODO: handle unwraps
-pub fn get_account_state_snapshots_dir() -> String {
-    let home_dir = std::env::home_dir().unwrap();
-    let home_dir = home_dir.to_str().unwrap();
-    format!("{home_dir}/.local/share/ethrex/account_state_snapshots")
+pub fn get_account_state_snapshots_dir() -> Option<String> {
+    let home_dir = std::env::home_dir()?;
+    let home_dir = home_dir.to_str()?;
+    let account_state_snapshots_dir =
+        format!("{home_dir}/.local/share/ethrex/account_state_snapshots");
+    Some(account_state_snapshots_dir)
 }

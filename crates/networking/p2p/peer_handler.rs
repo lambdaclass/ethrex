@@ -816,6 +816,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
+        // TODO: handle this error
+        let account_state_snapshots_dir = get_account_state_snapshots_dir()
+            .expect("Failed to get account_state_snapshots directory");
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -827,17 +830,16 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                let account_state_snapshots_dir = get_account_state_snapshots_dir();
-                dbg!(&account_state_snapshots_dir); // TODO: remove this debug
                 if !std::fs::exists(&account_state_snapshots_dir).expect("Failed") {
                     std::fs::create_dir_all(&account_state_snapshots_dir)
                         .expect("Failed to create accounts_state_snapshot dir");
                 }
 
+                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.clone();
                 let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                 tokio::task::spawn(async move {
                     let path = format!(
-                        "{account_state_snapshots_dir}/account_state_chunk.rlp.{chunk_file}"
+                        "{account_state_snapshots_dir_cloned}/account_state_chunk.rlp.{chunk_file}",
                     );
                     // TODO: check the error type and handle it properly
                     let result =
@@ -1100,7 +1102,6 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
-            let account_state_snapshots_dir = get_account_state_snapshots_dir();
             if !std::fs::exists(&account_state_snapshots_dir).expect("Failed") {
                 std::fs::create_dir_all(&account_state_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
@@ -1491,6 +1492,7 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > 1024 * 1024 * 1024 * 8
@@ -1508,14 +1510,19 @@ impl PeerHandler {
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
-                let account_storages_snapshots_dir = get_account_storages_snapshots_dir();
                 if !std::fs::exists(&account_storages_snapshots_dir).expect("Failed") {
                     std::fs::create_dir_all(&account_storages_snapshots_dir)
                         .expect("Failed to create accounts_state_snapshot dir");
                 }
-
+                let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
                 tokio::task::spawn(async move {
-                    std::fs::write(format!("{account_storages_snapshots_dir}/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
+                    std::fs::write(
+                        format!("{account_storages_snapshots_dir_cloned}/account_storages_chunk.rlp.{chunk_index}"),
+                        snapshot,
+                    )
+                    .unwrap_or_else(|_| {
+                        panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
+                    });
                 })
                 .await
                 .expect("");
@@ -1909,16 +1916,15 @@ impl PeerHandler {
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
-            let account_storages_snapshots_dir = get_account_storages_snapshots_dir();
             if !std::fs::exists(&account_storages_snapshots_dir).expect("Failed") {
                 std::fs::create_dir_all(&account_storages_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
             }
-
+            let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
             tokio::task::spawn(async move {
                 std::fs::write(
                     format!(
-                        "{account_storages_snapshots_dir}/account_storages_chunk.rlp.{chunk_index}"
+                        "{account_storages_snapshots_dir_cloned}/account_storages_chunk.rlp.{chunk_index}"
                     ),
                     snapshot,
                 )
