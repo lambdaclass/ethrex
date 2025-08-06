@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -62,8 +62,19 @@ pub enum StorageHealerMsg {
 
 #[derive(Debug, Clone)]
 pub struct StorageHealerState {
-    /// We use this to track which peers we have sent stuff to
+    last_update: Instant,
+    /// We use this to track what is still to be downloaded
+    /// After processing the nodes it may be left empty,
+    /// but if we have too many requests in flight
+    /// we may want to throttle the new requests
+    download_queue: VecDeque<NodeRequest>,
+    /// How many requests are already in flight
+    inflight_requests: usize,
+    /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
+    /// We use this to track which peers are occupied, and we can't send stuff to
+    /// Alongside their score for this situation
+    peers: HashMap<u64, (bool, u64)>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, ()>,
@@ -161,43 +172,7 @@ pub fn storage_heal_trie(
     membatch: &mut Membatch,
     staleness_timestamp: u64,
 ) -> bool {
-    // Logging stuff, we log during a given interval
-    let mut last_update = Instant::now();
-
-    let mut download_queue = get_initial_downloads(&account_paths);
-
-    let mut node_processing_queue: Vec<NodeResponse> = Vec::new();
-
-    // channel to send the download task to the peers
-    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<Vec<NodeResponse>>(1000);
-
-    loop {
-        log_storage_heal(&mut last_update);
-
-        if current_unix_time() > staleness_timestamp {
-            return false;
-        }
-
-        // we request the trie nodes
-        spawn_downloader_task(task_sender.clone(), &mut download_queue, &peers);
-
-        // try_recv
-        receive_data_from_tasks(&mut task_receiver, &mut node_processing_queue);
-
-        // Then we process them
-        // The coordinator for now is going to process them, although it may be more efficient if the writing to the database
-        // is concurrentized
-        process_data(
-            &mut node_processing_queue,
-            &mut download_queue,
-            store.clone(),
-            membatch,
-        );
-
-        if download_queue.is_empty() {
-            return true;
-        }
-    }
+    todo!()
 }
 
 fn receive_data_from_tasks(
