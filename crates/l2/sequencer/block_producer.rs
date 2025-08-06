@@ -44,7 +44,7 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BlockProducer {
     store: Store,
     blockchain: Arc<Blockchain>,

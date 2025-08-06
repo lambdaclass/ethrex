@@ -78,7 +78,7 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BlockFetcher {
     eth_client: EthClient,
     on_chain_proposer_address: Address,

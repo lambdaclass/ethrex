@@ -503,7 +503,7 @@ impl GenServer for ProofCoordinator {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone)]
 struct ConnectionHandler {
     proof_coordinator: ProofCoordinator,
 }

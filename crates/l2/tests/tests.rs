@@ -187,10 +187,8 @@ async fn test_upgrade(
     println!("test upgrade: Compiling CommonBridgeL2 contract");
     compile_contract(
         contracts_path,
-        Path::new("contracts/src/l2/CommonBridgeL2.sol"),
+        "contracts/src/l2/CommonBridgeL2.sol",
         false,
-        Some(&remappings),
-        &[contracts_path],
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -408,12 +406,13 @@ async fn test_erc20_roundtrip(
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
+
     compile_contract(
         contracts_path,
-        &contracts_path.join("src/example/L2ERC20.sol"),
+        &contracts_path.join("src/example/L2ERC20.sol").to_str().unwrap(), // TODO: SNAP SYNC: fix this path
         false,
-        Some(&remappings),
-        &[contracts_path],
+        // Some(&remappings),
+        // &[contracts_path],
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
