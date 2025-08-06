@@ -114,6 +114,8 @@ pub struct StorageHealerState {
     /// When we ask if we have finished, we check is the staleness
     /// If stale we stop
     staleness_timestamp: u64,
+    /// What state tree is our parent
+    state_root: H256,
 }
 
 #[derive(Debug)]
@@ -160,11 +162,20 @@ impl GenServer for StorageHealer {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
-            StorageHealerMsg::CheckUp => todo!(),
+            StorageHealerMsg::CheckUp => {
+                ask_peers_for_nodes(
+                    &mut state.download_queue,
+                    &mut state.requests,
+                    &state.peer_handler,
+                    state.state_root,
+                    &mut state.scored_peers,
+                    handle.clone(),
+                );
+            }
             StorageHealerMsg::TrieNodes(trie_nodes) => {
                 if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
                     &mut state.requests,
@@ -179,8 +190,14 @@ impl GenServer for StorageHealer {
                         &mut state.membatch,
                     );
                 };
-                todo!()
-                // ask_peers_for_nodes
+                ask_peers_for_nodes(
+                    &mut state.download_queue,
+                    &mut state.requests,
+                    &state.peer_handler,
+                    state.state_root,
+                    &mut state.scored_peers,
+                    handle.clone(),
+                );
             }
         }
         CastResponse::NoReply(state)
