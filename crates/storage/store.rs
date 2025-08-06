@@ -621,6 +621,8 @@ impl Store {
         );
 
         self.add_block(genesis_block).await?;
+        self.update_earliest_block_number(genesis_block_number)
+            .await?;
         self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
