@@ -52,7 +52,7 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
 // How many blocks before snap prunes the blocks. Taken from https://github.com/ethereum/devp2p/blob/master/caps/snap.md
-pub const SNAP_LIMIT: usize = 20;
+pub const SNAP_LIMIT: usize = 128;
 
 struct TaskResultStorage {
     start_index: usize,
