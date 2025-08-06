@@ -109,9 +109,6 @@ pub struct StorageHealerState {
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
-    /// This bool gets set up at the end of the processing, if we have
-    /// committed the last node in the tree
-    is_finished: bool,
     /// When we ask if we have finished, we check is the staleness
     /// If stale we stop
     staleness_timestamp: u64,
@@ -147,7 +144,7 @@ impl GenServer for StorageHealer {
         state: Self::State,
     ) -> CallResponse<Self> {
         // We only ask for IsFinished in the message, so we don't match it
-        let is_finished = state.is_finished;
+        let is_finished = state.requests.len() == 0 && state.download_queue.len() == 0;
         let is_stale = current_unix_time() > state.staleness_timestamp;
         // Finished means that we have succesfully healed according to our algorithm
         // That means that we have commited the root_node of the tree
@@ -266,9 +263,25 @@ pub fn storage_heal_trie(
     account_paths: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    membatch: &mut Membatch,
+    membatch: Membatch,
     staleness_timestamp: u64,
 ) -> bool {
+    StorageHealer::start(StorageHealerState {
+        last_update: Instant::now(),
+        download_queue: VecDeque::new(),
+        store,
+        membatch,
+        peer_handler: peers,
+        scored_peers: HashMap::new(),
+        requests: HashMap::new(),
+        staleness_timestamp,
+        state_root,
+        maximum_length_seen: Default::default(),
+        leafs_healed: Default::default(),
+        roots_healed: Default::default(),
+        succesful_downloads: Default::default(),
+        failed_downloads: Default::default(),
+    });
     todo!()
 }
 
@@ -419,7 +432,7 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch);
+            commit_node(&node_response, store.clone(), membatch, roots_healed);
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -540,6 +553,7 @@ fn commit_node(
     node: &NodeResponse,
     store: Store,
     membatch: &mut Membatch,
+    roots_healed: &mut usize,
 ) -> Result<(), StoreError> {
     let trie = store.clone().open_state_trie(*EMPTY_TRIE_HASH)?;
     let trie_db = trie.db();
@@ -552,6 +566,7 @@ fn commit_node(
         trace!(
             "We have the parent of an account, this means we are the root. Storage healing should end."
         );
+        *roots_healed += 1;
         return Ok(());
     }
 
@@ -571,7 +586,7 @@ fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        commit_node(&parent_entry.node_response, store, membatch)?;
+        commit_node(&parent_entry.node_response, store, membatch, roots_healed)?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }
