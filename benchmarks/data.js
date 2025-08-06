@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754504253354,
+  "lastUpdate": 1754504744996,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7795,6 +7795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164258724432,
             "range": "± 827023068",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e2e597008a7d7c40a12d44712566ae9cdef929cf",
+          "message": "fix(l1,l2): fix git branch and hash in `ethrex --version` (#3947)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n`ethrex --version` is broken in Docker image right now, displaying\n`VERGEN_IDEMPOTENT_OUTPUT` instead of git branch and hash. This also\nbreaks the commit check between L2 sequencer and prover when running one\nin Docker and another natively.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nCopy `.git` dir into the Docker build stage allowing `cargo build` to\ncalculate the values.\nRelated: #3848 \n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-06T17:35:25Z",
+          "tree_id": "7ca84148c6d123d520d8a9e59d217f6c7706b33d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e2e597008a7d7c40a12d44712566ae9cdef929cf"
+        },
+        "date": 1754504730523,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162470502163,
+            "range": "± 733213470",
             "unit": "ns/iter"
           }
         ]
