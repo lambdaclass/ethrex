@@ -41,6 +41,7 @@ COPY cmd ./cmd
 COPY metrics ./metrics
 COPY tooling ./tooling
 COPY fixtures/genesis ./fixtures/genesis
+COPY .git ./.git
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
