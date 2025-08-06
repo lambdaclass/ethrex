@@ -398,7 +398,17 @@ impl StoreEngine for RedBStore {
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        let key_values = block_headers
+        let hashes_and_numbers = block_headers
+            .into_iter()
+            .map(|header| {
+                (
+                    <H256 as Into<BlockHashRLP>>::into(header.hash()),
+                    <u64 as Into<BlockNumber>>::into(header.number),
+                )
+            })
+            .collect();
+        self.write_batch(BLOCK_NUMBERS_TABLE, hashes_and_headers).await;
+        let hashes_and_headers = block_headers
             .into_iter()
             .map(|header| {
                 (
@@ -407,7 +417,7 @@ impl StoreEngine for RedBStore {
                 )
             })
             .collect();
-        self.write_batch(HEADERS_TABLE, key_values).await
+        self.write_batch(HEADERS_TABLE, hashes_and_headers).await
     }
 
     fn get_block_header(
