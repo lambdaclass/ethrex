@@ -279,8 +279,7 @@ wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos
 <p>To install the client, <a href="https://www.rust-lang.org/tools/install">first install Rust</a> and then run:</p>
 <pre><code class="language-sh">cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
-    --tag v0.0.2-rc.1 \
-    --features dev
+    --tag &lt;LATEST_VERSION_HERE&gt; \
 </code></pre>
 <p>This installs the <code>ethrex</code> binary.
 For more information on how it is built and installed, see <a href="https://doc.rust-lang.org/cargo/commands/cargo-install.html">the cargo-install documentation</a>.</p>
@@ -291,13 +290,21 @@ For more information on how it is built and installed, see <a href="https://doc.
 <pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 </code></pre>
 <p>After installing the client, see <a href="./running.html">"Running the client"</a> for instructions on how to use it to run L1 and/or L2 networks.</p>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
+and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
+</div>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
 <p>This section assumes you already have <a href="https://www.rust-lang.org/tools/install">Rust's <code>cargo</code></a> and <a href="https://git-scm.com/book/en/v2/Getting-Started-Installing-Git"><code>git</code></a> installed.</p>
 <p>You can download the source code of a release from the <a href="https://github.com/lambdaclass/ethrex/releases">GitHub releases page</a>, or by cloning the repository at that version:</p>
 <pre><code class="language-sh">git clone --branch &lt;LATEST_VERSION_HERE&gt; --depth 1 https://github.com/lambdaclass/ethrex.git
 </code></pre>
 <p>After that, you can run the following command inside the cloned repo to build the client:</p>
-<pre><code class="language-sh">cargo build --bin ethrex --release --features dev
+<pre><code class="language-sh">cargo build --bin ethrex --release
 </code></pre>
 <p>You can find the built binary inside <code>target/release</code> directory:</p>
 <pre><code class="language-sh">./target/release/ethrex --version
@@ -305,6 +312,14 @@ For more information on how it is built and installed, see <a href="https://doc.
 <p>This should output something like:</p>
 <pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 </code></pre>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
+and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
+</div>
 <div class="mdbook-alerts mdbook-alerts-tip">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>

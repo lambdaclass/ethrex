@@ -360,8 +360,7 @@ wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos
 <p>To install the client, <a href="https://www.rust-lang.org/tools/install">first install Rust</a> and then run:</p>
 <pre><code class="language-sh">cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
-    --tag v0.0.2-rc.1 \
-    --features dev
+    --tag &lt;LATEST_VERSION_HERE&gt; \
 </code></pre>
 <p>This installs the <code>ethrex</code> binary.
 For more information on how it is built and installed, see <a href="https://doc.rust-lang.org/cargo/commands/cargo-install.html">the cargo-install documentation</a>.</p>
@@ -372,13 +371,21 @@ For more information on how it is built and installed, see <a href="https://doc.
 <pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 </code></pre>
 <p>After installing the client, see <a href="getting-started/./running.html">"Running the client"</a> for instructions on how to use it to run L1 and/or L2 networks.</p>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
+and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
+</div>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
 <p>This section assumes you already have <a href="https://www.rust-lang.org/tools/install">Rust's <code>cargo</code></a> and <a href="https://git-scm.com/book/en/v2/Getting-Started-Installing-Git"><code>git</code></a> installed.</p>
 <p>You can download the source code of a release from the <a href="https://github.com/lambdaclass/ethrex/releases">GitHub releases page</a>, or by cloning the repository at that version:</p>
 <pre><code class="language-sh">git clone --branch &lt;LATEST_VERSION_HERE&gt; --depth 1 https://github.com/lambdaclass/ethrex.git
 </code></pre>
 <p>After that, you can run the following command inside the cloned repo to build the client:</p>
-<pre><code class="language-sh">cargo build --bin ethrex --release --features dev
+<pre><code class="language-sh">cargo build --bin ethrex --release
 </code></pre>
 <p>You can find the built binary inside <code>target/release</code> directory:</p>
 <pre><code class="language-sh">./target/release/ethrex --version
@@ -386,6 +393,14 @@ For more information on how it is built and installed, see <a href="https://doc.
 <p>This should output something like:</p>
 <pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 </code></pre>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
+and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
+</div>
 <div class="mdbook-alerts mdbook-alerts-tip">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
@@ -466,6 +481,13 @@ For more information on how it is built and installed, see <a href="https://doc.
 <p>This guide will help you start a local L1+L2 stack using ethrex.
 It is assumed that you have already <a href="getting-started/./installing.html">installed ethrex</a>.</p>
 <p>Running <code>ethrex --help</code> will display the help message.</p>
+<h2 id="running-an-l1-node"><a class="header" href="#running-an-l1-node">Running an L1 node</a></h2>
+<p>You can run a mainnet node just by running:</p>
+<pre><code class="language-sh">ethrex
+</code></pre>
+<p>In case you want to sync with a testnet, you can use:</p>
+<pre><code class="language-sh">ethrex --network [sepolia|holesky|hoodi]
+</code></pre>
 <h2 id="running-an-l1-dev-environment"><a class="header" href="#running-an-l1-dev-environment">Running an L1 dev environment</a></h2>
 <p>After <a href="getting-started/./installing.html">installing ethrex</a>, you can start a local L1 by running:</p>
 <pre><code class="language-sh">ethrex --dev
@@ -1089,7 +1111,7 @@ A consensus node must be running for the syncing to work.</p>
 <p>Run the docker containers:</p>
 <pre><code class="language-bash">cd metrics
 
- docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
 </code></pre>
 </li>
 </ol>
@@ -3576,7 +3598,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -4649,7 +4671,7 @@ make load-test-io
 <h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
 <p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
 <p>For <code>ethrex</code>, you can run the server with:</p>
-<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network fixtures/genesis/l2.json --http.port 1729 --dev
+<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --root -- --network fixtures/genesis/l2.json --http.port 1729 --dev
 </code></pre>
 <p>For <code>reth</code>:</p>
 <pre><code class="language-sh">sudo cargo flamegraph --profile profiling -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
