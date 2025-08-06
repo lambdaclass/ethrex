@@ -264,22 +264,22 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-        
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Compare based and non based contracts
-          run: |
-            bash .github/scripts/compare_solidity_functions.sh \
-              _verifyPublicData \
-              crates/l2/contracts/src/l1/OnChainProposer.sol \
-              crates/l2/contracts/src/l1/based/OnChainProposer.sol
+        run: |
+          bash .github/scripts/compare_solidity_functions.sh \
+            _verifyPublicData \
+            crates/l2/contracts/src/l1/OnChainProposer.sol \
+            crates/l2/contracts/src/l1/based/OnChainProposer.sol
 
-            # For now verifyBatch is different but they should be the same in the future.
-            # bash .github/scripts/compare_solidity_functions.sh \
-            #   verifyBatch \
-            #   crates/l2/contracts/src/l1/OnChainProposer.sol \
-            #   crates/l2/contracts/src/l1/based/OnChainProposer.sol
+          # For now verifyBatch is different but they should be the same in the future.
+          # bash .github/scripts/compare_solidity_functions.sh \
+          #   verifyBatch \
+          #   crates/l2/contracts/src/l1/OnChainProposer.sol \
+          #   crates/l2/contracts/src/l1/based/OnChainProposer.sol
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
