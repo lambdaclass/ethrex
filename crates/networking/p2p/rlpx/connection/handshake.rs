@@ -133,7 +133,7 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            table: context.table.clone(),
+            table: Arc::new(Mutex::new(context.table.clone())),
             backend_channel: None,
             inbound,
             l2_state: context

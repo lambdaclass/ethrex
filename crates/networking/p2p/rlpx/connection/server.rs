@@ -122,7 +122,7 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Arc<Mutex<KademliaTable>>,
+    pub(crate) table: Arc<Mutex<Kademlia>>,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) inbound: bool,
     pub(crate) l2_state: L2ConnState,
@@ -362,11 +362,12 @@ impl GenServer for RLPxConnection {
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-                established_state
-                    .table
-                    .lock()
-                    .await
-                    .replace_peer(established_state.node.node_id());
+                // TODO: snap sync: remove peer from kademlia table
+                // established_state
+                //     .table
+                //     .lock()
+                //     .await
+                //     .replace_peer(established_state.node.node_id());
                 established_state.teardown().await;
             }
             _ => {
@@ -400,6 +401,8 @@ where
 
     state
         .table
+        .lock()
+        .await
         .set_connected_peer(state.node.clone(), peer_channels)
         .await;
 
@@ -557,7 +560,18 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
+async fn post_handshake_checks(_table: Arc<Mutex<Kademlia>>) -> Result<(), RLPxError> {
+    // TODO: disabled on snap sync, reenable before merge to main
+    // Check if connected peers exceed the limit
+    // let peer_count = {
+    //     let table_lock = table.lock().await;
+    //     table_lock.count_connected_peers()
+    // };
+
+    // if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
+    //     return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
+    // }
+
     Ok(())
 }
 
@@ -740,7 +754,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            state.table.peers.lock().await.remove(&state.node.node_id());
+            // TODO: snap sync: check if this is correct
+            state.table.lock().await.peers.lock().await.remove(&state.node.node_id());
 
             // TODO handle the disconnection request
 

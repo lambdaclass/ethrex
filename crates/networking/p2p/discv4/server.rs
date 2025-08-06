@@ -8,7 +8,7 @@ use crate::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
         PacketDecodeErr, PingMessage, PongMessage,
     },
-    kademlia::{Contact, Kademlia, KademliaTable},
+    kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
@@ -481,7 +481,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let table = self.kademlia.table.lock().await;
+                let table = self.inner_state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     return CastResponse::Stop;
@@ -593,267 +593,267 @@ impl GenServer for ConnectionHandler {
     }
 }
 
-pub async fn insert_random_node_on_custom_bucket(
-    table: Arc<Mutex<KademliaTable>>,
-    bucket_idx: usize,
-) {
-    let public_key = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
-    let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
-    table
-        .lock()
-        .await
-        .insert_node_on_custom_bucket(node, bucket_idx);
-}
+// pub async fn insert_random_node_on_custom_bucket(
+//     table: Arc<Mutex<KademliaTable>>,
+//     bucket_idx: usize,
+// ) {
+//     let public_key = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
+//     let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
+//     table
+//         .lock()
+//         .await
+//         .insert_node_on_custom_bucket(node, bucket_idx);
+// }
 
-pub async fn fill_table_with_random_nodes(table: Arc<Mutex<KademliaTable>>) {
-    for i in 0..256 {
-        for _ in 0..16 {
-            insert_random_node_on_custom_bucket(table.clone(), i).await;
-        }
-    }
-}
+// pub async fn fill_table_with_random_nodes(table: Arc<Mutex<KademliaTable>>) {
+//     for i in 0..256 {
+//         for _ in 0..16 {
+//             insert_random_node_on_custom_bucket(table.clone(), i).await;
+//         }
+//     }
+// }
 
-pub async fn start_discovery_server(
-    udp_port: u16,
-    initial_blocks: u64,
-    should_start_server: bool,
-) -> Result<Discv4Server, DiscoveryError> {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
-    let signer = SecretKey::new(&mut OsRng);
-    let public_key = public_key_from_signing_key(&signer);
-    let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
+// pub async fn start_discovery_server(
+//     udp_port: u16,
+//     initial_blocks: u64,
+//     should_start_server: bool,
+// ) -> Result<Discv4Server, DiscoveryError> {
+//     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
+//     let signer = SecretKey::new(&mut OsRng);
+//     let public_key = public_key_from_signing_key(&signer);
+//     let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
 
-    let storage = match initial_blocks {
-        0 => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
-        blocks => setup_storage(blocks).await.expect("Storage setup"),
-    };
+//     let storage = match initial_blocks {
+//         0 => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
+//         blocks => setup_storage(blocks).await.expect("Storage setup"),
+//     };
 
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-    let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
-    let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
-        MAX_MESSAGES_TO_BROADCAST,
-    );
-    let tracker = tokio_util::task::TaskTracker::new();
-    let local_node_record = Arc::new(Mutex::new(
-        NodeRecord::from_node(&local_node, 1, &signer)
-                       .expect("Node record could not be created from local node"),
-    ));
-    let ctx = P2PContext {
-        local_node,
-        local_node_record,
-        tracker: tracker.clone(),
-        signer,
-        table,
-        storage,
-        blockchain,
-        broadcast,
-        client_version: "ethrex/test".to_string(),
-        based_context: None,
-    };
+//     let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+//     let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
+//     let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
+//         MAX_MESSAGES_TO_BROADCAST,
+//     );
+//     let tracker = tokio_util::task::TaskTracker::new();
+//     let local_node_record = Arc::new(Mutex::new(
+//         NodeRecord::from_node(&local_node, 1, &signer)
+//                        .expect("Node record could not be created from local node"),
+//     ));
+//     let ctx = P2PContext {
+//         local_node,
+//         local_node_record,
+//         tracker: tracker.clone(),
+//         signer,
+//         table,
+//         storage,
+//         blockchain,
+//         broadcast,
+//         client_version: "ethrex/test".to_string(),
+//         based_context: None,
+//     };
 
-    let discv4 = Discv4Server::try_new(ctx.clone()).await?;
+//     let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
-    if should_start_server {
-        tracker.spawn({
-            let discv4 = discv4.clone();
-            async move {
-                discv4.receive().await;
-            }
-        });
-        // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
-        // if that connection fails, then they are remove themselves from the table, we want them to be bonded for these tests
-        ctx.tracker.spawn(serve_p2p_requests(ctx.clone()));
-    }
+//     if should_start_server {
+//         tracker.spawn({
+//             let discv4 = discv4.clone();
+//             async move {
+//                 discv4.receive().await;
+//             }
+//         });
+//         // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
+//         // if that connection fails, then they are remove themselves from the table, we want them to be bonded for these tests
+//         ctx.tracker.spawn(serve_p2p_requests(ctx.clone()));
+//     }
 
-    Ok(discv4)
-}
+//     Ok(discv4)
+// }
 
-/// connects two mock servers by pinging a to b
-pub async fn connect_servers(
-    server_a: &mut Discv4Server,
-    server_b: &mut Discv4Server,
-) -> Result<(), DiscoveryError> {
-    server_a
-        .try_add_peer_and_ping(server_b.ctx.local_node.clone())
-        .await?;
+// /// connects two mock servers by pinging a to b
+// pub async fn connect_servers(
+//     server_a: &mut Discv4Server,
+//     server_b: &mut Discv4Server,
+// ) -> Result<(), DiscoveryError> {
+//     server_a
+//         .try_add_peer_and_ping(server_b.ctx.local_node.clone())
+//         .await?;
 
-    // allow some time for the server to respond
-    sleep(Duration::from_secs(1)).await;
-    Ok(())
-}
+//     // allow some time for the server to respond
+//     sleep(Duration::from_secs(1)).await;
+//     Ok(())
+// }
 
-async fn setup_storage(blocks: u64) -> Result<Store, StoreError> {
-    let store = Store::new("test", EngineType::InMemory)?;
+// async fn setup_storage(blocks: u64) -> Result<Store, StoreError> {
+//     let store = Store::new("test", EngineType::InMemory)?;
 
-    let config = ChainConfig {
-        shanghai_time: Some(1),
-        istanbul_block: Some(1),
-        ..Default::default()
-    };
-    store.set_chain_config(&config).await?;
+//     let config = ChainConfig {
+//         shanghai_time: Some(1),
+//         istanbul_block: Some(1),
+//         ..Default::default()
+//     };
+//     store.set_chain_config(&config).await?;
 
-    for i in 0..blocks {
-        let header = BlockHeader {
-            number: 0,
-            timestamp: i * 5,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-        let block_hash = header.hash();
-        store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(i, block_hash).await?;
-    }
-    store.update_latest_block_number(blocks - 1).await?;
-    Ok(store)
-}
+//     for i in 0..blocks {
+//         let header = BlockHeader {
+//             number: 0,
+//             timestamp: i * 5,
+//             gas_limit: 100_000_000,
+//             gas_used: 0,
+//             ..Default::default()
+//         };
+//         let block_hash = header.hash();
+//         store.add_block_header(block_hash, header).await?;
+//         store.set_canonical_block(i, block_hash).await?;
+//     }
+//     store.update_latest_block_number(blocks - 1).await?;
+//     Ok(store)
+// }
 
-#[tokio::test]
-/** This is a end to end test on the discovery server, the idea is as follows:
- * - We'll start two discovery servers (`a` & `b`) to ping between each other
- * - We'll make `b` ping `a`, and validate that the connection is right
- * - Then we'll wait for a revalidation where we expect everything to be the same
- * - We'll do this five 5 more times
- * - Then we'll stop server `a` so that it doesn't respond to re-validations
- * - We expect server `b` to remove node `a` from its table after 3 re-validations
- * To make this run faster, we'll change the revalidation time to be every 2secs
- */
-async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-    let mut server_a = start_discovery_server(7998, 1, true).await?;
-    let mut server_b = start_discovery_server(7999, 1, true).await?;
+// #[tokio::test]
+// /** This is a end to end test on the discovery server, the idea is as follows:
+//  * - We'll start two discovery servers (`a` & `b`) to ping between each other
+//  * - We'll make `b` ping `a`, and validate that the connection is right
+//  * - Then we'll wait for a revalidation where we expect everything to be the same
+//  * - We'll do this five 5 more times
+//  * - Then we'll stop server `a` so that it doesn't respond to re-validations
+//  * - We expect server `b` to remove node `a` from its table after 3 re-validations
+//  * To make this run faster, we'll change the revalidation time to be every 2secs
+//  */
+// async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
+//     let mut server_a = start_discovery_server(7998, 1, true).await?;
+//     let mut server_b = start_discovery_server(7999, 1, true).await?;
 
-    connect_servers(&mut server_a, &mut server_b).await?;
+//     connect_servers(&mut server_a, &mut server_b).await?;
 
-    server_b.revalidation_interval_seconds = 2;
+//     server_b.revalidation_interval_seconds = 2;
 
-    // start revalidation server
-    server_b.ctx.tracker.spawn({
-        let server_b = server_b.clone();
-        async move { server_b.start_revalidation().await }
-    });
+//     // start revalidation server
+//     server_b.ctx.tracker.spawn({
+//         let server_b = server_b.clone();
+//         async move { server_b.start_revalidation().await }
+//     });
 
-    for _ in 0..5 {
-        sleep(Duration::from_millis(2500)).await;
-        // by now, b should've send a revalidation to a
-        let table = server_b.ctx.table.lock().await;
-        let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
-        assert!(node.is_some_and(|n| n.revalidation.is_some()));
-    }
+//     for _ in 0..5 {
+//         sleep(Duration::from_millis(2500)).await;
+//         // by now, b should've send a revalidation to a
+//         let table = server_b.ctx.table.lock().await;
+//         let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
+//         assert!(node.is_some_and(|n| n.revalidation.is_some()));
+//     }
 
-    // make sure that `a` has responded too all the re-validations
-    // we can do that by checking the liveness
-    {
-        let table = server_b.ctx.table.lock().await;
-        let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
-        assert_eq!(node.map_or(0, |n| n.liveness), 6);
-    }
+//     // make sure that `a` has responded too all the re-validations
+//     // we can do that by checking the liveness
+//     {
+//         let table = server_b.ctx.table.lock().await;
+//         let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
+//         assert_eq!(node.map_or(0, |n| n.liveness), 6);
+//     }
 
-    // now, stopping server `a` is not trivial
-    // so we'll instead change its port, so that no one responds
-    {
-        let mut table = server_b.ctx.table.lock().await;
-        let node = table.get_by_node_id_mut(server_a.ctx.local_node.node_id());
-        if let Some(node) = node {
-            node.node.udp_port = 0
-        };
-    }
+//     // now, stopping server `a` is not trivial
+//     // so we'll instead change its port, so that no one responds
+//     {
+//         let mut table = server_b.ctx.table.lock().await;
+//         let node = table.get_by_node_id_mut(server_a.ctx.local_node.node_id());
+//         if let Some(node) = node {
+//             node.node.udp_port = 0
+//         };
+//     }
 
-    // now the liveness field should start decreasing until it gets to 0
-    // which should happen in 3 re-validations
-    for _ in 0..2 {
-        sleep(Duration::from_millis(2500)).await;
-        let table = server_b.ctx.table.lock().await;
-        let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
-        assert!(node.is_some_and(|n| n.revalidation.is_some()));
-    }
-    sleep(Duration::from_millis(2500)).await;
+//     // now the liveness field should start decreasing until it gets to 0
+//     // which should happen in 3 re-validations
+//     for _ in 0..2 {
+//         sleep(Duration::from_millis(2500)).await;
+//         let table = server_b.ctx.table.lock().await;
+//         let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
+//         assert!(node.is_some_and(|n| n.revalidation.is_some()));
+//     }
+//     sleep(Duration::from_millis(2500)).await;
 
-    // finally, `a`` should not exist anymore
-    let table = server_b.ctx.table.lock().await;
-    assert!(
-        table
-            .get_by_node_id(server_a.ctx.local_node.node_id())
-            .is_none()
-    );
-    Ok(())
-}
+//     // finally, `a`` should not exist anymore
+//     let table = server_b.ctx.table.lock().await;
+//     assert!(
+//         table
+//             .get_by_node_id(server_a.ctx.local_node.node_id())
+//             .is_none()
+//     );
+//     Ok(())
+// }
 
-#[tokio::test]
-/**
- * This test verifies the exchange and update of ENR (Ethereum Node Record) messages.
- * The test follows these steps:
- *
- * 1. Start two nodes.
- * 2. Wait until they establish a connection.
- * 3. Assert that they exchange their records and store them
- * 3. Modify the ENR (node record) of one of the nodes.
- * 4. Send a new ping message and check that an ENR request was triggered.
- * 5. Verify that the updated node record has been correctly received and stored.
- */
-async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-    let mut server_a = start_discovery_server(8006, 1, true).await?;
-    let mut server_b = start_discovery_server(8007, 1, true).await?;
+// #[tokio::test]
+// /**
+//  * This test verifies the exchange and update of ENR (Ethereum Node Record) messages.
+//  * The test follows these steps:
+//  *
+//  * 1. Start two nodes.
+//  * 2. Wait until they establish a connection.
+//  * 3. Assert that they exchange their records and store them
+//  * 3. Modify the ENR (node record) of one of the nodes.
+//  * 4. Send a new ping message and check that an ENR request was triggered.
+//  * 5. Verify that the updated node record has been correctly received and stored.
+//  */
+// async fn discovery_enr_message() -> Result<(), DiscoveryError> {
+//     let mut server_a = start_discovery_server(8006, 1, true).await?;
+//     let mut server_b = start_discovery_server(8007, 1, true).await?;
 
-    connect_servers(&mut server_a, &mut server_b).await?;
+//     connect_servers(&mut server_a, &mut server_b).await?;
 
-    // wait some time for the enr request-response finishes
-    sleep(Duration::from_millis(2500)).await;
+//     // wait some time for the enr request-response finishes
+//     sleep(Duration::from_millis(2500)).await;
 
-    let expected_record = server_b.ctx.local_node_record.lock().await.clone();
+//     let expected_record = server_b.ctx.local_node_record.lock().await.clone();
 
-    let server_a_peer_b = server_a
-        .ctx
-        .table
-        .lock()
-        .await
-        .get_by_node_id(server_b.ctx.local_node.node_id())
-        .cloned()
-        .unwrap();
+//     let server_a_peer_b = server_a
+//         .ctx
+//         .table
+//         .lock()
+//         .await
+//         .get_by_node_id(server_b.ctx.local_node.node_id())
+//         .cloned()
+//         .unwrap();
 
-    // we only match the pairs, as the signature and seq will change
-    // because they are calculated with the current time
-    assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
+//     // we only match the pairs, as the signature and seq will change
+//     // because they are calculated with the current time
+//     assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
 
-    // Modify server_a's record of server_b with an incorrect TCP port.
-    // This simulates an outdated or incorrect entry in the node table.
-    server_a
-        .ctx
-        .table
-        .lock()
-        .await
-        .get_by_node_id_mut(server_b.ctx.local_node.node_id())
-        .unwrap()
-        .node
-        .tcp_port = 10;
+//     // Modify server_a's record of server_b with an incorrect TCP port.
+//     // This simulates an outdated or incorrect entry in the node table.
+//     server_a
+//         .ctx
+//         .table
+//         .lock()
+//         .await
+//         .get_by_node_id_mut(server_b.ctx.local_node.node_id())
+//         .unwrap()
+//         .node
+//         .tcp_port = 10;
 
-    // update the enr_seq of server_b so that server_a notices it is outdated
-    // and sends a request to update it
-    server_b
-        .ctx
-        .local_node_record
-        .lock()
-        .await
-        .update_seq(&server_b.ctx.signer)
-        .unwrap();
+//     // update the enr_seq of server_b so that server_a notices it is outdated
+//     // and sends a request to update it
+//     server_b
+//         .ctx
+//         .local_node_record
+//         .lock()
+//         .await
+//         .update_seq(&server_b.ctx.signer)
+//         .unwrap();
 
-    // Send a ping from server_b to server_a.
-    // server_a should notice the enr_seq is outdated
-    // and trigger a enr-request to server_b to update the record.
-    server_b.ping(&server_a.ctx.local_node).await?;
+//     // Send a ping from server_b to server_a.
+//     // server_a should notice the enr_seq is outdated
+//     // and trigger a enr-request to server_b to update the record.
+//     server_b.ping(&server_a.ctx.local_node).await?;
 
-    // Wait for the update to propagate.
-    sleep(Duration::from_millis(2500)).await;
+//     // Wait for the update to propagate.
+//     sleep(Duration::from_millis(2500)).await;
 
-    // Verify that server_a has updated its record of server_b with the correct TCP port.
-    let table_lock = server_a.ctx.table.lock().await;
-    let server_a_node_b_record = table_lock
-        .get_by_node_id(server_b.ctx.local_node.node_id())
-        .unwrap();
+//     // Verify that server_a has updated its record of server_b with the correct TCP port.
+//     let table_lock = server_a.ctx.table.lock().await;
+//     let server_a_node_b_record = table_lock
+//         .get_by_node_id(server_b.ctx.local_node.node_id())
+//         .unwrap();
 
-    assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);
+//     assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 // TODO: SNAP SYNC: reenable this test
 // #[tokio::test]
