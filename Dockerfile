@@ -61,8 +61,18 @@ WORKDIR /usr/local/bin
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder /ethrex/target/release/ethrex .
 
+# Common ports:
+# -  8545: RPC
+# -  8551: EngineAPI
+# - 30303: Discovery
+# -  9090: Metrics
+# -  1729: L2 RPC
+# -  3900: L2 Proof Coordinator
 EXPOSE 8545
 EXPOSE 8551
+EXPOSE 30303/tcp
+EXPOSE 30303/udp
+EXPOSE 9090
 EXPOSE 1729
 EXPOSE 3900
 
