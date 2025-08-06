@@ -5,6 +5,7 @@ use std::{
 
 use crate::{peer_handler::PeerHandler, rlpx::snap::TrieNodes, utils::current_unix_time};
 use ethrex_common::H256;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
 use spawned_concurrency::{
@@ -148,7 +149,7 @@ impl GenServer for StorageHealer {
 }
 
 /// This struct stores the metadata we need when we request a node
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NodeRequest {
     /// What account this belongs too (so what is the storage tree)
     acc_path: Nibbles,
@@ -201,15 +202,41 @@ fn process_trie_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
 ) -> Vec<NodeResponse> {
-    let Some(request) = requests.remove(&trie_nodes.id) else {
+    trace!(
+        "We are processing the nodes, we received {} nodes from our peer",
+        trie_nodes.nodes.len()
+    );
+    let Some(mut request) = requests.remove(&trie_nodes.id) else {
         return Vec::new();
     };
 
-    if request.requests.len() < trie_nodes.nodes.len() {
+    let nodes_size = trie_nodes.nodes.len();
+
+    if request.requests.len() < nodes_size {
         panic!("The node responded with more data than us!");
     }
 
-    todo!()
+    if let Ok(nodes) = request
+        .requests
+        .iter()
+        .zip(trie_nodes.nodes)
+        .map(|(node_request, node_bytes)| {
+            Ok(NodeResponse {
+                node_request: node_request.clone(),
+                node: Node::decode_raw(&node_bytes)?,
+            })
+        })
+        .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
+    {
+        if request.requests.len() > nodes_size {
+            // TODO: Reencode the missing requests
+            download_queue.extend(request.requests.into_iter().skip(nodes_size));
+        }
+        nodes
+    } else {
+        download_queue.extend(request.requests.into_iter());
+        vec![]
+    }
 }
 
 fn process_data(
