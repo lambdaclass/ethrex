@@ -16,7 +16,7 @@ For more information on these tests check [the docs](https://eest.ethereum.org/m
 First, make sure you have the EF tests downloaded. This can be achieved by running:
 ```bash
 cd cmd/ef_tests/state
-make download-evm-ef-tests
+make download-state-tests
 ```
 
 After the `vectors/` directory is set up, run:

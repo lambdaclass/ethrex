@@ -33,13 +33,13 @@ jobs:
       - name: Download EF Tests
         run: |
           cd cmd/ef_tests/state
-          make download-evm-ef-tests
+          make download-state-tests
 
       - name: Run tests
         run: |
           cd cmd/ef_tests/state
           set -o pipefail
-          make run-evm-ef-tests-ci | tee test_result_pr.txt
+          make run-state-tests-ci | tee test_result_pr.txt
 
       - name: Show test summary -- full
         run: |
@@ -78,13 +78,13 @@ jobs:
       - name: Download EF Tests
         run: |
           cd cmd/ef_tests/state
-          make download-evm-ef-tests
+          make download-state-tests
 
       - name: Run tests
         run: |
           cd cmd/ef_tests/state
           set -o pipefail
-          make run-evm-ef-tests-ci | tee test_result_main.txt
+          make run-state-tests-ci | tee test_result_main.txt
 
       - name: Show test summary -- full
         run: |

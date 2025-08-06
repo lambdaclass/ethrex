@@ -1,4 +1,4 @@
-.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
+.PHONY: download-state-tests clean-state-tests run-state-tests test-levm test-revm
 
 FIXTURES_FILE := .fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
@@ -14,7 +14,7 @@ COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 $(STATETEST_ARTIFACT): $(FIXTURES_FILE)
-	$(MAKE) clean-evm-ef-tests
+	$(MAKE) clean-state-tests
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 
 $(VECTORS_DIR): $(STATETEST_ARTIFACT)
@@ -40,16 +40,16 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
-download-evm-ef-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
+download-state-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
 
-clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
+clean-state-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)
 	rm -rf $(TMP_DIR)
 	rm -f $(STATETEST_ARTIFACT)
 
-refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
+refresh-state-tests: clean-state-tests download-state-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
-run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
+run-state-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		time cargo test --quiet --test all --profile release-with-debug -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
@@ -58,58 +58,14 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-with-debug -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-state-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM for CI.
 	time cargo test -p ef_tests-state --test all --profile release-with-debug -- --summary
 
 test-levm: $(VECTORS_DIR)
-	$(MAKE) run-evm-ef-tests flags="--summary"
+	$(MAKE) run-state-tests flags="--summary"
 
 test-revm: $(VECTORS_DIR)
-	$(MAKE) run-evm-ef-tests flags="--revm"
-
-###### Running Flamegraphs ######
-
-SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
-
-flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
-	mkdir -p levm_perfgraphs/flamegraph/ef_tests/state ||: && \
-	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
-	$(MAKE) flamegraph-run-ef-tests-revm
-	$(MAKE) flamegraph-run-ef-tests-levm
-
-flamegraph-run-ef-tests-revm:
-	@for dir in $(SUBDIRS); do\
-		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
-		-p ef_tests-state --test all -- --summary --revm --tests $$dir;\
-	done
-
-flamegraph-run-ef-tests-levm:
-	@for dir in $(SUBDIRS); do\
-		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output levm_perfgraphs/flamegraph/ef_tests/state/$$dir.svg\
-		-p ef_tests-state --test all -- --summary --tests $$dir;\
-	done
-
-samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
-	mkdir -p levm_perfgraphs/samply/ef_tests/state ||: && \
-	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
-	$(MAKE) samply-run-ef-tests-revm
-	$(MAKE) samply-run-ef-tests-levm
-
-samply-run-ef-tests-revm:
-	@for dir in $(SUBDIRS); do\
-		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
-		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
-	done
-
-samply-run-ef-tests-levm:
-	@for dir in $(SUBDIRS); do\
-		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o levm_perfgraphs/samply/ef_tests/state/prof_$$dir.json \
-		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --tests $$dir;\
-	done
+	$(MAKE) run-state-tests flags="--revm"
 
 ################
 # FLAMEGRAPHS
