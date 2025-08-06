@@ -26,7 +26,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    //TODO: For max perf use like a Map with the code_hash as the lookup method
+    //TODO: For max perf use like a Map with the code_hash as the lookup method. https://github.com/lambdaclass/ethrex/issues/3964
     pub codes: BTreeMap<H256, Bytes>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
