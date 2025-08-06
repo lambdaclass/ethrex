@@ -1,6 +1,6 @@
 use crate::{
     cli::Options,
-    networks::{self, Network, PublicNetwork},
+    networks::Network,
     utils::{
         get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
         set_datadir,
@@ -225,25 +225,7 @@ pub fn get_network(opts: &Options) -> Network {
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    match network {
-        Network::PublicNetwork(PublicNetwork::Holesky) => {
-            info!("Adding holesky preset bootnodes");
-            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Hoodi) => {
-            info!("Addig hoodi preset bootnodes");
-            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Mainnet) => {
-            info!("Adding mainnet preset bootnodes");
-            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Sepolia) => {
-            info!("Adding sepolia preset bootnodes");
-            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-        }
-        _ => {}
-    }
+    bootnodes.extend(network.get_bootnodes());
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
