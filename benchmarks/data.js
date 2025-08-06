@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754507056704,
+  "lastUpdate": 1754510660852,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7915,6 +7915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162333237228,
             "range": "± 520235707",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a511ff2e0a1b8bcacf59a042d42a95fc9a1438e",
+          "message": "feat(l1): embed bootnodes for public networks inside binary (#3967)\n\n**Motivation**\n\nWe want users to be able to run the binary without needing to have a\nfile of known bootnodes for each public network.\n\n**Description**\n\nThis PR embeds the bootnode files inside the binary.\n\nCloses #3966",
+          "timestamp": "2025-08-06T19:13:51Z",
+          "tree_id": "35509bef5962a276de04c4ac67d0bfa7056cd8c5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6a511ff2e0a1b8bcacf59a042d42a95fc9a1438e"
+        },
+        "date": 1754510646003,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161764105253,
+            "range": "± 518732141",
             "unit": "ns/iter"
           }
         ]
