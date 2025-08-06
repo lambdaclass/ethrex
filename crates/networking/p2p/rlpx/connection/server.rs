@@ -468,8 +468,9 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let filter =
-            |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.compute_hash()) };
+        let filter = |tx_hash: &H256, _tx: &Transaction| -> bool {
+            !state.broadcasted_txs.contains(tx_hash)
+        };
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool

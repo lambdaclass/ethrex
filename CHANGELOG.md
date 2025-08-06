@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-06
+
+- Pass transaction hash to filter function to avoid recomputing inside [#xxxx](https://github.com/lambdaclass/ethrex/pull/xxxx)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)

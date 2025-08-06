@@ -99,7 +99,7 @@ impl Mempool {
         &self,
         filter: &PendingTxFilter,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let filter_tx = |tx: &Transaction| -> bool {
+        let filter_tx = |_tx_hash: &H256, tx: &Transaction| -> bool {
             // Filter by tx type
             let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
             if filter.only_plain_txs && is_blob_tx || filter.only_blob_txs && !is_blob_tx {
@@ -136,7 +136,7 @@ impl Mempool {
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions_with_filter_fn(
         &self,
-        filter: &dyn Fn(&Transaction) -> bool,
+        filter: &dyn Fn(&H256, &Transaction) -> bool,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
@@ -145,8 +145,8 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        for (_, tx) in tx_pool.iter() {
-            if filter(tx) {
+        for (tx_hash, tx) in tx_pool.iter() {
+            if filter(tx_hash, tx) {
                 txs_by_sender
                     .entry(tx.sender())
                     .or_insert_with(|| Vec::with_capacity(128))
