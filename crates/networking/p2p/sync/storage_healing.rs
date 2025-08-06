@@ -192,7 +192,7 @@ fn spawn_downloader_task(
 
 fn process_data(
     node_processing_queue: &mut Vec<NodeResponse>,
-    download_queue: &mut Vec<NodeRequest>,
+    download_queue: &mut VecDeque<NodeRequest>,
     store: Store,
     membatch: &mut Membatch,
 ) -> Result<(), StoreError> {
