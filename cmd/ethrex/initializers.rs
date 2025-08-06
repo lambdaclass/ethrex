@@ -183,35 +183,33 @@ pub async fn init_network(
 
 #[cfg(feature = "dev")]
 pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
-    if opts.dev {
-        info!("Running in DEV_MODE");
+    info!("Running in DEV_MODE");
 
-        let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().await.unwrap();
-            store
-                .get_canonical_block_hash(current_block_number)
-                .await
-                .unwrap()
-                .unwrap()
-        };
+    let head_block_hash = {
+        let current_block_number = store.get_latest_block_number().await.unwrap();
+        store
+            .get_canonical_block_hash(current_block_number)
+            .await
+            .unwrap()
+            .unwrap()
+    };
 
-        let max_tries = 3;
+    let max_tries = 3;
 
-        let url = format!(
-            "http://{authrpc_socket_addr}",
-            authrpc_socket_addr = get_authrpc_socket_addr(opts)
-        );
+    let url = format!(
+        "http://{authrpc_socket_addr}",
+        authrpc_socket_addr = get_authrpc_socket_addr(opts)
+    );
 
-        let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-            url,
-            read_jwtsecret_file(&opts.authrpc_jwtsecret),
-            head_block_hash,
-            max_tries,
-            1000,
-            ethrex_common::Address::default(),
-        );
-        tracker.spawn(block_producer_engine);
-    }
+    let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+        url,
+        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        head_block_hash,
+        max_tries,
+        1000,
+        ethrex_common::Address::default(),
+    );
+    tracker.spawn(block_producer_engine);
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -423,29 +421,27 @@ pub async fn init_l1(
         init_metrics(&opts, tracker.clone());
     }
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "dev")] {
-            init_dev_network(&opts, &store, tracker.clone()).await;
-        } else {
-            if opts.p2p_enabled {
-                init_network(
-                    &opts,
-                    &network,
-                    &data_dir,
-                    local_p2p_node,
-                    local_node_record.clone(),
-                    signer,
-                    peer_table.clone(),
-                    store.clone(),
-                    tracker.clone(),
-                    blockchain.clone(),
-                    None
-                )
-                .await;
-            } else {
-                info!("P2P is disabled");
-            }
-        }
+    if opts.dev {
+        #[cfg(feature = "dev")]
+        init_dev_network(&opts, &store, tracker.clone()).await;
+    } else if opts.p2p_enabled {
+        init_network(
+            &opts,
+            &network,
+            &data_dir,
+            local_p2p_node,
+            local_node_record.clone(),
+            signer,
+            peer_table.clone(),
+            store.clone(),
+            tracker.clone(),
+            blockchain.clone(),
+            None,
+        )
+        .await;
+    } else {
+        info!("P2P is disabled");
     }
+
     Ok((data_dir, cancel_token, peer_table, local_node_record))
 }

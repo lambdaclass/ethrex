@@ -43,6 +43,7 @@ COPY cmd ./cmd
 COPY metrics ./metrics
 COPY tooling ./tooling
 COPY fixtures/genesis ./fixtures/genesis
+COPY .git ./.git
 COPY Cargo.* ./
 COPY fixtures ./fixtures
 COPY .git ./.git
