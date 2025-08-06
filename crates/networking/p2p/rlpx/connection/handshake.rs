@@ -4,10 +4,15 @@ use std::{
     sync::Arc,
 };
 
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
+        l2::l2_connection::L2ConnState,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -37,11 +42,6 @@ use tokio::{
 };
 use tokio_util::codec::Framed;
 
-use super::{
-    codec::RLPxCodec,
-    server::{Initiator, Receiver},
-};
-
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
@@ -63,7 +63,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let (context, node, framed, _inbound) = match state {
+    let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
@@ -111,6 +111,11 @@ pub(crate) async fn perform(
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()));
         }
+        // Shouldn't perform a Handshake on an already failed connection.
+        // Put it here to complete the match arms
+        InnerState::HandshakeFailed => {
+            return Err(RLPxError::StateError("Handshake Failed".to_string()));
+        }
     };
     let (sink, stream) = framed.split();
     Ok((
@@ -130,6 +135,10 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
+            inbound,
+            l2_state: context
+                .based_context
+                .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
         },
         stream,
     ))

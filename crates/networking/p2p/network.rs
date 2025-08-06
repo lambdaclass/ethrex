@@ -1,3 +1,4 @@
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::{
     discv4::{
         server::{DiscoveryServer, DiscoveryServerError},
@@ -42,6 +43,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    pub based_context: Option<P2PBasedContext>,
 }
 
 impl P2PContext {
@@ -55,6 +57,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -71,6 +74,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            based_context,
         }
     }
 }

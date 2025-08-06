@@ -16,8 +16,8 @@ use ethrex_common::{
 /// When a new callframe is created a RC clone of this memory is made, with the current base offset at the length of the buffer at that time.
 #[derive(Debug, Clone)]
 pub struct Memory {
-    buffer: Rc<RefCell<Vec<u8>>>,
-    len: usize,
+    pub buffer: Rc<RefCell<Vec<u8>>>,
+    pub len: usize,
     current_base: usize,
 }
 

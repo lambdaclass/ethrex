@@ -58,7 +58,7 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RLPxInitiator;
 
 impl RLPxInitiator {
