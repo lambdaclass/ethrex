@@ -9,8 +9,8 @@ use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use ethrex_common::Bytes;
 
-const SERVER_URL: &str = "172.17.0.1:3900";
-const SERVER_URL_DEV: &str = "localhost:3900";
+const PROOF_COORDINATOR_URL_ENV: &str = "ETHREX_TDX_PROOF_COORDINATOR_URL";
+const LOCAL_PROOF_COORDINATOR_URL: &str = "localhost:3900";
 
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
@@ -76,11 +76,8 @@ pub async fn submit_quote(quote: Bytes) -> Result<(), String> {
 async fn connect_to_prover_server_wr(
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let addr = if std::env::var("ETHREX_TDX_DEV_MODE").is_ok() {
-        SERVER_URL_DEV
-    } else {
-        SERVER_URL
-    };
+    let addr =
+        std::env::var(PROOF_COORDINATOR_URL_ENV).unwrap_or(LOCAL_PROOF_COORDINATOR_URL.to_string());
     let mut stream = TcpStream::connect(addr).await?;
 
     stream.write_all(&serde_json::to_vec(&write)?).await?;
