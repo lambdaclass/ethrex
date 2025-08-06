@@ -217,7 +217,7 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
 /// and/or rebuilding the block's state in the DB
 struct DumpProcessor {
     state_root: Option<H256>,
-    // Current Trie Root + Store. Set to false if state sync is disabled
+    // Current Trie Root + Store. Set to None if state sync is disabled
     sync_state: Option<(H256, Store)>,
     writer: Option<DumpDirWriter>,
 }
