@@ -2,7 +2,7 @@ lazy_static::lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
 use ethrex::utils::set_datadir;
@@ -533,6 +533,7 @@ impl DumpIpcReader {
 }
 
 #[derive(Parser)]
+#[clap(group = ArgGroup::new("input").required(true).args(&["ipc_path", "input_dir"]).multiple(false))]
 struct Args {
     #[arg(
         required = true,
@@ -540,12 +541,6 @@ struct Args {
         help = "Block number to sync to"
     )]
     block_number: BlockNumber,
-    #[arg(
-        long = "ipc_path",
-        value_name = "IPC_PATH",
-        help = "Path to the ipc of the archive node."
-    )]
-    archive_node_ipc: Option<String>,
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
@@ -556,17 +551,23 @@ struct Args {
     )]
     pub datadir: String,
     #[arg(
-        long = "output_dir",
-        value_name = "OUTPUT_DIRECTORY",
-        help = "Receives the name of the directory where the State Dump will be written to."
+        long = "ipc_path",
+        value_name = "IPC_PATH",
+        help = "Path to the ipc of the archive node."
     )]
-    pub output_dir: Option<String>,
+    ipc_path: Option<String>,
     #[arg(
         long = "input_dir",
         value_name = "OUTPUT_DIRECTORY",
         help = "Receives the name of the directory where the State Dump will be read from."
     )]
     pub input_dir: Option<String>,
+    #[arg(
+        long = "output_dir",
+        value_name = "OUTPUT_DIRECTORY",
+        help = "Receives the name of the directory where the State Dump will be written to."
+    )]
+    pub output_dir: Option<String>,
     #[arg(
         long = "no_sync",
         value_name = "NO_SYNC",
@@ -583,18 +584,8 @@ pub async fn main() -> eyre::Result<()> {
         .expect("setting default subscriber failed");
     let data_dir = set_datadir(&args.datadir);
     let store = open_store(&data_dir);
-    if args.archive_node_ipc.is_none() && args.input_dir.is_none() {
-        return Err(eyre::ErrReport::msg(
-            "Either ipc_path or input_dir need to be specified",
-        ));
-    }
-    if args.archive_node_ipc.is_some() && args.input_dir.is_some() {
-        return Err(eyre::ErrReport::msg(
-            "Both ipc_path and input_dir cannot be specified",
-        ));
-    }
     archive_sync(
-        args.archive_node_ipc,
+        args.ipc_path,
         args.block_number,
         args.output_dir,
         args.input_dir,
