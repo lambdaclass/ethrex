@@ -176,6 +176,10 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.operations_counts)
     }
 
+    async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.block_numbers_by_batch.keys().max().copied())
+    }
+
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
