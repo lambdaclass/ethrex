@@ -61,6 +61,11 @@ pub enum StorageHealerMsg {
 }
 
 #[derive(Debug, Clone)]
+pub struct InflightRequest {
+    requests: Vec<NodeRequest>,
+}
+
+#[derive(Debug, Clone)]
 pub struct StorageHealerState {
     last_update: Instant,
     /// We use this to track what is still to be downloaded
@@ -68,8 +73,6 @@ pub struct StorageHealerState {
     /// but if we have too many requests in flight
     /// we may want to throttle the new requests
     download_queue: VecDeque<NodeRequest>,
-    /// How many requests are already in flight
-    inflight_requests: usize,
     /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
     /// We use this to track which peers are occupied, and we can't send stuff to
@@ -77,7 +80,7 @@ pub struct StorageHealerState {
     peers: HashMap<u64, (bool, u64)>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
-    requests: HashMap<u64, ()>,
+    requests: HashMap<u64, InflightRequest>,
     /// This bool gets set up at the end of the processing, if we have
     /// committed the last node in the tree
     is_finished: bool,
@@ -131,11 +134,14 @@ impl GenServer for StorageHealer {
         &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-        state: Self::State,
+        mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             StorageHealerMsg::CheckUp => todo!(),
-            StorageHealerMsg::TrieNodes(trie_nodes) => todo!(),
+            StorageHealerMsg::TrieNodes(trie_nodes) => {
+                let nodes_from_peer: Vec<NodeResponse> =
+                    process_trie_nodes(&mut state.requests, &mut state.download_queue, trie_nodes);
+            }
         }
         CastResponse::NoReply(state)
     }
@@ -187,6 +193,22 @@ fn spawn_downloader_task(
     download_queue: &mut Vec<NodeRequest>,
     peers: &PeerHandler,
 ) {
+    todo!()
+}
+
+fn process_trie_nodes(
+    requests: &mut HashMap<u64, InflightRequest>,
+    download_queue: &mut VecDeque<NodeRequest>,
+    trie_nodes: TrieNodes,
+) -> Vec<NodeResponse> {
+    let Some(request) = requests.remove(&trie_nodes.id) else {
+        return Vec::new();
+    };
+
+    if request.requests.len() < trie_nodes.nodes.len() {
+        panic!("The node responded with more data than us!");
+    }
+
     todo!()
 }
 
