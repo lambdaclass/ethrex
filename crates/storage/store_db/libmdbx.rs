@@ -481,18 +481,6 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        match self.read_sync::<ChainData>(ChainDataIndex::ChainConfig)? {
-            None => Err(StoreError::Custom("Chain config not found".to_string())),
-            Some(bytes) => {
-                let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
-                let chain_config: ChainConfig =
-                    serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)?;
-                Ok(chain_config)
-            }
-        }
-    }
-
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
@@ -502,6 +490,18 @@ impl StoreEngine for Store {
             block_number.encode_to_vec(),
         )
         .await
+    }
+
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
+            None => Ok(None),
+            Some(ref rlp) => RLPDecode::decode(rlp)
+                .map(Some)
+                .map_err(|_| StoreError::DecodeError),
+        }
     }
 
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
