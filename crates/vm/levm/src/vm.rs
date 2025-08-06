@@ -25,6 +25,7 @@ use ethrex_common::{
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
 
@@ -69,6 +70,9 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+
+    pub calldata: Bytes,
+    pub ret_data: Bytes,
 }
 
 impl<'a> VM<'a> {
@@ -103,18 +107,20 @@ impl<'a> VM<'a> {
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Bytes::new(),       // Will be assigned at the end of prepare_execution
                 tx.value(),
-                tx.data().clone(),
+                0..0,
+                0..0,
                 false,
                 env.gas_limit,
                 0,
                 true,
                 is_create,
-                0,
-                0,
                 Stack::default(),
                 Memory::default(),
             ),
             env,
+
+            calldata: tx.data().clone(),
+            ret_data: Bytes::new(),
         };
 
         let call_type = if is_create {
@@ -176,15 +182,30 @@ impl<'a> VM<'a> {
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
         if self.is_precompile(&self.current_call_frame.to) {
             let vm_type = self.vm_type;
-            let call_frame = &mut self.current_call_frame;
 
-            return Self::execute_precompile(
+            let context_result;
+            (context_result, self.ret_data) = Self::execute_precompile(
                 vm_type,
-                call_frame.code_address,
-                &call_frame.calldata,
-                call_frame.gas_limit,
-                &mut call_frame.gas_remaining,
-            );
+                self.current_call_frame.code_address,
+                self.call_frames
+                    .last()
+                    .map(|call_frame| {
+                        #[expect(clippy::unwrap_used)]
+                        call_frame
+                            .memory
+                            .try_as_slice(
+                                self.current_call_frame.calldata.start,
+                                self.current_call_frame.calldata.end
+                                    - self.current_call_frame.calldata.start,
+                            )
+                            .unwrap()
+                    })
+                    .unwrap_or(&self.calldata),
+                self.current_call_frame.gas_limit,
+                &mut self.current_call_frame.gas_remaining,
+            )?;
+
+            return Ok(context_result);
         }
 
         loop {
@@ -220,20 +241,22 @@ impl<'a> VM<'a> {
     pub fn execute_precompile(
         vm_type: VMType,
         code_address: H160,
-        calldata: &Bytes,
+        calldata: &[u8],
         gas_limit: u64,
         gas_remaining: &mut u64,
-    ) -> Result<ContextResult, VMError> {
+    ) -> Result<(ContextResult, Bytes), VMError> {
         let execute_precompile = match vm_type {
             VMType::L1 => precompiles::execute_precompile,
             VMType::L2 => l2_precompiles::execute_precompile,
         };
 
-        Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining),
-            gas_limit,
-            *gas_remaining,
-        )
+        let result = execute_precompile(code_address, calldata, gas_remaining);
+        let (output, maybe_err) = match result {
+            Ok(x) => (x, None),
+            Err(e) => (Bytes::new(), Some(e)),
+        };
+
+        Self::handle_precompile_result(maybe_err, gas_limit, *gas_remaining).map(|x| (x, output))
     }
 
     /// True if external transaction is a contract creation
@@ -268,13 +291,14 @@ impl<'a> VM<'a> {
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
-        self.tracer.exit_context(&ctx_result, true)?;
+        self.tracer
+            .exit_context(&ctx_result, self.ret_data.clone(), true)?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
             gas_refunded: self.substate.refunded_gas,
-            output: std::mem::take(&mut ctx_result.output),
+            output: std::mem::take(&mut self.ret_data),
             logs: self.substate.logs.clone(),
         };
 

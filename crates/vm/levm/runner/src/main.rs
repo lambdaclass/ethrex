@@ -163,10 +163,9 @@ fn main() {
         "Setting initial memory: 0x{:x}",
         runner_input.initial_memory
     );
-    let _ = vm
-        .current_call_frame
+    vm.current_call_frame
         .memory
-        .store_data(0, &runner_input.initial_memory);
+        .write(0, &runner_input.initial_memory);
 
     // Execute Transaction
     let result = vm.execute();
@@ -179,7 +178,7 @@ fn main() {
     }
 
     // Print final stack and memory
-    let callframe = vm.current_call_frame;
+    let mut callframe = vm.current_call_frame;
     info!(
         "Final Stack (bottom to top): {:?}",
         &callframe.stack.values[callframe.stack.offset..]
@@ -188,7 +187,7 @@ fn main() {
             .map(|value| format!("0x{:x}", value))
             .collect::<Vec<_>>()
     );
-    let final_memory: Vec<u8> = callframe.memory.buffer.borrow()[0..callframe.memory.len].to_vec();
+    let final_memory = callframe.memory.as_slice(0, callframe.memory.len());
     info!("Final Memory: 0x{}", hex::encode(final_memory));
 
     // Print Accounts diff

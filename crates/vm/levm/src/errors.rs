@@ -232,7 +232,6 @@ impl ExecutionReport {
 pub struct ContextResult {
     pub result: TxResult,
     pub gas_used: u64,
-    pub output: Bytes,
 }
 
 impl ContextResult {

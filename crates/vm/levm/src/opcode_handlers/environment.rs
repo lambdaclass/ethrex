@@ -6,6 +6,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use std::usize;
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -81,39 +82,57 @@ impl<'a> VM<'a> {
 
     // CALLDATALOAD operation
     pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
-
-        let offset = current_call_frame.stack.pop1()?;
+        let offset: usize = self
+            .current_call_frame
+            .stack
+            .pop1()?
+            .try_into()
+            .unwrap_or(usize::MAX);
 
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
-        if offset > calldata_size {
-            current_call_frame.stack.push1(U256::zero())?;
+        if offset
+            > self
+                .call_frames
+                .last()
+                .map(|_| {
+                    self.current_call_frame.calldata.end - self.current_call_frame.calldata.start
+                })
+                .unwrap_or(self.calldata.len())
+        {
+            self.current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
+
+        let calldata = self
+            .call_frames
+            .last()
+            .map(|call_frame| {
+                #[expect(clippy::unwrap_used)]
+                call_frame
+                    .memory
+                    .try_as_slice(
+                        self.current_call_frame.calldata.start,
+                        self.current_call_frame.calldata.end
+                            - self.current_call_frame.calldata.start,
+                    )
+                    .unwrap()
+            })
+            .unwrap_or(&self.calldata);
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
+        for (i, byte) in calldata.iter().skip(offset).take(32).enumerate() {
             if let Some(data_byte) = data.get_mut(i) {
                 *data_byte = *byte;
             }
         }
         let result = u256_from_big_endian_const(data);
 
-        current_call_frame.stack.push1(result)?;
+        self.current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -123,61 +142,72 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
-        current_call_frame
-            .stack
-            .push1(U256::from(current_call_frame.calldata.len()))?;
+        current_call_frame.stack.push1(U256::from(
+            self.call_frames
+                .last()
+                .map(|_| current_call_frame.calldata.end - current_call_frame.calldata.start)
+                .unwrap_or(self.calldata.len()),
+        ))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATACOPY operation
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
-        let size: usize = size
+        let [memory_offset, calldata_offset, num_bytes] = *self.current_call_frame.stack.pop()?;
+        let num_bytes: usize = num_bytes
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-        let dest_offset: usize = match dest_offset.try_into() {
+        let memory_offset: usize = match memory_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
+            Err(_) if num_bytes == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
         };
-
         let calldata_offset: usize = match calldata_offset.try_into() {
             Ok(x) => x,
             Err(_) => usize::MAX,
         };
 
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::calldatacopy(
+                calculate_memory_size(memory_offset, num_bytes)?,
+                self.current_call_frame.memory.len(),
+                num_bytes,
+            )?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
+        if num_bytes != 0 {
+            let calldata = self
+                .call_frames
+                .last()
+                .map(|call_frame| {
+                    #[expect(clippy::unwrap_used)]
+                    call_frame
+                        .memory
+                        .try_as_slice(
+                            self.current_call_frame.calldata.start,
+                            self.current_call_frame.calldata.end
+                                - self.current_call_frame.calldata.start,
+                        )
+                        .unwrap()
+                })
+                .unwrap_or(&self.calldata);
 
-        if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        let mut data = vec![0u8; size];
-
-        if calldata_offset <= current_call_frame.calldata.len() {
-            for (i, byte) in current_call_frame
-                .calldata
-                .iter()
-                .skip(calldata_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
+            // Copy calldata region and zero-fill remaining space.
+            let data = calldata
+                .split_at_checked(calldata_offset)
+                .map(|(_, x)| x)
+                .unwrap_or_default();
+            match data.get(..num_bytes) {
+                Some(data) => self.current_call_frame.memory.write(memory_offset, data),
+                None => {
+                    self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
+                    self.current_call_frame
+                        .memory
+                        .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
                 }
             }
         }
-
-        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -196,69 +226,46 @@ impl<'a> VM<'a> {
 
     // CODECOPY operation
     pub fn op_codecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-
-        let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-
-        let size: usize = size
+        let [memory_offset, bytecode_offset, num_bytes] = *self.current_call_frame.stack.pop()?;
+        let num_bytes: usize = num_bytes
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-
-        let destination_offset: usize = match destination_offset.try_into() {
+        let memory_offset: usize = match memory_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
+            Err(_) if num_bytes == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
         };
-        let code_offset: usize = match code_offset.try_into() {
+        let bytecode_offset: usize = match bytecode_offset.try_into() {
             Ok(x) => x,
             Err(_) => usize::MAX,
         };
 
-        let new_memory_size = calculate_memory_size(destination_offset, size)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::codecopy(
+                calculate_memory_size(memory_offset, num_bytes)?,
+                self.current_call_frame.memory.len(),
+                num_bytes,
+            )?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::codecopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end < current_call_frame.bytecode.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe {
-                    current_call_frame
-                        .bytecode
-                        .get_unchecked(code_offset..code_offset_end)
-                };
-                current_call_frame
-                    .memory
-                    .store_data(destination_offset, slice)?;
-
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        if num_bytes != 0 {
+            // Copy bytecode region and zero-fill remaining space.
+            let data = self
+                .current_call_frame
+                .bytecode
+                .split_at_checked(bytecode_offset)
+                .map(|(_, x)| x)
+                .unwrap_or_default();
+            match data.get(..num_bytes) {
+                Some(data) => self.current_call_frame.memory.write(memory_offset, data),
+                None => {
+                    self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
+                    self.current_call_frame
+                        .memory
+                        .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
+                }
             }
         }
-
-        let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len() {
-            let diff = current_call_frame.bytecode.len().wrapping_sub(code_offset);
-            let final_size = size.min(diff);
-            let end = code_offset.wrapping_add(final_size);
-
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(current_call_frame.bytecode.get_unchecked(code_offset..end));
-            }
-        }
-
-        current_call_frame
-            .memory
-            .store_data(destination_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -291,126 +298,103 @@ impl<'a> VM<'a> {
 
     // EXTCODECOPY operation
     pub fn op_extcodecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let call_frame = &mut self.current_call_frame;
-        let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
-        let address = word_to_address(address);
-        let size = size
+        let [from_address, memory_offset, bytecode_offset, num_bytes] =
+            *self.current_call_frame.stack.pop()?;
+        let from_address = word_to_address(from_address);
+        let num_bytes = num_bytes
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let current_memory_size = call_frame.memory.len();
-
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
-
-        let dest_offset: usize = match dest_offset.try_into() {
+        let memory_offset = match memory_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
+            Err(_) if num_bytes == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
         };
-
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
+        let bytecode_offset = match bytecode_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         self.current_call_frame
             .increase_consumed_gas(gas_cost::extcodecopy(
-                size,
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
+                num_bytes,
+                calculate_memory_size(memory_offset, num_bytes)?,
+                self.current_call_frame.memory.len(),
+                self.substate.accessed_addresses.insert(from_address),
             )?)?;
 
-        if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
+        if num_bytes != 0 {
+            // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
+            // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+            let bytecode = &self.db.get_account(from_address)?.code;
 
-        // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
-        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = &self.db.get_account(address)?.code;
-
-        let mut data = vec![0u8; size];
-        if offset < bytecode.len().into() {
-            let offset: usize = offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
+            // Copy bytecode region and zero-fill remaining space.
+            let data = bytecode
+                .split_at_checked(bytecode_offset)
+                .map(|(_, x)| x)
+                .unwrap_or_default();
+            match data.get(..num_bytes) {
+                Some(data) => self.current_call_frame.memory.write(memory_offset, data),
+                None => {
+                    self.current_call_frame.memory.write(memory_offset, data);
+                    #[expect(clippy::arithmetic_side_effects)]
+                    self.current_call_frame
+                        .memory
+                        .fill_zeroes(memory_offset + data.len(), num_bytes - data.len());
                 }
             }
         }
-
-        self.current_call_frame
-            .memory
-            .store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
-        current_call_frame
+        self.current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.sub_return_data.len()))?;
+            .push1(U256::from(self.ret_data.len()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATACOPY operation
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
+        let [memory_offset, returndata_offset, num_bytes] = *self.current_call_frame.stack.pop()?;
         let returndata_offset: usize = returndata_offset
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let size: usize = size
+        let num_bytes: usize = num_bytes
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-
-        let dest_offset: usize = match dest_offset.try_into() {
+        let memory_offset: usize = match memory_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
+            Err(_) if num_bytes == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
         };
 
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::returndatacopy(
+                calculate_memory_size(memory_offset, num_bytes)?,
+                self.current_call_frame.memory.len(),
+                num_bytes,
+            )?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::returndatacopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        if size == 0 && returndata_offset == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        let sub_return_data_len = current_call_frame.sub_return_data.len();
-
-        let copy_limit = returndata_offset
-            .checked_add(size)
-            .ok_or(ExceptionalHalt::VeryLargeNumber)?;
-
-        if copy_limit > sub_return_data_len {
-            return Err(ExceptionalHalt::OutOfBounds.into());
-        }
-
-        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
-        // I would've used copy_from_slice but it can panic.
-        let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        // Copy return data region and zero-fill remaining space.
+        let data = self
+            .ret_data
+            .split_at_checked(returndata_offset)
+            .ok_or(ExceptionalHalt::OutOfBounds)?
+            .1;
+        match data.get(..num_bytes) {
+            Some(data) => {
+                if num_bytes != 0 {
+                    self.current_call_frame.memory.write(memory_offset, data);
+                }
             }
+            None => return Err(ExceptionalHalt::OutOfBounds.into()),
         }
-
-        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
