@@ -759,15 +759,22 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
-        Message::TrieNodes(resp) => {
+        ref message @ Message::TrieNodes(ref resp) => {
             let id = resp.id;
             if let Some(receiver) = state.backend_table.get(&id) {
-                receiver.clone().cast(StorageHealerMsg::TrieNodes(resp));
+                receiver
+                    .clone()
+                    .cast(StorageHealerMsg::TrieNodes(resp.clone()));
             } else {
                 log_peer_debug(
                     &state.node,
-                    &format!("Cannot find GetTrieNodes request for TrieNodes response. Id: {id}"),
+                    "GetTrieNodes was not requested by StorageHealer process, sending response to backend on default channel",
                 );
+                state
+                    .backend_channel
+                    .as_mut()
+                    .expect("Backend channel is not available")
+                    .send(message.clone())?
             }
         }
         // Send response messages to the backend
