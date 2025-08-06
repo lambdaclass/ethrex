@@ -360,9 +360,13 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .update_latest_block_number(block_number)
             .await
-            .expect("Could not set sync block");
+            .expect("Failed to update latest block number");
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .expect("Failed to set latest canonical block");
     }
 }
 
