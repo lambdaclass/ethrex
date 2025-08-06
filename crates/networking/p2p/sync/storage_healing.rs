@@ -3,62 +3,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{peer_handler::PeerHandler, utils::current_unix_time};
+use crate::{peer_handler::PeerHandler, rlpx::snap::TrieNodes, utils::current_unix_time};
 use ethrex_common::H256;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
 };
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
-
-#[derive(Debug, Clone)]
-pub struct StorageHealerState {}
-
-#[derive(Debug)]
-pub struct StorageHealer {}
-
-impl GenServer for StorageHealer {
-    type CallMsg = Unused;
-    type CastMsg = Unused;
-    type OutMsg = Unused;
-    type State = StorageHealerState;
-    type Error = ();
-
-    fn new() -> Self {
-        Self {}
-    }
-
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CastResponse<Self> {
-        // 2 ways of handling requests
-        // - Bookeeping of requests
-        //      - reenque the missing responses
-        // - Peer server keeps the requests
-        CastResponse::NoReply(state)
-    }
-}
-
-/// This struct stores the metadata we need when we request a node
-#[derive(Debug, Clone)]
-pub struct NodeRequest {
-    /// What account this belongs too (so what is the storage tree)
-    acc_path: Nibbles,
-    /// Where in the tree is this node located
-    storage_path: Nibbles,
-    /// What node needs this node
-    parent: Nibbles,
-    // /// What hash was requested. We can use this for validation
-    // hash: H256 // this is a potential optimization, we ignore for now
-}
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -83,6 +39,109 @@ pub struct MembatchEntry {
 type MembatchKey = (Nibbles, Nibbles);
 
 type Membatch = HashMap<MembatchKey, MembatchEntry>;
+
+#[derive(Debug, Clone)]
+pub enum StorageHealerCallMsg {
+    IsFinished,
+}
+#[derive(Debug, Clone)]
+pub enum StorageHealerOutMsg {
+    FinishedStale { is_finished: bool, is_stale: bool },
+}
+
+#[derive(Debug, Clone)]
+pub enum StorageHealerMsg {
+    /// Overloaded msg, checkup does two things
+    /// It prints the status of the connection
+    /// And if a request is timed out, we also clean it up
+    CheckUp,
+    /// This message is sent by a peer indicating what is needed to download
+    /// We process the request
+    TrieNodes(TrieNodes),
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageHealerState {
+    /// We use this to track which peers we have sent stuff to
+    peer_handler: PeerHandler,
+    /// With this we track how many requests are inflight to our peer
+    /// This allows us to know if one is wildly out of time
+    requests: HashMap<u64, ()>,
+    /// This bool gets set up at the end of the processing, if we have
+    /// committed the last node in the tree
+    is_finished: bool,
+    /// When we ask if we have finished, we check is the staleness
+    /// If stale we stop
+    staleness_timestamp: u64,
+}
+
+#[derive(Debug)]
+pub struct StorageHealer {}
+
+impl GenServer for StorageHealer {
+    type CallMsg = StorageHealerCallMsg;
+    type CastMsg = StorageHealerMsg;
+    type OutMsg = StorageHealerOutMsg;
+    type State = StorageHealerState;
+    type Error = ();
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        // We only ask for IsFinished in the message, so we don't match it
+        let is_finished = state.is_finished;
+        let is_stale = current_unix_time() > state.staleness_timestamp;
+        // Finished means that we have succesfully healed according to our algorithm
+        // That means that we have commited the root_node of the tree
+        if is_finished || is_stale {
+            CallResponse::Stop(StorageHealerOutMsg::FinishedStale {
+                is_finished,
+                is_stale,
+            })
+        } else {
+            CallResponse::Reply(
+                state,
+                StorageHealerOutMsg::FinishedStale {
+                    is_finished,
+                    is_stale,
+                },
+            )
+        }
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
+        match message {
+            StorageHealerMsg::CheckUp => todo!(),
+            StorageHealerMsg::TrieNodes(trie_nodes) => todo!(),
+        }
+        CastResponse::NoReply(state)
+    }
+}
+
+/// This struct stores the metadata we need when we request a node
+#[derive(Debug, Clone)]
+pub struct NodeRequest {
+    /// What account this belongs too (so what is the storage tree)
+    acc_path: Nibbles,
+    /// Where in the tree is this node located
+    storage_path: Nibbles,
+    /// What node needs this node
+    parent: Nibbles,
+    // /// What hash was requested. We can use this for validation
+    // hash: H256 // this is a potential optimization, we ignore for now
+}
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
 /// by the storage root in their account state
@@ -145,6 +204,7 @@ fn receive_data_from_tasks(
     task_receiver: &mut Receiver<Vec<NodeResponse>>,
     node_processing_queue: &mut Vec<NodeResponse>,
 ) {
+    todo!()
 }
 
 fn spawn_downloader_task(
@@ -152,6 +212,7 @@ fn spawn_downloader_task(
     download_queue: &mut Vec<NodeRequest>,
     peers: &PeerHandler,
 ) {
+    todo!()
 }
 
 fn process_data(
