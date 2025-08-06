@@ -792,7 +792,7 @@ impl Store {
         *latest_header_lock = self
             .engine
             .get_block_header(head_number)?
-            .ok_or(StoreError::MissingLatestBlockNumber)?;
+            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         Ok(())
     }
 

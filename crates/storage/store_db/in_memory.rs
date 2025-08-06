@@ -389,10 +389,6 @@ impl StoreEngine for Store {
         Ok(self.inner()?.chain_data.safe_block_number)
     }
 
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner()?.chain_data.latest_block_number)
-    }
-
     async fn update_pending_block_number(
         &self,
         block_number: BlockNumber,
