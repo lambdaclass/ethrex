@@ -7,9 +7,13 @@ use keccak_hash::{H256, keccak};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Similar to Account but suited for LEVM implementation.
-/// Difference is this doesn't have code and it contains an additional `status` field for decision-making
-/// The code is stored in the GeneralizedDatabase and can be accessed with the hash.
+/// Similar to `Account` struct but suited for LEVM implementation.
+/// Difference is this doesn't have code and it contains an additional `status` field for decision-making.
+/// The code is stored in the `GeneralizedDatabase` and can be accessed with its hash.\
+/// **Some advantages:**
+/// - We'll fetch the code only if we need to, this means less accesses to the database.
+/// - If there's duplicate code between accounts (which is pretty common) we'll store it in memory only once.
+/// - We'll be able to make better decisions without relying on external structures, based on the current status of an Account. e.g. If it was untouched we skip processing it when calculating Account Updates, or if the account has been destroyed and re-created with same address we know that the storage on the Database is not valid and we shouldn't access it, etc.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmAccount {
     pub info: AccountInfo,
