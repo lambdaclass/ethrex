@@ -176,6 +176,47 @@ impl Mempool {
             .collect())
     }
 
+    pub fn remove_matching_transaction(
+        &self,
+        filter: impl Fn(H160, u64, H256, &MempoolTransaction) -> bool,
+    ) -> Result<(), MempoolError> {
+        let to_delete: Vec<_> = {
+            let tx_pool = self
+                .transaction_pool
+                .read()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            let ordered_pool = self
+                .txs_by_sender_nonce
+                .read()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            ordered_pool
+                .iter()
+                .filter_map(|((sender, nonce), hash)| {
+                    filter(*sender, *nonce, *hash, &tx_pool[hash])
+                        .then_some((*sender, *nonce, *hash))
+                })
+                .collect()
+        };
+        let mut tx_pool = self
+            .transaction_pool
+            .write()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let mut blob_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let mut ordered_pool = self
+            .txs_by_sender_nonce
+            .write()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        for (sender, nonce, hash) in to_delete {
+            tx_pool.remove(&hash);
+            blob_pool.remove(&hash);
+            ordered_pool.remove(&(sender, nonce));
+        }
+        Ok(())
+    }
+
     pub fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
