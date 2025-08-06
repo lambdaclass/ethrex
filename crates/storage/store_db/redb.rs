@@ -808,18 +808,6 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self
-            .read(CHAIN_DATA_TABLE, ChainDataIndex::LatestBlockNumber)
-            .await?
-        {
-            None => Ok(None),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value())
-                .map(Some)
-                .map_err(|_| StoreError::DecodeError),
-        }
-    }
-
     async fn update_pending_block_number(
         &self,
         block_number: BlockNumber,
