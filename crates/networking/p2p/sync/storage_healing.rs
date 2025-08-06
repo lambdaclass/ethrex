@@ -1,12 +1,15 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    time::{Duration, Instant},
-};
-
 use crate::{
-    kademlia::PeerChannels, peer_handler::PeerHandler, rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    rlpx::snap::TrieNodes, utils::current_unix_time,
+    kademlia::PeerChannels,
+    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
+    rlpx::{
+        connection::server::CastMessage,
+        message::Message,
+        p2p::SUPPORTED_SNAP_CAPABILITIES,
+        snap::{GetTrieNodes, TrieNodes},
+    },
+    utils::current_unix_time,
 };
+use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
@@ -15,6 +18,10 @@ use rand::random;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
+};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{info, trace};
@@ -159,7 +166,7 @@ impl GenServer for StorageHealer {
         match message {
             StorageHealerMsg::CheckUp => todo!(),
             StorageHealerMsg::TrieNodes(trie_nodes) => {
-                if let Some(mut nodes_from_peer) = zip_and_requeue_node_responses(
+                if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
                     &mut state.requests,
                     &mut state.scored_peers,
                     &mut state.download_queue,
@@ -219,10 +226,12 @@ async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
     peers: &PeerHandler,
+    state_root: H256,
     scored_peers: &mut HashMap<H256, PeerScore>,
+    self_handler: GenServerHandle<StorageHealer>,
 ) {
     while requests.len() < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some(peer) =
+        let Some(mut peer) =
             get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
         else {
             // If we have no peers we shrug our shoulders and wait until next free peer
@@ -231,18 +240,38 @@ async fn ask_peers_for_nodes(
         let at = usize::max(0, download_queue.len());
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
-        //peer.1.connection.cast()
         requests.insert(
             req_id,
             InflightRequest {
-                requests: download_chunk.into(),
+                requests: download_chunk.clone().into(),
                 peer_id: peer.0,
             },
         );
+        peer.1
+            .connection
+            .cast(CastMessage::BackendRequest(
+                Message::GetTrieNodes(GetTrieNodes {
+                    id: req_id,
+                    root_hash: state_root,
+                    paths: download_chunk
+                        .into_iter()
+                        .map(|request| {
+                            vec![
+                                Bytes::from(request.acc_path.to_bytes()),
+                                Bytes::from(request.storage_path.to_bytes()),
+                            ]
+                        })
+                        .collect(),
+                    bytes: MAX_RESPONSE_BYTES,
+                }),
+                self_handler.clone(),
+            ))
+            .await
+            .unwrap();
     }
 }
 
-fn zip_and_requeue_node_responses(
+fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
     scored_peers: &mut HashMap<H256, PeerScore>,
     download_queue: &mut VecDeque<NodeRequest>,
@@ -253,10 +282,10 @@ fn zip_and_requeue_node_responses(
         trie_nodes.nodes.len()
     );
     let mut request = requests.remove(&trie_nodes.id)?;
-    scored_peers
+    let mut peer = scored_peers
         .get_mut(&request.peer_id)
-        .expect("Each time we request we should add to scored_peeers")
-        .in_flight = false;
+        .expect("Each time we request we should add to scored_peeers");
+    peer.in_flight = false;
 
     let nodes_size = trie_nodes.nodes.len();
 
@@ -279,8 +308,12 @@ fn zip_and_requeue_node_responses(
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
+        if peer.score < 10 {
+            peer.score += 1;
+        }
         Some(nodes)
     } else {
+        peer.score -= 1;
         download_queue.extend(request.requests.into_iter());
         None
     }
