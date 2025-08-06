@@ -141,11 +141,29 @@ jobs:
   build-docker:
     name: "Build and publish ethrex docker image"
     runs-on: ubuntu-latest
+
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Format name
         run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
 
-      # Pushes to ghcr.io/ethrex
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@v6
