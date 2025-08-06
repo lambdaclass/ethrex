@@ -76,9 +76,7 @@ pub async fn archive_sync(
     } else {
         DumpReader::new_from_dir(input_dir.unwrap())?
     };
-    let dump_writer = output_dir
-        .map(|filename| DumpDirWriter::new(filename))
-        .transpose()?;
+    let dump_writer = output_dir.map(DumpDirWriter::new).transpose()?;
     let mut dump_processor = if no_sync {
         DumpProcessor::new_no_sync(dump_writer)
     } else {
@@ -343,7 +341,7 @@ impl DumpDirWriter {
 
     /// Writes the incoming RLP-encoded block into file named `block.rlp`
     /// at the directory set in the struct's creation
-    fn write_rlp_block(&mut self, rlp: &Vec<u8>) -> eyre::Result<()> {
+    fn write_rlp_block(&mut self, rlp: &[u8]) -> eyre::Result<()> {
         let mut block_file: File =
             File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
         block_file.write_all(rlp)?;
