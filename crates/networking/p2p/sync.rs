@@ -1,9 +1,11 @@
 mod state_healing;
 pub mod storage_healing;
+use std::cell::OnceCell;
 
 use crate::metrics::METRICS;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, heal_state_trie};
+use crate::sync::storage_healing::heal_storage_trie;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler, SNAP_LIMIT},
     utils::current_unix_time,
@@ -679,7 +681,10 @@ impl Syncer {
         // If we need to, we star to heal now.
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
-
+            let membatch = OnceCell::new();
+            membatch.get_or_init(|| {
+                HashMap::new()
+            });
             let mut healing_done = false;
             while !healing_done {
                 (pivot_header, staleness_timestamp) =
@@ -695,14 +700,17 @@ impl Syncer {
                     continue;
                 }
                 // TODO: 💀💀💀 either remove or change to a debug flag
-                validate_state_root(store.clone(), pivot_header.state_root).await;
-                healing_done = heal_storage_trie_wrap(
+                // validate_state_root(store.clone(), pivot_header.state_root).await;
+                healing_done = heal_storage_trie(
                     pivot_header.state_root,
+                                store
+                .iter_accounts(state_root).expect("We should be able to access the storege").map(|(hashed_account_key, _)| Nibbles::from_bytes(hashed_account_key.as_bytes())).collect(),
+                    self.peers.clone(),
                     store.clone(),
-                    &self.peers,
+                    membatch.clone(),
                     staleness_timestamp,
                 )
-                .await?;
+                .await;
             }
             info!("Finished healing");
         }
@@ -1069,33 +1077,6 @@ async fn heal_state_trie_wrap(
         }
     }
     info!("Stopped state healing");
-    Ok(healing_done)
-}
-
-async fn heal_storage_trie_wrap(
-    state_root: H256,
-    store: Store,
-    peers: &PeerHandler,
-    time_limit: u64,
-) -> Result<bool, SyncError> {
-    let mut healing_done = false;
-    info!("Starting storage healing");
-    while !healing_done {
-        healing_done = true;
-/*         healing_done = heal_storage_trie(
-            state_root,
-            peers.clone(),
-            store.clone(),
-            CancellationToken::new(),
-            Arc::new(AtomicBool::new(true)),
-        )
-        .await?; */
-        if current_unix_time() > time_limit {
-            info!("Stopped storage healing due to staleness");
-            break;
-        }
-    }
-    info!("Stopped storage healing");
     Ok(healing_done)
 }
 

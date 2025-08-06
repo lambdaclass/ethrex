@@ -7,8 +7,11 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
+    sync::state_healing::SHOW_PROGRESS_INTERVAL_DURATION,
     utils::current_unix_time,
 };
+use std::cell::OnceCell;
+
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
@@ -100,7 +103,7 @@ pub struct StorageHealerState {
     /// Arc<dyn> to the db, clone freely
     store: Store,
     /// Memory of everything stored
-    membatch: Membatch,
+    membatch: OnceCell<Membatch>,
     /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
     /// We use this to track which peers are occupied, and we can't send stuff to
@@ -210,7 +213,10 @@ impl GenServer for StorageHealer {
                         &mut nodes_from_peer,
                         &mut state.download_queue,
                         state.store.clone(),
-                        &mut state.membatch,
+                        &mut state
+                            .membatch
+                            .get_mut()
+                            .expect("We launched the storage healer without a membatch"),
                         &mut state.leafs_healed,
                         &mut state.roots_healed,
                     );
@@ -258,15 +264,15 @@ pub struct NodeRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
-pub fn storage_heal_trie(
+pub async fn heal_storage_trie(
     state_root: H256,
     account_paths: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    membatch: Membatch,
+    membatch: OnceCell<Membatch>,
     staleness_timestamp: u64,
 ) -> bool {
-    StorageHealer::start(StorageHealerState {
+    let mut handle = StorageHealer::start(StorageHealerState {
         last_update: Instant::now(),
         download_queue: VecDeque::new(),
         store,
@@ -282,7 +288,28 @@ pub fn storage_heal_trie(
         succesful_downloads: Default::default(),
         failed_downloads: Default::default(),
     });
-    todo!()
+
+    let mut is_finished = false;
+    let mut is_stale = false;
+
+    while !is_finished || !is_stale {
+        handle.cast(StorageHealerMsg::CheckUp).await;
+        let outmsg = handle
+            .call(StorageHealerCallMsg::IsFinished)
+            .await
+            .expect("The genserver died prematurely");
+        match outmsg {
+            StorageHealerOutMsg::FinishedStale {
+                is_finished: heal_finished,
+                is_stale: heal_stale,
+            } => {
+                is_finished = heal_finished;
+                is_stale = heal_stale;
+            }
+        }
+        tokio::time::sleep(SHOW_PROGRESS_INTERVAL_DURATION);
+    }
+    is_finished
 }
 
 async fn clear_inflight_requests(
