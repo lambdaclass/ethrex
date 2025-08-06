@@ -214,6 +214,9 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
     res
 }
 
+/// Struct in charge of processing incoming state data
+/// Depending on its optional fields processing can refer to either writing the state into files
+/// and/or rebuilding the block's state in the DB
 struct DumpProcessor {
     state_root: Option<H256>,
     // Current Trie Root + Store. Set to false if state sync is disabled
@@ -222,6 +225,8 @@ struct DumpProcessor {
 }
 
 impl DumpProcessor {
+    /// Create a new DumpProcessor that will rebuild a Block's state based on incoming state dumps
+    /// And which may write incoming data into files if writer is set
     fn new_sync(writer: Option<DumpDirWriter>, store: Store) -> Self {
         Self {
             state_root: None,
@@ -230,6 +235,7 @@ impl DumpProcessor {
         }
     }
 
+    /// Create a new DumpProcessor which may write incoming data into files if writer is set
     fn new_no_sync(writer: Option<DumpDirWriter>) -> Self {
         Self {
             state_root: None,
@@ -238,6 +244,8 @@ impl DumpProcessor {
         }
     }
 
+    /// Process incoming state dump by either writing it to a file and/or using it to rebuild the partial state
+    /// Will fail if the incoming dump's state root differs from the previously processed dump
     async fn process_dump(&mut self, dump: Dump) -> eyre::Result<bool> {
         // Sanity check
         if *self.state_root.get_or_insert(dump.state_root) != dump.state_root {
@@ -262,6 +270,8 @@ impl DumpProcessor {
         Ok(should_continue)
     }
 
+    /// Process incoming the incoming RLP-encoded Block by either writing it to a file and/or adding it as head of the canonical chain.
+    /// In the later case, the rebuilt state root will be chacked againts the block's state root
     async fn process_rlp_block(&mut self, rlp_block: Vec<u8>) -> eyre::Result<()> {
         if let Some(writer) = self.writer.as_mut() {
             writer.write_rlp_block(&rlp_block)?;
@@ -285,6 +295,8 @@ impl DumpProcessor {
         Ok(())
     }
 
+    /// Processes the incoming list of block hashes by either writing them to a file and/or marking
+    /// them as part of the canonical chain. This will be necessary in order to execute blocks after the target block
     async fn process_block_hahes(
         &mut self,
         block_hashes: Vec<(BlockNumber, BlockHash)>,
@@ -299,61 +311,15 @@ impl DumpProcessor {
     }
 }
 
+/// Struct in charge of writing state data into files on a given directory
 struct DumpDirWriter {
     dirname: String,
     current_file: usize,
 }
 
-enum DumpReader {
-    Dir(DumpDirReader),
-    Ipc(DumpIpcReader),
-}
-
-struct DumpDirReader {
-    dirname: String,
-    current_file: usize,
-}
-
-struct DumpIpcReader {
-    stream: UnixStream,
-    block_number: BlockNumber,
-    start: H256,
-}
-
-impl DumpReader {
-    fn new_from_dir(dirname: String) -> eyre::Result<Self> {
-        Ok(Self::Dir(DumpDirReader::new(dirname)?))
-    }
-
-    async fn new_from_ipc(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<Self> {
-        Ok(Self::Ipc(
-            DumpIpcReader::new(archive_ipc_path, block_number).await?,
-        ))
-    }
-
-    async fn read_dump(&mut self) -> eyre::Result<Dump> {
-        match self {
-            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_dump(),
-            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_dump().await,
-        }
-    }
-
-    async fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
-        match self {
-            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_rlp_block(),
-            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_rlp_block().await,
-        }
-    }
-
-    async fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
-        match self {
-            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_block_hashes(),
-            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_block_hashes().await,
-        }
-    }
-}
-
 impl DumpDirWriter {
+    /// Create a new DumpDirWriter which will write state data to files the given directory
+    /// It will create the directory if it doesn't exist yet
     fn new(dirname: String) -> eyre::Result<DumpDirWriter> {
         if !std::path::Path::new(&dirname).exists() {
             std::fs::create_dir(&dirname)?;
@@ -364,6 +330,8 @@ impl DumpDirWriter {
         })
     }
 
+    /// Writes the incoming dump into a json file named `dump_n.json` at the directory set
+    /// in the struct's creation. Where n represents the order at which each dump was received
     fn write_dump(&mut self, dump: &Dump) -> eyre::Result<()> {
         let dump_file = File::create(
             std::path::Path::new(&self.dirname).join(format!("dump_{}.json", self.current_file)),
@@ -373,6 +341,8 @@ impl DumpDirWriter {
         Ok(())
     }
 
+    /// Writes the incoming RLP-encoded block into file named `block.rlp`
+    /// at the directory set in the struct's creation
     fn write_rlp_block(&mut self, rlp: &Vec<u8>) -> eyre::Result<()> {
         let mut block_file: File =
             File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
@@ -380,6 +350,8 @@ impl DumpDirWriter {
         Ok(())
     }
 
+    /// Writes the incoming block hahses into a json file named `block_hashes.json`
+    /// at the directory set in the struct's creation
     fn write_hashes_file(
         &mut self,
         block_hashes: &Vec<(BlockNumber, BlockHash)>,
@@ -391,7 +363,69 @@ impl DumpDirWriter {
     }
 }
 
+/// Struct in charge of fetching state data
+/// This data may come from either IPC comunication with an active archive node
+/// or a directory of files obtained from a previous archive-sync execution using --output-dir flag
+enum DumpReader {
+    Dir(DumpDirReader),
+    Ipc(DumpIpcReader),
+}
+
+/// Struct in charge of reading state data from a directory of files obtained
+/// from a previous archive-sync execution using --output-dir flag
+struct DumpDirReader {
+    dirname: String,
+    current_file: usize,
+}
+
+/// Struct in charge of fetching state data from an IPC connection with an active archive node
+struct DumpIpcReader {
+    stream: UnixStream,
+    block_number: BlockNumber,
+    start: H256,
+}
+
+impl DumpReader {
+    /// Create a new DumpReader that will read state data from the given directory
+    fn new_from_dir(dirname: String) -> eyre::Result<Self> {
+        Ok(Self::Dir(DumpDirReader::new(dirname)?))
+    }
+
+    /// Create a new DumpReader that will read state data from an archive node given the path to its IPC file
+    async fn new_from_ipc(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<Self> {
+        Ok(Self::Ipc(
+            DumpIpcReader::new(archive_ipc_path, block_number).await?,
+        ))
+    }
+
+    /// Read the next state dump, either from a file or from an active IPC connection
+    async fn read_dump(&mut self) -> eyre::Result<Dump> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_dump(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_dump().await,
+        }
+    }
+
+    /// Read the target RLP-encoded block, either from a file or from an active IPC connection
+    async fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_rlp_block(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_rlp_block().await,
+        }
+    }
+
+    /// Read hashes of the `BLOCK_HASH_LOOKUP_DEPTH` blocks before the target block,
+    ///  either from a file or from an active IPC connection
+    async fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
+        match self {
+            DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_block_hashes(),
+            DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_block_hashes().await,
+        }
+    }
+}
+
 impl DumpDirReader {
+    /// Create a new DumpDirReader that will read state data from the given directory
     fn new(dirname: String) -> eyre::Result<DumpDirReader> {
         if !std::path::Path::new(&dirname).exists() {
             return Err(eyre::Error::msg("Input directory doesn't exist"));
@@ -402,6 +436,7 @@ impl DumpDirReader {
         })
     }
 
+    /// Read the next dump file from the directory set at creation
     fn read_dump(&mut self) -> eyre::Result<Dump> {
         let dump_file = File::open(
             std::path::Path::new(&self.dirname).join(format!("dump_{}.json", self.current_file)),
@@ -410,6 +445,7 @@ impl DumpDirReader {
         Ok(serde_json::from_reader(dump_file)?)
     }
 
+    /// Read the rlp block file from the directory set at creation
     fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
         let mut block_file = File::open(std::path::Path::new(&self.dirname).join("block.rlp"))?;
         let mut buffer = Vec::<u8>::new();
@@ -417,6 +453,7 @@ impl DumpDirReader {
         Ok(buffer)
     }
 
+    /// Read the block hashes file from the directory set at creation
     fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
         let hashes_file =
             File::open(std::path::Path::new(&self.dirname).join("block_hashes.json"))?;
@@ -425,6 +462,8 @@ impl DumpDirReader {
 }
 
 impl DumpIpcReader {
+    /// Create a new DumpIpcReader that will fetch incoming data by connecting to an active archive node
+    /// given the path to its IPC file
     async fn new(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<DumpIpcReader> {
         let stream = UnixStream::connect(archive_ipc_path).await?;
         Ok(Self {
@@ -434,6 +473,7 @@ impl DumpIpcReader {
         })
     }
 
+    /// Fetches the nex state dump from the archive node it is currently connected to via IPC
     async fn read_dump(&mut self) -> eyre::Result<Dump> {
         // [debug_accountRange](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugaccountrange)
         let request = &json!({
@@ -455,6 +495,7 @@ impl DumpIpcReader {
         Ok(dump)
     }
 
+    /// Fetches the RLP-encoded target blocks from the archive node it is currently connected to via IPC
     async fn read_rlp_block(&mut self) -> eyre::Result<Vec<u8>> {
         // Request block so we can store it and mark it as canonical
         let request = &json!({
@@ -470,7 +511,7 @@ impl DumpIpcReader {
     }
 
     /// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPTH` blocks before the current one
-    /// This is necessary in order to propperly execute the following blocks
+    /// from the archive node it is currently connected to via IPC
     async fn read_block_hashes(&mut self) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
         let mut res = Vec::new();
         for offset in 1..BLOCK_HASH_LOOKUP_DEPTH {
