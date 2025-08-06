@@ -679,3 +679,23 @@ impl<'a> VM<'a> {
         }
     }
 }
+
+/// Converts a U256 value into usize, fails if the value is over 64 bytes
+#[expect(clippy::as_conversions)]
+pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
+    if val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+        return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
+    }
+    Ok(val.0[0] as usize)
+}
+
+/// Converts U256 size and offset to usize.
+/// If the size is zero, the offset will be zero regardless of its original value as it is not relevant
+pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), VMError> {
+    if size.is_zero() {
+        // Offset is irrelevant
+        Ok((0, 0))
+    } else {
+        Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
