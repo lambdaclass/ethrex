@@ -229,7 +229,6 @@ fn process_trie_nodes(
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
     {
         if request.requests.len() > nodes_size {
-            // TODO: Reencode the missing requests
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         nodes
