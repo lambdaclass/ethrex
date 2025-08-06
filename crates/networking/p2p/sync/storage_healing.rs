@@ -3,11 +3,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{peer_handler::PeerHandler, rlpx::snap::TrieNodes, utils::current_unix_time};
+use crate::{
+    kademlia::PeerChannels, peer_handler::PeerHandler, rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    rlpx::snap::TrieNodes, utils::current_unix_time,
+};
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
+use rand::random;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
@@ -16,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_IN_FLIGHT_REQUESTS: usize = 777;
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -27,7 +32,7 @@ pub struct NodeResponse {
 }
 
 /// This struct stores the metadata we need when we store a node in the memory bank before storing
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MembatchEntry {
     /// What this node is
     node_response: NodeResponse,
@@ -64,6 +69,16 @@ pub enum StorageHealerMsg {
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
+    peer_id: H256,
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerScore {
+    /// This tracks if a peer has a task in flight
+    /// So we can't use it yet
+    in_flight: bool,
+    /// This tracks the score of a peer
+    score: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -74,11 +89,15 @@ pub struct StorageHealerState {
     /// but if we have too many requests in flight
     /// we may want to throttle the new requests
     download_queue: VecDeque<NodeRequest>,
+    /// Arc<dyn> to the db, clone freely
+    store: Store,
+    /// Memory of everything stored
+    membatch: Membatch,
     /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
     /// We use this to track which peers are occupied, and we can't send stuff to
     /// Alongside their score for this situation
-    peers: HashMap<u64, (bool, u64)>,
+    scored_peers: HashMap<H256, PeerScore>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
@@ -140,8 +159,21 @@ impl GenServer for StorageHealer {
         match message {
             StorageHealerMsg::CheckUp => todo!(),
             StorageHealerMsg::TrieNodes(trie_nodes) => {
-                let nodes_from_peer: Vec<NodeResponse> =
-                    process_trie_nodes(&mut state.requests, &mut state.download_queue, trie_nodes);
+                if let Some(mut nodes_from_peer) = zip_and_requeue_node_responses(
+                    &mut state.requests,
+                    &mut state.scored_peers,
+                    &mut state.download_queue,
+                    trie_nodes,
+                ) {
+                    process_node_responses(
+                        &mut nodes_from_peer,
+                        &mut state.download_queue,
+                        state.store.clone(),
+                        &mut state.membatch,
+                    );
+                };
+                todo!()
+                // ask_peers_for_nodes
             }
         }
         CastResponse::NoReply(state)
@@ -182,33 +214,49 @@ pub fn storage_heal_trie(
     todo!()
 }
 
-fn receive_data_from_tasks(
-    task_receiver: &mut Receiver<Vec<NodeResponse>>,
-    node_processing_queue: &mut Vec<NodeResponse>,
-) {
-    todo!()
-}
-
-fn spawn_downloader_task(
-    task_receiver: Sender<Vec<NodeResponse>>,
-    download_queue: &mut Vec<NodeRequest>,
-    peers: &PeerHandler,
-) {
-    todo!()
-}
-
-fn process_trie_nodes(
+/// it grabs N peers to ask for data
+async fn ask_peers_for_nodes(
+    download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
+    peers: &PeerHandler,
+    scored_peers: &mut HashMap<H256, PeerScore>,
+) {
+    while requests.len() < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
+        let Some(peer) =
+            get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
+        else {
+            // If we have no peers we shrug our shoulders and wait until next free peer
+            return;
+        };
+        let at = usize::max(0, download_queue.len());
+        let download_chunk = download_queue.split_off(at);
+        let req_id: u64 = random();
+        //peer.1.connection.cast()
+        requests.insert(
+            req_id,
+            InflightRequest {
+                requests: download_chunk.into(),
+                peer_id: peer.0,
+            },
+        );
+    }
+}
+
+fn zip_and_requeue_node_responses(
+    requests: &mut HashMap<u64, InflightRequest>,
+    scored_peers: &mut HashMap<H256, PeerScore>,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
-) -> Vec<NodeResponse> {
+) -> Option<Vec<NodeResponse>> {
     trace!(
         "We are processing the nodes, we received {} nodes from our peer",
         trie_nodes.nodes.len()
     );
-    let Some(mut request) = requests.remove(&trie_nodes.id) else {
-        return Vec::new();
-    };
+    let mut request = requests.remove(&trie_nodes.id)?;
+    scored_peers
+        .get_mut(&request.peer_id)
+        .expect("Each time we request we should add to scored_peeers")
+        .in_flight = false;
 
     let nodes_size = trie_nodes.nodes.len();
 
@@ -231,14 +279,14 @@ fn process_trie_nodes(
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
-        nodes
+        Some(nodes)
     } else {
         download_queue.extend(request.requests.into_iter());
-        vec![]
+        None
     }
 }
 
-fn process_data(
+fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
     store: Store,
@@ -409,4 +457,45 @@ fn commit_node(
         membatch.insert(parent_key, parent_entry);
     }
     Ok(())
+}
+
+async fn get_peer_with_highest_score_and_mark_it_as_occupied(
+    peers: &PeerHandler,
+    scored_peers: &mut HashMap<H256, PeerScore>,
+) -> Option<(H256, PeerChannels)> {
+    let mut chosen_peer: Option<(H256, PeerChannels)> = None;
+    let mut max_score = i64::MIN;
+
+    for (peer_id, peer_channel) in peers
+        .peer_table
+        .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+        .await
+    {
+        if let Some(known_peer_score) = scored_peers.get_mut(&peer_id) {
+            if known_peer_score.in_flight {
+                continue;
+            }
+            if known_peer_score.score > max_score {
+                chosen_peer = Some((peer_id, peer_channel));
+                max_score = known_peer_score.score;
+            }
+        } else {
+            if chosen_peer.is_none() {
+                chosen_peer = Some((peer_id, peer_channel));
+                max_score = 0;
+            }
+        }
+    }
+
+    if let Some((peer_id, _)) = chosen_peer {
+        scored_peers
+            .entry(peer_id)
+            .and_modify(|peer_score| peer_score.in_flight = true)
+            .or_insert(PeerScore {
+                in_flight: true,
+                score: 0,
+            });
+    }
+
+    chosen_peer
 }
