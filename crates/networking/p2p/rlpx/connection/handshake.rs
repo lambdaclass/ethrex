@@ -130,6 +130,7 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
+            backend_table: HashMap::new(),
         },
         stream,
     ))

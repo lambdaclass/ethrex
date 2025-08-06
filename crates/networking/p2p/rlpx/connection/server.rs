@@ -19,6 +19,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
 };
 use spawned_rt::tasks::{BroadcastStream, mpsc};
+use tokio::sync::mpsc::Sender;
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast},
@@ -48,12 +49,14 @@ use crate::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
+        snap::TrieNodes,
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
+    sync::storage_healing::StorageHealer,
     types::Node,
 };
 
@@ -111,6 +114,12 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Kademlia,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
+    //// This serves to indicate who is the receiver
+    /// TODO: make generic
+    /// 2 options
+    /// 1 - 1 type of genserver
+    /// 2 - Look at the genserver registry / HashTable genserverhandles
+    pub(crate) backend_table: HashMap<u64, GenServerHandle<StorageHealer>>,
 }
 
 #[derive(Clone)]
@@ -142,6 +151,7 @@ impl RLPxConnectionState {
 pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
+    BackendMessageReceiver(Message, GenServerHandle<StorageHealer>),
     SendPing,
     SendNewPooledTxHashes,
     BlockRangeUpdate,
@@ -256,6 +266,15 @@ impl GenServer for RLPxConnection {
                         &format!("Received backend message: {message}"),
                     );
                     let _ = handle_backend_message(&mut established_state, message).await;
+                }
+                Self::CastMsg::BackendMessageReceiver(message, receiver) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received backend message: {message}"),
+                    );
+                    let _ =
+                        handle_backend_message_receiver(&mut established_state, message, receiver)
+                            .await;
                 }
                 Self::CastMsg::SendPing => {
                     let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
@@ -739,8 +758,13 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
+            let id = req.id;
             let response = process_trie_nodes_request(req, state.storage.clone())?;
-            send(state, Message::TrieNodes(response)).await?
+            if let Some(receiver) = state.backend_table.get(&id) {
+                todo!();
+            } else {
+                send(state, Message::TrieNodes(response)).await?
+            }
         }
         // Send response messages to the backend
         message @ Message::AccountRange(_)
@@ -767,6 +791,24 @@ async fn handle_backend_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), RLPxError> {
+    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    send(state, message).await?;
+    Ok(())
+}
+
+async fn handle_backend_message_receiver(
+    state: &mut Established,
+    mut message: Message,
+    receiver: GenServerHandle<StorageHealer>,
+) -> Result<(), RLPxError> {
+    match &mut message {
+        Message::GetTrieNodes(get_trie_nodes_message) => {
+            state
+                .backend_table
+                .insert(get_trie_nodes_message.id, receiver);
+        }
+        _ => todo!(),
+    }
     log_peer_debug(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())

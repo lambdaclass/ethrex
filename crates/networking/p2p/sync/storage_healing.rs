@@ -1,173 +1,328 @@
-//! This module contains the logic for storage healing during snap sync
-//! It becomes active as soon as state sync begins and acts like a queue, waiting for storages in need of healing to be advertised
-//! It will receive storages from the storage_fetcher queue that couldn't be downloaded due to the pivot becoming stale,
-//! and also storages belonging to newly healed accounts from the state healing
-//! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
-//! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
-
 use std::{
-    collections::BTreeMap,
-    sync::{
-        atomic::{AtomicBool, Ordering}, Arc
-    }, time::Duration,
+    collections::HashMap,
+    time::{Duration, Instant},
 };
 
+use crate::{peer_handler::PeerHandler, utils::current_unix_time};
 use ethrex_common::H256;
-use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
-use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle},
+};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{info, trace};
 
-use crate::{peer_handler::PeerHandler, sync::node_missing_children};
+pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Minumum amount of storages to keep in the storage healer queue
-/// More paths will be read from the Store if the amount goes below this value
-const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
-/// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of bach to start a bytecode fetch request in queues
-const BYTECODE_BATCH_SIZE: usize = 70;
-/// Max size of a bach to start a storage fetch request in queues
-const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-const NODE_BATCH_SIZE: usize = 900;
-/// Maximum amount of concurrent paralell fetches for a queue
-const MAX_PARALLEL_FETCHES: usize = 10;
-/// Maximum amount of messages in a channel
-const MAX_CHANNEL_MESSAGES: usize = 500;
-/// Maximum amount of messages to read from a channel at once
-const MAX_CHANNEL_READS: usize = 200;
-/// Pace at which progress is shown via info tracing
-const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
-/// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+#[derive(Debug, Clone)]
+pub struct StorageHealerState {}
 
-use super::{SyncError};
-use ethrex_rlp::encode::RLPEncode;
+#[derive(Debug)]
+pub struct StorageHealer {}
 
-/// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
-/// Also retrieves their children nodes until we have the full storage trie stored
-/// If the state becomes stale while fetching, returns its current queued account hashes
-// Returns true if there are no more pending storages in the queue (aka storage healing was completed)
-pub(crate) async fn heal_storage_trie(
-    state_root: H256,
-    peers: PeerHandler,
-    store: Store,
-    cancel_token: CancellationToken,
-    state_healing_ended: Arc<AtomicBool>,
-) -> Result<bool, SyncError> {
-    // List of paths in need of healing, grouped by hashed address
-    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
-    let mut stale = false;
-    let mut last_update = Instant::now();
-    while !(stale || cancel_token.is_cancelled()) {
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-            last_update = Instant::now();
-            info!(
-                "Storage Healing in Progress, storages queued: {}",
-                pending_paths.len()
-            );
-        }
-        // If we have few storages in queue, fetch more from the store
-        // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
-        if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
-            info!("pending_paths {}", pending_paths.len());
-            pending_paths.extend(
-                store
-                    .take_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)
-                    .await?
-                    .into_iter(),
-            );
-        }
-        // If we have no more pending paths even after reading from the store, and state healing has finished, cut the loop
-        if pending_paths.is_empty() && state_healing_ended.load(Ordering::Relaxed) {
-            break;
-        }
-        // If we have enough pending storages to fill a batch
-        // or if we have no more incoming batches, spawn a fetch process
-        // If the pivot became stale don't process anything and just save incoming requests
-        let mut storage_tasks = tokio::task::JoinSet::new();
-        let mut task_num = 0;
-        while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
-            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
-            // Fill batch
-            let mut batch_size = 0;
-            while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
-                let (key, val) = pending_paths.pop_first().ok_or(SyncError::CorruptPath)?;
-                batch_size += val.len();
-                next_batch.insert(key, val);
-            }
-            storage_tasks.spawn(heal_storage_batch(
-                state_root,
-                next_batch.clone(),
-                peers.clone(),
-                store.clone(),
-            ));
-            task_num += 1;
-        }
-        // Add unfetched paths to queue and handle stale signal
-        for res in storage_tasks.join_all().await {
-            let (remaining, is_stale) = res?;
-            pending_paths.extend(remaining);
-            stale |= is_stale;
-        }
+impl GenServer for StorageHealer {
+    type CallMsg = Unused;
+    type CastMsg = Unused;
+    type OutMsg = Unused;
+    type State = StorageHealerState;
+    type Error = ();
+
+    fn new() -> Self {
+        Self {}
     }
-    let healing_complete = pending_paths.is_empty();
-    // Store pending paths
-    store
-        .set_storage_heal_paths(pending_paths.into_iter().collect())
-        .await?;
-    Ok(healing_complete)
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
+        // 2 ways of handling requests
+        // - Bookeeping of requests
+        //      - reenque the missing responses
+        // - Peer server keeps the requests
+        CastResponse::NoReply(state)
+    }
 }
 
-/// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
-/// fetches their respective nodes, stores them, and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
-/// Also returns a boolean indicating if the pivot became stale during the request
-async fn heal_storage_batch(
+/// This struct stores the metadata we need when we request a node
+#[derive(Debug, Clone)]
+pub struct NodeRequest {
+    /// What account this belongs too (so what is the storage tree)
+    acc_path: Nibbles,
+    /// Where in the tree is this node located
+    storage_path: Nibbles,
+    /// What node needs this node
+    parent: Nibbles,
+    // /// What hash was requested. We can use this for validation
+    // hash: H256 // this is a potential optimization, we ignore for now
+}
+
+/// This struct stores the metadata we need when we request a node
+#[derive(Debug, Clone)]
+pub struct NodeResponse {
+    /// Who is this node
+    node: Node,
+    /// What did we ask for
+    node_request: NodeRequest,
+}
+
+/// This struct stores the metadata we need when we store a node in the memory bank before storing
+#[derive(Debug)]
+pub struct MembatchEntry {
+    /// What this node is
+    node_response: NodeResponse,
+    /// How many missing children this node has
+    /// if this number is 0, it should be flushed to the db, not stored in memory
+    missing_children_count: usize,
+}
+
+/// The membatch key represents the account path and the storage path
+type MembatchKey = (Nibbles, Nibbles);
+
+type Membatch = HashMap<MembatchKey, MembatchEntry>;
+
+/// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
+/// by the storage root in their account state
+/// We receive a list of the counts that we want to save, we heal by chunks of accounts.
+/// We assume these accounts are not empty hash tries, but may or may not have their
+/// Algorithmic rules:
+/// - If a nodehash is present in the db, it and all of it's children are present in the db
+/// - If we are missing a node, we queue to download them.
+/// - When a node is downloaded:
+///    - if it has no missing children, we store it in the db
+///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
+pub fn storage_heal_trie(
     state_root: H256,
-    mut batch: BTreeMap<H256, Vec<Nibbles>>,
+    account_paths: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
-    if let Some(mut nodes) = peers
-        .request_storage_trienodes(state_root, batch.clone())
-        .await
-    {
-        debug!("Storage Healing: Received {} storage nodes", nodes.len());
-        // Process the nodes for each account path
-        for (acc_path, paths) in batch.iter_mut() {
-            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
-            // Get the corresponding nodes
-            let trie_nodes: Vec<ethrex_trie::Node> =
-                nodes.drain(..paths.len().min(nodes.len())).collect();
-            // Update batch: remove fetched paths & add children
-            let children = trie_nodes
-                .iter()
-                .zip(paths.drain(..trie_nodes.len()))
-                .map(|(node, path)| node_missing_children(node, &path, trie.db()))
-                .collect::<Result<Vec<_>, _>>()?;
-            paths.extend(children.into_iter().flatten());
-            // Write nodes to trie
-            trie.db().put_batch(
-                trie_nodes
-                    .iter()
-                    .filter_map(|node: &ethrex_trie::Node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
-            if nodes.is_empty() {
-                break;
+    membatch: &mut Membatch,
+    staleness_timestamp: u64,
+) -> bool {
+    // Logging stuff, we log during a given interval
+    let mut last_update = Instant::now();
+
+    let mut download_queue = get_initial_downloads(&account_paths);
+
+    let mut node_processing_queue: Vec<NodeResponse> = Vec::new();
+
+    // channel to send the download task to the peers
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<Vec<NodeResponse>>(1000);
+
+    loop {
+        log_storage_heal(&mut last_update);
+
+        if current_unix_time() > staleness_timestamp {
+            return false;
+        }
+
+        // we request the trie nodes
+        spawn_downloader_task(task_sender.clone(), &mut download_queue, &peers);
+
+        // try_recv
+        receive_data_from_tasks(&mut task_receiver, &mut node_processing_queue);
+
+        // Then we process them
+        // The coordinator for now is going to process them, although it may be more efficient if the writing to the database
+        // is concurrentized
+        process_data(
+            &mut node_processing_queue,
+            &mut download_queue,
+            store.clone(),
+            membatch,
+        );
+
+        if download_queue.is_empty() {
+            return true;
+        }
+    }
+}
+
+fn receive_data_from_tasks(
+    task_receiver: &mut Receiver<Vec<NodeResponse>>,
+    node_processing_queue: &mut Vec<NodeResponse>,
+) {
+}
+
+fn spawn_downloader_task(
+    task_receiver: Sender<Vec<NodeResponse>>,
+    download_queue: &mut Vec<NodeRequest>,
+    peers: &PeerHandler,
+) {
+}
+
+fn process_data(
+    node_processing_queue: &mut Vec<NodeResponse>,
+    download_queue: &mut Vec<NodeRequest>,
+    store: Store,
+    membatch: &mut Membatch,
+) -> Result<(), StoreError> {
+    while let Some(node_response) = node_processing_queue.pop() {
+        trace!("We are processing node response {:?}", node_response);
+
+        let (missing_children_nibbles, missing_children_count) =
+            determine_missing_children(&node_response, store.clone(), membatch)?;
+
+        if missing_children_count == 0 {
+            // We flush to the database this node
+            commit_node(&node_response, store.clone(), membatch);
+        } else {
+            let key = (
+                node_response.node_request.acc_path.clone(),
+                node_response.node_request.storage_path.clone(),
+            );
+            membatch.insert(
+                key,
+                MembatchEntry {
+                    node_response: node_response.clone(),
+                    missing_children_count: missing_children_count,
+                },
+            );
+            download_queue.extend(missing_children_nibbles.iter().map(|children_key| {
+                NodeRequest {
+                    acc_path: children_key.0.clone(),
+                    storage_path: children_key.1.clone(),
+                    parent: node_response.node_request.storage_path.clone(),
+                }
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+fn log_storage_heal(last_update: &mut Instant) {
+    if last_update.elapsed() > LOGGING_INTERVAL {
+        info!("Storage Healing");
+        *last_update = Instant::now();
+    }
+}
+
+fn get_initial_downloads(account_paths: &[Nibbles]) -> Vec<NodeRequest> {
+    account_paths
+        .into_iter()
+        .map(|acc_path| {
+            NodeRequest {
+                acc_path: acc_path.clone(),
+                storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
+                parent: Nibbles::default(),
+            }
+        })
+        .collect()
+}
+
+/// Returns the full paths to the node's missing children and grandchildren
+/// and the number of direct missing children
+pub fn determine_missing_children(
+    node_response: &NodeResponse,
+    store: Store,
+    membatch: &Membatch,
+) -> Result<(Vec<MembatchKey>, usize), StoreError> {
+    let mut paths = Vec::new();
+    let mut count = 0;
+    let node = node_response.node.clone();
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie_state = trie.db();
+    match &node {
+        Node::Branch(node) => {
+            for (index, child) in node.choices.iter().enumerate() {
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                    count += 1;
+                    paths.extend(determine_membatch_missing_children(
+                        &node_response.node_request.acc_path,
+                        &node_response
+                            .node_request
+                            .storage_path
+                            .append_new(index as u8),
+                        &child.compute_hash(),
+                        membatch,
+                        store.clone(),
+                    )?);
+                }
             }
         }
-        // Return remaining and added paths to be added to the queue
-        // Filter out the storages we completely fetched
-        batch.retain(|_, v| !v.is_empty());
-        return Ok((batch, false));
+        Node::Extension(node) => {
+            let hash = node.child.compute_hash();
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+                count += 1;
+                paths.extend(determine_membatch_missing_children(
+                    &node_response.node_request.acc_path,
+                    &node_response
+                        .node_request
+                        .parent
+                        .concat(node.prefix.clone()),
+                    &node.child.compute_hash(),
+                    membatch,
+                    store.clone(),
+                )?);
+            }
+        }
+        _ => {}
     }
-    // Pivot became stale, lets inform the fetcher
-    debug!("Storage Healing: node return empty data");
-    Ok((batch, true))
+    Ok((paths, count))
+}
+
+// This function searches for the nodes we have to download that are childs from the membatch
+fn determine_membatch_missing_children(
+    acc_path: &Nibbles,
+    nibbles: &Nibbles,
+    hash: &NodeHash,
+    membatch: &Membatch,
+    store: Store,
+) -> Result<Vec<MembatchKey>, StoreError> {
+    if let Some(membatch_entry) = membatch.get(&(acc_path.clone(), nibbles.clone())) {
+        if membatch_entry.node_response.node.compute_hash() == *hash {
+            determine_missing_children(&membatch_entry.node_response, store, membatch)
+                .map(|(paths, count)| paths)
+        } else {
+            Ok(vec![(acc_path.clone(), nibbles.clone())])
+        }
+    } else {
+        Ok(vec![(acc_path.clone(), nibbles.clone())])
+    }
+}
+
+fn commit_node(
+    node: &NodeResponse,
+    store: Store,
+    membatch: &mut Membatch,
+) -> Result<(), StoreError> {
+    let trie = store.clone().open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie_db = trie.db();
+    trie_db
+        .put(node.node.compute_hash(), node.node.encode_raw())
+        .map_err(StoreError::Trie)?; // we can have an error if 2 trees have the same nodes
+
+    // Special case, we have just commited the root, we stop
+    if node.node_request.storage_path == node.node_request.parent {
+        trace!(
+            "We have the parent of an account, this means we are the root. Storage healing should end."
+        );
+        return Ok(());
+    }
+
+    let parent_key: (Nibbles, Nibbles) = (
+        node.node_request.acc_path.clone(),
+        node.node_request.parent.clone(),
+    );
+
+    if !membatch.contains_key(&parent_key) {
+        return Ok(());
+    }
+
+    let mut parent_entry = membatch
+        .remove(&parent_key)
+        .expect("We are missing the parent from the membatch!");
+
+    parent_entry.missing_children_count -= 1;
+
+    if parent_entry.missing_children_count == 0 {
+        commit_node(&parent_entry.node_response, store, membatch)?;
+    } else {
+        membatch.insert(parent_key, parent_entry);
+    }
+    Ok(())
 }
