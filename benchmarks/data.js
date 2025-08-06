@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754506790553,
+  "lastUpdate": 1754507056704,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7885,6 +7885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159766965558,
             "range": "± 264673650",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "45134e83fc8d2cc39473f9cb391490f54262d03f",
+          "message": "chore(l1): improve load_test readme about samply (#3899)\n\n**Motivation**\n\nAdds a better command snippet for running samply",
+          "timestamp": "2025-08-06T18:13:25Z",
+          "tree_id": "a00551be36ed8632090f1820679317b5ea491804",
+          "url": "https://github.com/lambdaclass/ethrex/commit/45134e83fc8d2cc39473f9cb391490f54262d03f"
+        },
+        "date": 1754507042107,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162333237228,
+            "range": "± 520235707",
             "unit": "ns/iter"
           }
         ]
