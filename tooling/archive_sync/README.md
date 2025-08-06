@@ -71,7 +71,7 @@ We can avoid relying on an active archive node connection once we have already p
  cargo run --release BLOCK_NUMBER --ipc_path IPC_PATH --output_dir STATE_DUMP_DIR
 ```
 
-If we don't need the geth node to be synced (for example if we plan to move the state dump to another server after the sync) we can also add the flag `--no_sync` to skip the state sync and only write the state dump.
+If we don't need the node to be synced (for example if we plan to move the state dump to another server after the sync) we can also add the flag `--no_sync` to skip the state sync and only write the state data to files.
 
 ### Step 2: Run the `archive_sync` executable with `--input_dir` instead of `--ipc-path`
 
