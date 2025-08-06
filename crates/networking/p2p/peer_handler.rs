@@ -2156,6 +2156,53 @@ impl PeerHandler {
 
         None
     }
+
+    pub async fn get_latest(
+        &self,
+        peer_channel: &mut PeerChannels
+    ) -> Option<u64> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(0),
+            limit: 1,
+            skip: 0,
+            reverse: true,
+        });
+        info!("get_latest: requesting latest block");
+
+        let mut receiver = peer_channel.receiver.lock().await;
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request.clone()))
+            .await
+            .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
+            .inspect_err(|err| error!(err))
+            .expect("############### Error peer_channel connection");
+        let response = tokio::time::timeout(Duration::from_secs(5), async move {
+            let response = receiver.recv().await;
+            if response.is_none() {
+                error!("############### Error Message");
+            };
+            response.unwrap()
+        })
+        .await;
+
+        match response {
+            Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+                if id == request_id && !block_headers.is_empty() {
+                    return Some(block_headers.last().expect("############### Error").number);
+                }
+            }
+            Ok(_other_msgs) => {
+                info!("Received unexpected message from peer");
+            }
+            Err(_err) => {
+                info!("Timeout while waiting for sync head from peer");
+            }
+        }
+        None
+    }
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header

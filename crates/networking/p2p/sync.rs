@@ -1010,6 +1010,9 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
             .expect("Error");
 
+        let maybe_latest = peers.get_latest(&mut peer_channel).await;
+        println!("getting block {}, latest is {:?}", new_pivot_block_number, maybe_latest);
+
         let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
