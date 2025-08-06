@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754514549610,
+  "lastUpdate": 1754515742388,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17739,6 +17739,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006809857142857143,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "023c3ca51210233318512911ebdbfa804450ae51",
+          "message": "fix(l1): allow P2P init with `dev` feature (#3970)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nIf compiled with `dev` feature and not using `--dev`, P2P is not\nenabled, making it impossible to sync with other networks.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nRemove feature dependency on P2P initialization.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-08-06T17:53:09Z",
+          "tree_id": "2c8142756e43fb46b0ce98aa23c8482fc7fee851",
+          "url": "https://github.com/lambdaclass/ethrex/commit/023c3ca51210233318512911ebdbfa804450ae51"
+        },
+        "date": 1754515726060,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001238155844155844,
             "unit": "Mgas/s"
           }
         ]
