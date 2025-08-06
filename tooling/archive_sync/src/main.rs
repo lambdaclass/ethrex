@@ -558,7 +558,7 @@ struct Args {
     ipc_path: Option<String>,
     #[arg(
         long = "input_dir",
-        value_name = "OUTPUT_DIRECTORY",
+        value_name = "INPUT_DIRECTORY",
         help = "Receives the name of the directory where the State Dump will be read from."
     )]
     pub input_dir: Option<String>,
