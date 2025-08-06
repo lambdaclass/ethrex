@@ -984,6 +984,8 @@ impl Syncer {
 
         store.add_block(block).await?;
 
+        let all_block_hashes = block_sync_state.into_snap_block_hashes();
+
         let numbers_and_hashes = all_block_hashes
             .into_iter()
             .rev()
