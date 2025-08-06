@@ -339,7 +339,7 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Bytes>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -358,7 +358,7 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -777,10 +777,15 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        let mut latest_header_lock = self
+        // Updates first the latest_block_header
+        // to avoid nonce inconsistencies #3927.
+        *self
             .latest_block_header
             .write()
-            .map_err(|_| StoreError::LockError)?;
+            .map_err(|_| StoreError::LockError)? = self
+            .engine
+            .get_block_header(head_number)?
+            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.engine
             .forkchoice_update(
                 new_canonical_blocks,
@@ -791,10 +796,6 @@ impl Store {
             )
             .await?;
 
-        *latest_header_lock = self
-            .engine
-            .get_block_header(head_number)?
-            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         Ok(())
     }
 
@@ -834,7 +835,7 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -871,7 +872,7 @@ impl Store {
         block_number: BlockNumber,
         address: &Address,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -1274,6 +1275,15 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        {
+            let last = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if last.number == block_number {
+                return Ok(Some(last.hash()));
+            }
+        }
         self.engine.get_canonical_block_hash_sync(block_number)
     }
 
@@ -1283,7 +1293,6 @@ impl Store {
             return Ok(false);
         };
         Ok(self
-            .engine
             .get_canonical_block_hash_sync(block_number)?
             .is_some_and(|h| h == block_hash))
     }
