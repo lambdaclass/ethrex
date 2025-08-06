@@ -1,4 +1,4 @@
-.PHONY: test lint run-state-tests render-benches samply-run-bench
+.PHONY: all fmt test lint run-state-tests render-benches samply-run-bench
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -8,6 +8,11 @@ test: ## 🧪 Runs all tests except Ethereum tests
 
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features -- -D warnings
+
+fmt: ## 📄 Runs rustfmt
+	cargo fmt --all
+
+all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
 ###### EF Tests ######
 EFTEST_DIR := ../../../cmd/ef_tests/state
