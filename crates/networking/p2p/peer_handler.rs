@@ -33,7 +33,10 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::{get_account_state_snapshots_dir, get_account_storages_snapshots_dir},
+    utils::{
+        get_account_state_snapshot_file, get_account_state_snapshots_dir,
+        get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
+    },
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -838,8 +841,9 @@ impl PeerHandler {
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.clone();
                 let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                 tokio::task::spawn(async move {
-                    let path = format!(
-                        "{account_state_snapshots_dir_cloned}/account_state_chunk.rlp.{chunk_file}",
+                    let path = get_account_state_snapshot_file(
+                        account_state_snapshots_dir_cloned,
+                        chunk_file,
                     );
                     // TODO: check the error type and handle it properly
                     let result =
@@ -1108,11 +1112,8 @@ impl PeerHandler {
             }
 
             tokio::task::spawn(async move {
-                std::fs::write(
-                    format!("{account_state_snapshots_dir}/account_state_chunk.rlp.{chunk_file}"),
-                    account_state_chunk,
-                )
-                .unwrap_or_else(|_| {
+                let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
+                std::fs::write(path, account_state_chunk).unwrap_or_else(|_| {
                     panic!("Failed to write account_state_snapshot chunk {chunk_file}")
                 });
             })
@@ -1516,11 +1517,11 @@ impl PeerHandler {
                 }
                 let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
                 tokio::task::spawn(async move {
-                    std::fs::write(
-                        format!("{account_storages_snapshots_dir_cloned}/account_storages_chunk.rlp.{chunk_index}"),
-                        snapshot,
-                    )
-                    .unwrap_or_else(|_| {
+                    let path = get_account_storages_snapshot_file(
+                        account_storages_snapshots_dir_cloned,
+                        chunk_index,
+                    );
+                    std::fs::write(path, snapshot).unwrap_or_else(|_| {
                         panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
                     });
                 })
@@ -1922,13 +1923,11 @@ impl PeerHandler {
             }
             let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
             tokio::task::spawn(async move {
-                std::fs::write(
-                    format!(
-                        "{account_storages_snapshots_dir_cloned}/account_storages_chunk.rlp.{chunk_index}"
-                    ),
-                    snapshot,
-                )
-                .unwrap_or_else(|_| {
+                let path = get_account_storages_snapshot_file(
+                    account_storages_snapshots_dir_cloned,
+                    chunk_index,
+                );
+                std::fs::write(path, snapshot).unwrap_or_else(|_| {
                     panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
                 });
             })
