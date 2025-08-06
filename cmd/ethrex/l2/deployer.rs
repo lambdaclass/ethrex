@@ -35,33 +35,15 @@ use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
 
-use crate::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
+use crate::{
+    l2::EthOptions,
+    networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS},
+};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
-    #[arg(
-        long = "eth-rpc-url",
-        value_name = "RPC_URL",
-        env = "ETHREX_ETH_RPC_URL",
-        help_heading = "Eth options"
-    )]
-    pub rpc_url: String,
-    #[arg(
-        long,
-        default_value = "10000000000",
-        value_name = "UINT64",
-        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS",
-        help_heading = "Eth options"
-    )]
-    pub maximum_allowed_max_fee_per_gas: u64,
-    #[arg(
-        long,
-        default_value = "10000000000",
-        value_name = "UINT64",
-        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS",
-        help_heading = "Eth options"
-    )]
-    pub maximum_allowed_max_fee_per_blob_gas: u64,
+    #[command(flatten)]
+    pub eth_options: EthOptions,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -71,38 +53,6 @@ pub struct DeployerOptions {
         help = "Private key corresponding of a funded account that will be used for L1 contract deployment.",
     )]
     pub private_key: SecretKey,
-    #[arg(
-        long,
-        default_value = "10",
-        value_name = "UINT64",
-        env = "ETHREX_ETH_MAX_NUMBER_OF_RETRIES",
-        help_heading = "Eth options"
-    )]
-    pub max_number_of_retries: u64,
-    #[arg(
-        long,
-        default_value = "2",
-        value_name = "UINT64",
-        env = "ETHREX_ETH_BACKOFF_FACTOR",
-        help_heading = "Eth options"
-    )]
-    pub backoff_factor: u64,
-    #[arg(
-        long,
-        default_value = "96",
-        value_name = "UINT64",
-        env = "ETHREX_ETH_MIN_RETRY_DELAY",
-        help_heading = "Eth options"
-    )]
-    pub min_retry_delay: u64,
-    #[arg(
-        long,
-        default_value = "1800",
-        value_name = "UINT64",
-        env = "ETHREX_ETH_MAX_RETRY_DELAY",
-        help_heading = "Eth options"
-    )]
-    pub max_retry_delay: u64,
     #[arg(
         long,
         value_name = "PATH",
@@ -326,13 +276,7 @@ pub struct DeployerOptions {
 impl Default for DeployerOptions {
     fn default() -> Self {
         Self {
-            rpc_url: "http://localhost:8545".to_string(),
-            maximum_allowed_max_fee_per_gas: 10_000_000_000,
-            maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
-            max_number_of_retries: 10,
-            backoff_factor: 2,
-            min_retry_delay: 96,
-            max_retry_delay: 1800,
+            eth_options: EthOptions::default(),
             #[allow(clippy::unwrap_used)]
             private_key: SecretKey::from_slice(
                 H256([
@@ -507,13 +451,17 @@ pub async fn deploy_l1_contracts(
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
-        vec![&opts.rpc_url],
-        opts.max_number_of_retries,
-        opts.backoff_factor,
-        opts.min_retry_delay,
-        opts.max_retry_delay,
-        Some(opts.maximum_allowed_max_fee_per_gas),
-        Some(opts.maximum_allowed_max_fee_per_blob_gas),
+        opts.eth_options
+            .rpc_url
+            .iter()
+            .map(|url| url.as_str())
+            .collect(),
+        opts.eth_options.max_number_of_retries,
+        opts.eth_options.backoff_factor,
+        opts.eth_options.min_retry_delay,
+        opts.eth_options.max_retry_delay,
+        Some(opts.eth_options.maximum_allowed_max_fee_per_gas),
+        Some(opts.eth_options.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
@@ -677,7 +625,8 @@ fn deploy_tdx_contracts(
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
-        .env("RPC_URL", &opts.rpc_url)
+        // TODO: This can panic
+        .env("RPC_URL", &opts.eth_options.rpc_url[0])
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
