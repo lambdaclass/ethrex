@@ -50,7 +50,7 @@ pub struct DeployerOptions {
         value_parser = parse_private_key,
         env = "ETHREX_DEPLOYER_L1_PRIVATE_KEY",
         help_heading = "Deployer options",
-        help = "Private key corresponding of a funded account that will be used for L1 contract deployment.",
+        help = "Private key of the deployer account. Needs to have L1 funds.",
     )]
     pub private_key: SecretKey,
     #[arg(
@@ -58,7 +58,7 @@ pub struct DeployerOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_ENV_FILE_PATH",
         help_heading = "Deployer options",
-        help = "Path to the .env file."
+        help = "Path to the .env file where addresses of deployed contracts will be written to."
     )]
     pub env_file_path: Option<PathBuf>,
     #[arg(
@@ -68,7 +68,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_DEPLOY_RICH",
         action = ArgAction::SetTrue,
         help_heading = "Deployer options",
-        help = "If set to true, it will deposit ETH from L1 rich wallets to L2 accounts."
+        help = "If set, it will deposit ETH from L1 rich wallets to L2 accounts."
     )]
     pub deposit_rich: bool,
     #[arg(
@@ -76,6 +76,7 @@ pub struct DeployerOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
         required_if_eq("deposit_rich", "true"),
+        requires = "deposit_rich",
         help_heading = "Deployer options",
         help = "Path to the file containing the private keys of the rich accounts. The default is ../../fixtures/keys/private_keys_l1.txt"
     )]
@@ -85,12 +86,13 @@ pub struct DeployerOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
+        requires = "deposit_rich",
         help_heading = "Deployer options",
         help = "Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     #[arg(
-        long,
+        long = "l2.genesis",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
         help_heading = "Deployer options",
@@ -120,18 +122,16 @@ pub struct DeployerOptions {
         long = "risc0.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        required = true, // TODO: This should be required_unless_present = "risc0_deploy_verifier",
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "Set to 0xAA to skip proof verification. Only use in dev mode."
     )]
     pub risc0_verifier_address: Option<Address>,
     #[arg(
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        required_if_eq("sp1_deploy_verifier", "false"),
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "Set to 0xAA to skip proof verification. Only use in dev mode."
     )]
     pub sp1_verifier_address: Option<Address>,
     #[arg(
@@ -140,7 +140,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
         env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
-        required_unless_present = "sp1_verifier_address",
         help_heading = "Deployer options",
         help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
     )]
@@ -149,9 +148,8 @@ pub struct DeployerOptions {
         long = "tdx.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
-        required_if_eq("tdx_deploy_verifier", "false"),
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "Set to 0xAA to skip proof verification. Only use in dev mode."
     )]
     pub tdx_verifier_address: Option<Address>,
     #[arg(
@@ -160,7 +158,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
         env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
-        required_unless_present = "tdx_verifier_address",
         help_heading = "Deployer options",
         help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
     )]
@@ -169,21 +166,18 @@ pub struct DeployerOptions {
         long = "aligned.aggregator-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
-        required = true,
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "Set to 0xAA to skip proof verification. Only use in dev mode."
     )]
-    pub aligned_aggregator_address: Address,
+    pub aligned_aggregator_address: Option<Address>,
     #[arg(
-        long,
-        default_value = "false",
-        value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT",
+        long = "deterministic-salt",
+        value_name = "H256",
+        env = "ETHREX_DEPLOYER_DETERMINISTIC_SALT",
         help_heading = "Deployer options",
-        help = "If set to false, the deployed contract addresses will be deterministic."
+        help = "Salt to use with CREATE2 deterministic deployer. If used, the contracts will be always deployed under the same addresses."
     )]
-    pub randomize_contract_deployment: bool,
+    pub create2_salt: Option<H256>,
     #[arg(
         long,
         default_value = "false",
@@ -316,11 +310,11 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
             tdx_deploy_verifier: false,
-            aligned_aggregator_address: H160([
+            aligned_aggregator_address: Some(H160([
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ]),
-            randomize_contract_deployment: false,
+            ])),
+            create2_salt: None,
             validium: false,
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
@@ -494,14 +488,7 @@ async fn deploy_contracts(
 
     info!("Deploying OnChainProposer");
 
-    let salt = if opts.randomize_contract_deployment {
-        H256::random().as_bytes().to_vec()
-    } else {
-        SALT.lock()
-            .map_err(|_| DeployerError::InternalError("failed unwrapping salt lock".to_string()))?
-            .as_bytes()
-            .to_vec()
-    };
+    let salt = opts.create2_salt.unwrap_or_else(|| H256::random());
 
     trace!("Attempting to deploy OnChainProposer contract");
     let bytecode = if opts.deploy_based_contracts {
@@ -515,7 +502,7 @@ async fn deploy_contracts(
     }
 
     let on_chain_proposer_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, &salt).await?;
+        deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, salt.as_bytes()).await?;
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
         on_chain_proposer_deployment.proxy_address,
@@ -526,9 +513,13 @@ async fn deploy_contracts(
 
     info!("Deploying CommonBridge");
 
-    let bridge_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, COMMON_BRIDGE_BYTECODE, &salt)
-            .await?;
+    let bridge_deployment = deploy_with_proxy_from_bytecode(
+        deployer,
+        eth_client,
+        COMMON_BRIDGE_BYTECODE,
+        salt.as_bytes(),
+    )
+    .await?;
 
     info!(
         "CommonBridge deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
@@ -545,7 +536,7 @@ async fn deploy_contracts(
             deployer,
             eth_client,
             SEQUENCER_REGISTRY_BYTECODE,
-            &salt,
+            salt.as_bytes(),
         )
         .await?;
 
@@ -563,25 +554,26 @@ async fn deploy_contracts(
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, sp1_verifier_address) =
-            deploy_contract_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
-                .await?;
+        let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract_from_bytecode(
+            &[],
+            SP1_VERIFIER_BYTECODE,
+            deployer,
+            salt.as_bytes(),
+            eth_client,
+        )
+        .await?;
 
         info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
         sp1_verifier_address
     } else {
         opts.sp1_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "SP1Verifier address is not set and sp1_deploy_verifier is false".to_string(),
-            ))?
+            .unwrap_or_else(|| Address::from_low_u64_be(0xaa))
     };
 
     // TODO: Add Risc0Verifier deployment
-    let risc0_verifier_address =
-        opts.risc0_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
-            ))?;
+    let risc0_verifier_address = opts
+        .risc0_verifier_address
+        .unwrap_or_else(|| Address::from_low_u64_be(0xaa));
 
     let tdx_verifier_address = if opts.tdx_deploy_verifier {
         info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
@@ -592,10 +584,12 @@ async fn deploy_contracts(
         tdx_verifier_address
     } else {
         opts.tdx_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
-            ))?
+            .unwrap_or_else(|| Address::from_low_u64_be(0xaa))
     };
+
+    let aligned_aggregator_address = opts
+        .aligned_aggregator_address
+        .unwrap_or_else(|| Address::from_low_u64_be(0xaa));
 
     trace!(
         on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
@@ -614,7 +608,7 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
-        aligned_aggregator_address: opts.aligned_aggregator_address,
+        aligned_aggregator_address,
     })
 }
 

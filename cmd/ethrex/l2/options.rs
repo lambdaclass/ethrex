@@ -244,6 +244,7 @@ pub struct EthOptions {
         long = "eth.rpc-url",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
+        default_value = "http://localhost:8545",
         help = "List of rpc urls to use.",
         help_heading = "Eth options",
         num_args = 1..
