@@ -421,12 +421,10 @@ pub async fn init_l1(
         init_metrics(&opts, tracker.clone());
     }
 
-    #[cfg(feature = "dev")]
     if opts.dev {
+        #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone()).await;
-    }
-
-    if !opts.dev && opts.p2p_enabled {
+     } else if opts.p2p_enabled {
         init_network(
             &opts,
             &network,
