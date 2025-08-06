@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754516628216,
+  "lastUpdate": 1754524783003,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17797,6 +17797,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0066736600000000005,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "45134e83fc8d2cc39473f9cb391490f54262d03f",
+          "message": "chore(l1): improve load_test readme about samply (#3899)\n\n**Motivation**\n\nAdds a better command snippet for running samply",
+          "timestamp": "2025-08-06T18:13:25Z",
+          "tree_id": "a00551be36ed8632090f1820679317b5ea491804",
+          "url": "https://github.com/lambdaclass/ethrex/commit/45134e83fc8d2cc39473f9cb391490f54262d03f"
+        },
+        "date": 1754524782302,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001227904323827047,
             "unit": "Mgas/s"
           }
         ]
