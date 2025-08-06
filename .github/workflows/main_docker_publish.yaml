@@ -32,7 +32,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pushes to ghcr.io/ethrex
+      # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@v6

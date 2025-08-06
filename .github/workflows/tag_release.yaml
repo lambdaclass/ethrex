@@ -34,7 +34,6 @@ jobs:
           - platform: macos-latest
             os: macos
             arch: aarch64
-            prover_features: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -84,9 +83,14 @@ jobs:
           method: "network"
           sub-packages: '["nvcc"]'
 
+      - name: Set compiler envs
+        if: ${{ matrix.os == 'linux' }}
+        run: |
+          echo COMPILE_FLAGS="RUSTFLAGS='-C target-cpu=native' NVCC_PREPEND_FLAGS='-arch=sm_70'" >> $GITHUB_ENV
+
       - name: Build ethrex
         run: |
-          RUSTFLAGS='-C target-cpu=native' NVCC_PREPEND_FLAGS='-arch=sm_70' cargo build --release --features ${{ matrix.prover_features }} --bin ethrex
+          ${{ env.COMPILE_FLAGS }} cargo build --release --features "${{ matrix.prover_features }}" --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Copy verification keys
