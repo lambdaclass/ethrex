@@ -39,8 +39,6 @@ const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 struct Dump {
     #[serde(rename = "root")]
     state_root: H256,
-    // #[serde(deserialize_with = "deser_account_dump_map")]
-    /// Map from address (unhashed) to dump account
     accounts: HashMap<Address, DumpAccount>,
     #[serde(default)]
     next: Option<String>,
@@ -78,62 +76,29 @@ pub async fn archive_sync(
     } else {
         DumpReader::new_from_dir(input_dir.unwrap())?
     };
-    let mut dump_writer = output_dir
+    let dump_writer = output_dir
         .map(|filename| DumpDirWriter::new(filename))
         .transpose()?;
-    let mut state_trie_root = *EMPTY_TRIE_HASH;
+    let mut dump_processor = if no_sync {
+        DumpProcessor::new_no_sync(dump_writer)
+    } else {
+        DumpProcessor::new_sync(dump_writer, store)
+    };
     let mut should_continue = true;
-    let mut state_root = None;
+    // Fetch and process dumps until we have the full block state
     while should_continue {
         let dump = dump_reader.read_dump().await?;
-        // Sanity check
-        if *state_root.get_or_insert(dump.state_root) != dump.state_root {
-            return Err(eyre::ErrReport::msg(
-                "Archive node yieled different state roots for the same block dump",
-            ));
-        }
-        should_continue = dump.next.is_some();
-        // Write dump if we have an output
-        if let Some(dump_writer) = dump_writer.as_mut() {
-            dump_writer.write_dump(&dump)?;
-        }
-        // Process dump
-        if !no_sync {
-            let instant = Instant::now();
-            state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
-            info!(
-                "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
-                mseconds_to_readable(instant.elapsed().as_millis())
-            );
-        }
+        should_continue = dump_processor.process_dump(dump).await?;
     }
-    // Request block so we can store it and mark it as canonical
+    // Fetch the block itself so we can mark it as canonical
     let rlp_block = dump_reader.read_rlp_block().await?;
-    let block = Block::decode(&rlp_block)?;
-    let block_hash = block.hash();
-    if let Some(dump_writer) = dump_writer.as_mut() {
-        dump_writer.write_rlp_block(rlp_block)?;
-    }
-    if !no_sync && state_trie_root != block.header.state_root {
-        return Err(eyre::ErrReport::msg(
-            "State root doesn't match the one in the header after archive sync",
-        ));
-    }
+    dump_processor.process_rlp_block(rlp_block).await?;
+    // Fetch the block hashes of the previous `BLOCK_HASH_LOOKUP_DEPTH`
+    // as we might need them to execute the next blocks after archive sync
     let block_hashes = dump_reader.read_block_hashes().await?;
-    if !no_sync {
-        store.add_block(block).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
-        store.mark_chain_as_canonical(&block_hashes).await?;
-    }
-    if let Some(dump_writer) = dump_writer.as_mut() {
-        dump_writer.write_hashes_file(block_hashes)?;
-    }
+    dump_processor.process_block_hahes(block_hashes).await?;
     let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
     info!("Archive Sync complete in {sync_time}");
-    if !no_sync {
-        info!("Head of local chain is now block {block_number} with hash {block_hash}");
-    }
     Ok(())
 }
 
@@ -249,6 +214,91 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
     res
 }
 
+struct DumpProcessor {
+    state_root: Option<H256>,
+    // Current Trie Root + Store. Set to false if state sync is disabled
+    sync_state: Option<(H256, Store)>,
+    writer: Option<DumpDirWriter>,
+}
+
+impl DumpProcessor {
+    fn new_sync(writer: Option<DumpDirWriter>, store: Store) -> Self {
+        Self {
+            state_root: None,
+            sync_state: Some((*EMPTY_TRIE_HASH, store)),
+            writer,
+        }
+    }
+
+    fn new_no_sync(writer: Option<DumpDirWriter>) -> Self {
+        Self {
+            state_root: None,
+            sync_state: None,
+            writer,
+        }
+    }
+
+    async fn process_dump(&mut self, dump: Dump) -> eyre::Result<bool> {
+        // Sanity check
+        if *self.state_root.get_or_insert(dump.state_root) != dump.state_root {
+            return Err(eyre::ErrReport::msg(
+                "Archive node yieled different state roots for the same block dump",
+            ));
+        }
+        let should_continue = dump.next.is_some();
+        // Write dump if we have an output
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_dump(&dump)?;
+        }
+        // Process dump
+        if let Some((current_root, store)) = self.sync_state.as_mut() {
+            let instant = Instant::now();
+            *current_root = process_dump(dump, store.clone(), *current_root).await?;
+            info!(
+                "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
+                mseconds_to_readable(instant.elapsed().as_millis())
+            );
+        }
+        Ok(should_continue)
+    }
+
+    async fn process_rlp_block(&mut self, rlp_block: Vec<u8>) -> eyre::Result<()> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_rlp_block(&rlp_block)?;
+        }
+        if let Some((current_root, store)) = self.sync_state.as_ref() {
+            let block = Block::decode(&rlp_block)?;
+            let block_number = block.header.number;
+            let block_hash = block.hash();
+
+            if *current_root != block.header.state_root {
+                return Err(eyre::ErrReport::msg(
+                    "State root doesn't match the one in the header after archive sync",
+                ));
+            }
+
+            store.add_block(block).await?;
+            store.set_canonical_block(block_number, block_hash).await?;
+            store.update_latest_block_number(block_number).await?;
+            info!("Head of local chain is now block {block_number} with hash {block_hash}");
+        }
+        Ok(())
+    }
+
+    async fn process_block_hahes(
+        &mut self,
+        block_hashes: Vec<(BlockNumber, BlockHash)>,
+    ) -> eyre::Result<()> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_hashes_file(&block_hashes)?;
+        }
+        if let Some((_, store)) = self.sync_state.as_ref() {
+            store.mark_chain_as_canonical(&block_hashes).await?;
+        }
+        Ok(())
+    }
+}
+
 struct DumpDirWriter {
     dirname: String,
     current_file: usize,
@@ -323,20 +373,20 @@ impl DumpDirWriter {
         Ok(())
     }
 
-    fn write_rlp_block(&mut self, rlp: Vec<u8>) -> eyre::Result<()> {
+    fn write_rlp_block(&mut self, rlp: &Vec<u8>) -> eyre::Result<()> {
         let mut block_file: File =
             File::create(std::path::Path::new(&self.dirname).join("block.rlp"))?;
-        block_file.write_all(&rlp)?;
+        block_file.write_all(rlp)?;
         Ok(())
     }
 
     fn write_hashes_file(
         &mut self,
-        block_hashes: Vec<(BlockNumber, BlockHash)>,
+        block_hashes: &Vec<(BlockNumber, BlockHash)>,
     ) -> eyre::Result<()> {
         let block_hashes_file =
             File::create(std::path::Path::new(&self.dirname).join("block_hashes.json"))?;
-        serde_json::to_writer(block_hashes_file, &block_hashes)?;
+        serde_json::to_writer(block_hashes_file, block_hashes)?;
         Ok(())
     }
 }
