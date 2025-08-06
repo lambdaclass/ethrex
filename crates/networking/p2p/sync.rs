@@ -156,7 +156,15 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store.get_block_number(current_head).await.unwrap().unwrap();
+        let current_head_number = match store.get_block_number(current_head).await {
+            Ok(Some(number)) => number,
+            _ => {
+                // For some reason we don't have the block number of our current head,
+                // skip current cycle and try again later
+                error!("Sync failed to get the block number of the current head, skipping cycle");
+                return Ok(());
+            }
+        };
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
@@ -797,8 +805,7 @@ impl Syncer {
 
             downloaded_account_storages += account_storage_roots.len();
 
-            chunk_index = self
-                .peers
+            chunk_index = self.peers
                 .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
                 .await;
         }
@@ -921,11 +928,16 @@ impl Syncer {
                             }
                         }
 
-                        let (computed_state_root, changes) =
+                        let (computed_storage_root, changes) =
                             storage_trie.collect_changes_since_last_hash();
 
-                        maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
+                        let path = account_hash.0.to_vec();
+                        let noderlp = store.open_state_trie(computed_state_root).unwrap().get(&path).unwrap().unwrap();
 
+                        let account = AccountState::decode(&noderlp).unwrap();
+                        if account.storage_root != computed_storage_root {
+                            maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_storage_root);
+                        }
                         METRICS.storage_tries_state_roots_computed.inc();
 
                         sender.send((account_hash, changes)).expect("Failed to send changes");
