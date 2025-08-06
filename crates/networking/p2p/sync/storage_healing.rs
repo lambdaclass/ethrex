@@ -11,6 +11,7 @@ use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
+use rand::random;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
@@ -19,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_IN_FLIGHT_REQUESTS: usize = 777;
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -67,6 +69,7 @@ pub enum StorageHealerMsg {
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
+    peer_id: H256,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +97,7 @@ pub struct StorageHealerState {
     peer_handler: PeerHandler,
     /// We use this to track which peers are occupied, and we can't send stuff to
     /// Alongside their score for this situation
-    peers: HashMap<u64, PeerScore>,
+    scored_peers: HashMap<H256, PeerScore>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
@@ -158,6 +161,7 @@ impl GenServer for StorageHealer {
             StorageHealerMsg::TrieNodes(trie_nodes) => {
                 if let Some(mut nodes_from_peer) = zip_and_requeue_node_responses(
                     &mut state.requests,
+                    &mut state.scored_peers,
                     &mut state.download_queue,
                     trie_nodes,
                 ) {
@@ -210,17 +214,37 @@ pub fn storage_heal_trie(
     todo!()
 }
 
-fn ask_peers_for_nodes(
-    download_queue: &mut Vec<NodeRequest>,
-    requests: HashMap<u64, InflightRequest>,
+/// it grabs N peers to ask for data
+async fn ask_peers_for_nodes(
+    download_queue: &mut VecDeque<NodeRequest>,
+    requests: &mut HashMap<u64, InflightRequest>,
     peers: &PeerHandler,
-    peers_score: HashMap<u64, PeerScore>,
+    scored_peers: &mut HashMap<H256, PeerScore>,
 ) {
-    todo!()
+    while requests.len() < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
+        let Some(peer) =
+            get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
+        else {
+            // If we have no peers we shrug our shoulders and wait until next free peer
+            return;
+        };
+        let at = usize::max(0, download_queue.len());
+        let download_chunk = download_queue.split_off(at);
+        let req_id: u64 = random();
+        //peer.1.connection.cast()
+        requests.insert(
+            req_id,
+            InflightRequest {
+                requests: download_chunk.into(),
+                peer_id: peer.0,
+            },
+        );
+    }
 }
 
 fn zip_and_requeue_node_responses(
     requests: &mut HashMap<u64, InflightRequest>,
+    scored_peers: &mut HashMap<H256, PeerScore>,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
 ) -> Option<Vec<NodeResponse>> {
@@ -229,6 +253,10 @@ fn zip_and_requeue_node_responses(
         trie_nodes.nodes.len()
     );
     let mut request = requests.remove(&trie_nodes.id)?;
+    scored_peers
+        .get_mut(&request.peer_id)
+        .expect("Each time we request we should add to scored_peeers")
+        .in_flight = false;
 
     let nodes_size = trie_nodes.nodes.len();
 
@@ -433,7 +461,7 @@ fn commit_node(
 
 async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     peers: &PeerHandler,
-    downloaders: &mut HashMap<H256, PeerScore>,
+    scored_peers: &mut HashMap<H256, PeerScore>,
 ) -> Option<(H256, PeerChannels)> {
     let mut chosen_peer: Option<(H256, PeerChannels)> = None;
     let mut max_score = i64::MIN;
@@ -443,7 +471,7 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
         .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
         .await
     {
-        if let Some(known_peer_score) = downloaders.get_mut(&peer_id) {
+        if let Some(known_peer_score) = scored_peers.get_mut(&peer_id) {
             if known_peer_score.in_flight {
                 continue;
             }
@@ -460,7 +488,7 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     }
 
     if let Some((peer_id, _)) = chosen_peer {
-        downloaders
+        scored_peers
             .entry(peer_id)
             .and_modify(|peer_score| peer_score.in_flight = true)
             .or_insert(PeerScore {
