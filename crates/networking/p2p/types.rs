@@ -294,42 +294,39 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(
-        node: &Node,
-        seq: u64,
-        signer: &SecretKey,
-        fork_id: ForkId,
-    ) -> Result<Self, String> {
-        let (ipv4, ipv6) = match node.ip {
-            IpAddr::V4(ipv4_addr) => (Some(ipv4_addr), None),
-            IpAddr::V6(ipv6_addr) => (None, Some(ipv6_addr)),
-        };
-        let secp256k1 = Some(H264(
-            PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
-        ));
-        let pairs = NodeRecordPairs {
-            id: Some("v4".to_string()),
-            ip: ipv4,
-            ip6: ipv6,
-            secp256k1,
-            tcp_port: Some(node.tcp_port),
-            udp_port: Some(node.udp_port),
-            eth: Some(fork_id),
-        };
-
+    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
-            pairs: pairs.into(),
             ..Default::default()
         };
-        record.sign_inplace(signer)?;
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record
+            .pairs
+            .push(("ip".into(), node.ip.encode_to_vec().into()));
+        record.pairs.push((
+            "secp256k1".into(),
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
+                .serialize()
+                .encode_to_vec()
+                .into(),
+        ));
+        record
+            .pairs
+            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
+        record
+            .pairs
+            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
+
+        record.signature = record.sign_record(signer)?;
 
         Ok(record)
     }
 
     pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), String> {
         self.seq += 1;
-        self.sign_inplace(signer)?;
+        self.sign_record(signer)?;
         Ok(())
     }
 
@@ -350,7 +347,7 @@ impl NodeRecord {
         Ok(())
     }
 
-    fn sign_inplace(&mut self, signer: &SecretKey) -> Result<(), String> {
+    fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| "Invalid message digest".to_string())?;
@@ -358,8 +355,7 @@ impl NodeRecord {
             .sign_ecdsa_recoverable(&msg, signer)
             .serialize_compact();
 
-        self.signature = H512::from_slice(&signature_bytes);
-        Ok(())
+        Ok(H512::from_slice(&signature_bytes))
     }
 
     pub fn get_signature_digest(&self) -> Vec<u8> {

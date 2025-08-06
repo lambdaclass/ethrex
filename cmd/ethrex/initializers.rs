@@ -9,13 +9,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{ForkId, Genesis};
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, peer_table, public_key_from_signing_key},
-    peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
-    sync_manager::SyncManager,
-    types::{Node, NodeRecord},
-    utils::public_key_from_signing_key,
+    kademlia::Kademlia, network::{peer_table, P2PContext}, peer_handler::PeerHandler, rlpx::l2::l2_connection::P2PBasedContext, sync_manager::SyncManager, types::{Node, NodeRecord}, utils::public_key_from_signing_key
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -146,11 +140,10 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Kademlia,
+    peer_table: Arc<Mutex<Kademlia>>,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    fork_id: &ForkId,
     based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
@@ -167,14 +160,14 @@ pub async fn init_network(
         local_node_record,
         tracker.clone(),
         signer,
-        peer_table.clone(),
+        peer_table.lock().await.clone(), // TODO: SNAP SYNC: FIX THIS
         store,
         blockchain,
         get_client_version(),
         based_context,
     );
 
-    ethrex_p2p::start_network(context, bootnodes, fork_id)
+    ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
 
@@ -319,24 +312,20 @@ pub fn get_local_node_record(
     data_dir: &str,
     local_p2p_node: &Node,
     signer: &SecretKey,
-    fork_id: &ForkId,
 ) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     match read_node_config_file(config_file) {
-        Ok(ref mut config) => NodeRecord::from_node(
-            local_p2p_node,
-            config.node_record.seq + 1,
-            signer,
-            fork_id.clone(),
-        )
-        .expect("Node record could not be created from local node"),
+        Ok(ref mut config) => {
+            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
+                .expect("Node record could not be created from local node")
+        }
         Err(_) => {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer, fork_id.clone())
+            NodeRecord::from_node(local_p2p_node, timestamp, signer)
                 .expect("Node record could not be created from local node")
         }
     }
@@ -379,7 +368,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     String,
     CancellationToken,
-    Arc<Mutex<KademliaTable>>,
+    Arc<Mutex<Kademlia>>,
     Arc<Mutex<NodeRecord>>,
 )> {
     let data_dir = set_datadir(&opts.datadir);
@@ -404,7 +393,9 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    // TODO: SNAP SYNC: FIX THIS
+    // let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -439,7 +430,7 @@ pub async fn init_l1(
                     local_p2p_node,
                     local_node_record.clone(),
                     signer,
-                    peer_table.clone(),
+                    Arc::new(Mutex::new(peer_table.clone())), // TODO: SNAP SYNC: FIX THIS
                     store.clone(),
                     tracker.clone(),
                     blockchain.clone(),
@@ -451,5 +442,5 @@ pub async fn init_l1(
             }
         }
     }
-    Ok((data_dir, cancel_token, peer_table, local_node_record))
+    Ok((data_dir, cancel_token, Arc::new(Mutex::new(peer_table)), local_node_record))
 }

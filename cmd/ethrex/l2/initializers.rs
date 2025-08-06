@@ -7,7 +7,6 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
@@ -173,7 +172,8 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    // let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -217,7 +217,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            Arc::new(Mutex::new(peer_table.clone())), // TODO: SNAP SYNC: FIX THIS
             store.clone(),
             tracker,
             blockchain.clone(),

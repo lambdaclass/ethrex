@@ -96,7 +96,6 @@ pub fn peer_table() -> Kademlia {
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
-    fork_id: &ForkId,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.local_node.udp_addr())
@@ -107,7 +106,6 @@ pub async fn start_network(
     DiscoveryServer::spawn(
         context.local_node.clone(),
         context.signer,
-        fork_id,
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
@@ -120,7 +118,6 @@ pub async fn start_network(
     DiscoverySideCar::spawn(
         context.local_node.clone(),
         context.signer,
-        fork_id,
         udp_socket,
         context.table.clone(),
     )

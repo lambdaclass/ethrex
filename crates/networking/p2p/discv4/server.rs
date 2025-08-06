@@ -252,7 +252,6 @@ impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
@@ -260,7 +259,7 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer, fork_id.clone())
+            NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Failed to create local node record"),
         ));
 
