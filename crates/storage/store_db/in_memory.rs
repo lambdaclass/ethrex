@@ -373,13 +373,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        self.inner()?
-            .chain_data
-            .chain_config
-            .ok_or(StoreError::Custom("No Chain Congif".to_string()))
-    }
-
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
@@ -389,6 +382,10 @@ impl StoreEngine for Store {
             .earliest_block_number
             .replace(block_number);
         Ok(())
+    }
+
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner()?.chain_data.latest_block_number)
     }
 
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -431,9 +428,6 @@ impl StoreEngine for Store {
             .latest_block_number
             .replace(block_number);
         Ok(())
-    }
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner()?.chain_data.latest_block_number)
     }
 
     async fn update_pending_block_number(

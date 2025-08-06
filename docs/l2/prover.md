@@ -33,7 +33,7 @@ sequenceDiagram
 
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
-  2. `rzup install cargo-risczero 1.2.0`
+  2. `rzup install cargo-risczero 2.3.1`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`

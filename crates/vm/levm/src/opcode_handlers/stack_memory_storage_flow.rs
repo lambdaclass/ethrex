@@ -331,15 +331,12 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> bool {
+    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: usize) -> bool {
         #[expect(clippy::as_conversions)]
-        call_frame.bytecode.get(jump_address).is_some_and(|&value| {
+        call_frame.bytecode.get(jump_address).is_some_and(|value| {
             // It's a constant, therefore the conversion cannot fail.
-            value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
-                    .binary_search(&jump_address)
-                    .is_err()
+            *value == Opcode::JUMPDEST as u8
+                && !call_frame.jump_target_filter.is_blacklisted(jump_address)
         })
     }
 
