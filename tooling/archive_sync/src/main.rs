@@ -91,7 +91,7 @@ pub async fn archive_sync(
     // Fetch the block itself so we can mark it as canonical
     let rlp_block = dump_reader.read_rlp_block().await?;
     dump_processor.process_rlp_block(rlp_block).await?;
-    // Fetch the block hashes of the previous `BLOCK_HASH_LOOKUP_DEPTH`
+    // Fetch the block hashes of the previous `BLOCK_HASH_LOOKUP_DEPTH` blocks
     // as we might need them to execute the next blocks after archive sync
     let block_hashes = dump_reader.read_block_hashes().await?;
     dump_processor.process_block_hahes(block_hashes).await?;
