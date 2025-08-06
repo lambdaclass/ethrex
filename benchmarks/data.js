@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754505248699,
+  "lastUpdate": 1754505747419,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7825,6 +7825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162470502163,
             "range": "± 733213470",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5fd68a2ee5c4e1749605344ad1b586380ae2ce01",
+          "message": "fix(levm): ignore offset value when size is zero (#3950)\n\n**Motivation**\nWe recently ran into a gas mismatch when running full sync in sepolia\ntestnet. The problem was that we were reverting earlier due to an\n`ExceptionHalt::VeryLargeNumber`. This happened during a `STATICCALL`\nopcode execution where the `arg_offset` value taken from the stack was a\nvery large number. Upon comparing our implementation with geth we\nrealized that the difference lies in that we do ignore the value of the\noffset when calculating the memory size If the size is zero, but by that\ntime we have already converted the offset into a usize value, and failed\nif we couldn't do so.\nThe transaction where this bug was discovered is\nhttps://sepolia.etherscan.io/tx/0x0495f636d6d69c91e40afc44d3bd12800831d848391666cf23325720fd9ebfd4\nThis PR solves this problem and aims to solve future related problems by\nadding a utility function `size_offset_to_usize` which first converts\nthe size into a size value and if it is not zero then converts the\noffset into a size value, if the size is zero, offset will be ignored\nand given a default value as it won't be used.\nIt also gets rid of some explicit error handling by adding utility\nfunction `u256_to_usize` to checkedly convert U256 to usize. Some tweaks\nhave also been performed while checking against geth handling.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add util  function `u256_to_usize` which converts a U256 to usize.\n* Add util function `size_offset_to_usize` which converts U256 size and\noffset to usize, ignoring the offset value if size is zero.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed in order to progress through #1676",
+          "timestamp": "2025-08-06T17:51:43Z",
+          "tree_id": "d3df32822cc1e773677992d5a7cf197b34cb3bc7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5fd68a2ee5c4e1749605344ad1b586380ae2ce01"
+        },
+        "date": 1754505733383,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159905030825,
+            "range": "± 347485737",
             "unit": "ns/iter"
           }
         ]
