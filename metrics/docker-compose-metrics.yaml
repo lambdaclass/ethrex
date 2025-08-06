@@ -12,6 +12,6 @@ services:
     #ports: defined in the .overrides file
     environment:
       - GF_PLUGINS_PREINSTALL=yesoreyeram-infinity-datasource
-      - L1_RPC_URL=http://eth-testnet-rpc:8545
+      - L1_RPC_URL=${L1_RPC_URL}
     depends_on:
       - prometheus

@@ -3,6 +3,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
 };
+use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
@@ -15,6 +16,13 @@ use crate::{bench::run_and_measure, fetcher::get_batchdata};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
+
+#[cfg(feature = "sp1")]
+const BACKEND: Backend = Backend::SP1;
+#[cfg(feature = "risc0")]
+const BACKEND: Backend = Backend::RISC0;
+#[cfg(not(any(feature = "risc0", feature = "sp1")))]
+const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name=BINARY_NAME, author, version=VERSION_STRING, about, long_about = None)]
@@ -111,7 +119,7 @@ impl SubcommandExecute {
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -133,7 +141,7 @@ impl SubcommandExecute {
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -178,7 +186,7 @@ impl SubcommandExecute {
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -259,7 +267,7 @@ impl SubcommandProve {
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -281,7 +289,7 @@ impl SubcommandProve {
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -297,7 +305,7 @@ impl SubcommandProve {
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;

@@ -2,14 +2,14 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
 
-    #[cfg(feature = "risc0")]
+    #[cfg(all(not(clippy), feature = "risc0"))]
     build_risc0_program();
 
-    #[cfg(feature = "sp1")]
+    #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
 }
 
-#[cfg(feature = "risc0")]
+#[cfg(all(not(clippy), feature = "risc0"))]
 fn build_risc0_program() {
     use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
@@ -46,7 +46,7 @@ fn build_risc0_program() {
     .expect("could not write Risc0 vk to file");
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(all(not(clippy), feature = "sp1"))]
 fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};

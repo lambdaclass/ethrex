@@ -13,12 +13,17 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
+use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
+use tracing::Level;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -93,7 +98,7 @@ pub struct SequencerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_MONITOR",
-        help_heading = "Sequencer options"
+        help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
 }
@@ -735,6 +740,76 @@ impl Default for MonitorOptions {
         Self {
             tick_rate: 1000,
             batch_widget_height: None,
+        }
+    }
+}
+
+#[derive(Parser)]
+pub struct ProverClientOptions {
+    #[arg(
+        long = "backend",
+        env = "PROVER_CLIENT_BACKEND",
+        default_value = "exec",
+        help_heading = "Prover client options",
+        value_enum
+    )]
+    pub backend: Backend,
+    #[arg(
+        long = "proof-coordinator",
+        value_name = "URL",
+        env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
+        help_heading = "Prover client options",
+        help = "URL of the sequencer's proof coordinator"
+    )]
+    pub proof_coordinator_endpoint: Url,
+    #[arg(
+        long = "proving-time",
+        value_name = "PROVING_TIME",
+        env = "PROVER_CLIENT_PROVING_TIME",
+        help = "Time to wait before requesting new data to prove",
+        help_heading = "Prover client options",
+        default_value_t = 5000
+    )]
+    pub proving_time_ms: u64,
+    #[arg(
+        long = "log.level",
+        default_value_t = Level::INFO,
+        value_name = "LOG_LEVEL",
+        help = "The verbosity level used for logs.",
+        long_help = "Possible values: info, debug, trace, warn, error",
+        help_heading = "Prover client options"
+    )]
+    pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        value_name = "BOOLEAN",
+        env = "PROVER_CLIENT_ALIGNED",
+        help = "Activate aligned proving system",
+        help_heading = "Prover client options"
+    )]
+    pub aligned: bool,
+}
+
+impl From<ProverClientOptions> for ProverConfig {
+    fn from(config: ProverClientOptions) -> Self {
+        Self {
+            backend: config.backend,
+            proof_coordinator: config.proof_coordinator_endpoint,
+            proving_time_ms: config.proving_time_ms,
+            aligned_mode: config.aligned,
+        }
+    }
+}
+
+impl Default for ProverClientOptions {
+    fn default() -> Self {
+        Self {
+            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            proving_time_ms: 5000,
+            log_level: Level::INFO,
+            aligned: false,
+            backend: Backend::Exec,
         }
     }
 }
