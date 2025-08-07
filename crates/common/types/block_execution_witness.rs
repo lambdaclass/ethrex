@@ -59,7 +59,7 @@ pub struct ExecutionWitnessResult {
         serialize_with = "serialize_code_map",
         deserialize_with = "deserialize_code_map"
     )]
-    pub codes_map: HashMap<H256, Bytes>,
+    pub codes_map: HashMap<H256, Bytes>, // FIXME: This field serializes empty when codes is not empty.
     // Pruned state MPT
     #[serde(skip)]
     pub state_trie: Option<Trie>,

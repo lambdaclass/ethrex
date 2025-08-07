@@ -8,11 +8,11 @@ use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
-use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use crate::{constants::get_chain_config, networks::Network};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
@@ -40,13 +40,16 @@ enum SubcommandExecute {
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: Url,
         #[arg(
-            long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            long = "network",
+            value_name = "GENESIS_FILE_PATH",
+            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
+            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+            help_heading = "Node options",
+            env = "ETHREX_NETWORK",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -113,7 +116,7 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
+                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;

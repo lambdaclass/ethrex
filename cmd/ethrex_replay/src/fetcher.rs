@@ -1,7 +1,7 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 
@@ -12,7 +12,7 @@ pub async fn get_blockdata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
 
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(cache) = load_cache(&file_name, chain_config) {
         info!("Getting block data from cache");
         return Ok(cache);
     }
@@ -90,7 +90,7 @@ pub async fn get_rangedata(
     to: usize,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{from}-{to}.json");
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(cache) = load_cache(&file_name, chain_config) {
         info!("Getting block range data from cache");
         return Ok(cache);
     }
@@ -108,7 +108,7 @@ pub async fn get_batchdata(
     batch_number: u64,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_batch_{batch_number}.json");
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(cache) = load_cache(&file_name, chain_config) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
