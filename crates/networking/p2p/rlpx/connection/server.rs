@@ -65,6 +65,7 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
+    sync::storage_healing::{StorageHealer, StorageHealerMsg},
     types::Node,
 };
 
@@ -121,6 +122,7 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Arc<Mutex<Kademlia>>,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
+    pub(crate) backend_table: HashMap<u64, GenServerHandle<StorageHealer>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
 }
@@ -152,6 +154,7 @@ pub enum InnerState {
 pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
+    BackendRequest(Message, GenServerHandle<StorageHealer>),
     SendPing,
     SendNewPooledTxHashes,
     BlockRangeUpdate,
@@ -273,6 +276,13 @@ impl GenServer for RLPxConnection {
                         &format!("Received backend message: {message}"),
                     );
                     handle_backend_message(&mut established_state, message).await
+                }
+                Self::CastMsg::BackendRequest(message, handler) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received backend message: {message}"),
+                    );
+                    handle_backend_request(&mut established_state, message, handler).await
                 }
                 Self::CastMsg::SendPing => {
                     send(&mut established_state, Message::Ping(PingMessage {})).await
@@ -888,11 +898,29 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
         }
+        ref message @ Message::TrieNodes(ref resp) => {
+            let id = resp.id;
+            if let Some(receiver) = state.backend_table.get(&id) {
+                receiver
+                    .clone()
+                    .cast(StorageHealerMsg::TrieNodes(resp.clone()))
+                    .await;
+            } else {
+                log_peer_debug(
+                    &state.node,
+                    "GetTrieNodes was not requested by StorageHealer process, sending response to backend on default channel",
+                );
+                state
+                    .backend_channel
+                    .as_mut()
+                    .expect("Backend channel is not available")
+                    .send(message.clone())?
+            }
+        }
         // Send response messages to the backend
         message @ Message::AccountRange(_)
         | message @ Message::StorageRanges(_)
         | message @ Message::ByteCodes(_)
-        | message @ Message::TrieNodes(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts(_) => {
@@ -913,6 +941,25 @@ async fn handle_backend_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), RLPxError> {
+    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    send(state, message).await?;
+    Ok(())
+}
+
+async fn handle_backend_request(
+    state: &mut Established,
+    message: Message,
+    handler: GenServerHandle<StorageHealer>,
+) -> Result<(), RLPxError> {
+    match &message {
+        Message::GetTrieNodes(get_trie_nodes_message) => {
+            state
+                .backend_table
+                .insert(get_trie_nodes_message.id, handler);
+        }
+        // Currently, not other message types are handled as requests
+        _ => todo!(),
+    }
     log_peer_debug(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())

@@ -135,6 +135,7 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: Arc::new(Mutex::new(context.table.clone())),
             backend_channel: None,
+            backend_table: HashMap::new(),
             _inbound: inbound,
             l2_state: context
                 .based_context

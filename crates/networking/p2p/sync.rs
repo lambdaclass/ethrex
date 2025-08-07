@@ -1,3 +1,6 @@
+mod state_healing;
+pub mod storage_healing;
+
 use crate::peer_handler::SNAP_LIMIT;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::utils::current_unix_time;
@@ -1084,6 +1087,8 @@ enum SyncError {
     NoLatestCanonical,
     #[error("Range received is invalid")]
     InvalidRangeReceived,
+    #[error("Corrupt Path")]
+    CorruptPath,
 }
 
 impl<T> From<SendError<T>> for SyncError {
