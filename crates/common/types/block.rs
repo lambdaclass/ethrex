@@ -241,30 +241,16 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_compact_iter(transactions, |w, b| w.encode(b))
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
-    let iter = receipts
-        .iter()
-        .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_compact_iter(receipts, |w, b| w.encode(b))
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
-    let iter = withdrawals
-        .iter()
-        .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_compact_iter(withdrawals, |w, b| w.encode(b))
 }
 
 impl RLPEncode for BlockBody {
