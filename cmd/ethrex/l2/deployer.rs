@@ -16,8 +16,7 @@ use ethrex_l2_rpc::{
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
-    initialize_contract,
+    call_contract, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
 };
 use ethrex_rpc::{
     EthClient,
@@ -449,7 +448,7 @@ pub struct ContractAddresses {
 pub async fn deploy_l1_contracts(
     opts: DeployerOptions,
 ) -> Result<ContractAddresses, DeployerError> {
-    info!("Starting deployer binary");
+    debug!("Starting deployer binary");
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
@@ -479,7 +478,8 @@ pub async fn deploy_l1_contracts(
     }
 
     write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
-    info!("Deployer binary finished successfully");
+
+    debug!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
 
@@ -720,17 +720,14 @@ async fn initialize_contracts(
             Value::Uint(genesis.config.chain_id.into()),
         ];
 
-        trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
-        let on_chain_proposer_initialization_calldata = encode_calldata(
-            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED,
-            &calldata_values,
-        )?;
+        trace!("OnChainProposer initialization calldata values: {calldata_values:?}");
 
-        let initialize_tx_hash = initialize_contract(
-            contract_addresses.on_chain_proposer_address,
-            on_chain_proposer_initialization_calldata,
-            initializer,
+        let initialize_tx_hash = call_contract(
             eth_client,
+            initializer,
+            contract_addresses.on_chain_proposer_address,
+            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED,
+            calldata_values,
         )
         .await?;
 
@@ -742,15 +739,14 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.on_chain_proposer_address),
         ];
 
-        trace!(calldata_values = ?calldata_values, "SequencerRegistry initialization calldata values");
-        let sequencer_registry_initialization_calldata =
-            encode_calldata(INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE, &calldata_values)?;
+        trace!("SequencerRegistry initialization calldata values: {calldata_values:?}");
 
-        let initialize_tx_hash = initialize_contract(
-            contract_addresses.sequencer_registry_address,
-            sequencer_registry_initialization_calldata,
-            initializer,
+        let initialize_tx_hash = call_contract(
             eth_client,
+            initializer,
+            contract_addresses.sequencer_registry_address,
+            INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE,
+            calldata_values,
         )
         .await?;
 
@@ -774,35 +770,32 @@ async fn initialize_contracts(
             Value::Uint(genesis.config.chain_id.into()),
         ];
 
-        trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
-        let on_chain_proposer_initialization_calldata =
-            encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
+        trace!("OnChainProposer initialization calldata values: {calldata_values:?}");
 
-        let initialize_tx_hash = initialize_contract(
-            contract_addresses.on_chain_proposer_address,
-            on_chain_proposer_initialization_calldata,
-            initializer,
+        let initialize_tx_hash = call_contract(
             eth_client,
+            initializer,
+            contract_addresses.on_chain_proposer_address,
+            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE,
+            calldata_values,
         )
         .await?;
+
         info!(tx_hash =? initialize_tx_hash, "OnChainProposer initialized");
     }
 
-    let initialize_bridge_address_tx_hash = {
-        let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
+    let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
 
-        trace!(calldata_values = ?calldata_values, "OnChainProposer bridge address initialization calldata values");
-        let on_chain_proposer_initialization_calldata =
-            encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
+    trace!("OnChainProposer bridge address initialization calldata values: {calldata_values:?}");
 
-        initialize_contract(
-            contract_addresses.on_chain_proposer_address,
-            on_chain_proposer_initialization_calldata,
-            initializer,
-            eth_client,
-        )
-        .await?
-    };
+    let initialize_bridge_address_tx_hash = call_contract(
+        eth_client,
+        initializer,
+        contract_addresses.on_chain_proposer_address,
+        INITIALIZE_BRIDGE_ADDRESS_SIGNATURE,
+        calldata_values,
+    )
+    .await?;
 
     info!(
         tx_hash =? initialize_bridge_address_tx_hash,
@@ -811,47 +804,54 @@ async fn initialize_contracts(
 
     if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
         let owner: Signer = LocalSigner::new(owner_pk).into();
-        transfer_ownership(
+
+        let tx_hash = transfer_ownership(
             eth_client,
             initializer,
             owner.address(),
             contract_addresses.on_chain_proposer_address,
         )
         .await?;
-        accept_ownership(
+
+        info!(?tx_hash, to =? owner, "OnChainProposer ownership transfered but not accepted yet");
+
+        let tx_hash = accept_ownership(
             eth_client,
             &owner,
             contract_addresses.on_chain_proposer_address,
         )
         .await?;
+
+        info!(?tx_hash, "OnChainProposer ownership accepted");
     } else if let Some(owner) = opts.on_chain_proposer_owner {
-        transfer_ownership(
+        let tx_hash = transfer_ownership(
             eth_client,
             initializer,
             owner,
             contract_addresses.on_chain_proposer_address,
         )
         .await?;
+
+        info!(?tx_hash, to =? owner, "OnChainProposer ownership transfered but not accepted yet");
     }
 
     info!("Initializing CommonBridge");
-    let bridge_owner = opts.bridge_owner.unwrap_or(initializer_address);
 
+    let bridge_owner = opts.bridge_owner.unwrap_or(initializer_address);
     let calldata_values = vec![
         Value::Address(bridge_owner),
         Value::Address(contract_addresses.on_chain_proposer_address),
         Value::Uint(opts.inclusion_max_wait.into()),
     ];
 
-    trace!(calldata_values = ?calldata_values, "CommonBridge initialization calldata values");
-    let bridge_initialization_calldata =
-        encode_calldata(INITIALIZE_COMMON_BRIDGE_SIGNATURE, &calldata_values)?;
+    trace!("CommonBridge initialization calldata values: {calldata_values:?}");
 
-    let initialize_tx_hash = initialize_contract(
-        contract_addresses.bridge_address,
-        bridge_initialization_calldata,
-        initializer,
+    let initialize_tx_hash = call_contract(
         eth_client,
+        initializer,
+        contract_addresses.bridge_address,
+        INITIALIZE_COMMON_BRIDGE_SIGNATURE,
+        calldata_values,
     )
     .await?;
 
@@ -866,52 +866,34 @@ async fn transfer_ownership(
     from: &Signer,
     to: Address,
     contract: Address,
-) -> Result<(), DeployerError> {
-    let owner_transfer_calldata =
-        encode_calldata(TRANSFER_OWNERSHIP_SIGNATURE, &[Value::Address(to)])?;
+) -> Result<H256, DeployerError> {
+    let tx_hash = call_contract(
+        eth_client,
+        from,
+        contract,
+        TRANSFER_OWNERSHIP_SIGNATURE,
+        vec![Value::Address(to)],
+    )
+    .await?;
 
-    let transfer_ownership_tx_hash =
-        initialize_contract(contract, owner_transfer_calldata, from, eth_client).await?;
-
-    info!(
-        tx_hash =? transfer_ownership_tx_hash,
-        from =? from.address(),
-        ?to,
-        ?contract,
-        "Ownership transfered but not accepted yet"
-    );
-
-    Ok(())
+    Ok(tx_hash)
 }
 
 async fn accept_ownership(
     eth_client: &EthClient,
     new_owner: &Signer,
     contract: Address,
-) -> Result<(), DeployerError> {
-    let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
-    let accept_tx = eth_client
-        .build_eip1559_transaction(
-            contract,
-            new_owner.address(),
-            accept_ownership_calldata.into(),
-            Overrides::default(),
-        )
-        .await?;
-    let accept_tx_hash = send_eip1559_transaction(eth_client, &accept_tx, &new_owner).await?;
+) -> Result<H256, DeployerError> {
+    let tx_hash = call_contract(
+        eth_client,
+        new_owner,
+        contract,
+        ACCEPT_OWNERSHIP_SIGNATURE,
+        vec![],
+    )
+    .await?;
 
-    eth_client
-        .wait_for_transaction_receipt(accept_tx_hash, 100)
-        .await?;
-
-    info!(
-        tx_hash =? accept_tx_hash,
-        owner =? new_owner.address(),
-        ?contract,
-        "OnChainProposer ownership transfered"
-    );
-
-    Ok(())
+    Ok(tx_hash)
 }
 
 async fn make_deposits(

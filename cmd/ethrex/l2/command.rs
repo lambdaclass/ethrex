@@ -16,6 +16,7 @@ use ethrex_common::{
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
+use ethrex_l2_rpc::signer::LocalSigner;
 use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
@@ -456,13 +457,14 @@ impl Command {
 
                 let client = EthClient::new(rpc_url.as_str())?;
                 if let Some(private_key) = private_key {
+                    let signer = LocalSigner::new(private_key).into();
+
                     info!("Pausing OnChainProposer...");
-                    call_contract(&client, &private_key, contract_address, "pause()", vec![])
-                        .await?;
+                    call_contract(&client, &signer, contract_address, "pause()", vec![]).await?;
                     info!("Doing revert on OnChainProposer...");
                     call_contract(
                         &client,
-                        &private_key,
+                        &signer,
                         contract_address,
                         "revertBatch(uint256)",
                         vec![Value::Uint(batch.into())],
@@ -495,9 +497,9 @@ impl Command {
                     block_to_delete += 1;
                 }
                 if let Some(private_key) = private_key {
+                    let signer = LocalSigner::new(private_key).into();
                     info!("Unpausing OnChainProposer...");
-                    call_contract(&client, &private_key, contract_address, "unpause()", vec![])
-                        .await?;
+                    call_contract(&client, &signer, contract_address, "unpause()", vec![]).await?;
                 }
             }
             Command::Deploy { options } => {
