@@ -11,4 +11,4 @@ We call the first one "ethrex L1" and the second one "ethrex L2".
 ## Where to start
 
 To get started with ethrex, you can follow the [installation guide](./installation/README.md) to set up the client on your machine.
-Then, a good next step would be to [run node](../l1/running/README.md) and see ethrex in action.
+Then, a good next step would be to [run node](../l1/running.md) and see ethrex in action.

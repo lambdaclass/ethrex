@@ -10,10 +10,7 @@
 - [Roadmap](./getting-started/roadmap.md)
 
 # Ethrex for L1 networks
-- [Running a node](./l1/running/README.md)
-  - [mainnet](./l1/running/mainnet.md)
-  - [testnets](./l1/running/testnet.md)
-  - [dev mode](./l1/running/dev_mode.md)
+- [Running a node](./l1/running.md)
 - [Fundamentals]()
   - [Metrics]()
   - [Logs]()
