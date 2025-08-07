@@ -426,7 +426,7 @@ async fn ask_peers_for_nodes(
                 self_handler.clone(),
             ))
             .await
-            .unwrap();
+            .expect("We should be able to send mesages to our peers");
     }
 }
 
@@ -683,11 +683,9 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
                 chosen_peer = Some((peer_id, peer_channel));
                 max_score = known_peer_score.score;
             }
-        } else {
-            if chosen_peer.is_none() {
-                chosen_peer = Some((peer_id, peer_channel));
-                max_score = 0;
-            }
+        } else if chosen_peer.is_none() {
+            chosen_peer = Some((peer_id, peer_channel));
+            max_score = 0;
         }
     }
 
