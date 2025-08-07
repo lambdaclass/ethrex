@@ -380,7 +380,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
-    if *code != Bytes::new() && !code_has_delegation(code)? {
+    if !code.is_empty() && !code_has_delegation(code)? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())
