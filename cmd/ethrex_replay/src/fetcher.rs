@@ -1,5 +1,10 @@
+use std::time::{Duration, SystemTime};
+
 use ethrex_common::types::ChainConfig;
-use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rpc::{
+    EthClient,
+    types::block_identifier::{BlockIdentifier, BlockTag},
+};
 use eyre::WrapErr;
 use tracing::info;
 
@@ -33,7 +38,9 @@ pub async fn get_blockdata(
         ));
     }
 
-    info!("Getting execution witness from RPC");
+    info!("Getting execution witness from RPC for block {requested_block_number}");
+
+    let execution_witness_retrieval_start_time = SystemTime::now();
 
     let mut witness = match eth_client.get_witness(block_number.clone(), None).await {
         Ok(witness) => witness,
@@ -42,16 +49,53 @@ pub async fn get_blockdata(
         }
     };
 
+    let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+        .elapsed()
+        .unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+    info!(
+        "Got execution witness for block {requested_block_number} in {}",
+        format_duration(execution_witness_retrieval_duration)
+    );
+
     // TODO: Make sure other ExecutionWitness users use the correct chain config.
     witness.chain_config = chain_config;
 
-    info!("Getting block data from RPC");
+    info!("Getting block data from RPC for block {requested_block_number}");
 
-    let block = eth_client.get_raw_block(block_number).await?;
+    let block_retrieval_start_time = SystemTime::now();
+
+    let block = eth_client
+        .get_raw_block(BlockIdentifier::Number(requested_block_number))
+        .await?;
+
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    info!(
+        "Got block {requested_block_number} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
+    info!("Caching block {requested_block_number}");
+
+    let block_cachh_start_time = SystemTime::now();
 
     let cache = Cache::new(vec![block], witness);
 
     write_cache(&cache, &file_name).expect("failed to write cache");
+
+    let block_cache_duration = block_cachh_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    info!(
+        "Cached block {requested_block_number} in {}",
+        format_duration(block_cache_duration)
+    );
 
     Ok(cache)
 }
@@ -149,4 +193,17 @@ pub async fn get_batchdata(
     write_cache(&cache, &file_name).expect("failed to write cache");
 
     Ok(cache)
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+    
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }
