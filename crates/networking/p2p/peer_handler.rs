@@ -1945,7 +1945,7 @@ impl PeerHandler {
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");
 
-        chunk_index
+        chunk_index + 1
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
