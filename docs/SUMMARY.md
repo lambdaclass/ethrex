@@ -52,14 +52,19 @@
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
+  - [Testing](./developers/l1/testing/README.md)
+    - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
+    - [Hive tests](./developers/l1/testing/hive.md)
+    - [Assertoor tests](./developers/l1/testing/assertoor.md)
+    - [Rust tests](./developers/l1/testing/rust.md)
+    - [Load tests](./developers/l1/testing/load-tests.md)
 - [L2](./developers/l2/README.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
     - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
-- [CLI reference]()
+- [CLI reference](./CLI.md)
 - [Troubleshooting]()
-- [Developer setup L1](./l1/dev-setup-l1.md)
 
 # Other resources
 
