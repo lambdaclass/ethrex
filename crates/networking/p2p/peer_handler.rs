@@ -1070,7 +1070,16 @@ impl PeerHandler {
                     } else {
                         None
                     };
-                    tx.send((accounts, free_peer_id, chunk_left)).await.ok();
+                    tx.send((
+                        accounts
+                            .into_iter()
+                            .filter(|unit| unit.hash <= chunk_end)
+                            .collect(),
+                        free_peer_id,
+                        chunk_left,
+                    ))
+                    .await
+                    .ok();
                 } else {
                     tracing::debug!("Failed to get account range");
                     tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))

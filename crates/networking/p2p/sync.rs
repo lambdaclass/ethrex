@@ -732,7 +732,7 @@ impl Syncer {
     async fn snap_sync(
         &mut self,
         store: Store,
-        block_sync_state: BlockSyncState,
+        mut block_sync_state: BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
@@ -747,7 +747,7 @@ impl Syncer {
         let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
         while current_unix_time() > staleness_timestamp {
             (pivot_header, staleness_timestamp) =
-                update_pivot(pivot_header.number, &self.peers).await;
+                update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
         }
 
         let pivot_number = pivot_header.number;
@@ -984,6 +984,8 @@ impl Syncer {
 
         store.add_block(block).await?;
 
+        let all_block_hashes = block_sync_state.into_snap_block_hashes();
+
         let numbers_and_hashes = all_block_hashes
             .into_iter()
             .rev()
@@ -997,7 +999,11 @@ impl Syncer {
     }
 }
 
-async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u64) {
+async fn update_pivot(
+    block_number: u64,
+    peers: &PeerHandler,
+    block_sync_state: &mut BlockSyncState,
+) -> (BlockHeader, u64) {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
@@ -1034,6 +1040,18 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler) -> (BlockHeader, u
             }
         });
         info!("Succesfully updated pivot");
+        if let BlockSyncState::Snap(sync_state) = block_sync_state {
+            let block_headers = peers
+                .request_block_headers(block_number, pivot.hash())
+                .await
+                .expect("failed to fetch headers");
+            sync_state
+                .process_incoming_headers(block_headers)
+                .await
+                .unwrap();
+        } else {
+            panic!("Called update_pivot outside snapsync mode");
+        }
         return (pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12));
     }
 }
