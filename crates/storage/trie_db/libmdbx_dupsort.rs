@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::sync::RwLock;
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
@@ -16,6 +18,7 @@ where
     db: Arc<Database>,
     fixed_key: SK,
     phantom: PhantomData<T>,
+    cache: Arc<RwLock<BTreeMap<NodeHash, T::Value>>>,
 }
 
 impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
@@ -28,6 +31,7 @@ where
             db,
             fixed_key,
             phantom: PhantomData,
+            cache: Default::default(),
         }
     }
 }
@@ -38,14 +42,35 @@ where
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        if let Some(value) = self
+            .cache
+            .read()
+            .map_err(|_| TrieError::LockError)?
+            .get(&key)
+        {
+            return Ok(Some(value.clone()));
+        }
+
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::DbError)
+        let value = txn
+            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .map_err(TrieError::DbError)?;
+
+        if let Some(value) = value.as_ref() {
+            self.cache
+                .write()
+                .map_err(|_| TrieError::LockError)?
+                .insert(key, value.clone());
+        }
+
+        Ok(value)
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
+        let mut cache = self.cache.write().map_err(|_| TrieError::LockError)?;
         for (key, value) in key_values {
+            cache.insert(key, value.clone());
             txn.upsert::<T>(
                 (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
                 value,

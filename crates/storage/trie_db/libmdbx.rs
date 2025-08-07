@@ -1,10 +1,15 @@
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Table};
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    marker::PhantomData,
+    sync::{Arc, RwLock},
+};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
     db: Arc<Database>,
     phantom: PhantomData<T>,
+    cache: Arc<RwLock<BTreeMap<T::Key, T::Value>>>,
 }
 
 use ethrex_trie::TrieDB;
@@ -17,6 +22,7 @@ where
         Self {
             db,
             phantom: PhantomData,
+            cache: Default::default(),
         }
     }
 }
@@ -26,13 +32,32 @@ where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        if let Some(value) = self
+            .cache
+            .read()
+            .map_err(|_| TrieError::LockError)?
+            .get(&key)
+        {
+            return Ok(Some(value.clone()));
+        }
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        let value = txn.get::<T>(key).map_err(TrieError::DbError)?;
+
+        if let Some(value) = value.as_ref() {
+            self.cache
+                .write()
+                .map_err(|_| TrieError::LockError)?
+                .insert(key, value.clone());
+        }
+
+        Ok(value)
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
+        let mut cache = self.cache.write().map_err(|_| TrieError::LockError)?;
         for (key, value) in key_values {
+            cache.insert(key, value.clone());
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
