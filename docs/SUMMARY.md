@@ -6,6 +6,7 @@
   - [Package manager](./getting-started/installation/package_manager.md)
   - [Docker image](./getting-started/installation/docker_images.md)
   - [Building from source](./getting-started/installation/building_from_source.md)
+- [Consensus Client](./getting-started/consensus_client.md)
 - [Roadmap](./getting-started/roadmap.md)
 
 # Ethrex for L1 networks
