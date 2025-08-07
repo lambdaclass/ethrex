@@ -477,7 +477,9 @@ pub async fn deploy_l1_contracts(
             });
     }
 
-    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+    if let Some(env_file_path) = opts.env_file_path {
+        write_contract_addresses_to_env(contract_addresses, env_file_path)?;
+    }
 
     debug!("Deployer binary finished successfully");
     Ok(contract_addresses)
@@ -977,84 +979,49 @@ async fn make_deposits(
 
 fn write_contract_addresses_to_env(
     contract_addresses: ContractAddresses,
-    env_file_path: Option<PathBuf>,
+    path: PathBuf,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
-    let env_file_path =
-        env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/cmd/.env
 
-    if !env_file_path.exists() {
-        File::create(&env_file_path).map_err(|err| {
+    if !path.is_file() {
+        File::create(&path).map_err(|err| {
             DeployerError::InternalError(format!(
                 "Failed to create .env file at {}: {err}",
-                env_file_path.display()
+                path.display()
             ))
         })?;
     }
 
-    let env_file = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&env_file_path)?; // ethrex/crates/l2/.env
+    let env_file = OpenOptions::new().write(true).truncate(true).open(&path)?;
     let mut writer = BufWriter::new(env_file);
-    writeln!(
-        writer,
-        "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={:#x}",
-        contract_addresses.on_chain_proposer_address
-    )?;
-    writeln!(
-        writer,
-        "ETHREX_WATCHER_BRIDGE_ADDRESS={:#x}",
-        contract_addresses.bridge_address
-    )?;
-    writeln!(
-        writer,
-        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={:#x}",
-        contract_addresses.sp1_verifier_address
-    )?;
 
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
-        contract_addresses.risc0_verifier_address
+        r#"ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={:#x}
+ETHREX_WATCHER_BRIDGE_ADDRESS={:#x}
+ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={:#x}
+ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}
+ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={:#x}
+ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}
+ENCLAVE_ID_DAO={:#x}
+FMSPC_TCB_DAO={:#x}
+PCK_DAO={:#x}
+PCS_DAO={:#x}
+ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}"#,
+        contract_addresses.on_chain_proposer_address,
+        contract_addresses.bridge_address,
+        contract_addresses.sp1_verifier_address,
+        contract_addresses.risc0_verifier_address,
+        contract_addresses.aligned_aggregator_address,
+        contract_addresses.tdx_verifier_address,
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao"),
+        read_tdx_deployment_address("AutomataFmspcTcbDao"),
+        read_tdx_deployment_address("AutomataPckDao"),
+        read_tdx_deployment_address("AutomataPcsDao"),
+        contract_addresses.sequencer_registry_address,
     )?;
-    writeln!(
-        writer,
-        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={:#x}",
-        contract_addresses.aligned_aggregator_address
-    )?;
-    writeln!(
-        writer,
-        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}",
-        contract_addresses.tdx_verifier_address
-    )?;
-    // TDX aux contracts, qpl-tool depends on exact env var naming
-    writeln!(
-        writer,
-        "ENCLAVE_ID_DAO={:#x}",
-        read_tdx_deployment_address("AutomataEnclaveIdentityDao")
-    )?;
-    writeln!(
-        writer,
-        "FMSPC_TCB_DAO={:#x}",
-        read_tdx_deployment_address("AutomataFmspcTcbDao")
-    )?;
-    writeln!(
-        writer,
-        "PCK_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPckDao")
-    )?;
-    writeln!(
-        writer,
-        "PCS_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPcsDao")
-    )?;
-    writeln!(
-        writer,
-        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
-        contract_addresses.sequencer_registry_address
-    )?;
-    trace!(?env_file_path, "Contract addresses written to .env");
+
+    trace!(?path, "Contract addresses written to .env");
     Ok(())
 }
 

@@ -10,9 +10,8 @@ use ethrex_l2_rpc::{
     clients::{send_eip1559_transaction, send_tx_bump_gas_exponential_backoff},
     signer::{LocalSigner, Signer},
 };
-use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
-    EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
+    EthClient, L1MessageProof, errors::EthClientError, eth_sender::Overrides,
 };
 use ethrex_rpc::types::receipt::RpcReceipt;
 
