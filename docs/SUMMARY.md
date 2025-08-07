@@ -23,7 +23,7 @@
 - [Running a node](./l2/running/README.md)
 
 # Ethrex for developers
-- [Installing](./developers/installing/README.md)
+- [Installing](./developers/installing.md)
 - [Kurtosis localnet](./l1/quick-start-l1.md)
 - [Developer setup L1](./l1/dev-setup-l1.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)

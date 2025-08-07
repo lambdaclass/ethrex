@@ -2,6 +2,9 @@
 
 This document covers how the code in the node is organized by looking at different end to end flows. If we start too high level we'll need to start at consensus, and if we start too low level, we'll need to start at the EVM. Let's start somewhere in the middle: importing blocks.
 
+## Prerequisites
+This guide assumes you've read the dev [installation guide](./installing.md)
+
 ## Importing blocks
 
 The simplest task a node can do is import blocks offline. We would do so like this:
