@@ -32,6 +32,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::{sync::mpsc::error::SendError, time::Instant};
+use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -762,149 +763,154 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
 
-        self.peers
-            .request_account_range(
-                state_root,
-                H256::zero(),
-                H256::repeat_byte(0xff),
-                staleness_timestamp,
-            )
-            .await;
-
-        let empty = *EMPTY_TRIE_HASH;
-
-        let mut chunk_index = 0;
-        let mut downloaded_account_storages = 0;
-        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
-            .expect("Failed to read account_state_snapshots dir")
-        {
-            let entry = entry.expect("Failed to read dir entry");
-
-            let snapshot_path = entry.path();
-
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
-
-            let account_states_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-                });
-
-            let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                account_states_snapshot.iter().cloned().unzip();
-
-            let account_storage_roots: Vec<(H256, H256)> = account_hashes
-                .iter()
-                .zip(account_states.iter())
-                .filter_map(|(hash, state)| {
-                    (state.storage_root != empty).then_some((*hash, state.storage_root))
-                })
-                .collect();
-
-            downloaded_account_storages += account_storage_roots.len();
-
-            chunk_index = self
-                .peers
-                .request_storage_ranges(
+        let mut pivot_is_stale = true;
+        let mut bytecode_hashes = Vec::new();
+        // TODO: remove this, it's not supported feature
+        if std::env::var("SKIP_START_SNAP_SYNC").is_ok() {
+            self.peers
+                .request_account_range(
                     state_root,
-                    account_storage_roots.clone(),
-                    chunk_index,
+                    H256::zero(),
+                    H256::repeat_byte(0xff),
                     staleness_timestamp,
                 )
                 .await;
-        }
 
-        let pivot_is_stale = current_unix_time() > staleness_timestamp;
+            let empty = *EMPTY_TRIE_HASH;
 
-        info!("Starting to compute the state root...");
+            let mut chunk_index = 0;
+            let mut downloaded_account_storages = 0;
+            for entry in
+                std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+                    .expect("Failed to read account_state_snapshots dir")
+            {
+                let entry = entry.expect("Failed to read dir entry");
 
-        let account_store_start = Instant::now();
+                let snapshot_path = entry.path();
 
-        let mut computed_state_root = *EMPTY_TRIE_HASH;
-        let mut bytecode_hashes = Vec::new();
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-        for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
-            .expect("Failed to read account_state_snapshots dir")
-        {
-            let entry = entry.expect("Failed to read dir entry");
+                let account_states_snapshot: Vec<(H256, AccountState)> =
+                    RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                        panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                    });
 
-            let snapshot_path = entry.path();
+                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
+                    account_states_snapshot.iter().cloned().unzip();
 
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+                let account_storage_roots: Vec<(H256, H256)> = account_hashes
+                    .iter()
+                    .zip(account_states.iter())
+                    .filter_map(|(hash, state)| {
+                        (state.storage_root != empty).then_some((*hash, state.storage_root))
+                    })
+                    .collect();
 
-            let account_state_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-                });
+                downloaded_account_storages += account_storage_roots.len();
 
-            let trie = store.open_state_trie(computed_state_root).unwrap();
+                chunk_index = self
+                    .peers
+                    .request_storage_ranges(
+                        state_root,
+                        account_storage_roots.clone(),
+                        chunk_index,
+                        staleness_timestamp,
+                    )
+                    .await;
+            }
 
-            let (current_state_root, current_bytecode_hashes) =
-                tokio::task::spawn_blocking(move || {
-                    let mut bytecode_hashes = vec![];
-                    let mut trie = trie;
+            pivot_is_stale = current_unix_time() > staleness_timestamp;
 
-                    for (account_hash, account) in account_state_snapshot {
-                        if account.code_hash != *EMPTY_KECCACK_HASH {
-                            bytecode_hashes.push(account.code_hash);
+            info!("Starting to compute the state root...");
+
+            let account_store_start = Instant::now();
+
+            let mut computed_state_root = *EMPTY_TRIE_HASH;
+
+            for entry in
+                std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots/")
+                    .expect("Failed to read account_state_snapshots dir")
+            {
+                let entry = entry.expect("Failed to read dir entry");
+
+                let snapshot_path = entry.path();
+
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+
+                let account_state_snapshot: Vec<(H256, AccountState)> =
+                    RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                        panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                    });
+
+                let trie = store.open_state_trie(computed_state_root).unwrap();
+
+                let (current_state_root, current_bytecode_hashes) =
+                    tokio::task::spawn_blocking(move || {
+                        let mut bytecode_hashes = vec![];
+                        let mut trie = trie;
+
+                        for (account_hash, account) in account_state_snapshot {
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                bytecode_hashes.push(account.code_hash);
+                            }
+                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                                .unwrap();
                         }
-                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                            .unwrap();
-                    }
-                    let current_state_root = trie.hash().unwrap();
-                    bytecode_hashes.sort();
-                    bytecode_hashes.dedup();
-                    (current_state_root, bytecode_hashes)
-                })
+                        let current_state_root = trie.hash().unwrap();
+                        bytecode_hashes.sort();
+                        bytecode_hashes.dedup();
+                        (current_state_root, bytecode_hashes)
+                    })
+                    .await
+                    .expect("");
+
+                computed_state_root = current_state_root;
+                bytecode_hashes.extend(&current_bytecode_hashes);
+            }
+
+            *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+
+            let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+
+            info!("Expected state root: {state_root:?}");
+            info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+            let storages_store_start = Instant::now();
+
+            METRICS
+                .storage_tries_state_roots_start_time
+                .lock()
                 .await
-                .expect("");
+                .replace(SystemTime::now());
 
-            computed_state_root = current_state_root;
-            bytecode_hashes.extend(&current_bytecode_hashes);
-        }
+            *METRICS.storage_tries_state_roots_to_compute.lock().await =
+                downloaded_account_storages as u64;
 
-        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+            let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
-        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+            for entry in
+                std::fs::read_dir("/home/admin/.local/share/ethrex/account_storages_snapshots/")
+                    .expect("Failed to read account_storages_snapshots dir")
+            {
+                let entry = entry.expect("Failed to read dir entry");
 
-        info!("Expected state root: {state_root:?}");
-        info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+                let snapshot_path = entry.path();
 
-        let storages_store_start = Instant::now();
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
-        METRICS
-            .storage_tries_state_roots_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
+                let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+                    RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                        panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+                    });
 
-        *METRICS.storage_tries_state_roots_to_compute.lock().await =
-            downloaded_account_storages as u64;
-
-        let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-
-        for entry in
-            std::fs::read_dir("/home/admin/.local/share/ethrex/account_storages_snapshots/")
-                .expect("Failed to read account_storages_snapshots dir")
-        {
-            let entry = entry.expect("Failed to read dir entry");
-
-            let snapshot_path = entry.path();
-
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
-
-            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
-                RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
-                    panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
-                });
-
-            let maybe_big_account_storage_state_roots_clone =
-                maybe_big_account_storage_state_roots.clone();
-            let store_clone = store.clone();
-            let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+                let maybe_big_account_storage_state_roots_clone =
+                    maybe_big_account_storage_state_roots.clone();
+                let store_clone = store.clone();
+                let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                 let store: Store = store_clone;
 
                 let (sender, receiver) = std::sync::mpsc::channel();
@@ -954,33 +960,35 @@ impl Syncer {
                     .collect::<Vec<_>>()
             }).await.expect("");
 
-            store
-                .write_storage_trie_nodes_batch(storage_trie_node_changes)
-                .await?;
+                store
+                    .write_storage_trie_nodes_batch(storage_trie_node_changes)
+                    .await?;
+            }
+
+            // for (account_hash, expected_storage_root) in &account_storage_roots {
+            //     let mut binding = maybe_big_account_storage_state_roots
+            //         .lock()
+            //         .expect("Failed to acquire lock");
+
+            //     let computed_storage_root = binding.entry(*account_hash).or_default();
+
+            //     if *computed_storage_root != *expected_storage_root {
+            //         error!(
+            //             "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
+            //         );
+            //     }
+            // }
+
+            METRICS
+                .storage_tries_state_roots_end_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+
+            let storages_store_time =
+                Instant::now().saturating_duration_since(storages_store_start);
+            info!("Finished storing storage tries in: {storages_store_time:?}");
         }
-
-        // for (account_hash, expected_storage_root) in &account_storage_roots {
-        //     let mut binding = maybe_big_account_storage_state_roots
-        //         .lock()
-        //         .expect("Failed to acquire lock");
-
-        //     let computed_storage_root = binding.entry(*account_hash).or_default();
-
-        //     if *computed_storage_root != *expected_storage_root {
-        //         error!(
-        //             "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
-        //         );
-        //     }
-        // }
-
-        METRICS
-            .storage_tries_state_roots_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
-        info!("Finished storing storage tries in: {storages_store_time:?}");
 
         // If we need to, we star to heal now.
         if pivot_is_stale {

@@ -133,25 +133,22 @@ impl GenServer for StorageHealer {
     type Error = ();
 
     async fn handle_call(
-        mut self,
+        self,
         _message: StorageHealerCallMsg,
         _handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         info!("Receiving a call");
         // We only ask for IsFinished in the message, so we don't match it
-        let is_finished = self.requests.len() == 0 && self.download_queue.len() == 0;
+        let is_finished = self.requests.is_empty() && self.download_queue.is_empty();
         let is_stale = current_unix_time() > self.staleness_timestamp;
         info!("Are we finished? {is_finished}. Are we stale? {is_stale}");
         // Finished means that we have succesfully healed according to our algorithm
         // That means that we have commited the root_node of the tree
         if is_finished || is_stale {
-            CallResponse::Reply(
-                self,
-                StorageHealerOutMsg::FinishedStale {
-                    is_finished,
-                    is_stale,
-                },
-            )
+            CallResponse::Stop(StorageHealerOutMsg::FinishedStale {
+                is_finished,
+                is_stale,
+            })
         } else {
             CallResponse::Reply(
                 self,
@@ -186,7 +183,8 @@ impl GenServer for StorageHealer {
                     &mut self.scored_peers,
                     &mut self.download_queue,
                     &mut self.failed_downloads,
-                );
+                )
+                .await;
                 info!("We have cleared the inflight requests");
                 ask_peers_for_nodes(
                     &mut self.download_queue,
@@ -195,7 +193,8 @@ impl GenServer for StorageHealer {
                     self.state_root,
                     &mut self.scored_peers,
                     handle.clone(),
-                );
+                )
+                .await;
                 info!("We have asked the peers for nodes");
             }
             StorageHealerMsg::TrieNodes(trie_nodes) => {
@@ -217,14 +216,16 @@ impl GenServer for StorageHealer {
                             .expect("We launched the storage healer without a membatch"),
                         &mut self.leafs_healed,
                         &mut self.roots_healed,
-                    );
+                    )
+                    .await;
                 };
                 clear_inflight_requests(
                     &mut self.requests,
                     &mut self.scored_peers,
                     &mut self.download_queue,
                     &mut self.failed_downloads,
-                );
+                )
+                .await;
                 ask_peers_for_nodes(
                     &mut self.download_queue,
                     &mut self.requests,
@@ -232,7 +233,8 @@ impl GenServer for StorageHealer {
                     self.state_root,
                     &mut self.scored_peers,
                     handle.clone(),
-                );
+                )
+                .await;
             }
         }
         CastResponse::NoReply(self)
@@ -308,7 +310,7 @@ pub async fn heal_storage_trie(
         "Started Storage Healing with {} accounts",
         account_paths.len()
     );
-    let mut handle = StorageHealer::start_blocking(StorageHealer {
+    let mut handle = StorageHealer::start(StorageHealer {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
         store,
@@ -328,7 +330,7 @@ pub async fn heal_storage_trie(
     let mut is_finished = false;
     let mut is_stale = false;
 
-    while !is_finished || !is_stale {
+    while !is_finished && !is_stale {
         handle.cast(StorageHealerMsg::CheckUp).await;
         let outmsg = handle
             .call(StorageHealerCallMsg::IsFinished)
@@ -441,8 +443,8 @@ fn zip_requeue_node_responses_score_peer(
         "We are processing the nodes, we received {} nodes from our peer",
         trie_nodes.nodes.len()
     );
-    let mut request = requests.remove(&trie_nodes.id)?;
-    let mut peer = scored_peers
+    let request = requests.remove(&trie_nodes.id)?;
+    let peer = scored_peers
         .get_mut(&request.peer_id)
         .expect("Each time we request we should add to scored_peeers");
     peer.in_flight = false;
