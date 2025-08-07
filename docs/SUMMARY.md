@@ -14,6 +14,13 @@
   - [mainnet](./l1/running/mainnet.md)
   - [testnets](./l1/running/testnet.md)
   - [dev mode](./l1/running/dev_mode.md)
+- [Fundamentals]()
+  - [Metrics]()
+  - [Logs]()
+  - [Security]()
+  - [Databases]()
+  - [Sync modes](./l1/fundamentals/sync_modes.md )
+  - [Pruning]()
 
 # Ethrex for L2 networks
 - [Running a node](./l2/running/README.md)
@@ -22,13 +29,7 @@
 - [Installing](./developers/installing/README.md)
 - [Kurtosis localnet](./l1/quick-start-l1.md)
 - [Developer setup L1](./l1/dev-setup-l1.md)
-- [Fundamentals]()
-  - [Metrics]()
-  - [Logs]()
-  - [Security]()
-  - [Databases]()
-  - [Sync modes]()
-  - [Pruning]()
+
 
 - [Layer 2](./l2/README.md)
   - [Getting started](./l2/getting_started.md)
