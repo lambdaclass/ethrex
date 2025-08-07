@@ -27,7 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: usize = 777;
@@ -176,8 +176,9 @@ impl GenServer for StorageHealer {
         match message {
             StorageHealerMsg::CheckUp => {
                 info!(
-                    "We are state healing. Inflight tasks {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                    "We are storage healing. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
                     state.requests.len(),
+                    state.download_queue.len(),
                     state.maximum_length_seen,
                     state.leafs_healed,
                     state.roots_healed,
@@ -355,6 +356,7 @@ async fn ask_peers_for_nodes(
         let Some(mut peer) =
             get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
         else {
+            warn!("We have no free peers for storage healing!");
             // If we have no peers we shrug our shoulders and wait until next free peer
             return;
         };
