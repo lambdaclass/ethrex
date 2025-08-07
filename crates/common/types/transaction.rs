@@ -2058,7 +2058,7 @@ mod serde_impl {
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
     /// Used to perform gas estimations and access list creation
-    #[derive(Deserialize, Serialize, Debug, PartialEq, Clone, Default)]
+    #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
     #[serde(rename_all = "camelCase")]
     pub struct GenericTransaction {
         #[serde(default)]

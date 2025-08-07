@@ -677,11 +677,10 @@ impl EthClient {
             tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
             add_blobs_to_generic_tx(&mut tx, blobs_bundle);
         }
-        tx.gas = Some(
-            overrides
-                .gas_limit
-                .unwrap_or(self.estimate_gas(tx.clone()).await?),
-        );
+        tx.gas = Some(match overrides.gas_limit {
+            Some(gas) => gas,
+            None => self.estimate_gas(tx.clone()).await?,
+        });
         tx.nonce = Some(
             self.get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
