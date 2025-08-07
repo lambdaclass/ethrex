@@ -75,7 +75,7 @@ These are the kinds of errors:
 - `RevertOpcode`: Triggered by Revert Opcode, it behaves like an `ExceptionalHalt` except this one doesn't consume the gas left.
 
 ## LevmAccount vs Account
-Why not use the same Account struct that the L1 uses? Because it's pretty limited and we wanted a little bit more flexibility in LEVM. We wanted to have an `AccountStatus` so that the VM knows the status of an account in any given moment and also we don't need the account to have code, as the code will be stored in the database directly and we can access it via `code_hash`.
+Why not use the same Account struct that the L1 uses? Because it's pretty limited and we wanted a little bit more flexibility in LEVM. We wanted to have an `AccountStatus` so that the VM knows the status of an account at any given moment and also we don't need the account to have code, as the code will be stored in the database directly and we can access it via `code_hash`.
 Advantages: 
 - We'll fetch the code only if we need to, this means less accesses to the database. 
 - If there is duplicate code between accounts (which is pretty common) we'll store it in memory only once. 
