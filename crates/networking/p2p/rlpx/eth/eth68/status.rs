@@ -13,7 +13,7 @@ use ethrex_rlp::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct StatusMessage68 {
+pub struct StatusMessage68 {
     pub(crate) eth_version: u8,
     pub(crate) network_id: u64,
     pub(crate) total_difficulty: U256,

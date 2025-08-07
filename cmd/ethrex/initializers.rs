@@ -9,12 +9,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, peer_table, public_key_from_signing_key},
-    peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
-    sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    kademlia::Kademlia, network::{peer_table, P2PContext}, peer_handler::PeerHandler, rlpx::l2::l2_connection::P2PBasedContext, sync_manager::SyncManager, types::{Node, NodeRecord}, utils::public_key_from_signing_key
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -100,7 +95,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -145,7 +140,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -178,7 +173,7 @@ pub async fn init_network(
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats());
 }
 
 #[cfg(feature = "dev")]
@@ -355,7 +350,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     String,
     CancellationToken,
-    Arc<Mutex<KademliaTable>>,
+    Kademlia,
     Arc<Mutex<NodeRecord>>,
 )> {
     let data_dir = set_datadir(&opts.datadir);
@@ -380,7 +375,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
