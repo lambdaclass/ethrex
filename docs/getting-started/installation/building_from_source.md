@@ -13,6 +13,10 @@ To install the client simply run
 cargo install --locked ethrex --git https://github.com/lambdaclass/ethrex.git
 ```
 
+> [!TIP]
+> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
+> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
+
 To install a specifc version you can add the `--tag <tag>` flag.
 Existing tags are available in the [GitHub repo](https://github.com/lambdaclass/ethrex/tags)
 
@@ -36,6 +40,10 @@ After that, you can run the following command inside the cloned repo to build th
 ```sh
 cargo build --bin ethrex --release
 ```
+
+> [!TIP]
+> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
+> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
 
 You can find the built binary inside `target/release` directory.
 After that, you can verify the program is working by running:
