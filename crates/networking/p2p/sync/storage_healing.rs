@@ -274,7 +274,7 @@ pub async fn heal_storage_trie(
 ) -> bool {
     let mut handle = StorageHealer::start(StorageHealerState {
         last_update: Instant::now(),
-        download_queue: VecDeque::new(),
+        download_queue: get_initial_downloads(&account_paths),
         store,
         membatch,
         peer_handler: peers,
@@ -492,7 +492,7 @@ fn log_storage_heal(last_update: &mut Instant) {
     }
 }
 
-fn get_initial_downloads(account_paths: &[Nibbles]) -> Vec<NodeRequest> {
+fn get_initial_downloads(account_paths: &[Nibbles]) -> VecDeque<NodeRequest> {
     account_paths
         .into_iter()
         .map(|acc_path| {
