@@ -37,7 +37,7 @@ const BYTECODE_BATCH_SIZE: usize = 70;
 /// Max size of a bach to start a storage fetch request in queues
 const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a node fetch request in queues
-const NODE_BATCH_SIZE: usize = 900;
+pub const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue
 const MAX_PARALLEL_FETCHES: usize = 10;
 /// Maximum amount of messages in a channel

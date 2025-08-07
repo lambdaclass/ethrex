@@ -7,13 +7,13 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
-    sync::state_healing::SHOW_PROGRESS_INTERVAL_DURATION,
+    sync::state_healing::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
     utils::current_unix_time,
 };
 use std::cell::OnceCell;
 
 use bytes::Bytes;
-use ethrex_common::H256;
+use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
@@ -265,6 +265,49 @@ pub struct NodeRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
+pub async fn heal_storage_trie_wrap<T: Iterator<Item = (H256, AccountState)>>(
+    state_root: H256,
+    account_paths: T,
+    peers: PeerHandler,
+    store: Store,
+    membatch: OnceCell<Membatch>,
+    staleness_timestamp: u64,
+) -> bool {
+    let mut account_path_roots = account_paths
+        .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
+        .map(|(hashed_account_key, _)| Nibbles::from_bytes(hashed_account_key.as_bytes()));
+    let mut account_path_nibbles: Vec<Nibbles> = Vec::new();
+    let mut is_finished = true;
+    for account_path in account_path_roots {
+        account_path_nibbles.push(account_path);
+        if account_path_nibbles.len() > 500 {
+            is_finished = heal_storage_trie(
+                state_root,
+                account_path_nibbles,
+                peers.clone(),
+                store.clone(),
+                membatch.clone(),
+                staleness_timestamp,
+            )
+            .await;
+        }
+        account_path_nibbles = Vec::new();
+        if !is_finished {
+            return false;
+        }
+    }
+    is_finished = heal_storage_trie(
+        state_root,
+        account_path_nibbles,
+        peers.clone(),
+        store.clone(),
+        membatch.clone(),
+        staleness_timestamp,
+    )
+    .await;
+    todo!()
+}
+
 pub async fn heal_storage_trie(
     state_root: H256,
     account_paths: Vec<Nibbles>,
@@ -274,7 +317,7 @@ pub async fn heal_storage_trie(
     staleness_timestamp: u64,
 ) -> bool {
     info!("Started Storage Healing");
-    let mut handle = StorageHealer::start(StorageHealerState {
+    let mut handle = StorageHealer::start_blocking(StorageHealerState {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
         store,
@@ -360,7 +403,7 @@ async fn ask_peers_for_nodes(
             // If we have no peers we shrug our shoulders and wait until next free peer
             return;
         };
-        let at = usize::max(0, download_queue.len());
+        let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         requests.insert(

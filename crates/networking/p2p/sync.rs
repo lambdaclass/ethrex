@@ -5,7 +5,7 @@ use std::cell::OnceCell;
 use crate::metrics::METRICS;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, heal_state_trie};
-use crate::sync::storage_healing::heal_storage_trie;
+use crate::sync::storage_healing::heal_storage_trie_wrap;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler, SNAP_LIMIT},
     utils::current_unix_time,
@@ -701,10 +701,9 @@ impl Syncer {
                 }
                 // TODO: 💀💀💀 either remove or change to a debug flag
                 // validate_state_root(store.clone(), pivot_header.state_root).await;
-                healing_done = heal_storage_trie(
+                healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
-                                store
-                .iter_accounts(state_root).expect("We should be able to access the storege").map(|(hashed_account_key, _)| Nibbles::from_bytes(hashed_account_key.as_bytes())).collect(),
+                    store.iter_accounts(state_root).expect("We should be able to access the storege"),
                     self.peers.clone(),
                     store.clone(),
                     membatch.clone(),
