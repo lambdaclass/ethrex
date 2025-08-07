@@ -1092,6 +1092,42 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            for (hashed_address, nodes) in storage_trie_nodes {
+                for (node_hash, node_data) in nodes {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        let account_codes = account_codes
+            .into_iter()
+            .map(|(account_hash, account_code)| (account_hash.into(), account_code.into()))
+            .collect();
+
+        self.write_batch::<AccountCodes>(account_codes).await
+    }
 }
 
 impl Debug for Store {
