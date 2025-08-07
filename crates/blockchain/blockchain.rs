@@ -168,11 +168,6 @@ impl Blockchain {
             .header
             .clone();
 
-        let parent_block_header = self
-            .storage
-            .get_block_header_by_hash(first_block_header.parent_hash)?
-            .ok_or(ChainError::ParentNotFound)?;
-
         // Get state at previous block
         let trie = self
             .storage

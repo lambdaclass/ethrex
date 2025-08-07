@@ -211,7 +211,7 @@ pub async fn get_rangedata(
 }
 
 pub async fn get_batchdata(
-    eth_client: EthClient,
+    rollup_client: EthClient,
     chain_config: ChainConfig,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
@@ -222,10 +222,10 @@ pub async fn get_batchdata(
     }
     info!("Getting batch data from RPC");
 
-    let rpc_batch = eth_client.get_batch_by_number(batch_number).await?;
+    let rpc_batch = rollup_client.get_batch_by_number(batch_number).await?;
 
     let mut cache = fetch_rangedata_from_client(
-        eth_client,
+        rollup_client,
         chain_config,
         rpc_batch.batch.first_block as usize,
         rpc_batch.batch.last_block as usize,

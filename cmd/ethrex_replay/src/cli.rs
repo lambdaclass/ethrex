@@ -187,9 +187,16 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
+                // Note: I think this condition is not sufficient to determine if the network is an L2 network.
+                // Take this into account if you are fixing this command.
+                if let Network::PublicNetwork(_) = network {
+                    return Err(eyre::Error::msg(
+                        "Batch execution is only supported ",
+                    ));
+                }
                 let chain_config = network.get_genesis()?.config;
-                let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                let rollup_client = EthClient::new(rpc_url.as_str())?;
+                let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;

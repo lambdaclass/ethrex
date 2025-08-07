@@ -5,7 +5,6 @@ mod bench;
 mod cache;
 mod cli;
 mod fetcher;
-// FIXME: This module is an exact copy of cmd/ethrex/networks.rs.
 mod networks;
 mod plot_composition;
 mod run;
