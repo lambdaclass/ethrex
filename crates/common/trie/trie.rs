@@ -67,22 +67,26 @@ enum SerializedNodeRef {
     Offset(usize),
 }
 
-/// Serializes a trie into a byte buffer.
-/// Serialize is post-order, meaning that the children are serialized first. The root node is serialized last.
-/// When we find a NodeRef::Node, we serialize the node and store the offset in the buffer.
-/// Format
-///   - Leaf: [ {TAG_LEAF}, {nibbles_len}, {nibbles...}, {value_len}, {value...} ]
-///   - Extension: [ {TAG_EXTENSION}, {prefix_len}, {prefix...}, {child_ref} ]
-///   - Branch: [ {TAG_BRANCH}, {16 children_refs}, {value_len}, {value...} ]
-///   - NodeRef:
-///      - Hash: [ {REF_HASH}, {hash_data} ]
-///      - Offset: [ {REF_OFFSET}, {offset} ]
+/// Serializes a Merkle Patricia Trie into a byte buffer.
+///
+/// The serialization process uses post-order traversal, meaning children are serialized
+/// before their parent nodes. The root node is serialized last.
+///
+/// Node Types:
+/// - **Leaf**: `[TAG_LEAF(0x00), nibbles_len(4 bytes), nibbles..., value_len(4 bytes), value...]`
+/// - **Extension**: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
+/// - **Branch**: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
+///
+/// Buffer structure: `[serialized_nodes..., root_offset(4 bytes)]`
 struct MPTSerializer {
+    /// Buffer where serialized data is accumulated
     buffer: Vec<u8>,
+    /// Offset where the root node starts
     root_offset: Option<usize>,
 }
 
 impl MPTSerializer {
+    /// Creates a new MPTSerializer with an empty buffer
     pub fn new() -> Self {
         Self {
             buffer: vec![],
@@ -90,15 +94,20 @@ impl MPTSerializer {
         }
     }
 
+    /// Serializes an entire trie starting from the root node.
     pub fn serialize_tree(mut self, root: &Node) -> Result<Vec<u8>, TrieError> {
+        // Serialize the root node and all its children
         let root_offset = self.serialize_node(root)?;
         self.root_offset = Some(root_offset);
-        // Write root offset at the end
+
+        // Append root offset at the end for easy deserialization
         self.buffer
             .extend_from_slice(&(root_offset as u32).to_le_bytes());
         Ok(self.buffer)
     }
 
+    /// Serializes a node based on its type (Leaf, Branch, or Extension).
+    /// Returns the offset where the node was written in the buffer.
     fn serialize_node(&mut self, node: &Node) -> Result<usize, TrieError> {
         match node {
             Node::Leaf(leaf) => self.serialize_leaf(leaf),
@@ -107,32 +116,56 @@ impl MPTSerializer {
         }
     }
 
+    /// Serializes a leaf node.
+    /// Format: [TAG_LEAF, nibbles_len, nibbles, value_len, value]
     fn serialize_leaf(&mut self, leaf: &LeafNode) -> Result<usize, TrieError> {
+        // Remember current position - this will be returned as the node's offset
         let offset = self.buffer.len();
+
+        // Write node type tag
         self.buffer.push(TAG_LEAF);
+
         let compact_nibbles = leaf.partial.encode_compact();
         self.write_bytes_with_len(&compact_nibbles);
+
         self.write_bytes_with_len(&leaf.value);
+
         Ok(offset)
     }
 
+    /// Serializes an extension node.
+    /// Format: [TAG_EXTENSION, prefix_len, prefix, child_ref]
+    /// If child is a Node, it will be serialized first and then the offset of the child will be written
+    /// in the Extension node. With this information, you know where is child is in the buffer.
     fn serialize_extension(&mut self, extension: &ExtensionNode) -> Result<usize, TrieError> {
+        // Process the child first (post-order traversal)
         let child_ref = self.process_node_ref(&extension.child);
+
         let offset = self.buffer.len();
+
         self.buffer.push(TAG_EXTENSION);
+
         let compact_prefix = extension.prefix.encode_compact();
         self.write_bytes_with_len(&compact_prefix);
+
         self.write_node_ref(child_ref);
+
         Ok(offset)
     }
 
+    /// Serializes a branch node.
+    /// Format: [TAG_BRANCH, child_ref_0, ..., child_ref_15, value_len, value]
+    /// If child is a Node, it will be serialized first and then the offset of the child will be written
+    /// in the Branch node. With this information, you know where is child is in the buffer.
     fn serialize_branch(&mut self, branch: &BranchNode) -> Result<usize, TrieError> {
+        // Process all 16 children first (post-order traversal)
         let mut children_refs = Vec::with_capacity(16);
         for child in &branch.choices {
             children_refs.push(self.process_node_ref(child));
         }
 
         let offset = self.buffer.len();
+
         self.buffer.push(TAG_BRANCH);
 
         for child_ref in children_refs {
@@ -144,8 +177,16 @@ impl MPTSerializer {
         Ok(offset)
     }
 
+    /// Processes a NodeRef and returns a SerializedNodeRef.
+    ///
+    /// - If the NodeRef contains an embedded node (NodeRef::Node), it serializes
+    ///   the node recursively and returns an offset reference.
+    /// - If the NodeRef contains a hash (NodeRef::Hash), it returns a hash reference.
+    ///
+    /// TODO: Hash references are preserved as-is, should we support this for the MVP?
     fn process_node_ref(&mut self, node_ref: &NodeRef) -> SerializedNodeRef {
         match node_ref {
+            // TODO: limitation - requires DB to resolve
             NodeRef::Hash(hash) => SerializedNodeRef::Hash(*hash),
             NodeRef::Node(node, _) => {
                 let offset = self.serialize_node(node).unwrap();
@@ -154,6 +195,11 @@ impl MPTSerializer {
         }
     }
 
+    /// Writes a node reference to the buffer.
+    ///
+    /// Format depends on reference type:
+    /// - Hash: [REF_HASH, hash_type, hash_data]
+    /// - Offset: [REF_NODE, offset(4 bytes)]
     fn write_node_ref(&mut self, node_ref: SerializedNodeRef) {
         match node_ref {
             SerializedNodeRef::Hash(hash) => {
@@ -167,6 +213,11 @@ impl MPTSerializer {
         }
     }
 
+    /// Writes a NodeHash to the buffer.
+    ///
+    /// Format depends on hash type:
+    /// - Hashed: [0x00, hash(32 bytes)]
+    /// - Inline: [0x01, data(31 bytes), length(1 byte)]
     fn write_node_hash(&mut self, hash: NodeHash) {
         match hash {
             NodeHash::Hashed(hash) => {
@@ -175,13 +226,14 @@ impl MPTSerializer {
             }
             NodeHash::Inline((data, len)) => {
                 self.buffer.push(1);
-                // Debes escribir los 31 bytes completos, no solo len bytes
-                self.buffer.extend_from_slice(&data); // Los 31 bytes
-                self.buffer.push(len); // Luego el length
+                self.buffer.extend_from_slice(&data);
+                self.buffer.push(len);
             }
         }
     }
 
+    /// Writes a byte array with its length prefix.
+    /// Format: [length(4 bytes), data...]
     fn write_bytes_with_len(&mut self, bytes: &[u8]) {
         let len = bytes.len() as u32;
         self.buffer.extend_from_slice(&len.to_le_bytes());
@@ -189,12 +241,20 @@ impl MPTSerializer {
     }
 }
 
+/// Deserializes a Merkle Patricia Trie from a byte buffer.
+///
+/// The deserializer reads the binary format produced by `MPTSerializer`.
+/// It starts by reading the root offset from the end of the buffer, then
+/// deserializes nodes on-demand by following offset references.
 pub struct MPTDeserializer<'a> {
+    /// The byte buffer containing serialized trie data
     buffer: &'a [u8],
+    /// Current reading position in the buffer
     position: usize,
 }
 
 impl<'a> MPTDeserializer<'a> {
+    /// Creates a new deserializer for the given buffer.
     pub fn new(buffer: &'a [u8]) -> Self {
         Self {
             buffer,
@@ -202,11 +262,16 @@ impl<'a> MPTDeserializer<'a> {
         }
     }
 
+    /// Deserializes the entire trie, returning the root node.
+    ///
+    /// The root offset is read from the last 4 bytes of the buffer,
+    /// then the deserializer jumps to that position to start reading the root node.
     fn decode_tree(&mut self) -> Result<Node, TrieError> {
-        // Read root offset from the end of the buffer
         if self.buffer.len() < 4 {
             return Err(TrieError::InvalidData);
         }
+
+        // Read root offset from the end of the buffer (last 4 bytes)
         let root_offset_bytes = &self.buffer[self.buffer.len() - 4..];
         let root_offset = u32::from_le_bytes([
             root_offset_bytes[0],
@@ -214,66 +279,101 @@ impl<'a> MPTDeserializer<'a> {
             root_offset_bytes[2],
             root_offset_bytes[3],
         ]);
+
+        // Jump to the root node position and start deserializing
         self.position = root_offset as usize;
         self.decode_node()
     }
 
+    /// Decodes a single node from the current position.
+    ///
+    /// Reads the node type tag and delegates to the appropriate decode method.
     fn decode_node(&mut self) -> Result<Node, TrieError> {
         let tag = self.buffer[self.position];
         self.position += 1;
+
+        // Decode based on node type
         match tag {
             TAG_LEAF => self.decode_leaf(),
             TAG_EXTENSION => self.decode_extension(),
             TAG_BRANCH => self.decode_branch(),
-            _ => unreachable!(),
+            _ => unreachable!("Invalid node tag: {}", tag),
         }
     }
 
+    /// Decodes a leaf node.
+    /// Format: [nibbles_len, nibbles, value_len, value]
     fn decode_leaf(&mut self) -> Result<Node, TrieError> {
         let compact_nibbles = self.read_bytes_with_len()?;
         let partial = Nibbles::decode_compact(&compact_nibbles);
         let value = self.read_bytes_with_len()?;
+
         Ok(Node::Leaf(LeafNode::new(partial, value)))
     }
 
+    /// Decodes an extension node.
+    /// Format: [prefix_len, prefix, child_ref]
     fn decode_extension(&mut self) -> Result<Node, TrieError> {
         let compact_prefix = self.read_bytes_with_len()?;
         let prefix = Nibbles::decode_compact(&compact_prefix);
         let child_ref = self.decode_node_ref()?;
+
         Ok(Node::Extension(ExtensionNode::new(prefix, child_ref)))
     }
 
+    /// Decodes a branch node.
+    /// Format: [child_ref_0, ..., child_ref_15, value_len, value]
     fn decode_branch(&mut self) -> Result<Node, TrieError> {
         let mut children_refs: [NodeRef; 16] = Default::default();
         for child in children_refs.iter_mut() {
             *child = self.decode_node_ref()?;
         }
         let value = self.read_bytes_with_len()?;
+
         Ok(Node::Branch(Box::new(BranchNode::new_with_value(
             children_refs,
             value,
         ))))
     }
 
+    /// Decodes a node reference.
+    ///
+    /// Returns either a hash reference or an embedded node, depending on the tag.
+    /// For offset references, it temporarily jumps to the referenced position,
+    /// deserializes the node, then returns to the current position.
     fn decode_node_ref(&mut self) -> Result<NodeRef, TrieError> {
         let tag = self.read_byte().unwrap();
         match tag {
             REF_HASH => {
+                // Hash reference - read the hash data
                 let hash = self.read_node_hash()?;
                 Ok(NodeRef::Hash(hash))
             }
             REF_NODE => {
+                // Offset reference - jump to the node and deserialize it
                 let offset = self.read_u32().unwrap();
+
+                // Save current position
                 let saved_pos = self.position;
+
+                // Jump to the referenced node
                 self.position = offset as usize;
                 let node = self.decode_node()?;
+
+                // Restore position for continued reading
                 self.position = saved_pos;
+
                 Ok(NodeRef::Node(Arc::new(node), OnceLock::new()))
             }
-            _ => unreachable!(),
+            _ => unreachable!("Invalid node reference tag: {}", tag),
         }
     }
 
+    /// Reads a NodeHash from the buffer.
+    ///
+    /// Format depends on hash type:
+    /// - Type 0 (Hashed): [hash(32 bytes)]
+    /// - Type 1 (Inline): [data(31 bytes), length(1 byte)]
     fn read_node_hash(&mut self) -> Result<NodeHash, TrieError> {
         let tag = self.read_byte().unwrap();
         match tag {
@@ -288,49 +388,59 @@ impl<'a> MPTDeserializer<'a> {
                 let len = self.read_byte().unwrap();
                 Ok(NodeHash::Inline((data, len)))
             }
-            _ => unreachable!(),
+            _ => unreachable!("Invalid hash type tag: {}", tag),
         }
     }
 
+    /// Reads a single byte from the buffer.
     fn read_byte(&mut self) -> Result<u8, TrieError> {
         if self.position >= self.buffer.len() {
-            panic!("Invalid buffer");
+            return Err(TrieError::InvalidData);
         }
         let byte = self.buffer[self.position];
         self.position += 1;
         Ok(byte)
     }
 
+    /// Reads exactly `buf.len()` bytes into the provided buffer.
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), TrieError> {
         let end = self.position + buf.len();
         if end > self.buffer.len() {
-            panic!("Invalid buffer");
+            return Err(TrieError::InvalidData);
         }
         buf.copy_from_slice(&self.buffer[self.position..end]);
         self.position = end;
         Ok(())
     }
 
+    /// Reads a little-endian u32 from the buffer.
     fn read_u32(&mut self) -> Result<u32, TrieError> {
         let mut bytes = [0u8; 4];
         self.read_exact(&mut bytes)?;
         Ok(u32::from_le_bytes(bytes))
     }
 
+    /// Reads a byte array with length prefix.
+    /// Format: [length(4 bytes LE), data...]
     fn read_bytes_with_len(&mut self) -> Result<Vec<u8>, TrieError> {
+        // Read length prefix
         let mut len_bytes = [0u8; 4];
         self.read_exact(&mut len_bytes)?;
         let len = u32::from_le_bytes(len_bytes);
+
+        // Read data
         let mut data = vec![0u8; len as usize];
         self.read_exact(&mut data)?;
         Ok(data)
     }
 }
 
+/// Helper function to serialize a Merkle Patricia Trie node to bytes.
 pub fn serialize(node: &Node) -> Vec<u8> {
     MPTSerializer::new().serialize_tree(node).unwrap()
 }
 
+/// Helper function to deserialize a Merkle Patricia Trie node from bytes.
 pub fn deserialize(data: &[u8]) -> Node {
     MPTDeserializer::new(data).decode_tree().unwrap()
 }
@@ -1507,12 +1617,8 @@ mod test {
             child: NodeRef::Node(Arc::new(leaf), OnceLock::new()),
         });
 
-        dbg!(&ext);
-
         let bytes = serialize(&ext);
         let recovered = deserialize(&bytes);
-
-        dbg!(&recovered);
 
         match recovered {
             Node::Extension(ext_node) => {
@@ -1602,13 +1708,65 @@ mod test {
         let bytes = serialize(&root);
         let recovered = deserialize(&bytes);
 
-        // Crear un nuevo trie con el nodo deserializado
         let mut new_trie = Trie::new_temp();
         new_trie.root = NodeRef::Node(Arc::new(recovered), OnceLock::new());
 
-        // Verificar que todos los valores están presentes
         for (key, value) in &test_data {
             assert_eq!(new_trie.get(key).unwrap(), Some(value.clone()));
+            assert_eq!(trie.get(key).unwrap(), new_trie.get(key).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_file_io() {
+        use std::fs;
+
+        // Create trie
+        let mut trie = Trie::new_temp();
+        trie.insert(b"file_key".to_vec(), b"file_value".to_vec())
+            .unwrap();
+
+        // Serialize to file
+        let root = trie.root_node().unwrap().unwrap();
+        let serialized = serialize(&root);
+
+        let path = "/tmp/test_trie.mpt";
+        fs::write(path, &serialized).unwrap();
+
+        // Read from file and deserialize
+        let read_data = fs::read(path).unwrap();
+        let deserialized = deserialize(&read_data);
+
+        assert_eq!(root, deserialized);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_limitation_with_hash_references() {
+        // Create a trie that will contain hash references after commit
+        let mut trie = Trie::new_temp();
+
+        // Insert enough data to force hash references
+        for i in 0..50 {
+            let key = format!("key_{:02}", i).into_bytes();
+            let value = format!("value_{:02}", i).into_bytes();
+            trie.insert(key, value).unwrap();
+        }
+
+        // Commit to force hash references
+        trie.commit().unwrap();
+
+        let root = trie.root_node().unwrap().unwrap();
+        let serialized = serialize(&root);
+        let deserialized = deserialize(&serialized);
+
+        // The structure is preserved but hash references won't resolve without DB
+        // This test documents the limitation rather than failing
+        match deserialized {
+            Node::Branch(_) | Node::Extension(_) => {
+                // Expected - the root structure is preserved
+            }
+            _ => panic!("Unexpected root node type"),
         }
     }
 }
