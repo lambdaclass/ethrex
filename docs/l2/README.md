@@ -66,7 +66,6 @@ Most of them are specified in [ethereum-package](https://github.com/ethpandaops/
 
 For general documentation, see:
 
-- [Getting started](./getting_started.md) contains guides on setting up and interacting with an ethrex L2 stack.
 - [General overview](./overview.md) for a high-level view of the ethrex L2 stack.
 - [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts.
 - [Components](./components.md) for more detailed documentation on each off-chain component.
