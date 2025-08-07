@@ -17,7 +17,7 @@ init: init-l1-docker deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localn
 
 down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
 
-restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
+restart: down deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
 # ==============================================================================
 # Variables

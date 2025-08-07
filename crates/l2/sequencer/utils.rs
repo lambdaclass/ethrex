@@ -5,7 +5,7 @@ use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, Overrides, eth::WrappedTransaction},
+    clients::{EthClientError, Overrides},
 };
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
@@ -61,10 +61,8 @@ pub async fn send_verify_tx(
         )
         .await?;
 
-    let mut tx = WrappedTransaction::EIP1559(verify_tx);
-
     let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, l1_signer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx.into(), l1_signer).await?;
 
     Ok(verify_tx_hash)
 }
