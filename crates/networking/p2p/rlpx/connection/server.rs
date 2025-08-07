@@ -246,14 +246,15 @@ impl GenServer for RLPxConnection {
                     METRICS.record_new_rlpx_conn_failure(reason).await;
                     Ok(NoSuccess(self))
                 } else {
-                    METRICS.record_new_rlpx_conn_established(
-                        &established_state
-                            .node
-                            .version
-                            .clone()
-                            .unwrap_or("Unknown".to_string()),
-                    )
-                    .await;
+                    METRICS
+                        .record_new_rlpx_conn_established(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                        )
+                        .await;
 
                     // New state
                     self.inner_state = InnerState::Established(established_state);
@@ -766,7 +767,14 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .await;
 
             // TODO: snap sync: check if this is correct
-            state.table.lock().await.peers.lock().await.remove(&state.node.node_id());
+            state
+                .table
+                .lock()
+                .await
+                .peers
+                .lock()
+                .await
+                .remove(&state.node.node_id());
 
             // TODO handle the disconnection request
 

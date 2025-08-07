@@ -184,8 +184,7 @@ impl DiscoverySideCar {
                 .expect("Failed to create local node record"),
         ));
 
-        let state =
-            Self::new(local_node, local_node_record, signer, udp_socket, kademlia);
+        let state = Self::new(local_node, local_node_record, signer, udp_socket, kademlia);
 
         let mut server = Self::start(state.clone());
 

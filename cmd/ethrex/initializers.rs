@@ -9,7 +9,13 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
-    kademlia::Kademlia, network::{peer_table, P2PContext}, peer_handler::PeerHandler, rlpx::l2::l2_connection::P2PBasedContext, sync_manager::SyncManager, types::{Node, NodeRecord}, utils::public_key_from_signing_key
+    kademlia::Kademlia,
+    network::{P2PContext, peer_table},
+    peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
+    utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -347,12 +353,7 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
-) -> eyre::Result<(
-    String,
-    CancellationToken,
-    Kademlia,
-    Arc<Mutex<NodeRecord>>,
-)> {
+) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = set_datadir(&opts.datadir);
 
     let network = get_network(&opts);

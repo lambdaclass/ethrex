@@ -453,9 +453,13 @@ impl GenServer for ConnectionHandler {
                 let sender_ip = unmap_ipv4in6_address(from.ip());
                 let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
 
-                let _ = self.inner_state.handle_ping(hash, node).await.inspect_err(|e| {
-                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
-                });
+                let _ = self
+                    .inner_state
+                    .handle_ping(hash, node)
+                    .await
+                    .inspect_err(|e| {
+                        error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    });
             }
             Self::CastMsg::Pong {
                 message,

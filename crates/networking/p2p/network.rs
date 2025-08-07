@@ -103,10 +103,7 @@ pub fn peer_table() -> Kademlia {
     Kademlia::new()
 }
 
-pub async fn start_network(
-    context: P2PContext,
-    bootnodes: Vec<Node>,
-) -> Result<(), NetworkError> {
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.local_node.udp_addr())
             .await

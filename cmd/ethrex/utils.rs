@@ -3,7 +3,9 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::Block;
 use ethrex_p2p::{
-    kademlia::Kademlia, sync::SyncMode, types::{Node, NodeRecord}
+    kademlia::Kademlia,
+    sync::SyncMode,
+    types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
