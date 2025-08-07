@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::serde_utils;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
@@ -11,6 +10,7 @@ use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sha3::{Digest, Keccak256};
 
@@ -18,36 +18,26 @@ use sha3::{Digest, Keccak256};
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct ExecutionWitnessResult {
     /* reth compatible fields */
-    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub state: Vec<Bytes>,
-    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub keys: Vec<Bytes>,
-    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub codes: Vec<Bytes>,
-    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub headers: Vec<Bytes>,
 
     /* Our fields */
     // Indexed by code hash
     // Used evm bytecodes
-    #[serde(skip)]
     pub codes_map: HashMap<H256, Bytes>,
     // Pruned state MPT
-    #[serde(skip)]
     pub state_trie: Option<Trie>,
     // Indexed by account
     // Pruned storage MPT
-    #[serde(skip)]
     pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
-    #[serde(skip)]
     pub block_headers: HashMap<u64, BlockHeader>,
     // Chain config
-    #[serde(skip)]
     pub chain_config: ChainConfig, // TODO: Remove this from this struct. To do this, we need ProgramInput to have the chain ID as a field.
 }
 
@@ -350,6 +340,32 @@ impl ExecutionWitnessResult {
                 "Could not find code for hash {code_hash}"
             ))),
         }
+    }
+}
+
+impl Serialize for ExecutionWitnessResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(4))?;
+        map.serialize_entry(
+            "state",
+            &self.state.iter().map(hex::encode).collect::<Vec<_>>(),
+        )?;
+        map.serialize_entry(
+            "keys",
+            &self.keys.iter().map(hex::encode).collect::<Vec<_>>(),
+        )?;
+        map.serialize_entry(
+            "codes",
+            &self.codes.iter().map(hex::encode).collect::<Vec<_>>(),
+        )?;
+        map.serialize_entry(
+            "headers",
+            &self.headers.iter().map(hex::encode).collect::<Vec<_>>(),
+        )?;
+        map.end()
     }
 }
 
