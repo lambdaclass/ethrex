@@ -180,20 +180,31 @@ impl ExecutionWitnessResult {
                             Trie::from_nodes(None, &[]).expect("failed to create empty trie")
                         });
 
-                    for (storage_key, storage_value) in &update.added_storage {
-                        let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
-                            storage_trie
-                                .remove(hashed_key)
-                                .expect("failed to remove key");
-                        } else {
-                            storage_trie
-                                .insert(hashed_key, storage_value.encode_to_vec())
-                                .expect("failed to insert in trie");
-                        }
+                    // Inserts must come before deletes, otherwise deletes might require extra nodes
+                    // Example:
+                    // If I have a branch node [A, B] and want to delete A and insert C
+                    // I will need to have B only if the deletion happens first
+                    let (deletes, inserts): (Vec<_>, Vec<_>) = update
+                        .added_storage
+                        .iter()
+                        .map(|(k, v)| (hash_key(k), v))
+                        .partition(|(_k, v)| v.is_zero());
+
+                    for (hashed_key, storage_value) in inserts {
+                        storage_trie
+                            .insert(hashed_key, storage_value.encode_to_vec())
+                            .expect("failed to insert in trie");
                     }
+
+                    for (hashed_key, _) in deletes {
+                        storage_trie
+                            .remove(hashed_key)
+                            .expect("failed to remove key");
+                    }
+
                     account_state.storage_root = storage_trie.hash_no_commit();
                 }
+
                 state_trie
                     .insert(hashed_address, account_state.encode_to_vec())
                     .expect("failed to insert into storage");
