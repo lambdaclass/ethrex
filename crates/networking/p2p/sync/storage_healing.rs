@@ -272,6 +272,7 @@ pub async fn heal_storage_trie(
     membatch: OnceCell<Membatch>,
     staleness_timestamp: u64,
 ) -> bool {
+    info!("Started Storage Healing");
     let mut handle = StorageHealer::start(StorageHealerState {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
@@ -308,6 +309,11 @@ pub async fn heal_storage_trie(
             }
         }
         tokio::time::sleep(SHOW_PROGRESS_INTERVAL_DURATION);
+    }
+    if is_finished {
+        info!("Storage healing finished succesfully.");
+    } else {
+        info!("Storage healing finished prematurely due to stalenss.");
     }
     is_finished
 }
