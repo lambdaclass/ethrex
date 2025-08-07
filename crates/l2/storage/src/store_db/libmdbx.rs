@@ -432,6 +432,24 @@ impl StoreEngineRollup for Store {
         .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(RollupStoreError::LibmdbxError)?;
+        let key = (batch_number, proof_type.into());
+        let val = tx
+            .get::<BatchProofs>(key)
+            .map_err(RollupStoreError::LibmdbxError)?;
+        tx.delete::<BatchProofs>(key, val)
+            .map_err(RollupStoreError::LibmdbxError)?;
+        Ok(())
+    }
+
     async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
         if let Some(val) = self.read::<PrecommitPrivileged>(0).await? {
             let (from, to) = val.to();
