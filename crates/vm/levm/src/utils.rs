@@ -359,15 +359,14 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let code_hash = db.get_account(address)?.info.code_hash;
-    let bytecode = db.get_code(code_hash)?.clone();
+    let bytecode = db.get_account_code(address)?;
 
     // If the Address doesn't have a delegation code
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
     if !code_has_delegation(&bytecode)? {
-        return Ok((false, 0, address, bytecode));
+        return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
@@ -381,8 +380,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let contract_code_hash = db.get_account(auth_address)?.info.code_hash;
-    let authorized_bytecode = db.get_code(contract_code_hash)?.clone();
+    let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }

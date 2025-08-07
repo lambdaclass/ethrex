@@ -97,6 +97,12 @@ impl GeneralizedDatabase {
         }
     }
 
+    /// Shortcut for getting the code when we only have the address of an account and we don't need anything else.
+    pub fn get_account_code(&mut self, address: Address) -> Result<&Bytes, InternalError> {
+        let code_hash = self.get_account(address)?.info.code_hash;
+        self.get_code(code_hash)
+    }
+
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
     fn get_value_from_database(
         &mut self,
