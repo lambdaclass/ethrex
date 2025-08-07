@@ -365,13 +365,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !code_has_delegation(&bytecode)? {
+    if !code_has_delegation(bytecode)? {
         return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode)?;
+    let auth_address = get_authorized_address_from_code(bytecode)?;
 
     let access_cost = if accrued_substate.accessed_addresses.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
