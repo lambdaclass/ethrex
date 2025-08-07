@@ -47,15 +47,19 @@
 
 # Ethrex for developers
 - [Installing](./developers/installing.md)
-- [Quick start](./developers/quickstart.md)
-- [Kurtosis localnet](./l1/quick-start-l1.md)
-- [Developer setup L1](./l1/dev-setup-l1.md)
+- [L1](./developers/l1/README.md)
+  - [Ethrex as a local development node](./developers/l1/dev-mode.md)
+  - [Importing blocks from a file](./developers/l1/importing-blocks.md)
+  - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
+  - [Metrics](./developers/l1/metrics.md)
+- [L2](./developers/l2/README.md)
+  - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
     - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
-- [L2 localnet](./developers/l2-localnet.md)
 - [CLI reference]()
 - [Troubleshooting]()
+- [Developer setup L1](./l1/dev-setup-l1.md)
 
 # Other resources
 
