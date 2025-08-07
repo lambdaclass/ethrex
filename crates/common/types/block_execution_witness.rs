@@ -1,65 +1,41 @@
-use core::fmt;
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 use crate::serde_utils;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::decode_hex,
 };
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, SeqAccess, Visitor},
-    ser::{self, SerializeSeq},
-};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use sha3::{Digest, Keccak256};
-
-type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     /* reth compatible fields */
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
+    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub state: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
+    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub keys: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
+    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub codes: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
+    #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
     pub headers: Vec<Bytes>,
 
     /* Our fields */
     // Indexed by code hash
     // Used evm bytecodes
-    #[serde(
-        default, // FIXME: This should be handled differently. We can deserialize both codes_map and codes together.
-        serialize_with = "serialize_code_map",
-        deserialize_with = "deserialize_code_map"
-    )]
-    pub codes_map: HashMap<H256, Bytes>, // FIXME: This field serializes empty when codes is not empty.
+    #[serde(skip)]
+    pub codes_map: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
     pub state_trie: Option<Trie>,
@@ -72,7 +48,7 @@ pub struct ExecutionWitnessResult {
     pub block_headers: HashMap<u64, BlockHeader>,
     // Chain config
     #[serde(skip)]
-    pub chain_config: ChainConfig,
+    pub chain_config: ChainConfig, // TODO: Remove this from this struct. To do this, we need ProgramInput to have the chain ID as a field.
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -96,19 +72,6 @@ impl ExecutionWitnessResult {
         &mut self,
         first_header: &BlockHeader,
     ) -> Result<(), ExecutionWitnessError> {
-        // TODO: Use a deserialize_headers functions for this instead.
-        let headers = self
-            .headers
-            .iter()
-            .map(Bytes::as_ref)
-            .map(BlockHeader::decode)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
-
-        for header in headers {
-            self.block_headers.insert(header.number, header);
-        }
-
         let parent_header = self.get_block_parent_header(first_header.number)?;
 
         let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state)?;
@@ -136,11 +99,6 @@ impl ExecutionWitnessResult {
 
         self.state_trie = Some(state_trie);
         self.storage_tries = Some(storage_tries);
-
-        for code in &self.codes {
-            self.codes_map
-                .insert(keccak_hash::keccak(code), code.clone());
-        }
 
         Ok(())
     }
@@ -395,206 +353,89 @@ impl ExecutionWitnessResult {
     }
 }
 
-pub fn serialize_code_map<S>(map: &HashMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-    for (code_hash, code) in map {
-        let code_hash = format!("0x{}", hex::encode(code_hash));
-        let code = format!("0x{}", hex::encode(code));
+// TODO: Make an RpcExecutionWitness struct to decouple the RPC response from the execution witness result.
+impl<'de> Deserialize<'de> for ExecutionWitnessResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let response = HashMap::<String, Vec<String>>::deserialize(deserializer)?;
 
-        let mut obj = serde_json::Map::new();
-        obj.insert(code_hash, serde_json::Value::String(code));
-
-        seq_serializer.serialize_element(&obj)?;
-    }
-    seq_serializer.end()
-}
-
-pub fn serialize_storage_tries<S>(
-    map: &Option<HashMap<H160, Vec<Vec<u8>>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(map) = map else {
-        return Err(ser::Error::custom("Storage trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-
-    for (address, keys) in map {
-        let address_hex = format!("0x{}", hex::encode(address));
-        let values_hex: Vec<String> = keys
+        let state: Vec<Bytes> = response
+            .get("state")
+            .ok_or_else(|| de::Error::custom("Missing or invalid 'state' field"))?
             .iter()
-            .map(|v| format!("0x{}", hex::encode(v)))
-            .collect();
+            .map(|str| {
+                hex::decode(str.trim_start_matches("0x"))
+                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
+                    .map(Into::into)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
 
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            address_hex,
-            serde_json::Value::Array(
-                values_hex
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
+        let keys: Vec<Bytes> = response
+            .get("keys")
+            .ok_or_else(|| de::Error::custom("Missing or invalid 'keys' field"))?
+            .iter()
+            .map(|str| {
+                hex::decode(str.trim_start_matches("0x"))
+                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
+                    .map(Into::into)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
 
-        seq_serializer.serialize_element(&obj)?;
+        let codes: Vec<Bytes> = response
+            .get("codes")
+            .ok_or_else(|| de::Error::custom("Missing or invalid 'codes' field"))?
+            .iter()
+            .map(|str| {
+                hex::decode(str.trim_start_matches("0x"))
+                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
+                    .map(Into::into)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
+
+        let headers: Vec<Bytes> = response
+            .get("headers")
+            .ok_or_else(|| de::Error::custom("Missing or invalid 'headers' field"))?
+            .iter()
+            .map(|str| {
+                hex::decode(str.trim_start_matches("0x"))
+                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
+                    .map(Into::into)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
+
+        let codes_map = codes
+            .iter()
+            .map(|code| (keccak_hash::keccak(code), code.clone()))
+            .collect::<HashMap<_, _>>();
+
+        let block_headers = headers
+            .iter()
+            .map(Bytes::as_ref)
+            .map(BlockHeader::decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?
+            .iter()
+            .map(|header| (header.number, header.clone()))
+            .collect::<HashMap<_, _>>();
+
+        Ok(Self {
+            state,
+            keys,
+            codes,
+            headers,
+            codes_map,
+            state_trie: None,
+            storage_tries: None,
+            block_headers,
+            chain_config: ChainConfig::default(),
+        })
     }
-
-    seq_serializer.end()
-}
-
-pub fn deserialize_state<'de, D>(deserializer: D) -> Result<Option<Vec<Vec<u8>>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct HexVecVisitor;
-
-    impl<'de> Visitor<'de> for HexVecVisitor {
-        type Value = Option<Vec<Vec<u8>>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a list of hex-encoded strings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut out = Vec::new();
-            while let Some(s) = seq.next_element::<String>()? {
-                let bytes = decode_hex(&s).map_err(de::Error::custom)?;
-                out.push(bytes);
-            }
-            Ok(Some(out))
-        }
-    }
-
-    deserializer.deserialize_seq(HexVecVisitor)
-}
-
-pub fn deserialize_code_map<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BytesVecVisitor;
-
-    impl<'de> Visitor<'de> for BytesVecVisitor {
-        type Value = HashMap<H256, Bytes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a list of hex-encoded strings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = HashMap::new();
-
-            #[derive(Deserialize)]
-            struct CodeEntry(HashMap<String, String>);
-
-            while let Some(CodeEntry(entry)) = seq.next_element::<CodeEntry>()? {
-                if entry.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in entry {
-                    let code_hash =
-                        H256::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let bytecode =
-                        decode_hex(v.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    map.insert(code_hash, Bytes::from(bytecode));
-                }
-            }
-            Ok(map)
-        }
-    }
-
-    deserializer.deserialize_seq(BytesVecVisitor)
-}
-
-pub fn deserialize_storage_tries<'de, D>(
-    deserializer: D,
-) -> Result<Option<StorageTrieNodes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct KeysVisitor;
-
-    impl<'de> Visitor<'de> for KeysVisitor {
-        type Value = Option<StorageTrieNodes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str(
-                "a list of maps with H160 keys and array of hex-encoded strings as values",
-            )
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = HashMap::new();
-
-            #[derive(Deserialize)]
-            struct KeyEntry(HashMap<String, Vec<String>>);
-
-            while let Some(entry) = seq.next_element::<KeyEntry>()? {
-                let obj = entry.0;
-                if obj.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in obj {
-                    let h160 =
-                        H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let vecs = v
-                        .into_iter()
-                        .map(|s| {
-                            let s = s.trim_start_matches("0x");
-                            hex::decode(s).map_err(de::Error::custom)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    map.insert(h160, vecs);
-                }
-            }
-
-            Ok(Some(map))
-        }
-    }
-
-    deserializer.deserialize_seq(KeysVisitor)
-}
-
-pub fn serialize_proofs<S>(
-    state_trie_nodes: &Option<Vec<Vec<u8>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(state_trie_nodes) = state_trie_nodes else {
-        return Err(ser::Error::custom("State trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(state_trie_nodes.len()))?;
-    for encoded_node in state_trie_nodes {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
-    }
-    seq_serializer.end()
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
