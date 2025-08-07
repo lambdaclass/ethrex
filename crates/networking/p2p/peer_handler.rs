@@ -814,34 +814,6 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
-            // REMOVE THIS IF; JUST FOR TESTING IN SEPOLIA ❌❌❌❌❌
-            if all_accounts_state.len() >= 33438524 {
-                let current_account_hashes = std::mem::take(&mut all_account_hashes);
-                let current_account_states = std::mem::take(&mut all_accounts_state);
-
-                let account_state_chunk = current_account_hashes
-                    .into_iter()
-                    .zip(current_account_states)
-                    .collect::<Vec<(H256, AccountState)>>()
-                    .encode_to_vec();
-
-                tokio::task::spawn(async move {
-                    if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
-                    .expect("Failed")
-                {
-                    std::fs::create_dir_all(
-                        "/home/admin/.local/share/ethrex/account_state_snapshots",
-                    )
-                    .expect("Failed to create accounts_state_snapshot dir");
-                }
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
-                })
-                .await
-                .unwrap();
-                let is_stale = true;
-                info!("Stopping account download due to \"staleness\"");
-                return is_stale;
-            }
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
