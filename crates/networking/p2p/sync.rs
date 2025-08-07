@@ -703,7 +703,6 @@ impl Syncer {
                 // validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
-                    store.iter_accounts(state_root).expect("We should be able to access the storege"),
                     self.peers.clone(),
                     store.clone(),
                     membatch.clone(),

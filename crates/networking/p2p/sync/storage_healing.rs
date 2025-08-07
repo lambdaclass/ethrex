@@ -146,9 +146,11 @@ impl GenServer for StorageHealer {
         _handle: &GenServerHandle<Self>,
         state: Self::State,
     ) -> CallResponse<Self> {
+        info!("Receiving a call");
         // We only ask for IsFinished in the message, so we don't match it
         let is_finished = state.requests.len() == 0 && state.download_queue.len() == 0;
         let is_stale = current_unix_time() > state.staleness_timestamp;
+        info!("Are we finished? {is_finished}. Are we stale? {is_stale}");
         // Finished means that we have succesfully healed according to our algorithm
         // That means that we have commited the root_node of the tree
         if is_finished || is_stale {
@@ -267,43 +269,30 @@ pub struct NodeRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
-pub async fn heal_storage_trie_wrap<T: Iterator<Item = (H256, AccountState)>>(
+pub async fn heal_storage_trie_wrap(
     state_root: H256,
-    account_paths: T,
     peers: PeerHandler,
     store: Store,
     membatch: OnceCell<Membatch>,
     staleness_timestamp: u64,
 ) -> bool {
     info!("Started Storage Healing");
-    let mut account_path_roots = account_paths.filter_map(|(hashed_account_key, account_state)| {
-        if account_state.storage_root != *EMPTY_TRIE_HASH {
-            Some(Nibbles::from_bytes(hashed_account_key.as_bytes()))
-        } else {
-            None
-        }
-    });
-    let mut account_path_nibbles: Vec<Nibbles> = Vec::new();
-    let mut is_finished = true;
-    for account_path in account_path_roots {
-        account_path_nibbles.push(account_path);
-        if account_path_nibbles.len() > 500 {
-            is_finished = heal_storage_trie(
-                state_root,
-                account_path_nibbles,
-                peers.clone(),
-                store.clone(),
-                membatch.clone(),
-                staleness_timestamp,
-            )
-            .await;
-        }
-        account_path_nibbles = Vec::new();
-        if !is_finished {
-            return false;
-        }
-    }
-    is_finished = heal_storage_trie(
+    let accounts: Vec<(H256, AccountState)> = store
+        .iter_accounts(*EMPTY_TRIE_HASH)
+        .expect("We should be able to open the accoun")
+        .collect();
+
+    info!("Total accounts: {}", accounts.len());
+    let filtered_accounts: Vec<(H256, AccountState)> = accounts
+        .into_iter()
+        .filter(|(_, state)| state.storage_root != *EMPTY_TRIE_HASH)
+        .collect();
+    info!("Total filtered accounts: {}", filtered_accounts.len());
+    let mut account_path_nibbles: Vec<Nibbles> = filtered_accounts
+        .into_iter()
+        .map(|(hashed_key, _)| Nibbles::from_bytes(hashed_key.as_bytes()))
+        .collect();
+    heal_storage_trie(
         state_root,
         account_path_nibbles,
         peers.clone(),
@@ -311,8 +300,7 @@ pub async fn heal_storage_trie_wrap<T: Iterator<Item = (H256, AccountState)>>(
         membatch.clone(),
         staleness_timestamp,
     )
-    .await;
-    todo!()
+    .await
 }
 
 pub async fn heal_storage_trie(
