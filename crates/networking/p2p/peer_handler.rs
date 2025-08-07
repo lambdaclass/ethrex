@@ -815,7 +815,7 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1070,16 +1070,7 @@ impl PeerHandler {
                     } else {
                         None
                     };
-                    tx.send((
-                        accounts
-                            .into_iter()
-                            .filter(|unit| unit.hash <= chunk_end)
-                            .collect(),
-                        free_peer_id,
-                        chunk_left,
-                    ))
-                    .await
-                    .ok();
+                    tx.send((accounts, free_peer_id, chunk_left)).await.ok();
                 } else {
                     tracing::debug!("Failed to get account range");
                     tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
@@ -1491,9 +1482,7 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
-            {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
