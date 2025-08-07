@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain --release -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -21,16 +21,16 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex . --build-arg BUILD_FLAGS="--features metrics"
+	docker build -t ethrex:unstable .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:unstable --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex --features dev -- \
+	cargo run --bin ethrex -- \
 			--network ./fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
@@ -167,8 +167,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	fi; \
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev" \
-	--  \
+	-- \
 	--evm $$LEVM \
 	--network fixtures/genesis/l2.json \
 	--http.port 1729 \
