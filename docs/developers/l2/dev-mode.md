@@ -1,31 +1,32 @@
-# Getting started with ethrex L2 stack
+# Ethrex as a local L2 development node
 
-## Starting the L2
+## Prerequisites
 
-> [!IMPORTANT]
-> Make sure docker is running!
+- This guide assumes you've read the dev [installation guide](../installing.md)
+- An Ethereum utility tool like [rex](https://github.com/lambdaclass/rex)
 
-1. `cd crates/l2`
-2. `make rm-db-l2 && make down`
-   - This will remove any old database stored in your computer, if present. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `make init`
-   - Starts the L1 in a docker container on port `8545`.
-   - Deploys the needed contracts for the L2 on the L1.
-   - Starts the L2 locally on port `1729`.
+## Dev mode
 
-For more information on how to run the L2 node with the prover attached to it, the [Prover Docs](../l2/fundamentals/components/prover.md) provides more insight.
+In dev mode ethrex acts as a local Ethereum development node and a local layer 2 rollup
 
-## Configuration
+```sh
+ethrex l2 --dev
+```
 
-The program that deploys our L2 contracts outputs the addresses in a `.env` file, that includes environment information used by each component, automatically loaded by our makefile.
+after running the command the ethrex monitor will open with information about the status of the local L2.
 
-> [!NOTE]
-> The deployer depends on the SDK, which conditionally compiles the proxy contract. For the proxy bytecode to be embedded, the `COMPILE_CONTRACTS` env var must be set during compilation.
-> The `make init` command handles this automatically.
+The default port of the L1 JSON-RPC is 8545 you can test it by running
 
-Apart from these, each component accepts multiple configuration options, which can be configured either in the `.env`, or with CLI flags.
-More information is available in [the documentation for each component](../l2/fundamentals/components/README.md).
+```sh
+rex block-number http://localhost:8545
+```
+
+The default port of the L2 JSON-RPC is 1729 you can test it by running
+
+```sh
+rex block-number http://localhost:1729
+```
 
 ## Guides
 
-For more information on how to perform certain operations, go to [Guides](../l2/guides).
+For more information on how to perform certain operations, go to [Guides](../../l2/guides).
