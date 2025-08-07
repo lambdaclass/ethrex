@@ -77,6 +77,10 @@ enum SerializedNodeRef {
 /// - **Extension**: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
 /// - **Branch**: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
 ///
+/// child_ref:
+/// - [REF_HASH, hash_type, hash_data] - If the child is a hash, it will be serialized as-is
+/// - [REF_NODE, offset(4 bytes)] - If the child is a node, it will be serialized and the offset will be written in the parent node
+///
 /// Buffer structure: `[serialized_nodes..., root_offset(4 bytes)]`
 struct MPTSerializer {
     /// Buffer where serialized data is accumulated
