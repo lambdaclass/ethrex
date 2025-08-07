@@ -10,10 +10,16 @@ pub async fn get_blockdata(
     chain_config: ChainConfig,
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_{block_number}.json");
+    let requested_block_number = match block_number {
+        BlockIdentifier::Number(some_number) => some_number,
+        BlockIdentifier::Tag(BlockTag::Latest) => eth_client.get_block_number().await?.as_u64(),
+        BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
+    };
+
+    let file_name = format!("cache_{requested_block_number}.json");
 
     if let Ok(cache) = load_cache(&file_name, chain_config) {
-        info!("Getting block data from cache");
+        info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
 
