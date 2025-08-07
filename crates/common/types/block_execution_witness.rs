@@ -1,6 +1,7 @@
 use core::fmt;
 use std::{collections::HashMap, str::FromStr};
 
+use crate::serde_utils;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
@@ -28,8 +29,32 @@ type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
+    /* reth compatible fields */
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub state: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub keys: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub codes: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub headers: Vec<Bytes>,
+
+    /* Our fields */
     // Rlp encoded state trie nodes
     #[serde(
+        default,
         serialize_with = "serialize_proofs",
         deserialize_with = "deserialize_state"
     )]
@@ -37,6 +62,7 @@ pub struct ExecutionWitnessResult {
     // Indexed by account
     // Rlp encoded state trie nodes
     #[serde(
+        default,
         serialize_with = "serialize_storage_tries",
         deserialize_with = "deserialize_storage_tries"
     )]
@@ -44,10 +70,11 @@ pub struct ExecutionWitnessResult {
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
-        serialize_with = "serialize_code",
-        deserialize_with = "deserialize_code"
+        default, // FIXME: This should be handled differently. We can deserialize both codes_map and codes together.
+        serialize_with = "serialize_code_map",
+        deserialize_with = "deserialize_code_map"
     )]
-    pub codes: HashMap<H256, Bytes>,
+    pub codes_map: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
     pub state_trie: Option<Trie>,
@@ -56,10 +83,13 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
+    #[serde(skip)]
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
+    #[serde(skip)]
     pub parent_block_header: BlockHeader,
     // Chain config
+    #[serde(skip)]
     pub chain_config: ChainConfig,
 }
 
@@ -199,7 +229,7 @@ impl ExecutionWitnessResult {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes.insert(info.code_hash, code.clone());
+                        self.codes_map.insert(info.code_hash, code.clone());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -363,7 +393,7 @@ impl ExecutionWitnessResult {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.codes.get(&code_hash) {
+        match self.codes_map.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(ExecutionWitnessError::Database(format!(
                 "Could not find code for hash {code_hash}"
@@ -372,7 +402,7 @@ impl ExecutionWitnessResult {
     }
 }
 
-pub fn serialize_code<S>(map: &HashMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_code_map<S>(map: &HashMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -454,7 +484,7 @@ where
     deserializer.deserialize_seq(HexVecVisitor)
 }
 
-pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
+pub fn deserialize_code_map<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
 where
     D: Deserializer<'de>,
 {

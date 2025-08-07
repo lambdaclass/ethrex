@@ -157,12 +157,17 @@ pub fn stateless_validation_l2(
     let mut initial_db = ExecutionWitnessResult {
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
-        codes: db.codes.clone(),
+        codes_map: db.codes_map.clone(),
         parent_block_header: db.parent_block_header.clone(),
         state_trie_nodes: db.state_trie_nodes.clone(),
         storage_trie_nodes: db.storage_trie_nodes.clone(),
         state_trie: None,
         storage_tries: None,
+        // FIXME: Handle L2 stateless validation properly.
+        state: vec![],
+        keys: vec![],
+        codes: vec![],
+        headers: vec![],
     };
 
     let StatelessResult {

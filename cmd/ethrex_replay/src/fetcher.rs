@@ -1,7 +1,7 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 
@@ -11,22 +11,46 @@ pub async fn get_blockdata(
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
+
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting block data from cache");
         return Ok(cache);
     }
-    info!("Getting block data from RPC");
-    let block = eth_client.get_raw_block(block_number.clone()).await?;
 
-    let witness = eth_client.get_witness(block_number, None).await?;
-    if witness.chain_config.chain_id != chain_config.chain_id {
+    info!("Validating RPC chain ID");
+
+    let chain_id = eth_client.get_chain_id().await?;
+
+    if chain_id != chain_config.chain_id.into() {
         return Err(eyre::eyre!(
             "Rpc endpoint returned a different chain id than the one set by --network"
         ));
     }
 
+    info!("Getting execution witness from RPC");
+
+    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+        Ok(witness) => {
+            if witness.chain_config.chain_id != chain_config.chain_id {
+                return Err(eyre::eyre!(
+                    "Rpc endpoint returned a different chain id than the one set by --network"
+                ));
+            }
+            witness
+        }
+        Err(_e) => {
+            todo!("Retry with eth_getProofs")
+        }
+    };
+
+    info!("Getting block data from RPC");
+
+    let block = eth_client.get_raw_block(block_number).await?;
+
     let cache = Cache::new(vec![block], witness);
+
     write_cache(&cache, &file_name).expect("failed to write cache");
+    
     Ok(cache)
 }
 

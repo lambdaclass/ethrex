@@ -348,12 +348,17 @@ impl Blockchain {
         Ok(ExecutionWitnessResult {
             state_trie_nodes: Some(used_trie_nodes),
             storage_trie_nodes: Some(encoded_storage_tries),
-            codes,
+            codes_map: codes,
             state_trie: None,
             storage_tries: None,
             block_headers,
             parent_block_header,
             chain_config,
+            // FIXME: Handle debug_executionWitness requests properly.
+            state: vec![],
+            keys: vec![],
+            codes: vec![],
+            headers: vec![],
         })
     }
 
