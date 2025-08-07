@@ -62,6 +62,7 @@ const REF_NODE: u8 = 1;
 
 enum SerializedNodeRef {
     /// Node hash
+    /// TODO: This is not supported in the MVP version. We only serialize empty hashes.
     Hash(NodeHash),
     /// Position where the child node is stored in the file
     Offset(usize),
@@ -73,12 +74,12 @@ enum SerializedNodeRef {
 /// before their parent nodes. The root node is serialized last.
 ///
 /// Node Types:
-/// - **Leaf**: `[TAG_LEAF(0x00), nibbles_len(4 bytes), nibbles..., value_len(4 bytes), value...]`
-/// - **Extension**: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
-/// - **Branch**: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
+/// - [LeafNode]: `[TAG_LEAF(0x00), nibbles_len(4 bytes), nibbles..., value_len(4 bytes), value...]`
+/// - [ExtensionNode]: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
+/// - [BranchNode]: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
 ///
 /// child_ref:
-/// - [REF_HASH, hash_type, hash_data] - If the child is a hash, it will be serialized as-is
+/// - REF_HASH - Not supported in the MVP version. We only serialize empty hashes.
 /// - [REF_NODE, offset(4 bytes)] - If the child is a node, it will be serialized and the offset will be written in the parent node
 ///
 /// Buffer structure: `[serialized_nodes..., root_offset(4 bytes)]`
@@ -185,13 +186,24 @@ impl MPTSerializer {
     ///
     /// - If the NodeRef contains an embedded node (NodeRef::Node), it serializes
     ///   the node recursively and returns an offset reference.
-    /// - If the NodeRef contains a hash (NodeRef::Hash), it returns a hash reference.
     ///
-    /// TODO: Hash references are preserved as-is, should we support this for the MVP?
+    /// NOTE: the NodeRef contains a hash (NodeRef::Hash), it checks if it's empty/default.
+    /// Empty hashes are serialized, but non-empty hashes cause a panic since they
+    /// require database access to resolve (not supported in MVP).
+    /// We need to serialize empty hashes since the default [NodeRef::default()] is an empty hash.
     fn process_node_ref(&mut self, node_ref: &NodeRef) -> SerializedNodeRef {
         match node_ref {
-            // TODO: limitation - requires DB to resolve
-            NodeRef::Hash(hash) => SerializedNodeRef::Hash(*hash),
+            NodeRef::Hash(hash) => {
+                // Allow empty/default hashes but panic on real hashes
+                if hash.is_valid() {
+                    panic!(
+                        "Non-empty hash references are not supported for serialization in this MVP version."
+                    )
+                } else {
+                    // Empty hash - serialize it as-is
+                    SerializedNodeRef::Hash(*hash)
+                }
+            }
             NodeRef::Node(node, _) => {
                 let offset = self.serialize_node(node).unwrap();
                 SerializedNodeRef::Offset(offset)
@@ -350,6 +362,7 @@ impl<'a> MPTDeserializer<'a> {
         match tag {
             REF_HASH => {
                 // Hash reference - read the hash data
+                // NOTE: Right now we are only deserializing empty hashes
                 let hash = self.read_node_hash()?;
                 Ok(NodeRef::Hash(hash))
             }
@@ -1554,53 +1567,10 @@ mod test {
     }
 
     #[test]
-    fn test_serialize_deserialize_extension_with_hash() {
-        let ext = Node::Extension(ExtensionNode {
-            prefix: Nibbles::from_hex(vec![1, 2]),
-            child: NodeRef::Hash(NodeHash::Hashed(H256::from([42; 32]))),
-        });
-
-        let bytes = serialize(&ext);
-        let recovered = deserialize(&bytes);
-
-        assert_eq!(ext, recovered);
-    }
-
-    #[test]
-    fn test_serialize_deserialize_extension_with_inline_hash() {
-        let ext = Node::Extension(ExtensionNode {
-            prefix: Nibbles::from_hex(vec![3, 4]),
-            child: NodeRef::Hash(NodeHash::Inline(([5; 31], 20))),
-        });
-
-        let bytes = serialize(&ext);
-        let recovered = deserialize(&bytes);
-
-        assert_eq!(ext, recovered);
-    }
-
-    #[test]
     fn test_serialize_deserialize_branch_empty() {
         let branch = Node::Branch(Box::new(BranchNode {
             choices: Default::default(),
             value: vec![],
-        }));
-
-        let bytes = serialize(&branch);
-        let recovered = deserialize(&bytes);
-
-        assert_eq!(branch, recovered);
-    }
-
-    #[test]
-    fn test_serialize_deserialize_branch_with_value() {
-        let mut choices: [NodeRef; 16] = Default::default();
-        choices[0] = NodeRef::Hash(NodeHash::Hashed(H256::from([1; 32])));
-        choices[15] = NodeRef::Hash(NodeHash::Hashed(H256::from([255; 32])));
-
-        let branch = Node::Branch(Box::new(BranchNode {
-            choices,
-            value: b"branch_value".to_vec(),
         }));
 
         let bytes = serialize(&branch);
@@ -1656,7 +1626,6 @@ mod test {
 
         let mut branch_choices: [NodeRef; 16] = Default::default();
         branch_choices[2] = NodeRef::Node(Arc::new(inner_ext), OnceLock::new());
-        branch_choices[10] = NodeRef::Hash(NodeHash::Hashed(H256::from([99; 32])));
 
         let branch = Node::Branch(Box::new(BranchNode {
             choices: branch_choices,
@@ -1743,34 +1712,5 @@ mod test {
 
         assert_eq!(root, deserialized);
         fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn test_limitation_with_hash_references() {
-        // Create a trie that will contain hash references after commit
-        let mut trie = Trie::new_temp();
-
-        // Insert enough data to force hash references
-        for i in 0..50 {
-            let key = format!("key_{:02}", i).into_bytes();
-            let value = format!("value_{:02}", i).into_bytes();
-            trie.insert(key, value).unwrap();
-        }
-
-        // Commit to force hash references
-        trie.commit().unwrap();
-
-        let root = trie.root_node().unwrap().unwrap();
-        let serialized = serialize(&root);
-        let deserialized = deserialize(&serialized);
-
-        // The structure is preserved but hash references won't resolve without DB
-        // This test documents the limitation rather than failing
-        match deserialized {
-            Node::Branch(_) | Node::Extension(_) => {
-                // Expected - the root structure is preserved
-            }
-            _ => panic!("Unexpected root node type"),
-        }
     }
 }
