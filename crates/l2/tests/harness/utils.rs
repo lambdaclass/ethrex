@@ -104,7 +104,7 @@ pub async fn wait_for_l2_ptx_receipt(
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cmd/.env");
     dbg!(&env_file_path);
     let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
 
