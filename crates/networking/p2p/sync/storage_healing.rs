@@ -216,8 +216,7 @@ impl GenServer for StorageHealer {
                             .expect("We launched the storage healer without a membatch"),
                         &mut self.leafs_healed,
                         &mut self.roots_healed,
-                    )
-                    .await;
+                    );
                 };
                 clear_inflight_requests(
                     &mut self.requests,
