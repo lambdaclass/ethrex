@@ -242,7 +242,7 @@ If a value is removed during block execution (meaning it existed initially but n
 
 **Case 1**
 
-![Image showing restructuration for case 1](img/execw_case1.png)
+![Image showing restructuration for case 1](../../img/execw_case1.png)
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
@@ -256,7 +256,7 @@ Without **leaf 2**'s data, we cannot construct **leaf 3**. The solution is to fe
 
 **Case 2**
 
-![Image showing restructuration for case 2](img/execw_case2.png)
+![Image showing restructuration for case 2](../../img/execw_case2.png)
 
 In this case, restructuring requires information about **branch/ext 2** (which could be a branch or extension node), but this node might not be in the witness. Checking the final **extension** node might seem sufficient to deduce **branch/ext 2** in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final **extension** node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing **branch/ext 2** node.
 
@@ -292,7 +292,7 @@ There are two kinds of MPT proofs:
 
 These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.
 
-For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
+For more details, refer to [Overview](../../overview.md), [Withdrawals](../withdrawals.md), and [State diffs](../state_diffs.md).
 
 #### Step 1: initial state validation
 

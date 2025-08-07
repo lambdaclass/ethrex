@@ -61,7 +61,7 @@ Going a bit further, instead of posting the entire transaction, we could just po
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
 
-Detailed documentation on [the state diffs spec](./state_diffs.md).
+Detailed documentation on [the state diffs spec](./fundamentals/state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -114,11 +114,11 @@ In this section we talk a bit about them, first going through the more specific 
 
 ### Deposits
 
-The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./deposits.md).
+The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./fundamentals/deposits.md).
 
 ### Withdrawals
 
-The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./withdrawals.md).
+The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./fundamentals/withdrawals.md).
 
 ## Recap
 
