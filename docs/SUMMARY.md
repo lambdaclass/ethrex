@@ -16,7 +16,9 @@
   - [Logs]()
   - [Security]()
   - [Databases]()
-  - [Sync modes](./l1/fundamentals/sync_modes.md )
+  - [Networking](./l1/fundamentals/networking/Network.md)
+    - [Snap sync](./l1/fundamentals/networking/Sync.md)
+  - [Sync modes](./l1/fundamentals/sync_modes.md)
   - [Pruning]()
 
 # Ethrex for L2 networks
