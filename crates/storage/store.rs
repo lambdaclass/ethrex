@@ -22,11 +22,11 @@ use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{info, instrument};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use tracing::{info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
