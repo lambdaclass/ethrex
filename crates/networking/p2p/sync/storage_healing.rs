@@ -192,6 +192,7 @@ impl GenServer for StorageHealer {
                     &mut state.download_queue,
                     &mut state.failed_downloads,
                 );
+                info!("We have cleared the inflight requests");
                 ask_peers_for_nodes(
                     &mut state.download_queue,
                     &mut state.requests,
@@ -200,6 +201,7 @@ impl GenServer for StorageHealer {
                     &mut state.scored_peers,
                     handle.clone(),
                 );
+                info!("We have asked the peers for nodes");
             }
             StorageHealerMsg::TrieNodes(trie_nodes) => {
                 if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
@@ -274,9 +276,13 @@ pub async fn heal_storage_trie_wrap<T: Iterator<Item = (H256, AccountState)>>(
     staleness_timestamp: u64,
 ) -> bool {
     info!("Started Storage Healing");
-    let mut account_path_roots = account_paths
-        .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
-        .map(|(hashed_account_key, _)| Nibbles::from_bytes(hashed_account_key.as_bytes()));
+    let mut account_path_roots = account_paths.filter_map(|(hashed_account_key, account_state)| {
+        if account_state.storage_root != *EMPTY_TRIE_HASH {
+            Some(Nibbles::from_bytes(hashed_account_key.as_bytes()))
+        } else {
+            None
+        }
+    });
     let mut account_path_nibbles: Vec<Nibbles> = Vec::new();
     let mut is_finished = true;
     for account_path in account_path_roots {
