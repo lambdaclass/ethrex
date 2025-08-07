@@ -38,7 +38,10 @@
     - [OnChainOperator]()
     - [CommonBridge]()
     - [L1MessageSender]()
+- [Based]()
   - [Based roadmap (draft)](./l2/based/roadmap.md)
+  - [Sequencer](./l2/based/sequencer.md)
+  - [contracts](./l2/based/contracts.md)
 
 # Ethrex for developers
 - [Installing](./developers/installing.md)
