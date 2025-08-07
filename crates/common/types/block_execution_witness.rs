@@ -70,9 +70,6 @@ pub struct ExecutionWitnessResult {
     // Block headers needed for BLOCKHASH opcode
     #[serde(skip)]
     pub block_headers: HashMap<u64, BlockHeader>,
-    // Parent block header to get the initial state root
-    #[serde(skip)]
-    pub parent_block_header: BlockHeader,
     // Chain config
     #[serde(skip)]
     pub chain_config: ChainConfig,

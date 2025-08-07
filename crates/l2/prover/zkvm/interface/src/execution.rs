@@ -169,7 +169,6 @@ pub fn stateless_validation_l2(
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
         codes_map: db.codes_map.clone(),
-        parent_block_header: db.parent_block_header.clone(),
         state_trie: None,
         storage_tries: None,
         // FIXME: Handle L2 stateless validation properly.

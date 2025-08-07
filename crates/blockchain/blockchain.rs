@@ -350,7 +350,6 @@ impl Blockchain {
             state_trie: None,
             storage_tries: None,
             block_headers,
-            parent_block_header,
             chain_config,
             // FIXME: Handle debug_executionWitness requests properly.
             state: vec![],
