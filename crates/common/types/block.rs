@@ -269,7 +269,17 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
         .iter()
         .enumerate()
         .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    let memdb = Arc::new(MemoryDB::new(true));
+
+    let root = {
+        let mut trie = EthTrie::new(memdb.clone());
+
+        for (k, v) in iter {
+            trie.insert(&k, &v).expect("test");
+        }
+        trie.root_hash().expect("test")
+    };
+    H256(root.0)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
@@ -278,7 +288,17 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
         .iter()
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    let memdb = Arc::new(MemoryDB::new(true));
+
+    let root = {
+        let mut trie = EthTrie::new(memdb.clone());
+
+        for (k, v) in iter {
+            trie.insert(&k, &v).expect("test");
+        }
+        trie.root_hash().expect("test")
+    };
+    H256(root.0)
 }
 
 impl RLPEncode for BlockBody {
