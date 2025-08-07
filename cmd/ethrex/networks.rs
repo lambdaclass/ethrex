@@ -5,47 +5,27 @@ use std::{
 
 use ethrex_common::types::{Genesis, GenesisError};
 use ethrex_p2p::types::Node;
-use lazy_static::lazy_static;
 
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
 pub const HOLESKY_GENESIS_CONTENTS: &str = include_str!("networks/holesky/genesis.json");
-const HOLESKY_BOOTNODES_PATH: &str = "cmd/ethrex/networks/holesky/bootnodes.json";
+const HOLESKY_BOOTNODES: &str = include_str!("networks/holesky/bootnodes.json");
 
 pub const SEPOLIA_GENESIS_PATH: &str = "cmd/ethrex/networks/sepolia/genesis.json";
 pub const SEPOLIA_GENESIS_CONTENTS: &str = include_str!("networks/sepolia/genesis.json");
-const SEPOLIA_BOOTNODES_PATH: &str = "cmd/ethrex/networks/sepolia/bootnodes.json";
+const SEPOLIA_BOOTNODES: &str = include_str!("networks/sepolia/bootnodes.json");
 
 pub const HOODI_GENESIS_PATH: &str = "cmd/ethrex/networks/hoodi/genesis.json";
 pub const HOODI_GENESIS_CONTENTS: &str = include_str!("networks/hoodi/genesis.json");
-const HOODI_BOOTNODES_PATH: &str = "cmd/ethrex/networks/hoodi/bootnodes.json";
+const HOODI_BOOTNODES: &str = include_str!("networks/hoodi/bootnodes.json");
 
 pub const MAINNET_GENESIS_PATH: &str = "cmd/ethrex/networks/mainnet/genesis.json";
 pub const MAINNET_GENESIS_CONTENTS: &str = include_str!("networks/mainnet/genesis.json");
-const MAINNET_BOOTNODES_PATH: &str = "cmd/ethrex/networks/mainnet/bootnodes.json";
+const MAINNET_BOOTNODES: &str = include_str!("networks/mainnet/bootnodes.json");
 
 pub const LOCAL_DEVNET_GENESIS_PATH: &str = "../../fixtures/genesis/l1-dev.json";
 pub const LOCAL_DEVNETL2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l1-dev.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l2.json");
-
-lazy_static! {
-    pub static ref HOLESKY_BOOTNODES: Vec<Node> = serde_json::from_reader(
-        std::fs::File::open(HOLESKY_BOOTNODES_PATH).expect("Failed to open holesky bootnodes file")
-    )
-    .expect("Failed to parse holesky bootnodes file");
-    pub static ref SEPOLIA_BOOTNODES: Vec<Node> = serde_json::from_reader(
-        std::fs::File::open(SEPOLIA_BOOTNODES_PATH).expect("Failed to open sepolia bootnodes file")
-    )
-    .expect("Failed to parse sepolia bootnodes file");
-    pub static ref HOODI_BOOTNODES: Vec<Node> = serde_json::from_reader(
-        std::fs::File::open(HOODI_BOOTNODES_PATH).expect("Failed to open hoodi bootnodes file")
-    )
-    .expect("Failed to parse hoodi bootnodes file");
-    pub static ref MAINNET_BOOTNODES: Vec<Node> = serde_json::from_reader(
-        std::fs::File::open(MAINNET_BOOTNODES_PATH).expect("Failed to open mainnet bootnodes file")
-    )
-    .expect("Failed to parse mainnet bootnodes file");
-}
 
 #[derive(Debug, Clone)]
 pub enum Network {
@@ -129,6 +109,17 @@ impl Network {
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }
+
+    pub fn get_bootnodes(&self) -> Vec<Node> {
+        let bootnodes = match self {
+            Network::PublicNetwork(PublicNetwork::Holesky) => HOLESKY_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+            _ => return vec![],
+        };
+        serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+    }
 }
 
 fn get_genesis_contents(network: PublicNetwork) -> &'static str {
@@ -191,5 +182,13 @@ mod tests {
             PublicNetwork::Mainnet,
             "d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
         );
+    }
+
+    #[test]
+    fn test_get_bootnodes_works_for_public_networks() {
+        Network::PublicNetwork(PublicNetwork::Holesky).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
+        Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
     }
 }

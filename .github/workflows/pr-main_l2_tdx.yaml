@@ -54,7 +54,7 @@ jobs:
 
       - name: Build L2
         run: |
-          cargo build --release --bin ethrex --features rollup_storage_libmdbx,metrics
+          cargo build --release --bin ethrex
 
       - name: Install rex
         run: |
@@ -68,8 +68,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
+          tags: ethrex:unstable
           push: false
 
       - name: Start L1 & Deploy contracts

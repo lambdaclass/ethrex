@@ -5,6 +5,7 @@ use crate::{
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
     opcodes::Opcode,
+    utils::u256_to_usize,
     vm::VM,
 };
 use ethrex_common::{
@@ -77,11 +78,7 @@ impl<'a> VM<'a> {
     // MLOAD operation
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        let offset = current_call_frame.stack.pop1()?;
-
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -106,9 +103,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let offset = u256_to_usize(offset)?;
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -128,11 +123,7 @@ impl<'a> VM<'a> {
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
 
-        let offset = current_call_frame.stack.pop1()?;
-
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -282,29 +273,18 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+        let size: usize = u256_to_usize(size)?;
 
-        let size: usize = size
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-
-        let dest_offset: usize = match dest_offset.try_into() {
-            Ok(x) => x,
-            Err(_) if size == 0 => 0,
-            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        let (dest_offset, src_offset) = if size == 0 {
+            (0, 0)
+        } else {
+            (u256_to_usize(dest_offset)?, u256_to_usize(src_offset)?)
         };
 
-        let src_offset: usize = match src_offset.try_into() {
-            Ok(x) => x,
-            Err(_) if size == 0 => 0,
-            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
-        };
-
-        let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
-
-        let new_memory_size_for_src = calculate_memory_size(src_offset, size)?;
+        let new_memory_size = calculate_memory_size(dest_offset.max(src_offset), size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-            new_memory_size_for_dest.max(new_memory_size_for_src),
+            new_memory_size,
             current_call_frame.memory.len(),
             size,
         )?)?;
