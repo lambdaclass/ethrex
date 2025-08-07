@@ -3,6 +3,8 @@ pub mod storage_healing;
 
 use crate::peer_handler::SNAP_LIMIT;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::sync::state_healing::heal_state_trie_wrap;
+use crate::sync::storage_healing::heal_storage_trie_wrap;
 use crate::utils::current_unix_time;
 use crate::{
     metrics::METRICS,
@@ -16,8 +18,9 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::TrieError;
+use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::cell::OnceCell;
 use std::{
     array,
     cmp::min,
@@ -760,7 +763,12 @@ impl Syncer {
         let state_root = pivot_header.state_root;
 
         self.peers
-            .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+            .request_account_range(
+                state_root,
+                H256::zero(),
+                H256::repeat_byte(0xff),
+                staleness_timestamp,
+            )
             .await;
 
         let empty = *EMPTY_TRIE_HASH;
@@ -797,9 +805,16 @@ impl Syncer {
 
             chunk_index = self
                 .peers
-                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+                .request_storage_ranges(
+                    state_root,
+                    account_storage_roots.clone(),
+                    chunk_index,
+                    staleness_timestamp,
+                )
                 .await;
         }
+
+        let pivot_is_stale = current_unix_time() > staleness_timestamp;
 
         info!("Starting to compute the state root...");
 
@@ -967,6 +982,40 @@ impl Syncer {
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
 
+        // If we need to, we star to heal now.
+        if pivot_is_stale {
+            info!("pivot is stale, starting healing process");
+            let membatch = OnceCell::new();
+            membatch.get_or_init(|| HashMap::new());
+            let mut healing_done = false;
+            while !healing_done {
+                (pivot_header, staleness_timestamp) =
+                    update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
+                healing_done = heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
+                if !healing_done {
+                    continue;
+                }
+                // TODO: 💀💀💀 either remove or change to a debug flag
+                // validate_state_root(store.clone(), pivot_header.state_root).await;
+                healing_done = heal_storage_trie_wrap(
+                    pivot_header.state_root,
+                    self.peers.clone(),
+                    store.clone(),
+                    membatch.clone(),
+                    staleness_timestamp,
+                )
+                .await;
+                validate_storage_root(store.clone(), pivot_header.state_root).await;
+            }
+            info!("Finished healing");
+        }
+
         // Download bytecodes
         info!(
             "Starting bytecode download of {} hashes",
@@ -1094,5 +1143,59 @@ enum SyncError {
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
+    }
+}
+
+pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+    let computed_state_root = tokio::task::spawn_blocking(move || {
+        Trie::compute_hash_from_unsorted_iter(
+            store
+                .iter_accounts(state_root)
+                .expect("we couldn't iterate over accounts")
+                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+        )
+    })
+    .await
+    .expect("We should be able to create threads");
+
+    let tree_validated = state_root == computed_state_root;
+    if tree_validated {
+        info!("Succesfully validated tree, {state_root} found");
+    } else {
+        error!(
+            "We have failed the validation of the tree {state_root} expected but {computed_state_root} found"
+        );
+    }
+    tree_validated
+}
+
+pub async fn validate_storage_root(store: Store, state_root: H256) {
+    for (hashed_address, account_state) in store
+        .clone()
+        .iter_accounts(state_root)
+        .expect("We should be able to open the store")
+    {
+        let store_clone = store.clone();
+        let computed_storage_root = tokio::task::spawn_blocking(move || {
+            Trie::compute_hash_from_unsorted_iter(
+                store_clone
+                    .iter_storage(state_root, hashed_address)
+                    .expect("we couldn't iterate over accounts")
+                    .expect("This address should be valid")
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+            )
+        })
+        .await
+        .expect("We should be able to create threads");
+
+        let tree_validated = account_state.storage_root == computed_storage_root;
+        if tree_validated {
+            info!("Succesfully validated tree, {computed_storage_root} found");
+        } else {
+            error!(
+                "We have failed the validation of the tree {} expected but {computed_storage_root} found",
+                account_state.storage_root
+            );
+        }
     }
 }

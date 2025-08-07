@@ -51,11 +51,36 @@ const MAX_SCORE: i64 = 10;
 
 use super::SyncError;
 
+pub async fn heal_state_trie_wrap(
+    state_root: H256,
+    store: Store,
+    peers: &PeerHandler,
+    staleness_timestamp: u64,
+) -> Result<bool, SyncError> {
+    let mut healing_done = false;
+    info!("Starting state healing");
+    while !healing_done {
+        healing_done = heal_state_trie(
+            state_root,
+            store.clone(),
+            peers.clone(),
+            staleness_timestamp,
+        )
+        .await?;
+        if current_unix_time() > staleness_timestamp {
+            info!("Stopped state healing due to staleness");
+            break;
+        }
+    }
+    info!("Stopped state healing");
+    Ok(healing_done)
+}
+
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
-pub(crate) async fn heal_state_trie(
+async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,

@@ -32,7 +32,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::SendMessageError,
+    utils::{SendMessageError, current_unix_time},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -758,7 +758,13 @@ impl PeerHandler {
     ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_account_range(&self, state_root: H256, start: H256, limit: H256) {
+    pub async fn request_account_range(
+        &self,
+        state_root: H256,
+        start: H256,
+        limit: H256,
+        staleness_timestamp: u64,
+    ) {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -985,6 +991,11 @@ impl PeerHandler {
 
             let state_root = state_root.clone();
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            if current_unix_time() > staleness_timestamp {
+                info!("We are stopping requesting account ranges due to staleness");
+                break;
+            }
+
             tokio::spawn(async move {
                 debug!(
                     "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
@@ -1413,6 +1424,7 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
+        staleness_timestamp: u64,
     ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1745,6 +1757,11 @@ impl PeerHandler {
                     chunk_account_hashes.first().unwrap_or(&H256::zero()),
                     chunk_storage_roots.first().unwrap_or(&H256::zero()),
                 );
+            }
+
+            if current_unix_time() > staleness_timestamp {
+                info!("We are stopping requesting storage ranges due to staleness");
+                break;
             }
 
             tokio::spawn(async move {
