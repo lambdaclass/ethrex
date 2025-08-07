@@ -8,11 +8,14 @@ use ethrex_rpc::{
 use eyre::WrapErr;
 use tracing::info;
 
-use crate::cache::{Cache, L2Fields, load_cache, write_cache};
+use crate::{
+    cache::{Cache, L2Fields, load_cache, write_cache},
+    networks::Network,
+};
 
 pub async fn get_blockdata(
     eth_client: EthClient,
-    chain_config: ChainConfig,
+    network: Network,
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
     let requested_block_number = match block_number {
@@ -21,7 +24,16 @@ pub async fn get_blockdata(
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
     };
 
-    let file_name = format!("cache_{requested_block_number}.json");
+    let latest_block_number = eth_client.get_block_number().await?.as_u64();
+
+    info!(
+        "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
+        latest_block_number - requested_block_number
+    );
+
+    let chain_config = network.get_genesis()?.config;
+
+    let file_name = format!("cache_{network}_{requested_block_number}.json");
 
     if let Ok(cache) = load_cache(&file_name, chain_config) {
         info!("Getting block {requested_block_number} data from cache");
@@ -135,16 +147,21 @@ async fn fetch_rangedata_from_client(
 
 pub async fn get_rangedata(
     eth_client: EthClient,
-    chain_config: ChainConfig,
+    network: Network,
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_{from}-{to}.json");
+    let chain_config = network.get_genesis()?.config;
+
+    let file_name = format!("cache_{network}_{from}-{to}.json");
+
     if let Ok(cache) = load_cache(&file_name, chain_config) {
         info!("Getting block range data from cache");
         return Ok(cache);
     }
+
     info!("Getting block range data from RPC");
+
     let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
 
     write_cache(&cache, &file_name).expect("failed to write cache");
@@ -200,7 +217,7 @@ fn format_duration(duration: Duration) -> String {
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     let milliseconds = duration.subsec_millis();
-    
+
     if minutes == 0 {
         return format!("{seconds:02}s {milliseconds:03}ms");
     }

@@ -122,10 +122,9 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network, block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -145,9 +144,8 @@ impl SubcommandExecute {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -161,7 +159,6 @@ impl SubcommandExecute {
                 network,
                 l2,
             } => {
-                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 // Get the block number of the transaction
@@ -173,7 +170,7 @@ impl SubcommandExecute {
 
                 let cache = get_blockdata(
                     eth_client,
-                    chain_config,
+                    network,
                     BlockIdentifier::Number(block_number.as_u64()),
                 )
                 .await?;
@@ -277,10 +274,9 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(&rpc_url)?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network, block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;
@@ -300,9 +296,8 @@ impl SubcommandProve {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(&rpc_url)?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;
@@ -381,9 +376,8 @@ pub async fn start() -> eyre::Result<()> {
                     "starting point can't be greater than ending point",
                 ));
             }
-            let chain_config = network.get_genesis()?.config;
             let eth_client = EthClient::new(&rpc_url)?;
-            let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+            let cache = get_rangedata(eth_client, network, start, end).await?;
             plot(cache).await?;
         }
     };
