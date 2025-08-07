@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754529530385,
+  "lastUpdate": 1754530291945,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17913,6 +17913,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0062080558139534885,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4e0ed9cc3b4ccb818dbc37afb305726cc01cec55",
+          "message": "refactor(l1,l2): merge prover binary into `ethrex` + improve releases (#3826)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThere were too many binaries in the release and it was confusing.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nMerge `ethrex_prover` CLI into `ethrex` under `l2 prover` subcommand.\nAlso, the same binary can now support both SP1 and RISC0 provers, the\nuser may select desired one with the `--backend` flag. This ends up with\na single binary that can run an L1 EL, an L2 sequencer and an L2 prover.\nL1 and L2 contracts were also merged in a single tar, along with the\nverification keys for the provers\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Juan Bono <juanbono94@gmail.com>",
+          "timestamp": "2025-08-06T19:37:42Z",
+          "tree_id": "7e56597d52173d14dc9b11e7fe7107939c34ed21",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4e0ed9cc3b4ccb818dbc37afb305726cc01cec55"
+        },
+        "date": 1754530291525,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
