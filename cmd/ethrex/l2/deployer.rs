@@ -91,6 +91,31 @@ pub struct DeployerOptions {
     )]
     pub create2_salt: Option<H256>,
     #[arg(
+        long = "deployer.on-chain-proposer-owner",
+        value_name = "ADDRESS",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract. Defaults to the deployer account."
+    )]
+    pub on_chain_proposer_owner: Option<Address>,
+    #[arg(
+        long = "deployer.on-chain-proposer-owner-pk",
+        value_name = "PRIVATE_KEY",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
+        conflicts_with = "on_chain_proposer_owner",
+        help_heading = "Deployer options",
+        help = "Private key of the owner of the OnChainProposer contract. If set, a transaction from this account will be sent to accept the ownership."
+    )]
+    pub on_chain_proposer_owner_pk: Option<SecretKey>,
+    #[arg(
+        long = "deployer.bridge-owner",
+        value_name = "ADDRESS",
+        env = "ETHREX_BRIDGE_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract. Defaults to the deployer account."
+    )]
+    pub bridge_owner: Option<Address>,
+    #[arg(
         long,
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
@@ -137,20 +162,40 @@ pub struct DeployerOptions {
         help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
+    #[arg(
+        long = "l2.inclusion-max-wait",
+        value_name = "SECONDS",
+        default_value = "3000",
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        help_heading = "L2 options",
+        help = "Deadline in seconds for the sequencer to process a privileged transaction."
+    )]
+    pub inclusion_max_wait: u64,
     // Verifiers options
     // TODO: This should work side by side with a risc0_deploy_verifier flag.
     #[arg(
         long = "verifier.risc0",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
+        requires = "risc0_vk_path",
         help_heading = "Verifiers options",
         help = "L1 address of the RISC0 verifier. If not set, RISC0 verification will be disabled and not required by the contract."
     )]
     pub risc0_verifier_address: Option<Address>,
     #[arg(
+        long = "verifier.risc0-vk",
+        // default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
+        help_heading = "Verifiers options",
+        help = "Path to the Risc0 image id / verification key. This is used for proof verification."
+    )]
+    pub risc0_vk_path: Option<PathBuf>,
+    #[arg(
         long = "verifier.sp1",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
+        requires = "sp1_vk_path",
         conflicts_with = "sp1_deploy_verifier",
         help_heading = "Verifiers options",
         help = "L1 address of the SP1 verifier. If not set, SP1 verification will be disabled and not required by the contract."
@@ -162,10 +207,20 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
         env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
+        requires = "sp1_vk_path",
         help_heading = "Verifiers options",
         help = "If set to true, it will deploy the SP1 verifier contract and use its address.",
     )]
     pub sp1_deploy_verifier: bool,
+    #[arg(
+        long = "verifier.sp1-vk",
+        // default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")).into(),
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Verifiers options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub sp1_vk_path: Option<PathBuf>,
     #[arg(
         long = "verifier.tdx",
         value_name = "ADDRESS",
@@ -193,56 +248,14 @@ pub struct DeployerOptions {
         help = "L1 address of the Aligned Aggregator. If not set, Aligned verification will be disabled and not required by the contract."
     )]
     pub aligned_aggregator_address: Option<Address>,
-    #[arg(
-        long,
-        value_name = "ADDRESS",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
-        help_heading = "Deployer options",
-        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract."
-    )]
-    pub on_chain_proposer_owner: Address,
-    #[arg(
-        long,
-        value_name = "ADDRESS",
-        env = "ETHREX_BRIDGE_OWNER",
-        help_heading = "Deployer options",
-        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
-    )]
-    pub bridge_owner: Address,
-    #[arg(
-        long,
-        value_name = "PRIVATE_KEY",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
-        help_heading = "Deployer options",
-        help = "Private key of the owner of the OnChainProposer contract. If set, the deployer will send a transaction to accept the ownership.",
-        requires = "on_chain_proposer_owner"
-    )]
-    pub on_chain_proposer_owner_pk: Option<SecretKey>,
-    #[arg(
-        long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
-        value_name = "PATH",
-        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
-        help_heading = "Deployer options",
-        help = "Path to the SP1 verification key. This is used for proof verification."
-    )]
-    pub sp1_vk_path: String,
-    #[arg(
-        long,
-        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
-        value_name = "PATH",
-        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
-        help_heading = "Deployer options",
-        help = "Path to the Risc0 image id / verification key. This is used for proof verification."
-    )]
-    pub risc0_vk_path: String,
+    // L2 Based options
     #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
         action = ArgAction::SetTrue,
-        help_heading = "Deployer options",
+        help_heading = "L2 Based options",
         help = "If set to true, it will deploy the SequencerRegistry contract and a modified OnChainProposer contract."
     )]
     pub deploy_based_contracts: bool,
@@ -251,21 +264,18 @@ pub struct DeployerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
         required_if_eq("deploy_based_contracts", "true"),
-        help_heading = "Deployer options",
+        help_heading = "L2 Based options",
         help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
     )]
     pub sequencer_registry_owner: Option<Address>,
     #[arg(
         long,
-        default_value = "3000",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
-        help_heading = "Deployer options",
-        help = "Deadline in seconds for the sequencer to process a privileged transaction."
-    )]
-    pub inclusion_max_wait: u64,
-    #[arg(
-        long,
         default_value = "false",
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = ArgAction::Set,
+        value_name = "BOOL",
         env = "ETHREX_USE_COMPILED_GENESIS",
         help_heading = "Deployer options",
         help = "Genesis data is extracted at compile time, used for development"
@@ -325,24 +335,26 @@ impl Default for DeployerOptions {
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
             // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
             // (also found on fixtures/keys/private_keys_l1.txt)
-            on_chain_proposer_owner: H160([
+            on_chain_proposer_owner: Some(H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
-            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            bridge_owner: H160([
-                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
-                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            ])),
             on_chain_proposer_owner_pk: None,
-            sp1_vk_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            risc0_vk_path: format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
+            bridge_owner: Some(H160([
+                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
+                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
+            ])),
+            // sp1_vk_path: format!(
+            //     "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+            //     env!("CARGO_MANIFEST_DIR")
+            // ),
+            // risc0_vk_path: format!(
+            //     "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
+            //     env!("CARGO_MANIFEST_DIR")
+            // ),
+            sp1_vk_path: None,
+            risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
@@ -633,7 +645,7 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Bytes {
+fn read_vk(path: &PathBuf) -> Bytes {
     let Ok(str) = std::fs::read_to_string(path) else {
         warn!(
             ?path,
@@ -661,7 +673,7 @@ async fn initialize_contracts(
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
-    trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
+    trace!(committer_l1_address =? opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)
@@ -675,10 +687,10 @@ async fn initialize_contracts(
         )?
     };
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path);
-    let risc0_vk = read_vk(&opts.risc0_vk_path);
+    let sp1_vk = read_vk(&opts.sp1_vk_path.clone().unwrap());
+    let risc0_vk = read_vk(&opts.risc0_vk_path.clone().unwrap());
 
-    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
+    let initializer_address = initializer.address();
 
     info!("Initializing OnChainProposer");
 
@@ -686,7 +698,7 @@ async fn initialize_contracts(
         // Initialize OnChainProposer with Based config and SequencerRegistry
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(deployer_address),
+            Value::Address(initializer_address),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
@@ -740,7 +752,7 @@ async fn initialize_contracts(
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(deployer_address),
+            Value::Address(initializer_address),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
@@ -765,7 +777,7 @@ async fn initialize_contracts(
             eth_client,
         )
         .await?;
-        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+        info!(tx_hash =? initialize_tx_hash, "OnChainProposer initialized");
     }
 
     let initialize_bridge_address_tx_hash = {
@@ -783,60 +795,41 @@ async fn initialize_contracts(
     };
 
     info!(
-        tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
+        tx_hash =? initialize_bridge_address_tx_hash,
         "OnChainProposer bridge address initialized"
     );
 
-    if opts.on_chain_proposer_owner != initializer.address() {
-        let transfer_ownership_tx_hash = {
-            let owener_transfer_calldata = encode_calldata(
-                TRANSFER_OWNERSHIP_SIGNATURE,
-                &[Value::Address(opts.on_chain_proposer_owner)],
-            )?;
-
-            initialize_contract(
-                contract_addresses.on_chain_proposer_address,
-                owener_transfer_calldata,
-                initializer,
-                eth_client,
-            )
-            .await?
-        };
-
-        if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
-            let signer = Signer::Local(LocalSigner::new(owner_pk));
-            let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
-            let accept_tx = eth_client
-                .build_eip1559_transaction(
-                    contract_addresses.on_chain_proposer_address,
-                    opts.on_chain_proposer_owner,
-                    accept_ownership_calldata.into(),
-                    Overrides::default(),
-                )
-                .await?;
-            let accept_tx_hash = send_eip1559_transaction(eth_client, &accept_tx, &signer).await?;
-
-            eth_client
-                .wait_for_transaction_receipt(accept_tx_hash, 100)
-                .await?;
-
-            info!(
-                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
-                "OnChainProposer ownership transfered"
-            );
-        } else {
-            info!(
-                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-                "OnChainProposer ownership transfered but not accepted yet"
-            );
-        }
+    if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
+        let owner: Signer = LocalSigner::new(owner_pk).into();
+        transfer_ownership(
+            eth_client,
+            initializer,
+            owner.address(),
+            contract_addresses.on_chain_proposer_address,
+        )
+        .await?;
+        accept_ownership(
+            eth_client,
+            &owner,
+            contract_addresses.on_chain_proposer_address,
+        )
+        .await?;
+    } else if let Some(owner) = opts.on_chain_proposer_owner {
+        transfer_ownership(
+            eth_client,
+            initializer,
+            owner,
+            contract_addresses.on_chain_proposer_address,
+        )
+        .await?;
     }
+
+    let bridge_owner = opts.bridge_owner.unwrap_or(initializer_address);
 
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner),
+            Value::Address(bridge_owner),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
         ];
@@ -851,9 +844,62 @@ async fn initialize_contracts(
         )
         .await?
     };
-    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+    info!(tx_hash =? initialize_tx_hash, "CommonBridge initialized");
 
     trace!("Contracts initialized");
+    Ok(())
+}
+
+async fn transfer_ownership(
+    eth_client: &EthClient,
+    from: &Signer,
+    to: Address,
+    contract: Address,
+) -> Result<(), DeployerError> {
+    let owner_transfer_calldata =
+        encode_calldata(TRANSFER_OWNERSHIP_SIGNATURE, &[Value::Address(to)])?;
+
+    let transfer_ownership_tx_hash =
+        initialize_contract(contract, owner_transfer_calldata, from, eth_client).await?;
+
+    info!(
+        tx_hash =? transfer_ownership_tx_hash,
+        from =? from.address(),
+        ?to,
+        ?contract,
+        "Ownership transfered but not accepted yet"
+    );
+
+    Ok(())
+}
+
+async fn accept_ownership(
+    eth_client: &EthClient,
+    new_owner: &Signer,
+    contract: Address,
+) -> Result<(), DeployerError> {
+    let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
+    let accept_tx = eth_client
+        .build_eip1559_transaction(
+            contract,
+            new_owner.address(),
+            accept_ownership_calldata.into(),
+            Overrides::default(),
+        )
+        .await?;
+    let accept_tx_hash = send_eip1559_transaction(eth_client, &accept_tx, &new_owner).await?;
+
+    eth_client
+        .wait_for_transaction_receipt(accept_tx_hash, 100)
+        .await?;
+
+    info!(
+        tx_hash =? accept_tx_hash,
+        owner =? new_owner.address(),
+        ?contract,
+        "OnChainProposer ownership transfered"
+    );
+
     Ok(())
 }
 
