@@ -130,6 +130,7 @@ pub struct DeployerOptions {
         long = "l2.genesis",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
+        required_unless_present = "use_compiled_genesis",
         required_if_eq("use_compiled_genesis", "false"),
         help_heading = "L2 options",
         help = "Path to the L2 genesis file"
