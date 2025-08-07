@@ -1,7 +1,3 @@
-use crate::network::MAX_MESSAGES_TO_BROADCAST;
-use crate::network::P2PContext;
-use crate::rlpx::message::RLPxMessage;
-use crate::utils::public_key_from_signing_key;
 use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
 use crate::{
     discv4::messages::{
@@ -13,13 +9,7 @@ use crate::{
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
 };
-use ethrex_blockchain::Blockchain;
-use ethrex_common::H32;
-use ethrex_common::types::{BlockHeader, ChainConfig};
-use ethrex_common::{H512, types::ForkId};
-use ethrex_storage::EngineType;
-use ethrex_storage::Store;
-use ethrex_storage::error::StoreError;
+use ethrex_common::H512;
 use keccak_hash::H256;
 use rand::{rngs::OsRng, seq::IteratorRandom};
 use secp256k1::SecretKey;
@@ -28,12 +18,8 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
-use tokio::time::Duration;
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info, trace, warn};
-
-use std::net::{IpAddr, Ipv4Addr};
-use tokio::time::sleep;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 
@@ -432,7 +418,7 @@ impl GenServer for ConnectionHandler {
     type Error = ConnectionHandlerError;
 
     async fn handle_cast(
-        mut self,
+        self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
     ) -> CastResponse<Self> {

@@ -17,9 +17,7 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
-    sync::Arc,
 };
-use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]

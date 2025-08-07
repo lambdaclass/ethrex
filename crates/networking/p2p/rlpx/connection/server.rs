@@ -79,9 +79,6 @@ pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
-#[derive(Clone)]
-pub struct RLPxConnectionState(InnerState);
-
 #[derive(Clone, Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
@@ -124,7 +121,7 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Arc<Mutex<Kademlia>>,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
-    pub(crate) inbound: bool,
+    pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
 }
 
@@ -148,23 +145,6 @@ pub enum InnerState {
     Initiator(Initiator),
     Receiver(Receiver),
     Established(Established),
-}
-
-impl RLPxConnectionState {
-    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Self {
-        Self(InnerState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream: Arc::new(stream),
-        }))
-    }
-
-    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        Self(InnerState::Initiator(Initiator {
-            context,
-            node: node.clone(),
-        }))
-    }
 }
 
 #[derive(Clone, Debug)]

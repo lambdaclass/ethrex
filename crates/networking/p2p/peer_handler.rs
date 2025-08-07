@@ -12,7 +12,6 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use futures::stream::select_all;
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
@@ -1656,6 +1655,10 @@ impl PeerHandler {
                     for (i, storage) in account_storages.into_iter().enumerate() {
                         all_account_storages[start_index + i] = storage;
                     }
+                }
+
+                if downloaded_count == account_storage_roots.len() as u64 {
+                    break;
                 }
             }
 
