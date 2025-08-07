@@ -32,12 +32,12 @@ use ethrex_rpc::clients::{EthClientError, eth::errors::CalldataEncodeError};
 
 use clap::ArgAction;
 use ethrex_common::H160;
-use hex::FromHexError;
 use secp256k1::SecretKey;
 
 use crate::{
     l2::EthOptions,
     networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS},
+    utils::parse_private_key,
 };
 
 #[derive(Parser)]
@@ -348,17 +348,6 @@ impl Default for DeployerOptions {
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
         }
-    }
-}
-
-pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
-    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
-}
-
-pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
-    match s.strip_prefix("0x") {
-        Some(s) => hex::decode(s).map(Into::into),
-        None => hex::decode(s).map(Into::into),
     }
 }
 
