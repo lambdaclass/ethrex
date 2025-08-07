@@ -21,7 +21,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::get_address_from_secret_key},
+    clients::Overrides,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
@@ -428,11 +428,11 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
-
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
+const INITIALIZE_COMMON_BRIDGE_SIGNATURE: &str = "initialize(address,address,uint256)";
+const INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE: &str = "initialize(address,address)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -645,24 +645,27 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &PathBuf) -> Bytes {
+fn read_vk(path: &PathBuf) -> H256 {
     let Ok(str) = std::fs::read_to_string(path) else {
         warn!(
             ?path,
             "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
         );
-        return Bytes::from(vec![0u8; 32]);
+        return H256::zero();
     };
 
     let cleaned = str.trim().strip_prefix("0x").unwrap_or(&str);
 
-    hex::decode(cleaned).map(Bytes::from).unwrap_or_else(|e| {
-        warn!(
-            ?path,
-            "Failed to decode hex string, will use 0x00..00, this is expected in dev mode: {}", e
-        );
-        Bytes::from(vec![0u8; 32])
-    })
+    hex::decode(cleaned)
+        .map(|bytes| H256::from_slice(&bytes))
+        .unwrap_or_else(|err| {
+            warn!(
+                ?path,
+                ?err,
+                "Failed to decode hex string, will use 0x00..00. This is expected in dev mode",
+            );
+            H256::zero()
+        })
 }
 
 async fn initialize_contracts(
@@ -673,8 +676,6 @@ async fn initialize_contracts(
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
-    trace!(committer_l1_address =? opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
-
     let genesis: Genesis = if opts.use_compiled_genesis {
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)
             .map_err(|e| DeployerError::GenesisError(e.to_string()))?
@@ -683,12 +684,20 @@ async fn initialize_contracts(
             &opts
                 .genesis_l2_path
                 .clone()
-                .expect("L2 genesis file required but not provided."),
+                .ok_or(DeployerError::ConfigValueNotSet("--l2.genesis".to_string()))?,
         )?
     };
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path.clone().unwrap());
-    let risc0_vk = read_vk(&opts.risc0_vk_path.clone().unwrap());
+    let sp1_vk = opts
+        .sp1_vk_path
+        .as_ref()
+        .map(read_vk)
+        .unwrap_or(H256::zero());
+    let risc0_vk = opts
+        .risc0_vk_path
+        .as_ref()
+        .map(read_vk)
+        .unwrap_or(H256::zero());
 
     let initializer_address = initializer.address();
 
@@ -703,8 +712,8 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
-            Value::FixedBytes(sp1_vk),
-            Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(sp1_vk.0.to_vec().into()),
+            Value::FixedBytes(risc0_vk.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
             Value::Uint(genesis.config.chain_id.into()),
@@ -716,38 +725,35 @@ async fn initialize_contracts(
             &calldata_values,
         )?;
 
-        let deployer = Signer::Local(LocalSigner::new(opts.private_key));
-
         let initialize_tx_hash = initialize_contract(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &deployer,
+            initializer,
             eth_client,
         )
         .await?;
 
-        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
-
+        info!(tx_hash =? initialize_tx_hash, "OnChainProposer initialized");
         info!("Initializing SequencerRegistry");
-        let initialize_tx_hash = {
-            let calldata_values = vec![
-                Value::Address(opts.sequencer_registry_owner.ok_or(
-                    DeployerError::ConfigValueNotSet("--sequencer-registry-owner".to_string()),
-                )?),
-                Value::Address(contract_addresses.on_chain_proposer_address),
-            ];
-            let sequencer_registry_initialization_calldata =
-                encode_calldata("initialize(address,address)", &calldata_values)?;
 
-            initialize_contract(
-                contract_addresses.sequencer_registry_address,
-                sequencer_registry_initialization_calldata,
-                &deployer,
-                eth_client,
-            )
-            .await?
-        };
-        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+        let calldata_values = vec![
+            Value::Address(opts.sequencer_registry_owner.unwrap_or(initializer_address)),
+            Value::Address(contract_addresses.on_chain_proposer_address),
+        ];
+
+        trace!(calldata_values = ?calldata_values, "SequencerRegistry initialization calldata values");
+        let sequencer_registry_initialization_calldata =
+            encode_calldata(INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE, &calldata_values)?;
+
+        let initialize_tx_hash = initialize_contract(
+            contract_addresses.sequencer_registry_address,
+            sequencer_registry_initialization_calldata,
+            initializer,
+            eth_client,
+        )
+        .await?;
+
+        info!(tx_hash =? initialize_tx_hash, "SequencerRegistry initialized");
     } else {
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
@@ -757,8 +763,8 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
-            Value::FixedBytes(sp1_vk),
-            Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(sp1_vk.0.to_vec().into()),
+            Value::FixedBytes(risc0_vk.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
@@ -766,6 +772,7 @@ async fn initialize_contracts(
             ]),
             Value::Uint(genesis.config.chain_id.into()),
         ];
+
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
@@ -782,6 +789,8 @@ async fn initialize_contracts(
 
     let initialize_bridge_address_tx_hash = {
         let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
+
+        trace!(calldata_values = ?calldata_values, "OnChainProposer bridge address initialization calldata values");
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
 
@@ -824,29 +833,30 @@ async fn initialize_contracts(
         .await?;
     }
 
+    info!("Initializing CommonBridge");
     let bridge_owner = opts.bridge_owner.unwrap_or(initializer_address);
 
-    info!("Initializing CommonBridge");
-    let initialize_tx_hash = {
-        let calldata_values = vec![
-            Value::Address(bridge_owner),
-            Value::Address(contract_addresses.on_chain_proposer_address),
-            Value::Uint(opts.inclusion_max_wait.into()),
-        ];
-        let bridge_initialization_calldata =
-            encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
+    let calldata_values = vec![
+        Value::Address(bridge_owner),
+        Value::Address(contract_addresses.on_chain_proposer_address),
+        Value::Uint(opts.inclusion_max_wait.into()),
+    ];
 
-        initialize_contract(
-            contract_addresses.bridge_address,
-            bridge_initialization_calldata,
-            initializer,
-            eth_client,
-        )
-        .await?
-    };
+    trace!(calldata_values = ?calldata_values, "CommonBridge initialization calldata values");
+    let bridge_initialization_calldata =
+        encode_calldata(INITIALIZE_COMMON_BRIDGE_SIGNATURE, &calldata_values)?;
+
+    let initialize_tx_hash = initialize_contract(
+        contract_addresses.bridge_address,
+        bridge_initialization_calldata,
+        initializer,
+        eth_client,
+    )
+    .await?;
+
     info!(tx_hash =? initialize_tx_hash, "CommonBridge initialized");
-
     trace!("Contracts initialized");
+
     Ok(())
 }
 
