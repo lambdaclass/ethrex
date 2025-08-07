@@ -26,6 +26,7 @@
 - [Installing](./developers/installing/README.md)
 - [Kurtosis localnet](./l1/quick-start-l1.md)
 - [Developer setup L1](./l1/dev-setup-l1.md)
+- [Debugging solidity with ethrex](./vm/levm/debug.md)
 
 
 - [Layer 2](./l2/README.md)
