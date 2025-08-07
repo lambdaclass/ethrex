@@ -4,7 +4,6 @@ use tracing_subscriber::filter::Directive;
 mod bench;
 mod cache;
 mod cli;
-mod constants;
 mod fetcher;
 // FIXME: This module is an exact copy of cmd/ethrex/networks.rs.
 mod networks;
