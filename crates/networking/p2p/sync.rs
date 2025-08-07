@@ -752,6 +752,7 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
+        info!("Got pivot header, current staleness timestamp {staleness_timestamp}");
         while current_unix_time() > staleness_timestamp {
             (pivot_header, staleness_timestamp) =
                 update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
@@ -759,7 +760,9 @@ impl Syncer {
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        debug!(
+            "Selected block {pivot_number} as pivot for snap sync, current staleness timestamp {staleness_timestamp}"
+        );
 
         let state_root = pivot_header.state_root;
 
