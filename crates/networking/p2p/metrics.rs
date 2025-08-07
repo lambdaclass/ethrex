@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
@@ -8,201 +8,98 @@ use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
-use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
+use crate::rlpx::error::RLPxError;
 
 pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
 #[derive(Debug, Clone)]
 pub struct Metrics {
-    _registry: Registry,
-    pub window_size: Duration,
-    pub enabled: Arc<Mutex<bool>>,
+    pub registry: Registry,
 
-    /// Nodes we've contacted over time.
-    pub discovered_nodes: IntCounter,
-    /// Nodes that successfully answered our ping.
-    pub contacts: Arc<Mutex<u64>>,
     pub new_contacts_events: Arc<Mutex<VecDeque<SystemTime>>>,
-    /// Nodes we either fail to ping or failed to pong us.
-    pub discarded_nodes: IntCounter,
-    /// The rate at which we get new contacts
+    pub window_size: Duration,
+    pub total_contacts: IntCounter,
+    pub current_contacts: Arc<Mutex<u64>>,
     pub new_contacts_rate: Gauge,
+    pub discarded_contacts: IntCounter,
 
-    pub connection_attempts: IntCounter,
-    pub connection_attempts_events: Arc<Mutex<VecDeque<SystemTime>>>,
-    pub new_connection_attempts_rate: Gauge,
+    pub rlpx_conn_attempts: IntCounter,
+    pub rlpx_conn_attempts_events: Arc<Mutex<VecDeque<SystemTime>>>,
+    pub rlpx_conn_attempts_rate: Gauge,
 
-    pub pings_sent: IntCounter,
-    pub pings_sent_events: Arc<Mutex<VecDeque<SystemTime>>>,
-    pub pings_sent_rate: Gauge,
+    pub rlpx_conn_establishments: IntCounter,
+    pub rlpx_conn_establishments_events: Arc<Mutex<VecDeque<SystemTime>>>,
+    pub rlpx_conn_establishments_rate: Gauge,
 
-    /// Peers we've connected over time.
-    pub connection_establishments: IntCounter,
-    pub connection_establishments_events: Arc<Mutex<VecDeque<SystemTime>>>,
-    /// The rate at which we get new peers
-    pub new_connection_establishments_rate: Gauge,
-    /// Peers.
-    pub peers: Arc<Mutex<u64>>,
-    /// The amount of clients connected grouped by client type
-    pub peers_by_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
-    /// Ex-peers by client type and then reason of disconnection.
-    pub disconnections_by_client_type: Arc<Mutex<BTreeMap<String, BTreeMap<String, u64>>>>,
-    /// RLPx connection attempt failures grouped and counted by reason
-    pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
+    pub rlpx_conn_failures_reasons: Arc<Mutex<Vec<RLPxError>>>,
+    pub rlpx_conn_failures_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
+    pub rlpx_conn_failures: IntCounter,
 
-    /* Snap Sync */
-    // Common
-    pub sync_head_block: Arc<Mutex<u64>>,
-    pub sync_head_hash: Arc<Mutex<H256>>,
-
-    // Headers
-    pub headers_to_download: Arc<Mutex<u64>>,
-    pub downloaded_headers: Arc<Mutex<u64>>,
-    pub total_header_downloaders: Arc<Mutex<u64>>,
-    pub free_header_downloaders: Arc<Mutex<u64>>,
-    pub header_downloads_tasks_queued: Arc<Mutex<u64>>,
-    pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
-    pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_headers: Arc<Mutex<Option<Duration>>>,
-
-    // Account tries
-    pub downloaded_account_tries: Arc<Mutex<u64>>,
-    pub total_accounts_downloaders: Arc<Mutex<u64>>,
-    pub free_accounts_downloaders: Arc<Mutex<u64>>,
-    pub accounts_downloads_tasks_queued: Arc<Mutex<u64>>,
-    pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
-    pub account_tries_state_root: Arc<Mutex<Option<H256>>>,
-
-    // Storage tries
-    pub storage_tries_to_download: Arc<Mutex<u64>>,
-    pub downloaded_storage_tries: Arc<Mutex<u64>>,
-    pub total_storages_downloaders: Arc<Mutex<u64>>,
-    pub free_storages_downloaders: Arc<Mutex<u64>>,
-    pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
-    pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
-
-    // Storage slots
-    pub downloaded_storage_slots: Arc<Mutex<u64>>,
-
-    // Storage tries state roots
-    pub storage_tries_state_roots_to_compute: Arc<Mutex<u64>>,
-    pub storage_tries_state_roots_computed: IntCounter,
-    pub storage_tries_state_roots_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_state_roots_end_time: Arc<Mutex<Option<SystemTime>>>,
-
-    // Bytecodes
-    pub bytecodes_to_download: Arc<Mutex<u64>>,
-    pub downloaded_bytecodes: Arc<Mutex<u64>>,
-    pub total_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub free_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub bytecode_downloads_tasks_queued: Arc<Mutex<u64>>,
-    pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub pinged_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub failed_to_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub answered_our_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connected_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_attempts_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_failures_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_failures_to_mainnet_peers_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
 
     start_time: SystemTime,
 }
 
 impl Metrics {
-    pub async fn enable(&self) {
-        *self.enabled.lock().await = true;
+    pub fn new(window_size_in_secs: u64) -> Self {
+        Metrics {
+            window_size: Duration::from_secs(window_size_in_secs),
+            ..Default::default()
+        }
     }
 
-    pub async fn disable(&self) {
-        *self.enabled.lock().await = false;
-    }
-
-    pub async fn record_new_discovery(&self) {
+    pub async fn record_new_contact(&self) {
         let mut events = self.new_contacts_events.lock().await;
-
         events.push_back(SystemTime::now());
-
-        self.discovered_nodes.inc();
-
-        *self.contacts.lock().await += 1;
-
+        self.total_contacts.inc();
+        self.increase_current_contacts().await;
         self.update_rate(&mut events, &self.new_contacts_rate).await;
     }
 
-    pub async fn record_new_discarded_node(&self) {
-        self.discarded_nodes.inc();
-
-        *self.contacts.lock().await -= 1;
+    pub async fn record_discarded_contact(&self) {
+        self.discarded_contacts.inc();
+        self.decrease_current_contacts().await;
     }
 
     pub async fn record_new_rlpx_conn_attempt(&self) {
-        let mut events = self.connection_attempts_events.lock().await;
-
+        let mut events = self.rlpx_conn_attempts_events.lock().await;
         events.push_back(SystemTime::now());
-
-        self.connection_attempts.inc();
-
-        self.update_rate(&mut events, &self.new_connection_attempts_rate)
+        self.rlpx_conn_attempts.inc();
+        self.update_rate(&mut events, &self.rlpx_conn_attempts_rate)
             .await;
     }
 
-    pub async fn record_new_rlpx_conn_established(&self, client_version: &str) {
-        let mut events = self.connection_establishments_events.lock().await;
-
+    pub async fn record_new_rlpx_conn_established(&self) {
+        let mut events = self.rlpx_conn_establishments_events.lock().await;
         events.push_back(SystemTime::now());
-
-        self.connection_establishments.inc();
-
-        *self.peers.lock().await += 1;
-
-        self.update_rate(&mut events, &self.new_connection_establishments_rate)
+        self.rlpx_conn_establishments.inc();
+        self.update_rate(&mut events, &self.rlpx_conn_establishments_rate)
             .await;
-
-        let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
-
-        clients
-            .entry(client_type.to_string())
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
-    }
-
-    pub async fn record_ping_sent(&self) {
-        let mut events = self.pings_sent_events.lock().await;
-
-        events.push_back(SystemTime::now());
-
-        self.pings_sent.inc();
-
-        self.update_rate(&mut events, &self.pings_sent_rate).await;
-    }
-
-    pub async fn record_new_rlpx_conn_disconnection(
-        &self,
-        client_version: &str,
-        reason: DisconnectReason,
-    ) {
-        *self.peers.lock().await -= 1;
-
-        let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
-
-        let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
-        disconnection_by_client
-            .entry(client_type.to_string())
-            .or_insert(BTreeMap::new())
-            .entry(reason.to_string())
-            .and_modify(|e| *e += 1)
-            .or_insert(1);
-
-        clients
-            .entry(client_type.to_string())
-            .and_modify(|count| *count -= 1);
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
-        let mut failures_grouped_by_reason = self.connection_attempt_failures.lock().await;
-
+        let mut events = self.rlpx_conn_establishments_events.lock().await;
+        events.push_back(SystemTime::now());
+        self.rlpx_conn_failures.inc();
+        let mut failures_grouped_by_reason = self.rlpx_conn_failures_reasons_counts.lock().await;
         self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
             .await;
+        self.rlpx_conn_failures_reasons.lock().await.push(reason);
+    }
+
+    pub async fn increase_current_contacts(&self) {
+        *self.current_contacts.lock().await += 1
+    }
+
+    pub async fn decrease_current_contacts(&self) {
+        *self.current_contacts.lock().await -= 1
     }
 
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
@@ -211,7 +108,6 @@ impl Metrics {
         let count = events.len() as f64;
 
         let windows_size_in_secs = self.window_size.as_secs_f64();
-
         let elapsed_from_start_time_in_secs =
             self.start_time.elapsed().unwrap_or_default().as_secs_f64();
 
@@ -232,7 +128,6 @@ impl Metrics {
 
     pub async fn clean_old_events(&self, events: &mut VecDeque<SystemTime>) {
         let now = SystemTime::now();
-
         while let Some(&event_time) = events.front() {
             if now.duration_since(event_time).unwrap_or_default() > self.window_size {
                 events.pop_front();
@@ -240,6 +135,56 @@ impl Metrics {
                 break;
             }
         }
+    }
+
+    pub async fn new_discovered_mainnet_peer(&self, node_id: H256) -> bool {
+        self.discovered_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_failure_pinging_mainnet_peer(&self, node_id: H256) -> bool {
+        self.failed_to_ping_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_pinged_mainnet_peer(&self, node_id: H256) -> bool {
+        self.pinged_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_contacted_mainnet_peer(&self, node_id: H256) -> bool {
+        self.answered_our_ping_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_connected_mainnet_peer(&self, node_id: H256) -> bool {
+        self.connected_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_connection_attempt_to_mainnet_peer(&self, node_id: H256) -> bool {
+        self.connection_attempts_to_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_connection_failure_to_mainnet_peer(
+        &self,
+        node_id: H256,
+        failure_reason: &RLPxError,
+    ) {
+        self.connection_failures_to_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id);
+        let mut failures_grouped_by_reason = self
+            .connection_failures_to_mainnet_peers_reasons_counts
+            .lock()
+            .await;
+        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, failure_reason)
+            .await;
     }
 
     pub async fn update_failures_grouped_by_reason(
@@ -400,33 +345,35 @@ impl Default for Metrics {
     fn default() -> Self {
         let registry = Registry::new();
 
-        let discovered_nodes = IntCounter::new(
-            "discv4_discovered_nodes",
+        let new_contacts_total = IntCounter::new(
+            "discv4_new_contacts_total",
             "Total number of new nodes discovered",
         )
-        .expect("Failed to create discovered_nodes counter");
+        .expect("Failed to create new_contacts_total counter");
 
-        let new_contacts_rate = Gauge::new(
-            "discv4_new_contacts_rate",
+        let contacts_rate = Gauge::new(
+            "discv4_contacts_rate",
             "Rate of new nodes discovered per second",
         )
-        .expect("Failed to create new_contacts_rate gauge");
+        .expect("Failed to create contacts_rate gauge");
 
-        let discarded_nodes =
-            IntCounter::new("discv4_discarded_nodes", "Total number of discarded nodes")
-                .expect("Failed to create discarded_nodes counter");
-
-        registry
-            .register(Box::new(discovered_nodes.clone()))
-            .expect("Failed to register discovered_nodes counter");
+        let discarded_contacts = IntCounter::new(
+            "discv4_discarded_contacts",
+            "Total number of discarded nodes",
+        )
+        .expect("Failed to create discarded_contacts counter");
 
         registry
-            .register(Box::new(new_contacts_rate.clone()))
+            .register(Box::new(new_contacts_total.clone()))
+            .expect("Failed to register new_contacts_total counter");
+
+        registry
+            .register(Box::new(contacts_rate.clone()))
             .expect("Failed to register contacts_rate gauge");
 
         registry
-            .register(Box::new(discarded_nodes.clone()))
-            .expect("Failed to register discarded_nodes counter");
+            .register(Box::new(discarded_contacts.clone()))
+            .expect("Failed to register discarded_contacts counter");
 
         let attempted_rlpx_conn = IntCounter::new(
             "rlpx_attempted_rlpx_conn",
@@ -452,11 +399,11 @@ impl Default for Metrics {
         )
         .expect("Failed to create established_rlpx_conn_rate gauge");
 
-        let pings_sent = IntCounter::new("pings_sent", "Total number of pings sent")
-            .expect("Failed to create pings_sent counter");
-
-        let pings_sent_rate = Gauge::new("pings_sent_rate", "Rate of pings sent per second")
-            .expect("Failed to create pings_sent_rate gauge");
+        let failed_rlpx_conn = IntCounter::new(
+            "rlpx_failed_rlpx_conn",
+            "Total number of failed RLPx connections",
+        )
+        .expect("Failed to create failed_rlpx_conn counter");
 
         registry
             .register(Box::new(attempted_rlpx_conn.clone()))
@@ -475,101 +422,37 @@ impl Default for Metrics {
             .expect("Failed to register established_rlpx_conn_rate gauge");
 
         registry
-            .register(Box::new(pings_sent.clone()))
-            .expect("Failed to register pings_sent counter");
-
-        registry
-            .register(Box::new(pings_sent_rate.clone()))
-            .expect("Failed to register pings_sent_rate gauge");
-
-        let storage_tries_state_roots_computed = IntCounter::new(
-            "storage_tries_state_roots_computed",
-            "Total number of storage tries state roots computed",
-        )
-        .expect("Failed to create storage_tries_state_roots_computed counter");
-
-        registry
-            .register(Box::new(storage_tries_state_roots_computed.clone()))
-            .expect("Failed to register storage_tries_state_roots_computed counter");
+            .register(Box::new(failed_rlpx_conn.clone()))
+            .expect("Failed to register failed_rlpx_conn counter");
 
         Metrics {
-            _registry: registry,
-            enabled: Arc::new(Mutex::new(false)),
+            registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
             window_size: Duration::from_secs(60),
+            total_contacts: new_contacts_total,
+            current_contacts: Arc::new(Mutex::new(0)),
+            new_contacts_rate: contacts_rate,
+            discarded_contacts,
+            rlpx_conn_attempts: attempted_rlpx_conn,
+            rlpx_conn_attempts_events: Arc::new(Mutex::new(VecDeque::new())),
+            rlpx_conn_attempts_rate: attempted_rlpx_conn_rate,
+            rlpx_conn_establishments: established_rlpx_conn,
+            rlpx_conn_establishments_events: Arc::new(Mutex::new(VecDeque::new())),
+            rlpx_conn_establishments_rate: established_rlpx_conn_rate,
+            rlpx_conn_failures: failed_rlpx_conn,
+            rlpx_conn_failures_reasons: Arc::new(Mutex::new(Vec::new())),
+            rlpx_conn_failures_reasons_counts: Arc::new(Mutex::new(BTreeMap::new())),
 
-            discovered_nodes,
-            contacts: Arc::new(Mutex::new(0)),
-            new_contacts_rate,
-            discarded_nodes,
-
-            connection_attempts: attempted_rlpx_conn,
-            connection_attempts_events: Arc::new(Mutex::new(VecDeque::new())),
-            new_connection_attempts_rate: attempted_rlpx_conn_rate,
-
-            connection_establishments: established_rlpx_conn,
-            connection_establishments_events: Arc::new(Mutex::new(VecDeque::new())),
-            new_connection_establishments_rate: established_rlpx_conn_rate,
-
-            pings_sent,
-            pings_sent_events: Arc::new(Mutex::new(VecDeque::new())),
-            pings_sent_rate,
-
-            peers: Arc::new(Mutex::new(0)),
-            peers_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
-
-            disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
-
-            connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
-
-            /* Snap Sync */
-            // Common
-            sync_head_block: Arc::new(Mutex::new(0)),
-            sync_head_hash: Arc::new(Mutex::new(H256::default())),
-            // Headers
-            headers_to_download: Arc::new(Mutex::new(0)),
-            downloaded_headers: Arc::new(Mutex::new(0)),
-            total_header_downloaders: Arc::new(Mutex::new(0)),
-            free_header_downloaders: Arc::new(Mutex::new(0)),
-            header_downloads_tasks_queued: Arc::new(Mutex::new(0)),
-            time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
-            headers_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_headers: Arc::new(Mutex::new(None)),
-            // Account tries
-            downloaded_account_tries: Arc::new(Mutex::new(0)),
-            total_accounts_downloaders: Arc::new(Mutex::new(0)),
-            free_accounts_downloaders: Arc::new(Mutex::new(0)),
-            accounts_downloads_tasks_queued: Arc::new(Mutex::new(0)),
-            account_tries_download_start_time: Arc::new(Mutex::new(None)),
-            account_tries_download_end_time: Arc::new(Mutex::new(None)),
-            account_tries_state_root: Arc::new(Mutex::new(None)),
-
-            // Storage tries
-            storage_tries_to_download: Arc::new(Mutex::new(0)),
-            downloaded_storage_tries: Arc::new(Mutex::new(0)),
-            total_storages_downloaders: Arc::new(Mutex::new(0)),
-            free_storages_downloaders: Arc::new(Mutex::new(0)),
-            storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
-            storage_tries_download_start_time: Arc::new(Mutex::new(None)),
-            storage_tries_download_end_time: Arc::new(Mutex::new(None)),
-
-            // Storage slots
-            downloaded_storage_slots: Arc::new(Mutex::new(0)),
-
-            // Storage tries state roots
-            storage_tries_state_roots_to_compute: Arc::new(Mutex::new(0)),
-            storage_tries_state_roots_computed,
-            storage_tries_state_roots_start_time: Arc::new(Mutex::new(None)),
-            storage_tries_state_roots_end_time: Arc::new(Mutex::new(None)),
-
-            // Bytecodes
-            bytecodes_to_download: Arc::new(Mutex::new(0)),
-            downloaded_bytecodes: Arc::new(Mutex::new(0)),
-            total_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            free_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            bytecode_downloads_tasks_queued: Arc::new(Mutex::new(0)),
-            bytecode_download_start_time: Arc::new(Mutex::new(None)),
-            bytecode_download_end_time: Arc::new(Mutex::new(None)),
+            discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            failed_to_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            pinged_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            answered_our_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connected_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_attempts_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_failures_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_failures_to_mainnet_peers_reasons_counts: Arc::new(Mutex::new(
+                BTreeMap::new(),
+            )),
 
             start_time: SystemTime::now(),
         }

@@ -1,23 +1,18 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
-use ethrex_common::types::ForkId;
-use keccak_hash::H256;
+use ethrex_common::{H256, H512, types::ForkId};
+use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::rngs::OsRng;
-use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_after, send_interval},
+    tasks::{CastResponse, GenServer, send_after},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info};
 
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
-    kademlia::{Contact, Kademlia},
+    kademlia::Kademlia,
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
@@ -35,28 +30,15 @@ pub enum DiscoverySideCarError {
 
 #[derive(Debug, Clone)]
 pub struct DiscoverySideCarState {
+    _geth_peers: Vec<H256>,
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SecretKey,
+    signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
 
-    /// Interval between revalidation checks.
-    revalidation_check_interval: Duration,
-    /// Interval between revalidations.
-    revalidation_interval: Duration,
-
-    /// The initial interval between peer lookups, until the number of peers reaches
-    /// [target_peers](DiscoverySideCarState::target_peers), or the number of
-    /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-    initial_lookup_interval: Duration,
-    lookup_interval: Duration,
-
-    prune_interval: Duration,
-
-    /// The target number of RLPx connections to reach.
-    target_peers: u64,
-    /// The target number of contacts to maintain in the Kademlia table.
-    target_contacts: u64,
+    revalidation_period: Duration,
+    lookup_period: Duration,
+    prune_period: Duration,
 
     kademlia: Kademlia,
 }
@@ -65,31 +47,38 @@ impl DiscoverySideCarState {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
-        signer: SecretKey,
+        signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/Users/ivanlitteri/Repositories/lambdaclass/ethrex/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<Vec<_>>();
+
         Self {
+            _geth_peers,
             local_node,
             local_node_record,
             signer,
             udp_socket,
             kademlia,
 
-            revalidation_check_interval: Duration::from_secs(5),
-            revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
-
-            initial_lookup_interval: Duration::from_secs(5),
-            lookup_interval: Duration::from_secs(5 * 60), // 5 minutes
-
-            prune_interval: Duration::from_secs(5),
-
-            target_peers: 100,
-            target_contacts: 100_000,
+            revalidation_period: Duration::from_secs(5),
+            lookup_period: Duration::from_secs(5),
+            prune_period: Duration::from_secs(5),
         }
     }
 
-    async fn ping(&self, node: &Node) -> Result<H256, DiscoverySideCarError> {
+    async fn ping(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let mut buf = Vec::new();
 
         // TODO: Parametrize this expiration.
@@ -113,10 +102,6 @@ impl DiscoverySideCarState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
-        let ping_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, node.udp_addr())
@@ -129,13 +114,13 @@ impl DiscoverySideCarState {
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
-        Ok(H256::from(ping_hash))
+        Ok(())
     }
 
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_priv_key = SigningKey::random(&mut OsRng);
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
@@ -170,13 +155,12 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
 pub struct DiscoverySideCar;
 
 impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
-        signer: SecretKey,
+        signer: SigningKey,
         fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
@@ -184,7 +168,7 @@ impl DiscoverySideCar {
         info!("Starting Discovery Side Car");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer, fork_id.clone())
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
                 .expect("Failed to create local node record"),
         ));
 
@@ -193,15 +177,11 @@ impl DiscoverySideCar {
 
         let mut server = DiscoverySideCar::start(state.clone());
 
-        send_interval(
-            state.revalidation_check_interval,
-            server.clone(),
-            InMessage::Revalidate,
-        );
-
-        send_interval(state.prune_interval, server.clone(), InMessage::Prune);
+        let _ = server.cast(InMessage::Revalidate).await;
 
         let _ = server.cast(InMessage::Lookup).await;
+
+        let _ = server.cast(InMessage::Prune).await;
 
         Ok(())
     }
@@ -230,6 +210,12 @@ impl GenServer for DiscoverySideCar {
 
                 revalidate(&state).await;
 
+                send_after(
+                    state.revalidation_period,
+                    handle.clone(),
+                    Self::CastMsg::Revalidate,
+                );
+
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::Lookup => {
@@ -237,8 +223,7 @@ impl GenServer for DiscoverySideCar {
 
                 lookup(&state).await;
 
-                let interval = get_lookup_interval(&state).await;
-                send_after(interval, handle.clone(), Self::CastMsg::Lookup);
+                send_after(state.lookup_period, handle.clone(), Self::CastMsg::Lookup);
 
                 CastResponse::NoReply(state)
             }
@@ -246,6 +231,8 @@ impl GenServer for DiscoverySideCar {
                 debug!(received = "Prune");
 
                 prune(&state).await;
+
+                send_after(state.prune_period, handle.clone(), Self::CastMsg::Prune);
 
                 CastResponse::NoReply(state)
             }
@@ -255,22 +242,28 @@ impl GenServer for DiscoverySideCar {
 
 async fn revalidate(state: &DiscoverySideCarState) {
     for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.disposable || !is_validation_needed(state, contact) {
+        if contact.disposable {
             continue;
         }
 
+        let node_id = contact.node.node_id();
+
         match state.ping(&contact.node).await {
-            Ok(ping_hash) => {
-                METRICS.record_ping_sent().await;
-                contact.validation_timestamp = Some(Instant::now());
-                contact.ping_hash = Some(ping_hash);
+            Ok(_) => {
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_pinged_mainnet_peer(node_id).await;
+                }
             }
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
 
                 contact.disposable = true;
 
-                METRICS.record_new_discarded_node().await;
+                METRICS.record_discarded_contact().await;
+
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_failure_pinging_mainnet_peer(node_id).await;
+                }
             }
         }
     }
@@ -285,7 +278,7 @@ async fn lookup(state: &DiscoverySideCarState) {
         if let Err(err) = state.send_find_node(&contact.node).await {
             error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
             contact.disposable = true;
-            METRICS.record_new_discarded_node().await;
+            METRICS.record_discarded_contact().await;
         }
 
         contact.n_find_node_sent += 1;
@@ -304,33 +297,5 @@ async fn prune(state: &DiscoverySideCarState) {
     for contact_to_discard_id in disposable_contacts {
         contacts.remove(&contact_to_discard_id);
         discarded_contacts.insert(contact_to_discard_id);
-    }
-}
-
-fn is_validation_needed(state: &DiscoverySideCarState, contact: &Contact) -> bool {
-    let sent_ping_ttl = Duration::from_secs(30);
-
-    let validation_is_stale = !contact.was_validated()
-        || contact
-            .validation_timestamp
-            .map(|ts| Instant::now().saturating_duration_since(ts) > state.revalidation_interval)
-            .unwrap_or(false);
-
-    let sent_ping_is_stale = contact
-        .validation_timestamp
-        .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
-        .unwrap_or(false);
-
-    validation_is_stale || sent_ping_is_stale
-}
-
-async fn get_lookup_interval(state: &DiscoverySideCarState) -> Duration {
-    let number_of_contacts = state.kademlia.table.lock().await.len() as u64;
-    let number_of_peers = state.kademlia.peers.lock().await.len() as u64;
-    if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
-        state.initial_lookup_interval
-    } else {
-        info!("Reached target number of peers or contacts. Using longer lookup interval.");
-        state.lookup_interval
     }
 }

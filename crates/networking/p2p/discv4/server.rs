@@ -1,17 +1,21 @@
-use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
+use std::{
+    collections::{HashSet, hash_map::Entry},
+    fs::read_to_string,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
+};
 
 use ethrex_common::{H512, types::ForkId};
+use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
-use rand::{rngs::OsRng, seq::IteratorRandom};
-use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
 use crate::{
     discv4::messages::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
@@ -41,9 +45,10 @@ pub enum DiscoveryServerError {
 
 #[derive(Debug, Clone)]
 pub struct DiscoveryServerState {
+    _geth_peers: HashSet<H256>,
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SecretKey,
+    signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
@@ -52,11 +57,25 @@ impl DiscoveryServerState {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
-        signer: SecretKey,
+        signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/Users/ivanlitteri/Repositories/lambdaclass/ethrex/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<HashSet<_>>();
+
         Self {
+            _geth_peers,
             local_node,
             local_node_record,
             signer,
@@ -74,10 +93,6 @@ impl DiscoveryServerState {
             else {
                 continue;
             };
-            if packet.get_node_id() == self.local_node.node_id() {
-                // Ignore packets sent by ourselves
-                continue;
-            }
             let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
             let _ = conn_handle
                 .cast(ConnectionHandlerInMessage::from(packet, from))
@@ -85,7 +100,7 @@ impl DiscoveryServerState {
         }
     }
 
-    async fn ping(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
+    async fn ping(&self, node: &Node) -> Result<(), DiscoveryServerError> {
         let mut buf = Vec::new();
 
         // TODO: Parametrize this expiration.
@@ -109,10 +124,6 @@ impl DiscoveryServerState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
-        let ping_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, node.udp_addr())
@@ -125,7 +136,7 @@ impl DiscoveryServerState {
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
-        Ok(H256::from(ping_hash))
+        Ok(())
     }
 
     async fn pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -154,30 +165,13 @@ impl DiscoveryServerState {
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
-        Ok(())
-    }
+        let _ = self.send_enr_request(node).await.inspect_err(
+            |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
+        );
 
-    async fn send_neighbors(
-        &self,
-        neighbors: Vec<Node>,
-        node: &Node,
-    ) -> Result<(), DiscoveryServerError> {
-        let mut buf = Vec::new();
-
-        // TODO: Parametrize this expiration.
-        let expiration: u64 = get_msg_expiration_from_seconds(20);
-
-        let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
-
-        msg.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
-
-        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
+        let _ = self.send_find_node(node).await.inspect_err(
+            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
+        );
 
         Ok(())
     }
@@ -208,19 +202,49 @@ impl DiscoveryServerState {
         Ok(())
     }
 
-    async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
-        self.pong(hash, &node).await?;
+    async fn send_enr_request(&self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let mut buf = Vec::new();
 
-        let mut table = self.kademlia.table.lock().await;
+        // TODO: Parametrize this expiration.
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        match table.entry(node.node_id()) {
-            Entry::Occupied(_) => (),
-            Entry::Vacant(entry) => {
-                let ping_hash = self.ping(&node).await?;
-                let contact = entry.insert(Contact::from(node));
-                contact.record_sent_ping(ping_hash);
-            }
+        let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
+
+        enr_req.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoveryServerError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
         }
+
+        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
+
+    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
+
+        let mut buf = Vec::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .await
+            .map_err(DiscoveryServerError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
+        }
+
+        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -236,13 +260,12 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
 pub struct DiscoveryServer;
 
 impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
-        signer: SecretKey,
+        signer: SigningKey,
         fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
@@ -251,7 +274,7 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer, fork_id.clone())
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
                 .expect("Failed to create local node record"),
         ));
 
@@ -269,14 +292,16 @@ impl DiscoveryServer {
 
         info!("Pinging {} bootnodes", bootnodes.len());
 
-        let mut table = kademlia.table.lock().await;
-
         for bootnode in bootnodes {
             let _ = state.ping(&bootnode).await.inspect_err(|e| {
                 error!("Failed to ping bootnode: {e}");
             });
 
-            table.insert(bootnode.node_id(), bootnode.into());
+            kademlia
+                .table
+                .lock()
+                .await
+                .insert(bootnode.node_id(), bootnode.into());
         }
 
         Ok(())
@@ -317,20 +342,12 @@ pub enum ConnectionHandlerError {}
 #[derive(Debug, Clone)]
 pub enum ConnectionHandlerInMessage {
     Ping {
-        from: SocketAddr,
         message: PingMessage,
         hash: H256,
         sender_public_key: H512,
     },
-    Pong {
-        message: PongMessage,
-        sender_public_key: H512,
-    },
-    FindNode {
-        from: SocketAddr,
-        message: FindNodeMessage,
-        sender_public_key: H512,
-    },
+    Pong(Packet),
+    FindNode(Packet),
     Neighbors {
         message: NeighborsMessage,
         sender_public_key: H512,
@@ -351,20 +368,12 @@ impl ConnectionHandlerInMessage {
     pub fn from(packet: Packet, from: SocketAddr) -> Self {
         match packet.get_message() {
             Message::Ping(msg) => Self::Ping {
-                from,
                 message: msg.clone(),
                 hash: packet.get_hash(),
                 sender_public_key: packet.get_public_key(),
             },
-            Message::Pong(msg) => Self::Pong {
-                message: *msg,
-                sender_public_key: packet.get_public_key(),
-            },
-            Message::FindNode(msg) => Self::FindNode {
-                from,
-                message: msg.clone(),
-                sender_public_key: packet.get_public_key(),
-            },
+            Message::Pong(..) => Self::Pong(packet),
+            Message::FindNode(..) => Self::FindNode(packet),
             Message::Neighbors(msg) => Self::Neighbors {
                 message: msg.clone(),
                 sender_public_key: packet.get_public_key(),
@@ -374,7 +383,7 @@ impl ConnectionHandlerInMessage {
                 sender_public_key: packet.get_public_key(),
             },
             Message::ENRRequest(msg) => Self::ENRRequest {
-                message: *msg,
+                message: msg.clone(),
                 from,
                 hash: packet.get_hash(),
                 sender_public_key: packet.get_public_key(),
@@ -388,7 +397,6 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
 pub struct ConnectionHandler;
 
 impl ConnectionHandler {
@@ -416,95 +424,40 @@ impl GenServer for ConnectionHandler {
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Ping {
-                from,
                 message: msg,
                 hash,
                 sender_public_key,
             } => {
-                trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+                debug!(received = "Ping", from = %format!("{sender_public_key:#x}"));
 
-                if is_msg_expired(msg.expiration) {
-                    trace!("Ping expired");
-                    return CastResponse::Stop;
-                }
+                let node = Node::new(
+                    msg.from.ip,
+                    msg.from.udp_port,
+                    msg.from.tcp_port,
+                    sender_public_key,
+                );
 
-                let sender_ip = unmap_ipv4in6_address(from.ip());
-                let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
-
-                let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
-                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                let _ = state.pong(hash, &node).await.inspect_err(|e| {
+                    error!(sent = "Pong", to = %format!("{sender_public_key:#x}"), err = ?e);
                 });
             }
-            Self::CastMsg::Pong {
-                message,
-                sender_public_key,
-            } => {
-                trace!(received = "Pong", msg = ?message, from = %format!("{:#x}", sender_public_key));
+            Self::CastMsg::Pong(packet) => {
+                debug!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
 
-                let node_id = node_id(&sender_public_key);
+                let node_id = packet.get_node_id();
 
-                handle_pong(&state, message, node_id).await;
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_contacted_mainnet_peer(node_id).await;
+                }
             }
-            Self::CastMsg::FindNode {
-                from,
-                message,
-                sender_public_key,
-            } => {
-                trace!(received = "FindNode", msg = ?message, from = %format!("{:#x}", sender_public_key));
-
-                if is_msg_expired(message.expiration) {
-                    trace!("FindNode expired");
-                    return CastResponse::Stop;
-                }
-                let node_id = node_id(&sender_public_key);
-
-                let table = state.kademlia.table.lock().await;
-
-                let Some(contact) = table.get(&node_id) else {
-                    return CastResponse::Stop;
-                };
-                if !contact.was_validated() {
-                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                    return CastResponse::Stop;
-                }
-                let node = contact.node.clone();
-
-                // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-                // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-                // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-                // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-                if from.ip() != node.ip {
-                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
-                    return CastResponse::Stop;
-                }
-
-                let neighbors = table
-                    .iter()
-                    .map(|(_, c)| c.node.clone())
-                    .choose_multiple(&mut OsRng, 16);
-
-                drop(table);
-
-                // we are sending the neighbors in 2 different messages to avoid exceeding the
-                // maximum packet size
-                for chunk in neighbors.chunks(8) {
-                    let _ = state.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
-                        error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
-                    });
-                }
+            Self::CastMsg::FindNode(packet) => {
+                debug!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
             }
             Self::CastMsg::Neighbors {
                 message: msg,
                 sender_public_key,
             } => {
-                trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-
-                if is_msg_expired(msg.expiration) {
-                    trace!("Neighbors expired");
-                    return CastResponse::Stop;
-                }
-
-                // TODO(#3746): check that we requested neighbors from the node
+                debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
 
                 let mut contacts = state.kademlia.table.lock().await;
                 let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
@@ -512,48 +465,49 @@ impl GenServer for ConnectionHandler {
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                        if !discarded_contacts.contains(&node_id)
-                            && node_id != state.local_node.node_id()
-                        {
+                        if state._geth_peers.contains(&node_id) {
+                            let was_unknown = state
+                                .kademlia
+                                .discovered_mainnet_peers
+                                .lock()
+                                .await
+                                .insert(node_id);
+
+                            if was_unknown {
+                                METRICS.new_discovered_mainnet_peer(node_id).await;
+                            }
+                        }
+
+                        if !discarded_contacts.contains(&node_id) {
                             vacant_entry.insert(Contact::from(node));
-                            METRICS.record_new_discovery().await;
+                            METRICS.record_new_contact().await;
                         }
                     };
                 }
             }
             Self::CastMsg::ENRRequest {
-                message: msg,
+                message: _,
                 from,
                 hash,
                 sender_public_key,
             } => {
-                trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-
-                if is_msg_expired(msg.expiration) {
-                    trace!("ENRRequest expired");
-                    return CastResponse::Stop;
-                }
-                let node_id = node_id(&sender_public_key);
-
-                let mut table = state.kademlia.table.lock().await;
-
-                let Some(contact) = table.get(&node_id) else {
-                    return CastResponse::Stop;
-                };
-                if !contact.was_validated() {
-                    debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                    return CastResponse::Stop;
-                }
+                debug!(received = "ENRRequest", from = %format!("{sender_public_key:#x}"));
 
                 if let Err(err) = state.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
                     return CastResponse::Stop;
                 }
 
-                table.entry(node_id).and_modify(|c| c.knows_us = true);
+                state
+                    .kademlia
+                    .table
+                    .lock()
+                    .await
+                    .entry(node_id(&sender_public_key))
+                    .and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
-                message: msg,
+                message: _msg,
                 sender_public_key,
             } => {
                 /*
@@ -563,27 +517,9 @@ impl GenServer for ConnectionHandler {
                     - Check valid signature
                     - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
                 */
-                trace!(received = "ENRResponse", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+                debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
             }
         }
         CastResponse::Stop
     }
-}
-
-async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id: H256) {
-    let mut contacts = state.kademlia.table.lock().await;
-
-    // Received a pong from a node we don't know about
-    let Some(contact) = contacts.get_mut(&node_id) else {
-        return;
-    };
-    // Received a pong for an unknown ping
-    if !contact
-        .ping_hash
-        .map(|ph| ph == message.ping_hash)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    contact.ping_hash = None;
 }

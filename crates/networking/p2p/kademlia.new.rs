@@ -7,10 +7,7 @@ use ethrex_common::H256;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use crate::{
-    rlpx::p2p::Capability,
-    types::{Node, NodeRecord},
-};
+use crate::types::Node;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -29,44 +26,6 @@ impl From<Node> for Contact {
             n_find_node_sent: 0,
             disposable: false,
             knows_us: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PeerData {
-    pub node: Node,
-    pub record: NodeRecord,
-    pub supported_capabilities: Vec<Capability>,
-    /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
-    /// It is only valid as long as is_connected is true
-    pub is_connection_inbound: bool,
-    // pub last_ping: u64,
-    // pub last_pong: u64,
-    // pub last_ping_hash: Option<H256>,
-    // pub is_proven: bool,
-    // pub find_node_request: Option<FindNodeRequest>,
-    // pub enr_request_hash: Option<H256>,
-    // /// a ration to track the peers's ping responses
-    // pub liveness: u16,
-    // /// if a revalidation was sent to the peer, the bool marks if it has answered
-    // pub revalidation: Option<bool>,
-    // /// communication channels between the peer data and its active connection
-    // pub channels: Option<PeerChannels>,
-    // /// Starts as false when a node is added. Set to true when a connection becomes active. When a
-    // /// connection fails, the peer record is removed, so no need to set it to false.
-    // pub is_connected: bool,
-    // /// Simple peer score: +1 for success, -1 for failure
-    // pub score: i32,
-}
-
-impl PeerData {
-    pub fn new(node: Node, record: NodeRecord) -> Self {
-        Self {
-            node,
-            record,
-            supported_capabilities: Vec::new(),
-            is_connection_inbound: false,
         }
     }
 }

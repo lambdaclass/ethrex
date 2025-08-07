@@ -11,15 +11,12 @@ use ethrex_rlp::{
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };
-use secp256k1::PublicKey;
+use k256::PublicKey;
 use serde::Serialize;
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
-
-/// The version of the base P2P protocol we support.
-/// This is sent at the start of the Hello message instead of the capabilities list.
-pub const SUPPORTED_P2P_CAPABILITY_VERSION: u8 = 5;
+pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
 const CAPABILITY_NAME_MAX_LENGTH: usize = 8;
 
@@ -51,6 +48,13 @@ impl Capability {
     pub const fn eth(version: u8) -> Self {
         Capability {
             protocol: pad_right(b"eth"),
+            version,
+        }
+    }
+
+    pub const fn p2p(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"p2p"),
             version,
         }
     }
@@ -104,10 +108,10 @@ impl Serialize for Capability {
 }
 
 #[derive(Debug, Clone)]
-pub struct HelloMessage {
-    pub capabilities: Vec<Capability>,
-    pub node_id: PublicKey,
-    pub client_id: String,
+pub(crate) struct HelloMessage {
+    pub(crate) capabilities: Vec<Capability>,
+    pub(crate) node_id: PublicKey,
+    pub(crate) client_id: String,
 }
 
 impl HelloMessage {
@@ -124,7 +128,7 @@ impl RLPxMessage for HelloMessage {
     const CODE: u8 = 0x00;
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
-            .encode_field(&SUPPORTED_P2P_CAPABILITY_VERSION) // protocolVersion
+            .encode_field(&5_u8) // protocolVersion
             .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
@@ -237,8 +241,8 @@ impl From<DisconnectReason> for u8 {
     }
 }
 #[derive(Debug, Clone)]
-pub struct DisconnectMessage {
-    pub reason: Option<DisconnectReason>,
+pub(crate) struct DisconnectMessage {
+    pub(crate) reason: Option<DisconnectReason>,
 }
 
 impl DisconnectMessage {
@@ -295,7 +299,7 @@ impl RLPxMessage for DisconnectMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PingMessage {}
+pub(crate) struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
     const CODE: u8 = 0x02;
@@ -321,7 +325,7 @@ impl RLPxMessage for PingMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PongMessage {}
+pub(crate) struct PongMessage {}
 
 impl RLPxMessage for PongMessage {
     const CODE: u8 = 0x03;
