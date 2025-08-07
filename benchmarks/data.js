@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754527275165,
+  "lastUpdate": 1754529530385,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17884,6 +17884,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001238155844155844,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a511ff2e0a1b8bcacf59a042d42a95fc9a1438e",
+          "message": "feat(l1): embed bootnodes for public networks inside binary (#3967)\n\n**Motivation**\n\nWe want users to be able to run the binary without needing to have a\nfile of known bootnodes for each public network.\n\n**Description**\n\nThis PR embeds the bootnode files inside the binary.\n\nCloses #3966",
+          "timestamp": "2025-08-06T19:13:51Z",
+          "tree_id": "35509bef5962a276de04c4ac67d0bfa7056cd8c5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6a511ff2e0a1b8bcacf59a042d42a95fc9a1438e"
+        },
+        "date": 1754529529705,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0062080558139534885,
             "unit": "Mgas/s"
           }
         ]
