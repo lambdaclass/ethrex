@@ -243,8 +243,18 @@ impl GenServer for RLPxConnection {
                     )
                     .await;
                     self.inner_state = InnerState::Established(established_state);
+                    METRICS.record_new_rlpx_conn_failure(reason).await;
                     Ok(NoSuccess(self))
                 } else {
+                    METRICS.record_new_rlpx_conn_established(
+                        &established_state
+                            .node
+                            .version
+                            .clone()
+                            .unwrap_or("Unknown".to_string()),
+                    )
+                    .await;
+
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))
@@ -255,6 +265,7 @@ impl GenServer for RLPxConnection {
                 // No connection was established so no need to perform any other action
                 debug!("Failed Handshake on RLPx connection {err}");
                 self.inner_state = InnerState::HandshakeFailed;
+                METRICS.record_new_rlpx_conn_failure(err).await;
                 Ok(NoSuccess(self))
             }
         }
