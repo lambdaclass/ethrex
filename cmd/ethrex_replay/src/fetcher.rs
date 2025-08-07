@@ -6,7 +6,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     cache::{Cache, L2Fields, load_cache, write_cache},
@@ -56,7 +56,8 @@ pub async fn get_blockdata(
 
     let mut witness = match eth_client.get_witness(block_number.clone(), None).await {
         Ok(witness) => witness,
-        Err(_e) => {
+        Err(e) => {
+            error!("{e}");
             todo!("Retry with eth_getProofs")
         }
     };
