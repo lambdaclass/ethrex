@@ -36,7 +36,7 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut prover_db = cache.witness;
-    prover_db.rebuild_tries()?;
+    prover_db.rebuild_tries(&block.header)?;
     let mut wrapped_db = ExecutionWitnessWrapper::new(prover_db);
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };

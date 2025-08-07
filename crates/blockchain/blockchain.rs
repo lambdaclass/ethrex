@@ -346,8 +346,6 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         Ok(ExecutionWitnessResult {
-            state_trie_nodes: Some(used_trie_nodes),
-            storage_trie_nodes: Some(encoded_storage_tries),
             codes_map: codes,
             state_trie: None,
             storage_tries: None,

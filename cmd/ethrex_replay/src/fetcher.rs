@@ -29,19 +29,15 @@ pub async fn get_blockdata(
 
     info!("Getting execution witness from RPC");
 
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => {
-            if witness.chain_config.chain_id != chain_config.chain_id {
-                return Err(eyre::eyre!(
-                    "Rpc endpoint returned a different chain id than the one set by --network"
-                ));
-            }
-            witness
-        }
+    let mut witness = match eth_client.get_witness(block_number.clone(), None).await {
+        Ok(witness) => witness,
         Err(_e) => {
             todo!("Retry with eth_getProofs")
         }
     };
+
+    // TODO: Make sure other ExecutionWitness users use the correct chain config.
+    witness.chain_config = chain_config;
 
     info!("Getting block data from RPC");
 
@@ -50,7 +46,7 @@ pub async fn get_blockdata(
     let cache = Cache::new(vec![block], witness);
 
     write_cache(&cache, &file_name).expect("failed to write cache");
-    
+
     Ok(cache)
 }
 

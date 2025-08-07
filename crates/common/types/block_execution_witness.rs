@@ -52,21 +52,6 @@ pub struct ExecutionWitnessResult {
     pub headers: Vec<Bytes>,
 
     /* Our fields */
-    // Rlp encoded state trie nodes
-    #[serde(
-        default,
-        serialize_with = "serialize_proofs",
-        deserialize_with = "deserialize_state"
-    )]
-    pub state_trie_nodes: Option<Vec<Vec<u8>>>,
-    // Indexed by account
-    // Rlp encoded state trie nodes
-    #[serde(
-        default,
-        serialize_with = "serialize_storage_tries",
-        deserialize_with = "deserialize_storage_tries"
-    )]
-    pub storage_trie_nodes: Option<HashMap<Address, Vec<Vec<u8>>>>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
@@ -110,87 +95,98 @@ pub enum ExecutionWitnessError {
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
-        let (Some(state_trie_nodes), Some(storage_trie_map)) = (
-            self.state_trie_nodes.as_ref(),
-            self.storage_trie_nodes.as_ref(),
-        ) else {
-            return Err(ExecutionWitnessError::RebuildTrie(
-                "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
-                    .to_string(),
-            ));
-        };
+    pub fn rebuild_tries(
+        &mut self,
+        first_header: &BlockHeader,
+    ) -> Result<(), ExecutionWitnessError> {
+        // TODO: Use a deserialize_headers functions for this instead.
+        let headers = self
+            .headers
+            .iter()
+            .map(Bytes::as_ref)
+            .map(BlockHeader::decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
 
-        let initial_state_root = self.parent_block_header.state_root;
+        for header in headers {
+            self.block_headers.insert(header.number, header);
+        }
 
+        let parent_header = self.get_block_parent_header(first_header.number)?;
+
+        let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state)?;
+
+        // Keys can either be account addresses or storage slots. They have different sizes,
+        // so we filter them by size. The from_slice method panics if the input has the wrong size.
+        let addresses: Vec<Address> = self
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
+            addresses
+                .iter()
+                .filter_map(|addr| {
+                    Some((
+                        *addr,
+                        Self::rebuild_storage_trie(addr, &state_trie, &self.state)?,
+                    ))
+                })
+                .collect::<Vec<(Address, Trie)>>(),
+        );
+
+        self.state_trie = Some(state_trie);
+        self.storage_tries = Some(storage_tries);
+
+        for code in &self.codes {
+            self.codes_map
+                .insert(keccak_hash::keccak(code), code.clone());
+        }
+
+        Ok(())
+    }
+
+    pub fn rebuild_trie(
+        initial_state: H256,
+        state: &[Bytes],
+    ) -> Result<Trie, ExecutionWitnessError> {
         let mut initial_node = None;
 
-        for node in state_trie_nodes.iter() {
+        for node in state.iter() {
+            // If the node is empty we skip it
+            if node == &vec![128_u8] {
+                continue;
+            }
             let x = Node::decode_raw(node).map_err(|_| {
                 ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
             })?;
             let hash = x.compute_hash().finalize();
-            if hash == initial_state_root {
+            if hash == initial_state {
                 initial_node = Some(node.clone());
                 break;
             }
         }
 
-        let state_trie =
-            Trie::from_nodes(initial_node.as_ref(), state_trie_nodes).map_err(|e| {
-                ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
-            })?;
+        Trie::from_nodes(
+            initial_node.map(|b| b.to_vec()).as_ref(),
+            &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
+        )
+        .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
+    }
 
-        let mut storage_tries = HashMap::new();
-        for (addr, nodes) in storage_trie_map {
-            let hashed_address = hash_address(addr);
-            let encoded_state = state_trie
-                .get(&hashed_address)
-                .expect("Failed to get from trie");
+    // This funciton is an option because we expect it to fail sometimes, and we just want to filter it
+    pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
+        let account_state_rlp = trie.get(&hash_address(address)).ok()??;
 
-            let state = encoded_state
-                .map(|encoded| AccountState::decode(&encoded))
-                .unwrap_or_else(|| Ok(AccountState::default()))
-                .expect("Failed to get account state");
+        let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-            if state.storage_root == *EMPTY_TRIE_HASH {
-                storage_tries.insert(
-                    *addr,
-                    Trie::from_nodes(None, nodes).map_err(|e| {
-                        ExecutionWitnessError::RebuildTrie(format!(
-                            "Failed to build storage trie {e}"
-                        ))
-                    })?,
-                );
-                continue;
-            }
-
-            let mut initial_node = None;
-
-            for node in nodes.iter() {
-                let x = Node::decode_raw(node).expect("invalid node");
-                let hash = x.compute_hash().finalize();
-                if hash == state.storage_root {
-                    initial_node = Some(node);
-                    break;
-                }
-            }
-
-            let Ok(storage_trie) = Trie::from_nodes(initial_node, nodes) else {
-                return Err(ExecutionWitnessError::RebuildTrie(
-                    "Failed to rebuild storage trie".to_string(),
-                ));
-            };
-
-            storage_tries.insert(*addr, storage_trie);
+        if account_state.storage_root == *EMPTY_TRIE_HASH {
+            return None;
         }
 
-        self.state_trie = Some(state_trie);
-        self.storage_tries = Some(storage_tries);
-        self.state_trie_nodes = None;
-        self.storage_trie_nodes = None;
-
-        Ok(())
+        Self::rebuild_trie(account_state.storage_root, state).ok()
     }
 
     pub fn apply_account_updates(
