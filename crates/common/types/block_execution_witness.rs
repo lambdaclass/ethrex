@@ -112,9 +112,6 @@ impl ExecutionWitnessResult {
             self.block_headers.insert(header.number, header);
         }
 
-        dbg!(self.block_headers.keys().collect::<Vec<_>>());
-        dbg!(first_header.number);
-
         let parent_header = self.get_block_parent_header(first_header.number)?;
 
         let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state)?;
