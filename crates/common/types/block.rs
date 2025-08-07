@@ -10,6 +10,7 @@ use crate::{
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
+use eth_trie::{EthTrie, MemoryDB, Trie as _};
 use ethereum_types::Bloom;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -22,7 +23,10 @@ use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{Ordering, max};
+use std::{
+    cmp::{Ordering, max},
+    sync::Arc,
+};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
@@ -247,7 +251,17 @@ pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
         //                   RLP(tx)  else
         (idx.encode_to_vec(), tx.encode_canonical_to_vec())
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    let memdb = Arc::new(MemoryDB::new(true));
+
+    let root = {
+        let mut trie = EthTrie::new(memdb.clone());
+
+        for (k, v) in iter {
+            trie.insert(&k, &v).expect("test");
+        }
+        trie.root_hash().expect("test")
+    };
+    H256(root.0)
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {

@@ -295,18 +295,24 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6177ed26655d4e84e00b65cb494d4e0b8830e7cae7ef5d63087d445a2600fb55"
 dependencies = [
+ "alloy-rlp",
  "bytes",
  "cfg-if 1.0.1",
  "const-hex",
  "derive_more 2.0.1",
+ "foldhash",
  "hashbrown 0.15.4",
  "indexmap 2.9.0",
  "itoa",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "keccak-asm",
  "paste",
+ "proptest",
  "rand 0.9.1",
  "ruint",
+ "rustc-hash 2.1.1",
  "serde",
+ "sha3",
  "tiny-keccak",
 ]
 
@@ -3508,6 +3514,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "eth_trie"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dccc337a4be0e05a73d509b85fa1c8f07cc7e7928de4f03c618bf33671a7f005"
+dependencies = [
+ "alloy-primitives 1.2.1",
+ "alloy-rlp",
+ "hashbrown 0.15.4",
+ "keccak-hash",
+ "log",
+ "parking_lot 0.12.4",
+]
+
+[[package]]
 name = "ethabi"
 version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3909,6 +3929,7 @@ dependencies = [
  "bytes",
  "c-kzg",
  "crc32fast",
+ "eth_trie",
  "ethereum-types 0.15.1",
  "ethrex-rlp",
  "ethrex-trie",
