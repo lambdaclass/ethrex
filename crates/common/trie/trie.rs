@@ -12,8 +12,12 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, OnceLock},
+};
+
+use crate::node::{BranchNode, ExtensionNode};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
@@ -48,6 +52,288 @@ pub type ValueRLP = Vec<u8>;
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (NodeHash, NodeRLP);
+
+const TAG_LEAF: u8 = 0;
+const TAG_EXTENSION: u8 = 1;
+const TAG_BRANCH: u8 = 2;
+
+const REF_HASH: u8 = 0;
+const REF_NODE: u8 = 1;
+
+enum SerializedNodeRef {
+    /// Node hash
+    Hash(NodeHash),
+    /// Position where the child node is stored in the file
+    Offset(usize),
+}
+
+/// Serializes a trie into a byte buffer.
+/// Serialize is post-order, meaning that the children are serialized first. The root node is serialized last.
+/// When we find a NodeRef::Node, we serialize the node and store the offset in the buffer.
+/// Format
+///   - Leaf: [ {TAG_LEAF}, {nibbles_len}, {nibbles...}, {value_len}, {value...} ]
+///   - Extension: [ {TAG_EXTENSION}, {prefix_len}, {prefix...}, {child_ref} ]
+///   - Branch: [ {TAG_BRANCH}, {16 children_refs}, {value_len}, {value...} ]
+///   - NodeRef:
+///      - Hash: [ {REF_HASH}, {hash_data} ]
+///      - Offset: [ {REF_OFFSET}, {offset} ]
+struct MPTSerializer {
+    buffer: Vec<u8>,
+    root_offset: Option<usize>,
+}
+
+impl MPTSerializer {
+    pub fn new() -> Self {
+        Self {
+            buffer: vec![],
+            root_offset: None,
+        }
+    }
+
+    pub fn serialize_tree(mut self, root: &Node) -> Result<Vec<u8>, TrieError> {
+        let root_offset = self.serialize_node(root)?;
+        self.root_offset = Some(root_offset);
+        // Write root offset at the end
+        self.buffer
+            .extend_from_slice(&(root_offset as u32).to_le_bytes());
+        Ok(self.buffer)
+    }
+
+    fn serialize_node(&mut self, node: &Node) -> Result<usize, TrieError> {
+        match node {
+            Node::Leaf(leaf) => self.serialize_leaf(leaf),
+            Node::Branch(branch) => self.serialize_branch(branch),
+            Node::Extension(extension) => self.serialize_extension(extension),
+        }
+    }
+
+    fn serialize_leaf(&mut self, leaf: &LeafNode) -> Result<usize, TrieError> {
+        let offset = self.buffer.len();
+        self.buffer.push(TAG_LEAF);
+        let compact_nibbles = leaf.partial.encode_compact();
+        self.write_bytes_with_len(&compact_nibbles);
+        self.write_bytes_with_len(&leaf.value);
+        Ok(offset)
+    }
+
+    fn serialize_extension(&mut self, extension: &ExtensionNode) -> Result<usize, TrieError> {
+        let child_ref = self.process_node_ref(&extension.child);
+        let offset = self.buffer.len();
+        self.buffer.push(TAG_EXTENSION);
+        let compact_prefix = extension.prefix.encode_compact();
+        self.write_bytes_with_len(&compact_prefix);
+        self.write_node_ref(child_ref);
+        Ok(offset)
+    }
+
+    fn serialize_branch(&mut self, branch: &BranchNode) -> Result<usize, TrieError> {
+        let mut children_refs = Vec::with_capacity(16);
+        for child in &branch.choices {
+            children_refs.push(self.process_node_ref(child));
+        }
+
+        let offset = self.buffer.len();
+        self.buffer.push(TAG_BRANCH);
+
+        for child_ref in children_refs {
+            self.write_node_ref(child_ref);
+        }
+
+        self.write_bytes_with_len(&branch.value);
+
+        Ok(offset)
+    }
+
+    fn process_node_ref(&mut self, node_ref: &NodeRef) -> SerializedNodeRef {
+        match node_ref {
+            NodeRef::Hash(hash) => SerializedNodeRef::Hash(*hash),
+            NodeRef::Node(node, _) => {
+                let offset = self.serialize_node(node).unwrap();
+                SerializedNodeRef::Offset(offset)
+            }
+        }
+    }
+
+    fn write_node_ref(&mut self, node_ref: SerializedNodeRef) {
+        match node_ref {
+            SerializedNodeRef::Hash(hash) => {
+                self.buffer.push(REF_HASH);
+                self.write_node_hash(hash);
+            }
+            SerializedNodeRef::Offset(index) => {
+                self.buffer.push(REF_NODE);
+                self.buffer.extend_from_slice(&(index as u32).to_le_bytes());
+            }
+        }
+    }
+
+    fn write_node_hash(&mut self, hash: NodeHash) {
+        match hash {
+            NodeHash::Hashed(hash) => {
+                self.buffer.push(0);
+                self.buffer.extend_from_slice(&hash.to_fixed_bytes());
+            }
+            NodeHash::Inline((data, len)) => {
+                self.buffer.push(1);
+                // Debes escribir los 31 bytes completos, no solo len bytes
+                self.buffer.extend_from_slice(&data); // Los 31 bytes
+                self.buffer.push(len); // Luego el length
+            }
+        }
+    }
+
+    fn write_bytes_with_len(&mut self, bytes: &[u8]) {
+        let len = bytes.len() as u32;
+        self.buffer.extend_from_slice(&len.to_le_bytes());
+        self.buffer.extend_from_slice(bytes);
+    }
+}
+
+pub struct MPTDeserializer<'a> {
+    buffer: &'a [u8],
+    position: usize,
+}
+
+impl<'a> MPTDeserializer<'a> {
+    pub fn new(buffer: &'a [u8]) -> Self {
+        Self {
+            buffer,
+            position: 0,
+        }
+    }
+
+    fn decode_tree(&mut self) -> Result<Node, TrieError> {
+        // Read root offset from the end of the buffer
+        if self.buffer.len() < 4 {
+            return Err(TrieError::InvalidData);
+        }
+        let root_offset_bytes = &self.buffer[self.buffer.len() - 4..];
+        let root_offset = u32::from_le_bytes([
+            root_offset_bytes[0],
+            root_offset_bytes[1],
+            root_offset_bytes[2],
+            root_offset_bytes[3],
+        ]);
+        self.position = root_offset as usize;
+        self.decode_node()
+    }
+
+    fn decode_node(&mut self) -> Result<Node, TrieError> {
+        let tag = self.buffer[self.position];
+        self.position += 1;
+        match tag {
+            TAG_LEAF => self.decode_leaf(),
+            TAG_EXTENSION => self.decode_extension(),
+            TAG_BRANCH => self.decode_branch(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_leaf(&mut self) -> Result<Node, TrieError> {
+        let compact_nibbles = self.read_bytes_with_len()?;
+        let partial = Nibbles::decode_compact(&compact_nibbles);
+        let value = self.read_bytes_with_len()?;
+        Ok(Node::Leaf(LeafNode::new(partial, value)))
+    }
+
+    fn decode_extension(&mut self) -> Result<Node, TrieError> {
+        let compact_prefix = self.read_bytes_with_len()?;
+        let prefix = Nibbles::decode_compact(&compact_prefix);
+        let child_ref = self.decode_node_ref()?;
+        Ok(Node::Extension(ExtensionNode::new(prefix, child_ref)))
+    }
+
+    fn decode_branch(&mut self) -> Result<Node, TrieError> {
+        let mut children_refs: [NodeRef; 16] = Default::default();
+        for child in children_refs.iter_mut() {
+            *child = self.decode_node_ref()?;
+        }
+        let value = self.read_bytes_with_len()?;
+        Ok(Node::Branch(Box::new(BranchNode::new_with_value(
+            children_refs,
+            value,
+        ))))
+    }
+
+    fn decode_node_ref(&mut self) -> Result<NodeRef, TrieError> {
+        let tag = self.read_byte().unwrap();
+        match tag {
+            REF_HASH => {
+                let hash = self.read_node_hash()?;
+                Ok(NodeRef::Hash(hash))
+            }
+            REF_NODE => {
+                let offset = self.read_u32().unwrap();
+                let saved_pos = self.position;
+                self.position = offset as usize;
+                let node = self.decode_node()?;
+                self.position = saved_pos;
+                Ok(NodeRef::Node(Arc::new(node), OnceLock::new()))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn read_node_hash(&mut self) -> Result<NodeHash, TrieError> {
+        let tag = self.read_byte().unwrap();
+        match tag {
+            0 => {
+                let mut h256 = [0u8; 32];
+                self.read_exact(&mut h256)?;
+                Ok(NodeHash::Hashed(H256::from_slice(&h256)))
+            }
+            1 => {
+                let mut data = [0u8; 31];
+                self.read_exact(&mut data)?;
+                let len = self.read_byte().unwrap();
+                Ok(NodeHash::Inline((data, len)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn read_byte(&mut self) -> Result<u8, TrieError> {
+        if self.position >= self.buffer.len() {
+            panic!("Invalid buffer");
+        }
+        let byte = self.buffer[self.position];
+        self.position += 1;
+        Ok(byte)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), TrieError> {
+        let end = self.position + buf.len();
+        if end > self.buffer.len() {
+            panic!("Invalid buffer");
+        }
+        buf.copy_from_slice(&self.buffer[self.position..end]);
+        self.position = end;
+        Ok(())
+    }
+
+    fn read_u32(&mut self) -> Result<u32, TrieError> {
+        let mut bytes = [0u8; 4];
+        self.read_exact(&mut bytes)?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_bytes_with_len(&mut self) -> Result<Vec<u8>, TrieError> {
+        let mut len_bytes = [0u8; 4];
+        self.read_exact(&mut len_bytes)?;
+        let len = u32::from_le_bytes(len_bytes);
+        let mut data = vec![0u8; len as usize];
+        self.read_exact(&mut data)?;
+        Ok(data)
+    }
+}
+
+pub fn serialize(node: &Node) -> Vec<u8> {
+    MPTSerializer::new().serialize_tree(node).unwrap()
+}
+
+pub fn deserialize(data: &[u8]) -> Node {
+    MPTDeserializer::new(data).decode_tree().unwrap()
+}
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -1125,5 +1411,204 @@ mod test {
         let cita_proof = cita_trie.get_proof(&a).unwrap();
         let trie_proof = trie.get_proof(&a).unwrap();
         assert_eq!(cita_proof, trie_proof);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_empty_leaf() {
+        let leaf = Node::Leaf(LeafNode {
+            partial: Nibbles::from_hex(vec![]),
+            value: vec![],
+        });
+
+        let bytes = serialize(&leaf);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(leaf, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_leaf_with_long_path() {
+        let leaf = Node::Leaf(LeafNode {
+            partial: Nibbles::from_hex(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5]),
+            value: b"long_path_value".to_vec(),
+        });
+
+        let bytes = serialize(&leaf);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(leaf, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_extension_with_hash() {
+        let ext = Node::Extension(ExtensionNode {
+            prefix: Nibbles::from_hex(vec![1, 2]),
+            child: NodeRef::Hash(NodeHash::Hashed(H256::from([42; 32]))),
+        });
+
+        let bytes = serialize(&ext);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(ext, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_extension_with_inline_hash() {
+        let ext = Node::Extension(ExtensionNode {
+            prefix: Nibbles::from_hex(vec![3, 4]),
+            child: NodeRef::Hash(NodeHash::Inline(([5; 31], 20))),
+        });
+
+        let bytes = serialize(&ext);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(ext, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_branch_empty() {
+        let branch = Node::Branch(Box::new(BranchNode {
+            choices: Default::default(),
+            value: vec![],
+        }));
+
+        let bytes = serialize(&branch);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(branch, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_branch_with_value() {
+        let mut choices: [NodeRef; 16] = Default::default();
+        choices[0] = NodeRef::Hash(NodeHash::Hashed(H256::from([1; 32])));
+        choices[15] = NodeRef::Hash(NodeHash::Hashed(H256::from([255; 32])));
+
+        let branch = Node::Branch(Box::new(BranchNode {
+            choices,
+            value: b"branch_value".to_vec(),
+        }));
+
+        let bytes = serialize(&branch);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(branch, recovered);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_tree_extension_to_leaf() {
+        let leaf = Node::Leaf(LeafNode {
+            partial: Nibbles::from_hex(vec![5, 6, 7]),
+            value: b"nested_leaf".to_vec(),
+        });
+
+        let ext = Node::Extension(ExtensionNode {
+            prefix: Nibbles::from_hex(vec![1, 2]),
+            child: NodeRef::Node(Arc::new(leaf), OnceLock::new()),
+        });
+
+        dbg!(&ext);
+
+        let bytes = serialize(&ext);
+        let recovered = deserialize(&bytes);
+
+        dbg!(&recovered);
+
+        match recovered {
+            Node::Extension(ext_node) => {
+                assert_eq!(ext_node.prefix, Nibbles::from_hex(vec![1, 2]));
+                match &ext_node.child {
+                    NodeRef::Node(arc_node, _) => match &**arc_node {
+                        Node::Leaf(leaf_node) => {
+                            assert_eq!(leaf_node.partial, Nibbles::from_hex(vec![5, 6, 7]));
+                            assert_eq!(leaf_node.value, b"nested_leaf");
+                        }
+                        _ => panic!("Expected leaf node"),
+                    },
+                    _ => panic!("Expected embedded node"),
+                }
+            }
+            _ => panic!("Expected extension node"),
+        }
+    }
+
+    #[test]
+    fn test_serialize_deserialize_deep_tree() {
+        let leaf = Node::Leaf(LeafNode {
+            partial: Nibbles::from_hex(vec![9, 8]),
+            value: b"deep_leaf".to_vec(),
+        });
+
+        let inner_ext = Node::Extension(ExtensionNode {
+            prefix: Nibbles::from_hex(vec![5, 6]),
+            child: NodeRef::Node(Arc::new(leaf), OnceLock::new()),
+        });
+
+        let mut branch_choices: [NodeRef; 16] = Default::default();
+        branch_choices[2] = NodeRef::Node(Arc::new(inner_ext), OnceLock::new());
+        branch_choices[10] = NodeRef::Hash(NodeHash::Hashed(H256::from([99; 32])));
+
+        let branch = Node::Branch(Box::new(BranchNode {
+            choices: branch_choices,
+            value: vec![],
+        }));
+
+        let outer_ext = Node::Extension(ExtensionNode {
+            prefix: Nibbles::from_hex(vec![1, 2, 3]),
+            child: NodeRef::Node(Arc::new(branch), OnceLock::new()),
+        });
+
+        let bytes = serialize(&outer_ext);
+        let recovered = deserialize(&bytes);
+
+        assert!(matches!(recovered, Node::Extension(_)));
+    }
+
+    #[test]
+    fn test_trie_serialization_empty() {
+        let trie = Trie::new_temp();
+        let root = trie.root_node().unwrap();
+        assert!(root.is_none());
+    }
+
+    #[test]
+    fn test_trie_serialization_single_insert() {
+        let mut trie = Trie::new_temp();
+        trie.insert(b"key".to_vec(), b"value".to_vec()).unwrap();
+
+        let root = trie.root_node().unwrap().unwrap();
+        let bytes = serialize(&root);
+        let recovered = deserialize(&bytes);
+
+        assert_eq!(root, recovered);
+    }
+
+    #[test]
+    fn test_trie_serialization_multiple_inserts() {
+        let mut trie = Trie::new_temp();
+
+        let test_data = vec![
+            (b"do".to_vec(), b"verb".to_vec()),
+            (b"dog".to_vec(), b"puppy".to_vec()),
+            (b"doge".to_vec(), b"coin".to_vec()),
+            (b"horse".to_vec(), b"stallion".to_vec()),
+        ];
+
+        for (key, value) in &test_data {
+            trie.insert(key.clone(), value.clone()).unwrap();
+        }
+
+        let root = trie.root_node().unwrap().unwrap();
+        let bytes = serialize(&root);
+        let recovered = deserialize(&bytes);
+
+        // Crear un nuevo trie con el nodo deserializado
+        let mut new_trie = Trie::new_temp();
+        new_trie.root = NodeRef::Node(Arc::new(recovered), OnceLock::new());
+
+        // Verificar que todos los valores están presentes
+        for (key, value) in &test_data {
+            assert_eq!(new_trie.get(key).unwrap(), Some(value.clone()));
+        }
     }
 }
