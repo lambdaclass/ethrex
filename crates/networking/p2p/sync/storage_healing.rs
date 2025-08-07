@@ -273,6 +273,7 @@ pub async fn heal_storage_trie_wrap<T: Iterator<Item = (H256, AccountState)>>(
     membatch: OnceCell<Membatch>,
     staleness_timestamp: u64,
 ) -> bool {
+    info!("Started Storage Healing");
     let mut account_path_roots = account_paths
         .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
         .map(|(hashed_account_key, _)| Nibbles::from_bytes(hashed_account_key.as_bytes()));
@@ -316,7 +317,10 @@ pub async fn heal_storage_trie(
     membatch: OnceCell<Membatch>,
     staleness_timestamp: u64,
 ) -> bool {
-    info!("Started Storage Healing");
+    info!(
+        "Started Storage Healing with {} accounts",
+        account_paths.len()
+    );
     let mut handle = StorageHealer::start_blocking(StorageHealerState {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
