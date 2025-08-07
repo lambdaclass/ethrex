@@ -769,7 +769,7 @@ impl Syncer {
         let mut pivot_is_stale = true;
         let mut bytecode_hashes = Vec::new();
         // TODO: remove this, it's not supported feature
-        if std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| var != "") {
+        if std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| var.is_empty()) {
             self.peers
                 .request_account_range(
                     state_root,
