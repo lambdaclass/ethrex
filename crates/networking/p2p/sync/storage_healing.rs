@@ -154,10 +154,13 @@ impl GenServer for StorageHealer {
         // Finished means that we have succesfully healed according to our algorithm
         // That means that we have commited the root_node of the tree
         if is_finished || is_stale {
-            CallResponse::Stop(StorageHealerOutMsg::FinishedStale {
-                is_finished,
-                is_stale,
-            })
+            CallResponse::Reply(
+                state,
+                StorageHealerOutMsg::FinishedStale {
+                    is_finished,
+                    is_stale,
+                },
+            )
         } else {
             CallResponse::Reply(
                 state,
@@ -278,7 +281,7 @@ pub async fn heal_storage_trie_wrap(
 ) -> bool {
     info!("Started Storage Healing");
     let accounts: Vec<(H256, AccountState)> = store
-        .iter_accounts(*EMPTY_TRIE_HASH)
+        .iter_accounts(state_root)
         .expect("We should be able to open the accoun")
         .collect();
 
