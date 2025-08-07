@@ -1421,7 +1421,7 @@ mod serde_impl {
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    use crate::types::{AccessListItem, AuthorizationTuple};
+    use crate::types::{AccessListItem, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundleError};
 
     use super::*;
 
@@ -2199,6 +2199,26 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
+        }
+    }
+
+    impl WrappedEIP4844Transaction {
+        pub fn from_generic(value: GenericTransaction) -> Result<Self, BlobsBundleError> {
+            let blobs = value
+                .blobs
+                .clone()
+                .iter()
+                .map(|bytes| {
+                    let slice = bytes.as_ref();
+                    let mut blob = [0u8; BYTES_PER_BLOB];
+                    blob.copy_from_slice(slice);
+                    blob
+                })
+                .collect();
+            Ok(Self {
+                tx: value.into(),
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+            })
         }
     }
 

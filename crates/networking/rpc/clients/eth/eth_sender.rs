@@ -7,9 +7,9 @@ use crate::{
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
-use ethrex_common::H256;
 use ethrex_common::types::{GenericTransaction, TxKind};
 use ethrex_common::{Address, U256};
+use ethrex_common::{H256, types::BlobsBundle};
 use serde_json::json;
 
 #[derive(Default, Clone, Debug)]
@@ -25,6 +25,7 @@ pub struct Overrides {
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
+    pub blobs_bundle: Option<BlobsBundle>,
 }
 
 impl EthClient {

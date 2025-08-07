@@ -10,7 +10,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
-        MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
 use ethrex_l2_common::{
@@ -30,7 +30,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, add_blobs_to_generic_tx, eth_sender::Overrides},
+    clients::eth::{EthClient, eth_sender::Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -490,9 +490,9 @@ impl L1Committer {
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
-            let wrapped_tx = self
-                .eth_client
-                .build_eip4844_transaction(
+            self.eth_client
+                .build_generic_tx(
+                    TxType::EIP4844,
                     self.on_chain_proposer_address,
                     self.signer.address(),
                     calldata.into(),
@@ -501,19 +501,17 @@ impl L1Committer {
                         gas_price_per_blob: Some(gas_price_per_blob),
                         max_fee_per_gas: Some(gas_price),
                         max_priority_fee_per_gas: Some(gas_price),
+                        blobs_bundle: Some(batch.blobs_bundle.clone()),
                         ..Default::default()
                     },
-                    batch.blobs_bundle.clone(),
                 )
                 .await
-                .map_err(CommitterError::from)?;
-            let mut generic_tx = wrapped_tx.tx.into();
-            add_blobs_to_generic_tx(&mut generic_tx, &wrapped_tx.blobs_bundle);
-            generic_tx
+                .map_err(CommitterError::from)?
         } else {
             info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
             self.eth_client
-                .build_eip1559_transaction(
+                .build_generic_tx(
+                    TxType::EIP1559,
                     self.on_chain_proposer_address,
                     self.signer.address(),
                     calldata.into(),
@@ -526,7 +524,6 @@ impl L1Committer {
                 )
                 .await
                 .map_err(CommitterError::from)?
-                .into()
         };
 
         let commit_tx_hash =

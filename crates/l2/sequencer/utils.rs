@@ -1,5 +1,5 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
@@ -49,7 +49,8 @@ pub async fn send_verify_tx(
         })?;
 
     let verify_tx = eth_client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             on_chain_proposer_address,
             l1_signer.address(),
             encoded_calldata.into(),
@@ -62,7 +63,7 @@ pub async fn send_verify_tx(
         .await?;
 
     let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx.into(), l1_signer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer).await?;
 
     Ok(verify_tx_hash)
 }

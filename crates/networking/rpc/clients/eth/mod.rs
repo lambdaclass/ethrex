@@ -23,13 +23,12 @@ use eth_sender::Overrides;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
-        block_execution_witness::ExecutionWitnessResult,
+        AccessListEntry, BlobsBundle, Block, BlockHash, GenericTransaction, TxKind, TxType,
+        batch::Batch, block_execution_witness::ExecutionWitnessResult,
     },
     utils::decode_hex,
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::decode::RLPDecode;
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
@@ -212,16 +211,6 @@ impl EthClient {
                 Err(SendRawTransactionError::RPCError(error_response.error.message).into())
             }
         }
-    }
-
-    pub async fn send_privileged_l2_transaction(
-        &self,
-        tx: &PrivilegedL2Transaction,
-    ) -> Result<H256, EthClientError> {
-        let mut encoded_tx = tx.encode_to_vec();
-        encoded_tx.insert(0, TxType::Privileged.into());
-
-        self.send_raw_transaction(encoded_tx.as_slice()).await
     }
 
     pub async fn estimate_gas(
@@ -632,157 +621,72 @@ impl EthClient {
         }
     }
 
-    /// Build an EIP1559 transaction with the given parameters.
+    /// Build a GenericTransaction with the given parameters.
     /// Either `overrides.nonce` or `overrides.from` must be provided.
     /// If `overrides.gas_price`, `overrides.chain_id` or `overrides.gas_price`
     /// are not provided, the client will fetch them from the network.
     /// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
-    pub async fn build_eip1559_transaction(
+    pub async fn build_generic_tx(
         &self,
+        r#type: TxType,
         to: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
-    ) -> Result<EIP1559Transaction, EthClientError> {
-        let mut tx = EIP1559Transaction {
+    ) -> Result<GenericTransaction, EthClientError> {
+        match r#type {
+            TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged => {}
+            _ => {
+                return Err(EthClientError::Custom(
+                    "Unsupported tx type in build_generic_tx".to_owned(),
+                ));
+            }
+        }
+        let mut tx = GenericTransaction {
+            r#type,
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
-            chain_id: if let Some(chain_id) = overrides.chain_id {
+            chain_id: Some(if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
                 self.get_chain_id().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
                 })?
-            },
-            nonce: self
-                .get_nonce_from_overrides_or_rpc(&overrides, from)
-                .await?,
-            max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
-                .await?,
-            max_priority_fee_per_gas: self
-                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
-                .await?,
+            }),
+            nonce: None,
+            max_fee_per_gas: Some(
+                self.get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                    .await?,
+            ),
+            max_priority_fee_per_gas: Some(
+                self.priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                    .await?,
+            ),
+            max_fee_per_blob_gas: overrides.gas_price_per_blob,
             value: overrides.value.unwrap_or_default(),
-            data: calldata,
-            access_list: overrides.access_list,
-            ..Default::default()
-        };
-
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            tx.gas_limit = overrides_gas_limit;
-        } else {
-            let mut generic_tx = GenericTransaction::from(tx.clone());
-            generic_tx.from = from;
-            generic_tx.nonce = None;
-            tx.gas_limit = self.estimate_gas(generic_tx).await?;
-        }
-
-        Ok(tx)
-    }
-
-    /// Build an EIP4844 transaction with the given parameters.
-    /// Either `overrides.nonce` or `overrides.from` must be provided.
-    /// If `overrides.gas_price`, `overrides.chain_id` or `overrides.gas_price`
-    /// are not provided, the client will fetch them from the network.
-    /// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
-    pub async fn build_eip4844_transaction(
-        &self,
-        to: Address,
-        from: Address,
-        calldata: Bytes,
-        overrides: Overrides,
-        blobs_bundle: BlobsBundle,
-    ) -> Result<WrappedEIP4844Transaction, EthClientError> {
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-
-        let tx = EIP4844Transaction {
-            to,
-            chain_id: if let Some(chain_id) = overrides.chain_id {
-                chain_id
-            } else {
-                self.get_chain_id().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
-                })?
-            },
-            nonce: self
-                .get_nonce_from_overrides_or_rpc(&overrides, from)
-                .await?,
-            max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
-                .await?,
-            max_priority_fee_per_gas: self
-                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
-                .await?,
-            value: overrides.value.unwrap_or_default(),
-            data: calldata,
-            access_list: overrides.access_list,
-            max_fee_per_blob_gas: overrides.gas_price_per_blob.unwrap_or_default(),
-            blob_versioned_hashes,
-            ..Default::default()
-        };
-
-        let mut wrapped_eip4844 = WrappedEIP4844Transaction {
-            tx: tx.clone(),
-            blobs_bundle,
-        };
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            wrapped_eip4844.tx.gas = overrides_gas_limit;
-        } else {
-            let mut generic_tx = GenericTransaction::from(tx);
-            generic_tx.from = from;
-            generic_tx.nonce = None;
-            add_blobs_to_generic_tx(&mut generic_tx, &wrapped_eip4844.blobs_bundle);
-            wrapped_eip4844.tx.gas = self.estimate_gas(generic_tx).await?;
-        }
-
-        Ok(wrapped_eip4844)
-    }
-
-    /// Build a PrivilegedL2 transaction with the given parameters.
-    /// Either `overrides.nonce` or `overrides.from` must be provided.
-    /// If `overrides.gas_price`, `overrides.chain_id` or `overrides.gas_price`
-    /// are not provided, the client will fetch them from the network.
-    /// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
-    pub async fn build_privileged_transaction(
-        &self,
-        to: Address,
-        from: Address,
-        calldata: Bytes,
-        overrides: Overrides,
-    ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let mut tx = PrivilegedL2Transaction {
-            to: TxKind::Call(to),
-            chain_id: if let Some(chain_id) = overrides.chain_id {
-                chain_id
-            } else {
-                self.get_chain_id().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
-                })?
-            },
-            nonce: self
-                .get_nonce_from_overrides_or_rpc(&overrides, from)
-                .await?,
-            max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
-                .await?,
-            max_priority_fee_per_gas: self
-                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
-                .await?,
-            value: overrides.value.unwrap_or_default(),
-            data: calldata,
-            access_list: overrides.access_list,
+            input: calldata,
+            access_list: overrides
+                .access_list
+                .iter()
+                .map(AccessListEntry::from)
+                .collect(),
             from,
             ..Default::default()
         };
-
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            tx.gas_limit = overrides_gas_limit;
-        } else {
-            let mut generic_tx = GenericTransaction::from(tx.clone());
-            generic_tx.from = from;
-            generic_tx.nonce = None;
-            tx.gas_limit = self.estimate_gas(generic_tx).await?;
+        tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
+        if let Some(blobs_bundle) = &overrides.blobs_bundle {
+            tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+            add_blobs_to_generic_tx(&mut tx, blobs_bundle);
         }
+        tx.gas = Some(
+            overrides
+                .gas_limit
+                .unwrap_or(self.estimate_gas(tx.clone()).await?),
+        );
+        tx.nonce = Some(
+            self.get_nonce_from_overrides_or_rpc(&overrides, from)
+                .await?,
+        );
+
         Ok(tx)
     }
 

@@ -2,10 +2,7 @@ use crate::signer::{Signable, Signer};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{
-        BYTES_PER_BLOB, BlobsBundle, EIP1559Transaction, GenericTransaction, TxKind, TxType,
-        WrappedEIP4844Transaction,
-    },
+    types::{EIP1559Transaction, GenericTransaction, TxKind, TxType, WrappedEIP4844Transaction},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -18,76 +15,44 @@ use tracing::warn;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
-pub async fn send_eip1559_transaction(
-    client: &EthClient,
-    tx: &EIP1559Transaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    let signed_tx = tx
-        .sign(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = signed_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP1559.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
-pub async fn send_eip4844_transaction(
-    client: &EthClient,
-    wrapped_tx: &WrappedEIP4844Transaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    let mut wrapped_tx = wrapped_tx.clone();
-    wrapped_tx
-        .tx
-        .sign_inplace(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = wrapped_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP4844.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
 pub async fn send_generic_transaction(
     client: &EthClient,
     generic_tx: GenericTransaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
-    match generic_tx.r#type {
-        TxType::EIP1559 => send_eip1559_transaction(client, &generic_tx.into(), signer).await,
-        TxType::Privileged => {
-            client
-                .send_privileged_l2_transaction(&generic_tx.into())
+    let r#type = generic_tx.r#type;
+    let mut encoded_tx = match r#type {
+        TxType::EIP1559 => {
+            let tx: EIP1559Transaction = generic_tx.into();
+            let signed_tx = tx
+                .sign(signer)
                 .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            signed_tx.encode_to_vec()
+        }
+        TxType::Privileged => {
+            let tx: EIP1559Transaction = generic_tx.into();
+            tx.encode_to_vec()
         }
         TxType::EIP4844 => {
-            let blobs = generic_tx
-                .blobs
-                .clone()
-                .iter()
-                .map(|bytes| {
-                    let slice = bytes.as_ref();
-                    let mut blob = [0u8; BYTES_PER_BLOB];
-                    blob.copy_from_slice(slice);
-                    blob
-                })
-                .collect();
-            let tx = WrappedEIP4844Transaction {
-                tx: generic_tx.into(),
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs).map_err(|err| {
-                    EthClientError::Custom(format!("Failed to create BlobsBundle: {err}"))
-                })?,
-            };
-            send_eip4844_transaction(client, &tx, signer).await
+            let mut tx = WrappedEIP4844Transaction::from_generic(generic_tx)
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+            tx.tx
+                .sign_inplace(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            tx.encode_to_vec()
         }
-        _ => Err(EthClientError::Custom(
-            "Unsupported transaction type".to_string(),
-        )),
-    }
+        _ => {
+            return Err(EthClientError::Custom(
+                "Unsupported transaction type".to_string(),
+            ));
+        }
+    };
+    encoded_tx.insert(0, r#type.into());
+    client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
 pub async fn deploy(
@@ -100,14 +65,15 @@ pub async fn deploy(
     deploy_overrides.to = Some(TxKind::Create);
 
     let deploy_tx = client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             Address::zero(),
             deployer.address(),
             init_code,
             deploy_overrides,
         )
         .await?;
-    let deploy_tx_hash = send_eip1559_transaction(client, &deploy_tx, deployer).await?;
+    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
     let nonce = client
         .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))

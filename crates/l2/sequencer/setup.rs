@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProofCoordinatorError;
+use ethrex_common::types::TxType;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
@@ -69,7 +70,8 @@ pub async fn register_tdx_key(
 
     let tdx_address = get_tdx_address(eth_client, on_chain_proposer_address).await?;
     let verify_tx = eth_client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             tdx_address,
             get_address_from_secret_key(private_key)
                 .map_err(ProofCoordinatorError::EthClientError)?,
@@ -85,7 +87,7 @@ pub async fn register_tdx_key(
     let signer = Signer::Local(LocalSigner::new(*private_key));
 
     let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx.into(), &signer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, &signer).await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
     Ok(())
