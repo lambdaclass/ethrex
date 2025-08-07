@@ -24,7 +24,7 @@ ethrex --authrpc.jwtsecret path/to/jwt.hex --network <mainnet,sepolia,holesky,ho
 ```
 
 > [!NOTE]
-> The flag `--network` can be ommitted if you are trying to sync to mainnet
+> The flag `--network` can be omitted if you are trying to sync to mainnet
 
 > [!NOTE]
 > The flag `--syncmode` can be omitted if you want to use full sync
