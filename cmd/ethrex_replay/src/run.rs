@@ -6,7 +6,7 @@ use ethrex_common::{
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
@@ -39,7 +39,7 @@ pub async fn run_tx(
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
-        let mut db = GeneralizedDatabase::new(store.clone(), BTreeMap::new());
+        let mut db = GeneralizedDatabase::new(store.clone());
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };

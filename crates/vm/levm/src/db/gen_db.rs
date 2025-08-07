@@ -35,7 +35,18 @@ pub struct GeneralizedDatabase {
 }
 
 impl GeneralizedDatabase {
-    pub fn new(
+    pub fn new(store: Arc<dyn Database>) -> Self {
+        Self {
+            store,
+            current_accounts_state: CacheDB::new(),
+            initial_accounts_state: CacheDB::new(),
+            tx_backup: None,
+            destroyed_accounts: HashSet::new(),
+            codes: BTreeMap::new(),
+        }
+    }
+
+    pub fn new_with_account_state(
         store: Arc<dyn Database>,
         current_accounts_state: BTreeMap<Address, Account>,
     ) -> Self {

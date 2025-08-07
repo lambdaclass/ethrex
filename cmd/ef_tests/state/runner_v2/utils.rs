@@ -5,7 +5,7 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
 use keccak_hash::H256;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::runner_v2::{
     error::RunnerError,
@@ -43,7 +43,7 @@ pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Stor
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
-        GeneralizedDatabase::new(Arc::new(store), BTreeMap::new()),
+        GeneralizedDatabase::new(Arc::new(store)),
         block_hash,
         storage,
         genesis,
