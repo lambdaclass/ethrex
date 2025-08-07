@@ -839,7 +839,7 @@ impl PeerHandler {
                     let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
                     // TODO: check the error type and handle it properly
                     let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
-                    dump_account_result_sender_cloned.send(result).await;
+                    dump_account_result_sender_cloned.send(result).await.unwrap();
                 })
                 .await
                 .unwrap();
@@ -907,7 +907,10 @@ impl PeerHandler {
                         let result = std::fs::write(path.clone(), contents.clone())
                             .map_err(|_| AccountDumpError { path, contents });
                         // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;
+                        dump_account_result_sender_cloned
+                            .send(result)
+                            .await
+                            .unwrap();
                     })
                     .await
                     .unwrap();
