@@ -118,7 +118,25 @@ async fn fetch_rangedata_from_client(
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
+    info!("Validating RPC chain ID");
+
+    let chain_id = eth_client.get_chain_id().await?;
+
+    if chain_id != chain_config.chain_id.into() {
+        return Err(eyre::eyre!(
+            "Rpc endpoint returned a different chain id than the one set by --network"
+        ));
+    }
+
     let mut blocks = Vec::with_capacity(to - from + 1);
+
+    info!(
+        "Retrieving execution data for blocks {from} to {to} ({} blocks in total)",
+        to - from + 1
+    );
+
+    let block_retrieval_start_time = SystemTime::now();
+
     for block_number in from..=to {
         let block = eth_client
             .get_raw_block(BlockIdentifier::Number(block_number.try_into()?))
@@ -127,21 +145,43 @@ async fn fetch_rangedata_from_client(
         blocks.push(block);
     }
 
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    info!(
+        "Got blocks {from} to {to} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
     let from_identifier = BlockIdentifier::Number(from.try_into()?);
+
     let to_identifier = BlockIdentifier::Number(to.try_into()?);
 
-    let witness = eth_client
+    info!("Getting execution witness from RPC for blocks {from} to {to}");
+
+    let execution_witness_retrieval_start_time = SystemTime::now();
+
+    let mut witness = eth_client
         .get_witness(from_identifier, Some(to_identifier))
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    if witness.chain_config.chain_id != chain_config.chain_id {
-        return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain id than the one set by --network"
-        ));
-    }
+    let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+        .elapsed()
+        .unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+    info!(
+        "Got execution witness for blocks {from} to {to} in {}",
+        format_duration(execution_witness_retrieval_duration)
+    );
+
+    witness.chain_config = chain_config;
 
     let cache = Cache::new(blocks, witness);
+
     Ok(cache)
 }
 
