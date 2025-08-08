@@ -652,7 +652,10 @@ impl EthClient {
                     EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
                 })?
             }),
-            nonce: None,
+            nonce: Some(
+                self.get_nonce_from_overrides_or_rpc(&overrides, from)
+                    .await?,
+            ),
             max_fee_per_gas: Some(
                 self.get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                     .await?,
@@ -681,10 +684,6 @@ impl EthClient {
             Some(gas) => gas,
             None => self.estimate_gas(tx.clone()).await?,
         });
-        tx.nonce = Some(
-            self.get_nonce_from_overrides_or_rpc(&overrides, from)
-                .await?,
-        );
 
         Ok(tx)
     }
