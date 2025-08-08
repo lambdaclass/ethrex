@@ -169,7 +169,8 @@ impl GenServer for StorageHealer {
                     self.maximum_length_seen,
                     self.leafs_healed,
                     self.roots_healed,
-                    self.succesful_downloads as f64 / self.failed_downloads as f64
+                    self.succesful_downloads as f64
+                        / (self.succesful_downloads as f64 + self.failed_downloads as f64)
                 );
                 self.succesful_downloads = 0;
                 self.failed_downloads = 0;
