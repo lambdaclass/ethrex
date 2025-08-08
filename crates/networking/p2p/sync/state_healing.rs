@@ -36,7 +36,7 @@ const BYTECODE_BATCH_SIZE: usize = 70;
 /// Max size of a bach to start a storage fetch request in queues
 const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 900;
+pub const NODE_BATCH_SIZE: usize = 500;
 /// Maximum amount of concurrent paralell fetches for a queue
 const MAX_PARALLEL_FETCHES: usize = 10;
 /// Maximum amount of messages in a channel
@@ -392,10 +392,14 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
             peer_with_highest_score = &peer_id;
         }
     }
-    let peer_channel = peers
+    let Some(peer_channel) = peers
         .peer_table
         .get_peer_channel(*peer_with_highest_score)
-        .await?;
+        .await
+    else {
+        downloaders.remove(peer_with_highest_score);
+        return None;
+    };
 
     // Mark it as occupied
     downloaders
