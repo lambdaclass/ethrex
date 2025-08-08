@@ -1016,6 +1016,7 @@ impl Syncer {
                     continue;
                 }
                 // TODO: 💀💀💀 either remove or change to a debug flag
+                validate_state_root(store.clone(), pivot_header.state_root).await;
 
                 // validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
@@ -1205,7 +1206,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
 
         let tree_validated = account_state.storage_root == computed_storage_root;
         if tree_validated {
-            info!("Succesfully validated tree, {computed_storage_root} found");
+            //info!("Succesfully validated tree, {computed_storage_root} found");
         } else {
             error!(
                 "We have failed the validation of the tree {} expected but {computed_storage_root} found",
@@ -1213,4 +1214,5 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
             );
         }
     }
+    info!("Finished validate_storage_root");
 }
