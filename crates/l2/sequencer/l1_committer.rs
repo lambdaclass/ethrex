@@ -415,8 +415,6 @@ impl L1Committer {
                         tracing::error!("Failed to update operations metric: {}", e.to_string())
                     });
             }
-            tracing::warn!("batch gas used: {batch_gas_used}");
-            tracing::warn!("batch number: {batch_number}");
             #[allow(clippy::as_conversions)]
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
@@ -552,6 +550,15 @@ impl L1Committer {
 
         let commit_tx_hash =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, &mut tx, &self.signer).await?;
+
+        metrics!(
+            let commit_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(commit_tx_hash)
+                .await?
+                .ok_or(CommitterError::InternalError("no verify tx receipt".to_string()))?;
+            METRICS.set_batch_commitment_gas(batch.number, commit_tx_receipt.receipt.cumulative_gas_used as i64);
+        );
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 

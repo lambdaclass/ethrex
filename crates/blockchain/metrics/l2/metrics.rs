@@ -15,6 +15,7 @@ pub struct Metrics {
     batch_gas_used: IntGaugeVec,
     batch_proving_time: IntGaugeVec,
     batch_verification_gas: IntGaugeVec,
+    batch_commitment_gas: IntGaugeVec,
 }
 
 impl Default for Metrics {
@@ -77,6 +78,14 @@ impl Metrics {
                 Opts::new(
                     "batch_verification_gas",
                     "Batch verification gas cost in L1, labeled by batch number",
+                ),
+                &["batch_number"],
+            )
+            .unwrap(),
+            batch_commitment_gas: IntGaugeVec::new(
+                Opts::new(
+                    "batch_commitment_gas",
+                    "Batch commitment gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
             )
@@ -174,6 +183,18 @@ impl Metrics {
         Ok(())
     }
 
+    pub fn set_batch_commitment_gas(
+        &self,
+        batch_number: u64,
+        commitment_gas: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_commitment_gas
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(commitment_gas);
+        Ok(())
+    }
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -195,7 +216,8 @@ impl Metrics {
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.batch_verification_gas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-
+        r.register(Box::new(self.batch_commitment_gas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         let encoder = TextEncoder::new();
         let metric_families = r.gather();
 
