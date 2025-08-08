@@ -3598,7 +3598,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -3765,11 +3765,11 @@ This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_
 <h3 id="imagenix"><a class="header" href="#imagenix">image.nix</a></h3>
 <p>Exports an image that uses <a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> and <a href="https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en">dm-verity</a> to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.</p>
 <h2 id="running"><a class="header" href="#running">Running</a></h2>
-<p>You can enable the prover by setting <code>ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true</code> and running the sequencer in production mode (<code>ETHREX_PROOF_COORDINATOR_DEV_MODE=false</code>).</p>
+<p>You can enable the prover by setting <code>ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true</code>.</p>
 <p>For development purposes, you can use the flag <code>ETHREX_TDX_DEV_MODE=true</code> to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.</p>
 <p>Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:</p>
 <pre><code class="language-sh">// cd crates/l2
-make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0
+make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true PROOF_COORDINATOR_ADDRESS=0.0.0.0
 </code></pre>
 <p>And in another terminal, running the VM:</p>
 <pre><code class="language-sh">// cd crates/l2
