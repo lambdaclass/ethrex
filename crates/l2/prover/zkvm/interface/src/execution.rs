@@ -124,13 +124,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(
-        &blocks,
-        db,
-        elasticity_multiplier,
-        chain_config.chain_id,
-        first_header,
-    )
+    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_config.chain_id)
 }
 
 pub fn stateless_validation_l1(
@@ -138,7 +132,6 @@ pub fn stateless_validation_l1(
     db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
     chain_id: u64,
-    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -146,7 +139,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -190,7 +183,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -245,13 +238,9 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    mut db: ExecutionWitnessResult,
+    db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
-    first_header: &BlockHeader,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries(first_header)
-        .map_err(StatelessExecutionError::ExecutionWitness)?;
-
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
