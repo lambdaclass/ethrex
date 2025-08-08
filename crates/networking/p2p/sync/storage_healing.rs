@@ -23,7 +23,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: usize = 777;
@@ -391,6 +391,7 @@ async fn ask_peers_for_nodes(
         };
         let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
+        debug!("Debugging download chunks: {:?}", download_chunk);
         let req_id: u64 = random();
         requests.insert(
             req_id,
@@ -443,7 +444,7 @@ fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>>
     mapped_requests
         .into_iter()
         .map(|(acc_path, storage_paths)| {
-            vec![
+            [
                 vec![Bytes::from(acc_path.to_bytes())],
                 storage_paths
                     .into_iter()
