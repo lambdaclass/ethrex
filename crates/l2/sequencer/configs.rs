@@ -61,7 +61,7 @@ pub struct ProofCoordinatorConfig {
     pub dev_mode: bool,
     pub signer: Signer,
     pub validium: bool,
-    pub tdx_private_key: SecretKey,
+    pub tdx_private_key: Option<SecretKey>,
 }
 
 #[derive(Clone, Debug)]
