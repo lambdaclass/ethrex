@@ -530,7 +530,7 @@ impl PeerHandler {
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
-        // ret.sort_by(|x, y| x.number.cmp(&y.number));
+        ret.sort_by(|x, y| x.number.cmp(&y.number));
         // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
