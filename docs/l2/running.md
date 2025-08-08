@@ -14,47 +14,20 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l1
 
 First we need to set some environment variables.
 
-#### Set the OnChainProposer address:
-
-```sh
-export ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=<address>
-```
-
-#### Set the L1 bridge address
-
-```sh
-export ETHREX_WATCHER_BRIDGE_ADDRES=<address>
-```
-
-#### Set the L1 RPC endpoint url
-
-```sh
-export ETHREX_ETH_RPC_URL=<url>
-```
-
-#### Set the committer private key
-
-This is the private key of the address that will send `commitBatch` transactions.
-
-```sh
-export ETHREX_COMMITTER_L1_PRIVATE_KEY=<pk>
-```
-
-#### Set the verifier private key
-
-This is the private key of the address that will send `verifyBatch` transactions.
-
-```sh
-export ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<pk>
-```
-
 #### Run the sequencer
 
 ```sh
     ethrex l2 \
 	--network <path-to-your-genesis.json> \
+	--on_chain_proposer_address <address> \
+	--bridge_address <address> \
+	--rpc_url <rpc-url> \
+	--committer_l1_private_key <private-key> \
+	--proof_coordinator_l1_private_key \
 	--block-producer.coinbase-address <l2-coinbase-address> \
 ```
+
+For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2)
 
 This will start an ethrex l2 sequencer with the RPC server listening at `http://localhost:1729` and the proof coordinator server listening at `http://localhost:3900`
 
@@ -63,3 +36,5 @@ This will start an ethrex l2 sequencer with the RPC server listening at `http://
 ```sh
 ethrex l2 prover --proof-coordinator http://localhost:3900
 ```
+
+For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2-prover)
