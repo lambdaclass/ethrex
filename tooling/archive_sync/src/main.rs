@@ -119,9 +119,16 @@ pub async fn archive_sync(
     let block_number = block.header.number;
     let block_hash = block.hash();
     store.add_block(block).await?;
-    store.set_canonical_block(block_number, block_hash).await?;
-    store.update_latest_block_number(block_number).await?;
-    fetch_block_hashes(block_number, &mut stream, store).await?;
+    let new_canonical_blocks = fetch_block_hashes(block_number, &mut stream).await?;
+    store
+        .forkchoice_update(
+            Some(new_canonical_blocks),
+            block_number,
+            block_hash,
+            None,
+            None,
+        )
+        .await?;
     let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
     info!(
         "Archive Sync complete in {sync_time}.\nHead of local chain is now block {block_number} with hash {block_hash}"
@@ -266,8 +273,8 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
 async fn fetch_block_hashes(
     current_block_number: BlockNumber,
     stream: &mut UnixStream,
-    store: Store,
-) -> eyre::Result<()> {
+) -> eyre::Result<Vec<(BlockNumber, BlockHash)>> {
+    let mut new_canonical_blocks = vec![];
     for offset in 1..BLOCK_HASH_LOOKUP_DEPTH {
         let Some(block_number) = current_block_number.checked_sub(offset) else {
             break;
@@ -280,9 +287,9 @@ async fn fetch_block_hashes(
         });
         let response = send_ipc_json_request(stream, request).await?;
         let block_hash: BlockHash = serde_json::from_value(response)?;
-        store.set_canonical_block(block_number, block_hash).await?;
+        new_canonical_blocks.push((block_number, block_hash));
     }
-    Ok(())
+    Ok(new_canonical_blocks)
 }
 
 #[derive(Parser)]

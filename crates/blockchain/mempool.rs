@@ -420,8 +420,9 @@ mod tests {
         let block_number = header.number;
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
+        store
+            .forkchoice_update(None, block_number, block_hash, None, None)
+            .await?;
         store.set_chain_config(&config).await?;
         Ok(store)
     }

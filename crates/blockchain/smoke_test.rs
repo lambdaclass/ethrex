@@ -30,7 +30,10 @@ mod blockchain_integration_test {
         let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
         blockchain.add_block(&block_1a).await.unwrap();
-        store.set_canonical_block(1, hash_1a).await.unwrap();
+        store
+            .forkchoice_update(None, 1, hash_1a, None, None)
+            .await
+            .unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();
 
         assert_eq!(retrieved_1a, block_1a.header);
