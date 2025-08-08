@@ -541,7 +541,8 @@ impl FullBlockSyncState {
     fn new(store: Store) -> Self {
         Self {
             store,
-            current_headers: Vec::new(),
+            current_headers: Vec::new(), // TODO: IF WE COME FROME SNAP SYNC WE MIGHT WANT TO LOAD PREVIOUS HEADERS FROM STORE
+                                         // NOTE: THIS SOLUTION MIGHT BE AN ISSUE THO FOR NETWORKS WITH A HIGH HEATHER COUNT (WHICH SHOULD ONLY OPERATE WITH STORAGE?)
             current_blocks: Vec::new(),
         }
     }
