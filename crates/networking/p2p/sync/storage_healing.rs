@@ -391,7 +391,6 @@ async fn ask_peers_for_nodes(
         };
         let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
-        debug!("Debugging download chunks: {:?}", download_chunk);
         let req_id: u64 = random();
         requests.insert(
             req_id,
@@ -437,7 +436,7 @@ fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>>
     for request in node_requests {
         mapped_requests
             .entry(request.acc_path.clone())
-            .or_insert(vec![])
+            .or_default()
             .push(request.storage_path);
     }
 
@@ -527,9 +526,11 @@ fn process_node_responses(
         if let Node::Leaf(_) = &node_response.node {
             *leafs_healed += 1
         };
+        debug!("Debugging downloaded node responses: {:?}", node_response);
 
         let (missing_children_nibbles, missing_children_count) =
             determine_missing_children(&node_response, store.clone(), membatch)?;
+        debug!("Debugging missing children: {:?}", missing_children_nibbles);
 
         if missing_children_count == 0 {
             // We flush to the database this node
