@@ -32,7 +32,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 pub fn init_tracing(opts: &Options) {
@@ -237,7 +237,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 
     match read_node_config_file(config_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
-        Err(e) => warn!("Could not read from peers file: {e}"),
+        Err(e) => debug!("Could not read from peers file: {e}"),
     };
 
     bootnodes
