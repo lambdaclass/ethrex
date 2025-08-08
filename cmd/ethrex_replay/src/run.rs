@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use crate::{cache::Cache, networks::Network};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -10,14 +10,14 @@ use eyre::Ok;
 use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
-pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    let input = get_input(cache)?;
+pub async fn exec(backend: Backend, cache: Cache, network: Network) -> eyre::Result<()> {
+    let input = get_input(cache, network)?;
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 
-pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    let input = get_input(cache)?;
+pub async fn prove(backend: Backend, cache: Cache, network: Network) -> eyre::Result<()> {
+    let input = get_input(cache, network)?;
     ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
@@ -64,12 +64,14 @@ pub async fn run_tx(
 
 /// Returns the input based on whether the feature "l2" is enabled or not.
 /// If the feature is enabled, it includes L2 fields (blob commitment and proof).
-fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
+fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        witness: db,
+        witness: mut db,
         l2_fields,
     } = cache;
+
+    db.chain_config = network.get_genesis()?.config;
 
     #[cfg(not(feature = "l2"))]
     {
@@ -81,6 +83,7 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
             blocks,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            chain_config: network.get_genesis()?.config,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
             // 'zkvm_interface' is active (due to workspace compilation).

@@ -11,7 +11,6 @@ use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sha3::{Digest, Keccak256};
 
@@ -36,7 +35,7 @@ pub struct ExecutionWitnessResult {
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Chain config
-    pub chain_config: ChainConfig, // TODO: Remove this from this struct. To do this, we need ProgramInput to have the chain ID as a field.
+    pub chain_config: ChainConfig,
 }
 
 #[derive(thiserror::Error, Debug)]

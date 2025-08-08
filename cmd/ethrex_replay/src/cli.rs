@@ -124,10 +124,10 @@ impl SubcommandExecute {
             } => {
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
+                    exec(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -145,10 +145,10 @@ impl SubcommandExecute {
                     ));
                 }
                 let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_rangedata(eth_client, network, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
+                    exec(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -199,7 +199,7 @@ impl SubcommandExecute {
                 let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
+                    exec(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -283,10 +283,10 @@ impl SubcommandProve {
             } => {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache).await?;
+                    prove(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -304,10 +304,10 @@ impl SubcommandProve {
                     ));
                 }
                 let eth_client = EthClient::new(&rpc_url)?;
-                let cache = get_rangedata(eth_client, network, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache).await?;
+                    prove(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -323,7 +323,7 @@ impl SubcommandProve {
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache).await?;
+                    prove(BACKEND, cache, network).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;

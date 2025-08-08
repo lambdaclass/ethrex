@@ -97,13 +97,16 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
 
     let ProgramInput {
         blocks,
-        db,
+        mut db,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
         blob_proof,
+        chain_config,
     } = input;
+
+    db.chain_config = chain_config;
 
     let first_header = &blocks
         .first()
