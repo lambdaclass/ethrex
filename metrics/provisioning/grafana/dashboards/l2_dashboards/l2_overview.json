@@ -767,7 +767,20 @@
           },
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "batch_gas_used"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -826,7 +839,7 @@
           "refId": "B"
         }
       ],
-      "title": "Batch Gas Used vs. Proving Time (fixed)",
+      "title": "Batch Gas Used vs. Proving Time",
       "transformations": [
         {
           "id": "joinByLabels",
