@@ -44,23 +44,24 @@ pub struct DeployerOptions {
     #[command(flatten)]
     pub eth_options: EthOptions,
     // Deployer options
+    /// Private key from which the contracts will be deployed from.
     #[arg(
         long = "deployer.private-key",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
         env = "ETHREX_DEPLOYER_L1_PRIVATE_KEY",
         help_heading = "Deployer options",
-        help = "Private key from which the contracts will be deployed from.",
     )]
     pub private_key: SecretKey,
+    /// Write the addresses of deployed contracts in a .env file format.
     #[arg(
         long = "deployer.env-file",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_ENV_FILE_PATH",
-        help_heading = "Deployer options",
-        help = "Path to the .env file where addresses of deployed contracts will be written to."
+        help_heading = "Deployer options"
     )]
     pub env_file_path: Option<PathBuf>,
+    /// Deposit ETH from L1 rich wallets to L2 accounts.
     #[arg(
         long = "deployer.deposit-rich-accounts",
         default_value = "false",
@@ -68,8 +69,8 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_DEPLOY_RICH",
         action = ArgAction::SetTrue,
         help_heading = "Deployer options",
-        help = "If set, it will deposit ETH from L1 rich wallets to L2 accounts."
     )]
+    /// Path to the file containing the private keys of the L1 rich accounts.
     pub deposit_rich: bool,
     #[arg(
         long = "deployer.rich-accounts-pk-file",
@@ -77,199 +78,95 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
         required_if_eq("deposit_rich", "true"),
         requires = "deposit_rich",
-        help_heading = "Deployer options",
-        help = "Path to the file containing the private keys of the L1 rich accounts."
+        help_heading = "Deployer options"
     )]
     pub private_keys_file_path: Option<PathBuf>,
+    /// Salt to use with CREATE2 deterministic deployer. Defaults to random.
     #[arg(
         long = "deployer.deterministic-salt",
         value_name = "H256",
         env = "ETHREX_DEPLOYER_DETERMINISTIC_SALT",
-        help_heading = "Deployer options",
-        help = "Salt to use with CREATE2 deterministic deployer. If used, the contracts will be always deployed under the same addresses."
+        help_heading = "Deployer options"
     )]
     pub create2_salt: Option<H256>,
+    /// Address of the OnChainProposer's owner. Defaults to the deployer account.
     #[arg(
         long = "deployer.on-chain-proposer-owner",
         value_name = "ADDRESS",
         env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
-        help_heading = "Deployer options",
-        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract. Defaults to the deployer account."
+        help_heading = "Deployer options"
     )]
     pub on_chain_proposer_owner: Option<Address>,
+    /// Private key of the OnChainProposer's owner, used for accepting the ownership.
     #[arg(
         long = "deployer.on-chain-proposer-owner-pk",
         value_name = "PRIVATE_KEY",
         env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
         conflicts_with = "on_chain_proposer_owner",
-        help_heading = "Deployer options",
-        help = "Private key of the owner of the OnChainProposer contract. If set, a transaction from this account will be sent to accept the ownership."
+        help_heading = "Deployer options"
     )]
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
+    /// Address of the CommonBridge' owner. Defaults to the deployer account.
     #[arg(
         long = "deployer.bridge-owner",
         value_name = "ADDRESS",
         env = "ETHREX_BRIDGE_OWNER",
-        help_heading = "Deployer options",
-        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract. Defaults to the deployer account."
+        help_heading = "Deployer options"
     )]
     pub bridge_owner: Option<Address>,
+    /// Deploy the SP1 verifier contract and use its address.
+    #[arg(
+        long = "deployer.deploy-sp1",
+        value_name = "BOOLEAN",
+        default_value = "false",
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = ArgAction::Set,
+        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
+        requires = "sp1_vk_path",
+        conflicts_with = "sp1_verifier_address",
+        help_heading = "Deployer options",
+    )]
+    pub sp1_deploy_verifier: bool,
+    /// Deploy the TDX verifier contracts and use its address.
+    #[arg(
+        long = "deployer.deploy-tdx",
+        value_name = "BOOLEAN",
+        default_value = "false",
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = ArgAction::Set,
+        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
+        conflicts_with = "tdx_verifier_address",
+        help_heading = "Deployer options",
+    )]
+    pub tdx_deploy_verifier: bool,
+    /// Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json
     #[arg(
         long,
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
         requires = "deposit_rich",
-        help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json"
+        help_heading = "Deployer options"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     // L2 options
+    /// Path to the L2 genesis file
     #[arg(
         long = "l2.genesis",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
         required_unless_present = "use_compiled_genesis",
         required_if_eq("use_compiled_genesis", "false"),
-        help_heading = "L2 options",
-        help = "Path to the L2 genesis file"
+        help_heading = "L2 options"
     )]
     pub genesis_l2_path: Option<PathBuf>,
+    /// Use a development-purpose genesis instead of a custom one.
     #[arg(
-        long = "l2.l1-committer",
-        default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS",
-        help_heading = "L2 options",
-        help = "Address of the account that commits the batches in L1."
-    )]
-    pub committer_l1_address: Address,
-    #[arg(
-        long = "l2.l1-proof-sender",
-        default_value = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS",
-        help_heading = "L2 options",
-        help = "Address of the account that sends the proofs to be verified in L1."
-    )]
-    pub proof_sender_l1_address: Address,
-    #[arg(
-        long = "l2.validium",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_L2_VALIDIUM",
-        help_heading = "L2 options",
-        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
-    )]
-    pub validium: bool,
-    #[arg(
-        long = "l2.inclusion-max-wait",
-        value_name = "SECONDS",
-        default_value = "3000",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
-        help_heading = "L2 options",
-        help = "Deadline in seconds for the sequencer to process a privileged transaction."
-    )]
-    pub inclusion_max_wait: u64,
-    // Verifiers options
-    // TODO: This should work side by side with a risc0_deploy_verifier flag.
-    #[arg(
-        long = "verifier.risc0",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        requires = "risc0_vk_path",
-        help_heading = "Verifiers options",
-        help = "L1 address of the RISC0 verifier. If not set, RISC0 verification will be disabled and not required by the contract."
-    )]
-    pub risc0_verifier_address: Option<Address>,
-    #[arg(
-        long = "verifier.risc0-vk",
-        // default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
-        value_name = "PATH",
-        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
-        help_heading = "Verifiers options",
-        help = "Path to the Risc0 image id / verification key. This is used for proof verification."
-    )]
-    pub risc0_vk_path: Option<PathBuf>,
-    #[arg(
-        long = "verifier.sp1",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        requires = "sp1_vk_path",
-        conflicts_with = "sp1_deploy_verifier",
-        help_heading = "Verifiers options",
-        help = "L1 address of the SP1 verifier. If not set, SP1 verification will be disabled and not required by the contract."
-    )]
-    pub sp1_verifier_address: Option<Address>,
-    #[arg(
-        long = "verifier.deploy-sp1",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
-        requires = "sp1_vk_path",
-        help_heading = "Verifiers options",
-        help = "If set to true, it will deploy the SP1 verifier contract and use its address.",
-    )]
-    pub sp1_deploy_verifier: bool,
-    #[arg(
-        long = "verifier.sp1-vk",
-        // default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")).into(),
-        value_name = "PATH",
-        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
-        help_heading = "Verifiers options",
-        help = "Path to the SP1 verification key. This is used for proof verification."
-    )]
-    pub sp1_vk_path: Option<PathBuf>,
-    #[arg(
-        long = "verifier.tdx",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
-        conflicts_with = "tdx_deploy_verifier",
-        help_heading = "Verifiers options",
-        help = "L1 address of the TDX verifier. If not set, TDX verification will be disabled and not required by the contract."
-    )]
-    pub tdx_verifier_address: Option<Address>,
-    #[arg(
-        long = "verifier.deploy-tdx",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
-        help_heading = "Verifiers options",
-        help = "If set to true, it will deploy the SP1 verifier contract and use its address.",
-    )]
-    pub tdx_deploy_verifier: bool,
-    #[arg(
-        long = "verifier.aligned-aggregator",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
-        help_heading = "Verifiers options",
-        help = "L1 address of the Aligned Aggregator. If not set, Aligned verification will be disabled and not required by the contract."
-    )]
-    pub aligned_aggregator_address: Option<Address>,
-    // L2 Based options
-    #[arg(
-        long,
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
-        action = ArgAction::SetTrue,
-        help_heading = "L2 Based options",
-        help = "If set to true, it will deploy the SequencerRegistry contract and a modified OnChainProposer contract."
-    )]
-    pub deploy_based_contracts: bool,
-    #[arg(
-        long,
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
-        required_if_eq("deploy_based_contracts", "true"),
-        help_heading = "L2 Based options",
-        help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
-    )]
-    pub sequencer_registry_owner: Option<Address>,
-    #[arg(
-        long,
+        long = "l2.dev-genesis",
         default_value = "false",
         default_missing_value = "true",
         num_args = 0..=1,
@@ -277,10 +174,128 @@ pub struct DeployerOptions {
         action = ArgAction::Set,
         value_name = "BOOL",
         env = "ETHREX_USE_COMPILED_GENESIS",
-        help_heading = "Deployer options",
-        help = "Genesis data is extracted at compile time, used for development"
+        help_heading = "L2 options",
     )]
     pub use_compiled_genesis: bool,
+    /// Address of the account that commits the batches to L1.
+    #[arg(
+        long = "l2.l1-committer",
+        default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS",
+        help_heading = "L2 options"
+    )]
+    pub committer_l1_address: Address,
+    /// Address of the account that sends the proofs to L1 to be verified.
+    #[arg(
+        long = "l2.l1-proof-sender",
+        default_value = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS",
+        help_heading = "L2 options"
+    )]
+    pub proof_sender_l1_address: Address,
+    /// Run on validium mode, meaning it will not publish state diffs to the L1.
+    #[arg(
+        long = "l2.validium",
+        value_name = "BOOLEAN",
+        default_value = "false",
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = ArgAction::Set,
+        env = "ETHREX_L2_VALIDIUM",
+        help_heading = "L2 options",
+    )]
+    pub validium: bool,
+    /// Deadline, in seconds, for the sequencer to process a privileged transaction.
+    #[arg(
+        long = "l2.inclusion-max-wait",
+        value_name = "SECONDS",
+        default_value = "3000",
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        help_heading = "L2 options"
+    )]
+    pub inclusion_max_wait: u64,
+    // Verifiers options
+    /// L1 address of the RISC0 verifier. If not set, contract will omit RISC0 verification.
+    // TODO: This should work side by side with a risc0_deploy_verifier flag.
+    #[arg(
+        long = "verifier.risc0",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
+        requires = "risc0_vk_path",
+        help_heading = "Verifiers options"
+    )]
+    pub risc0_verifier_address: Option<Address>,
+    /// Path to the RISC0 Image ID (verification key).
+    #[arg(
+        long = "verifier.risc0-vk",
+        // default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
+        help_heading = "Verifiers options",
+    )]
+    pub risc0_vk_path: Option<PathBuf>,
+    /// L1 address of the SP1 verifier. If not set, contract will omit SP1 verification.
+    #[arg(
+        long = "verifier.sp1",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
+        requires = "sp1_vk_path",
+        conflicts_with = "sp1_deploy_verifier",
+        help_heading = "Verifiers options"
+    )]
+    pub sp1_verifier_address: Option<Address>,
+    /// Path to the SP1 verification key.
+    #[arg(
+        long = "verifier.sp1-vk",
+        // default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")).into(),
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Verifiers options",
+    )]
+    pub sp1_vk_path: Option<PathBuf>,
+    /// L1 address of the TDX verifier. If not set, contract will omit TDX verification.
+    #[arg(
+        long = "verifier.tdx",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
+        conflicts_with = "tdx_deploy_verifier",
+        help_heading = "Verifiers options"
+    )]
+    pub tdx_verifier_address: Option<Address>,
+    /// L1 address of the Aligned Aggregator. If not set, contract will omit Aligned verification.
+    #[arg(
+        long = "verifier.aligned-aggregator",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
+        help_heading = "Verifiers options"
+    )]
+    pub aligned_aggregator_address: Option<Address>,
+    // L2 Based options
+    /// Deploy the SequencerRegistry contract and the based version of OnChainProposer.
+    #[arg(
+        long = "deployer.based",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = ArgAction::Set,
+        env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
+        help_heading = "L2 Based options",
+    )]
+    pub deploy_based_contracts: bool,
+    /// Address of the SequencerRegistry' owner. Defaults to the deployer account.
+    #[arg(
+        long = "deployer.sequener-registry-owner",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
+        required_if_eq("deploy_based_contracts", "true"),
+        help_heading = "L2 Based options"
+    )]
+    pub sequencer_registry_owner: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -551,11 +566,14 @@ async fn deploy_contracts(
         .await?;
 
         info!(
-            "SequencerRegistry deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
-            sequencer_registry_deployment.proxy_address,
-            sequencer_registry_deployment.proxy_tx_hash,
-            sequencer_registry_deployment.implementation_address,
-            sequencer_registry_deployment.implementation_tx_hash,
+            address =? sequencer_registry_deployment.implementation_address,
+            tx_hash =? sequencer_registry_deployment.implementation_tx_hash,
+            "SequencerRegistry implementation deployed"
+        );
+        info!(
+            address =? sequencer_registry_deployment.proxy_address,
+            tx_hash =? sequencer_registry_deployment.proxy_tx_hash,
+            "SequencerRegistry proxy deployed"
         );
         sequencer_registry_deployment
     } else {
