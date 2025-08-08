@@ -2205,11 +2205,12 @@ mod serde_impl {
     }
 
     #[cfg(feature = "c-kzg")]
-    impl WrappedEIP4844Transaction {
-        pub fn from_generic(value: GenericTransaction) -> Result<Self, BlobsBundleError> {
+    impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
+        type Error = BlobsBundleError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
             let blobs = value
                 .blobs
-                .clone()
                 .iter()
                 .map(|bytes| {
                     let slice = bytes.as_ref();

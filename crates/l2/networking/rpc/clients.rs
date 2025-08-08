@@ -2,7 +2,10 @@ use crate::signer::{Signable, Signer};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{EIP1559Transaction, GenericTransaction, TxKind, TxType, WrappedEIP4844Transaction},
+    types::{
+        BlobsBundleError, EIP1559Transaction, GenericTransaction, TxKind, TxType,
+        WrappedEIP4844Transaction,
+    },
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -32,8 +35,9 @@ pub async fn send_generic_transaction(
             signed_tx.encode_to_vec()
         }
         TxType::EIP4844 => {
-            let mut tx = WrappedEIP4844Transaction::from_generic(generic_tx)
-                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+            let mut tx: WrappedEIP4844Transaction = generic_tx
+                .try_into()
+                .map_err(|err: BlobsBundleError| EthClientError::Custom(err.to_string()))?;
             tx.tx
                 .sign_inplace(signer)
                 .await
