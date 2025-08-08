@@ -450,7 +450,7 @@ fn zip_requeue_node_responses_score_peer(
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
-        None
+        return None;
     }
 
     if request.requests.len() < nodes_size {
