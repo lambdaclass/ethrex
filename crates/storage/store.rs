@@ -1331,6 +1331,22 @@ impl Store {
             .get_canonical_block_hash_sync(block_number)?
             .is_some_and(|h| h == block_hash))
     }
+
+    pub async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_storage_trie_nodes_batch(storage_trie_nodes)
+            .await
+    }
+
+    pub async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        self.engine.write_account_code_batch(account_codes).await
+    }
 }
 
 pub struct AncestorIterator {
