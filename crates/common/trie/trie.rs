@@ -14,6 +14,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use tracing::error;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
@@ -94,11 +95,15 @@ impl Trie {
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
-            NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
-            }
+            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
+                &self
+                    .db
+                    .get(hash)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| error!("dbg1 Failed to get the node {hash:?}"))?,
+            )
+            .map_err(TrieError::RLPDecode)?
+            .get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             _ => None,
         })
     }
@@ -111,7 +116,13 @@ impl Trie {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .inspect_err(|_| {
+                    error!(
+                        "Failed to get node {:?} when trying to insert path and value",
+                        self.root.compute_hash()
+                    )
+                })?
                 .insert(self.db.as_ref(), path, value)?
                 .into()
         } else {
@@ -133,7 +144,13 @@ impl Trie {
         let (node, value) = self
             .root
             .get_node(self.db.as_ref())?
-            .ok_or(TrieError::InconsistentTree)?
+            .ok_or(TrieError::InconsistentTree)
+            .inspect_err(|_| {
+                error!(
+                    "Failed to get node {:?} when removing path",
+                    self.root.compute_hash()
+                )
+            })?
             .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
         self.root = node.map(Into::into).unwrap_or_default();
 
@@ -233,7 +250,13 @@ impl Trie {
             let encoded_root = self
                 .root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .inspect_err(|_| {
+                    error!(
+                        "Failed to get node {:?} when getting proofs",
+                        self.root.compute_hash()
+                    )
+                })?
                 .encode_raw();
 
             let mut node_path = HashSet::new();
@@ -384,8 +407,12 @@ impl Trie {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
-                            let child_node =
-                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                            let child_node = child_ref
+                                .get_node(db)?
+                                .ok_or(TrieError::InconsistentTree)
+                                .inspect_err(|_| {
+                                    error!("Failed to get child_ref node {child_ref:?} in get_node_inner")
+                                })?;
                             get_node_inner(db, child_node, partial_path)
                         } else {
                             Ok(vec![])
@@ -400,7 +427,13 @@ impl Trie {
                         let child_node = extension_node
                             .child
                             .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)?;
+                            .ok_or(TrieError::InconsistentTree)
+                            .inspect_err(|_| {
+                                error!(
+                                    "Failed to get extension_node.child {:?} in get_node_inner",
+                                    extension_node.child
+                                )
+                            })?;
                         get_node_inner(db, child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -416,7 +449,10 @@ impl Trie {
                 self.db.as_ref(),
                 self.root
                     .get_node(self.db.as_ref())?
-                    .ok_or(TrieError::InconsistentTree)?,
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| {
+                        error!("Failed to get root {:?} in get_node_inner", self.root)
+                    })?,
                 partial_path,
             )
         } else {
@@ -467,7 +503,13 @@ impl ProofTrie {
             self.0
                 .root
                 .get_node(self.0.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .inspect_err(|_| {
+                    error!(
+                        "Failed to get {:?} in ProofTrie::insert",
+                        self.0.root.compute_hash()
+                    )
+                })?
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()
         } else {

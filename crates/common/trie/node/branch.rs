@@ -1,4 +1,5 @@
 use ethrex_rlp::structs::Encoder;
+use tracing::error;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -44,7 +45,15 @@ impl BranchNode {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| {
+                        error!(
+                            "Failed to get child_ref {:?} in BranchNode::get",
+                            child_ref.compute_hash()
+                        )
+                    })?;
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -75,7 +84,13 @@ impl BranchNode {
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db)?
-                        .ok_or(TrieError::InconsistentTree)?;
+                        .ok_or(TrieError::InconsistentTree)
+                        .inspect_err(|_| {
+                            error!(
+                                "Failed to get choice_ref {:?} in BranchNode::insert",
+                                choice_ref.compute_hash()
+                            )
+                        })?;
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
                 }
@@ -90,7 +105,13 @@ impl BranchNode {
                     } else {
                         *choice_ref = choice_ref
                             .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)?
+                            .ok_or(TrieError::InconsistentTree)
+                            .inspect_err(|_| {
+                                error!(
+                                    "Failed to get choice_ref (2) {:?} in BranchNode::insert",
+                                    choice_ref.compute_hash()
+                                )
+                            })?
                             .insert(db, path, value)?
                             .into();
                     }
@@ -137,7 +158,13 @@ impl BranchNode {
             if self.choices[choice_index].is_valid() {
                 let child_node = self.choices[choice_index]
                     .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| {
+                        error!(
+                            "Failed to get self.choices[choice_index] {:?} in BranchNode::remove",
+                            self.choices[choice_index].compute_hash()
+                        )
+                    })?;
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(db, path.clone())?;
                 if let Some(child_node) = child_node {
@@ -176,7 +203,15 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| {
+                        error!(
+                            "Failed to get child_ref {:?} in BranchNode::remove",
+                            child_ref.compute_hash()
+                        )
+                    })?;
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
@@ -243,7 +278,15 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .inspect_err(|_| {
+                        error!(
+                            "Failed to get child_ref {:?} in BranchNode::get_path",
+                            child_ref.compute_hash()
+                        )
+                    })?;
                 child_node.get_path(db, path, node_path)?;
             }
         }
