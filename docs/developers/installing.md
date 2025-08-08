@@ -27,30 +27,34 @@ the following feature can be enable with `--features <features>`
 
 |Feature|Description|
 |-------|-----------|
-|default|Enables "libmdbx", "c-kzg", "blst", "rollup_storage_sql", "dev", "metrics" features|
+|**default**|Enables "libmdbx", "c-kzg", "blst", "rollup_storage_sql", "dev", "metrics" features|
 |debug|Enables [debug mode](../vm/levm/debug.md) for LEVM|
-|dev|Makes the --dev flag available|
-|metrics|Enables metrics gathering for use with a monitoring stack|
-|c-kzg|Enables the c-kzg crate instead of kzg-rs|
-|blst|Enables the blst crate|
-|libmdbx|Enables libmdbx as the database for the ethereum state|
+|**dev**|Makes the [--dev](./l1/dev-mode.md) flag available|
+|**metrics**|Enables metrics gathering for use with a monitoring stack|
+|**c-kzg**|Enables the c-kzg crate instead of kzg-rs|
+|**blst**|Enables the blst crate|
+|**libmdbx**|Enables libmdbx as the database for the ethereum state|
 |redb|Enables redb as the database for the ethereum state|
 |rollup_storage_libmdbx|Enables libmdbx as the database for the L2 batch data|
 |rollup_storage_redb|Enables redb as the database for the L2 batch data|
-|rollup_storage_sql|Enables sql as the database for the L2 batch data|
+|**rollup_storage_sql**|Enables sql as the database for the L2 batch data|
 |sp1|Enables the sp1 backend for the L2 prover|
 |risc0|Enables the risc0 backend for the L2 prover|
 |gpu|Enables CUDA support for the zk backends risc0 and sp1|
 
+**Bolded** are features enabled by default
+
+Additionally the environment variable `COMPILE_CONTRACTS` can be set to `true` to enable embedding the solidity contracts used by the rollup, into the binary to enable the [L2 dev mode](../developers/l2/dev-mode.md).
+
 ## Building the docker image
 
-The dockerfile is located at the root of the repository and can be built by running
+The Dockerfile is located at the root of the repository and can be built by running
 
 ```
 docker build -t ethrex .
 ```
 
-The `BUILD_FLAGS` argument can be used to pass flags to cargo for example
+The `BUILD_FLAGS` argument can be used to pass flags to cargo, for example
 
 ```
 docker build -t ethrex --build-arg BUILD_FLAGS="--features <features>" .
