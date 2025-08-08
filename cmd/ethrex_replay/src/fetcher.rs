@@ -6,7 +6,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     cache::{Cache, L2Fields, load_cache, write_cache},
@@ -35,7 +35,9 @@ pub async fn get_blockdata(
 
     let file_name = format!("cache_{network}_{requested_block_number}.json");
 
-    if let Ok(cache) = load_cache(&file_name, chain_config) {
+    if let Ok(cache) =
+        load_cache(&file_name, chain_config).inspect_err(|e| warn!("Failed to load cache: {e}"))
+    {
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
