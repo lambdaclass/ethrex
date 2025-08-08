@@ -18,4 +18,4 @@ Then you can use a tool like [rex](https://github.com/lambdaclass/rex) to make s
 rex block-number
 ```
 
-rich account private keys are listed at the folder `fixtures/keys/private_keys_l1.txt` located at the root of the repo. You can then use these keys to deploy contracts and send transactions in the localnet.
+Rich account private keys are listed at the folder `fixtures/keys/private_keys_l1.txt` located at the root of the repo. You can then use these keys to deploy contracts and send transactions in the localnet.

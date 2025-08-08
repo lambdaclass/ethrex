@@ -48,7 +48,7 @@
 # Ethrex for developers
 - [Getting started](./developers/README.md)
 - [Installing](./developers/installing.md)
-- [L1](./developers/l1/README.md)
+- [L1](./developers/l1/introduction.md)
   - [Ethrex as a local development node](./developers/l1/dev-mode.md)
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
@@ -59,7 +59,7 @@
     - [Assertoor tests](./developers/l1/testing/assertoor.md)
     - [Rust tests](./developers/l1/testing/rust.md)
     - [Load tests](./developers/l1/testing/load-tests.md)
-- [L2](./developers/l2/README.md)
+- [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)

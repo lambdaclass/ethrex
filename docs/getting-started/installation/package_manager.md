@@ -1,3 +1,3 @@
 # Package Manager
 
-Coming soon
+Coming soon.
