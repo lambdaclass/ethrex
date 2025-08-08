@@ -16,18 +16,14 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
-};
+use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{info, trace, warn};
+use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: usize = 777;
@@ -137,11 +133,9 @@ impl GenServer for StorageHealer {
         _message: StorageHealerCallMsg,
         _handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
-        info!("Receiving a call");
         // We only ask for IsFinished in the message, so we don't match it
         let is_finished = self.requests.is_empty() && self.download_queue.is_empty();
         let is_stale = current_unix_time() > self.staleness_timestamp;
-        info!("Are we finished? {is_finished}. Are we stale? {is_stale}");
         // Finished means that we have succesfully healed according to our algorithm
         // That means that we have commited the root_node of the tree
         if is_finished || is_stale {
@@ -216,7 +210,7 @@ impl GenServer for StorageHealer {
                             .expect("We launched the storage healer without a membatch"),
                         &mut self.leafs_healed,
                         &mut self.roots_healed,
-                    );
+                    ); // TODO: if we have a stor error we should stop
                 };
                 clear_inflight_requests(
                     &mut self.requests,
@@ -344,7 +338,7 @@ pub async fn heal_storage_trie(
                 is_stale = heal_stale;
             }
         }
-        tokio::time::sleep(SHOW_PROGRESS_INTERVAL_DURATION);
+        tokio::time::sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
     }
     if is_finished {
         info!("Storage healing finished succesfully.");
@@ -391,8 +385,9 @@ async fn ask_peers_for_nodes(
         let Some(mut peer) =
             get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
         else {
-            warn!("We have no free peers for storage healing!");
+            // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
             // If we have no peers we shrug our shoulders and wait until next free peer
+            trace!("We have no free peers for storage healing!");
             return;
         };
         let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
@@ -494,9 +489,8 @@ fn process_node_responses(
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
-        match &node_response.node {
-            Node::Leaf(_) => *leafs_healed += 1,
-            _ => {}
+        if let Node::Leaf(_) = &node_response.node {
+            *leafs_healed += 1
         };
 
         let (missing_children_nibbles, missing_children_count) =
@@ -504,7 +498,7 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch, roots_healed);
+            commit_node(&node_response, store.clone(), membatch, roots_healed)?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -514,7 +508,7 @@ fn process_node_responses(
                 key,
                 MembatchEntry {
                     node_response: node_response.clone(),
-                    missing_children_count: missing_children_count,
+                    missing_children_count,
                 },
             );
             download_queue.extend(missing_children_nibbles.iter().map(|children_key| {
@@ -530,16 +524,9 @@ fn process_node_responses(
     Ok(())
 }
 
-fn log_storage_heal(last_update: &mut Instant) {
-    if last_update.elapsed() > LOGGING_INTERVAL {
-        info!("Storage Healing");
-        *last_update = Instant::now();
-    }
-}
-
 fn get_initial_downloads(account_paths: &[Nibbles]) -> VecDeque<NodeRequest> {
     account_paths
-        .into_iter()
+        .iter()
         .map(|acc_path| {
             NodeRequest {
                 acc_path: acc_path.clone(),
