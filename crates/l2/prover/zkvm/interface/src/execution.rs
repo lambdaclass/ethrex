@@ -171,11 +171,8 @@ pub fn stateless_validation_l2(
         codes_map: db.codes_map.clone(),
         state_trie: None,
         storage_tries: None,
-        // FIXME: Handle L2 stateless validation properly.
-        state: vec![],
-        keys: vec![],
-        codes: vec![],
-        headers: vec![],
+        state: todo!(),
+        keys: todo!(),
     };
 
     let StatelessResult {

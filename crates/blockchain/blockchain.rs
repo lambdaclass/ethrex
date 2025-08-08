@@ -341,16 +341,13 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         Ok(ExecutionWitnessResult {
+            state: todo!(),
+            keys: todo!(),
             codes_map: codes,
             state_trie: None,
             storage_tries: None,
             block_headers,
             chain_config,
-            // FIXME: Handle debug_executionWitness requests properly.
-            state: vec![],
-            keys: vec![],
-            codes: vec![],
-            headers: vec![],
         })
     }
 

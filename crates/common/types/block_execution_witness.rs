@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::serde_utils;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
@@ -20,12 +21,9 @@ use sha3::{Digest, Keccak256};
 /// feeding the DB into a zkVM program to prove the execution.
 #[derive(Default)]
 pub struct ExecutionWitnessResult {
-    /* reth compatible fields */
+    /* Useful fields */
     pub state: Vec<Bytes>,
     pub keys: Vec<Bytes>,
-    pub codes: Vec<Bytes>,
-    pub headers: Vec<Bytes>,
-
     /* Our fields */
     // Indexed by code hash
     // Used evm bytecodes
@@ -359,23 +357,38 @@ impl Serialize for ExecutionWitnessResult {
     where
         S: serde::Serializer,
     {
+        // TODO: Extract and merge with the Deserialize impl
+        #[derive(Serialize)]
+        struct RpcExecutionWitness {
+            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
+            state: Vec<Bytes>,
+            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
+            keys: Vec<Bytes>,
+            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
+            codes: Vec<Bytes>,
+            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
+            headers: Vec<Bytes>,
+        }
+
+        let response = RpcExecutionWitness {
+            state: self.state.clone(),
+            keys: self.keys.clone(),
+            codes: self.codes_map.values().cloned().collect(),
+            headers: self
+                .block_headers
+                .values()
+                .map(BlockHeader::encode_to_vec)
+                .map(Into::into)
+                .collect(),
+        };
+
         let mut map = serializer.serialize_map(Some(4))?;
-        map.serialize_entry(
-            "state",
-            &self.state.iter().map(hex::encode).collect::<Vec<_>>(),
-        )?;
-        map.serialize_entry(
-            "keys",
-            &self.keys.iter().map(hex::encode).collect::<Vec<_>>(),
-        )?;
-        map.serialize_entry(
-            "codes",
-            &self.codes.iter().map(hex::encode).collect::<Vec<_>>(),
-        )?;
-        map.serialize_entry(
-            "headers",
-            &self.headers.iter().map(hex::encode).collect::<Vec<_>>(),
-        )?;
+
+        map.serialize_entry("state", &response.state)?;
+        map.serialize_entry("keys", &response.keys)?;
+        map.serialize_entry("codes", &response.codes)?;
+        map.serialize_entry("headers", &response.headers)?;
+
         map.end()
     }
 }
@@ -386,62 +399,29 @@ impl<'de> Deserialize<'de> for ExecutionWitnessResult {
     where
         D: Deserializer<'de>,
     {
-        let response = HashMap::<String, Vec<String>>::deserialize(deserializer)?;
+        // TODO: Extract and merge with the Serialize impl
+        #[derive(Deserialize)]
+        struct RpcExecutionWitness {
+            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
+            state: Vec<Bytes>,
+            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
+            keys: Vec<Bytes>,
+            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
+            codes: Vec<Bytes>,
+            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
+            headers: Vec<Bytes>,
+        }
 
-        let state: Vec<Bytes> = response
-            .get("state")
-            .ok_or_else(|| de::Error::custom("Missing or invalid 'state' field"))?
-            .iter()
-            .map(|str| {
-                hex::decode(str.trim_start_matches("0x"))
-                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
-                    .map(Into::into)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(de::Error::custom)?;
+        let response = RpcExecutionWitness::deserialize(deserializer)?;
 
-        let keys: Vec<Bytes> = response
-            .get("keys")
-            .ok_or_else(|| de::Error::custom("Missing or invalid 'keys' field"))?
-            .iter()
-            .map(|str| {
-                hex::decode(str.trim_start_matches("0x"))
-                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
-                    .map(Into::into)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(de::Error::custom)?;
-
-        let codes: Vec<Bytes> = response
-            .get("codes")
-            .ok_or_else(|| de::Error::custom("Missing or invalid 'codes' field"))?
-            .iter()
-            .map(|str| {
-                hex::decode(str.trim_start_matches("0x"))
-                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
-                    .map(Into::into)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(de::Error::custom)?;
-
-        let headers: Vec<Bytes> = response
-            .get("headers")
-            .ok_or_else(|| de::Error::custom("Missing or invalid 'headers' field"))?
-            .iter()
-            .map(|str| {
-                hex::decode(str.trim_start_matches("0x"))
-                    .map_err(|e| <D::Error as de::Error>::custom(e.to_string()))
-                    .map(Into::into)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(de::Error::custom)?;
-
-        let codes_map = codes
+        let codes_map = response
+            .codes
             .iter()
             .map(|code| (keccak_hash::keccak(code), code.clone()))
             .collect::<HashMap<_, _>>();
 
-        let block_headers = headers
+        let block_headers = response
+            .headers
             .iter()
             .map(Bytes::as_ref)
             .map(BlockHeader::decode)
@@ -451,14 +431,47 @@ impl<'de> Deserialize<'de> for ExecutionWitnessResult {
             .map(|header| (header.number, header.clone()))
             .collect::<HashMap<_, _>>();
 
+        let last_block_number = block_headers.keys().max().ok_or(de::Error::custom(
+            "No block headers found in the execution witness result",
+        ))?;
+
+        let parent_header = block_headers
+            .get(&(last_block_number.saturating_sub(1)))
+            .ok_or(de::Error::custom(
+                format!("No parent block header found for block {last_block_number} in the execution witness result"),
+            ))?;
+
+        let state_trie =
+            rebuild_trie(parent_header.state_root, &response.state).map_err(de::Error::custom)?;
+
+        // Keys can either be account addresses or storage slots. They have different sizes,
+        // so we filter them by size. The from_slice method panics if the input has the wrong size.
+        let addresses: Vec<Address> = response
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
+            addresses
+                .iter()
+                .filter_map(|addr| {
+                    Some((
+                        *addr,
+                        rebuild_storage_trie(addr, &state_trie, &response.state)?,
+                    ))
+                })
+                .collect::<Vec<(Address, Trie)>>(),
+        );
+
         Ok(Self {
-            state,
-            keys,
-            codes,
-            headers,
+            // FIXME: Figure out if we want the following 2 to be empty.
+            state: response.state,
+            keys: response.keys,
             codes_map,
-            state_trie: None,
-            storage_tries: None,
+            state_trie: Some(state_trie),
+            storage_tries: Some(storage_tries),
             block_headers,
             chain_config: ChainConfig::default(),
         })
@@ -475,4 +488,42 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+
+pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
+    let mut initial_node = None;
+
+    for node in state.iter() {
+        // If the node is empty we skip it
+        if node == &vec![128_u8] {
+            continue;
+        }
+        let x = Node::decode_raw(node).map_err(|_| {
+            ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
+        })?;
+        let hash = x.compute_hash().finalize();
+        if hash == initial_state {
+            initial_node = Some(node.clone());
+            break;
+        }
+    }
+
+    Trie::from_nodes(
+        initial_node.map(|b| b.to_vec()).as_ref(),
+        &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
+    )
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
+}
+
+// This function is an option because we expect it to fail sometimes, and we just want to filter it
+pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
+    let account_state_rlp = trie.get(&hash_address(address)).ok()??;
+
+    let account_state = AccountState::decode(&account_state_rlp).ok()?;
+
+    if account_state.storage_root == *EMPTY_TRIE_HASH {
+        return None;
+    }
+
+    rebuild_trie(account_state.storage_root, state).ok()
 }
