@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754663734098,
+  "lastUpdate": 1754666388772,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8005,6 +8005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161704512409,
             "range": "± 289839323",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "aca533e892a69c5978d4fceed7eef34c794a2828",
+          "message": "chore(l1): remove needless clone in ExecutionPayload into_block (#3996)\n\n**Motivation**\nFound this needless clone while checking the code.",
+          "timestamp": "2025-08-08T13:45:48Z",
+          "tree_id": "7b98a5c497afa03967a43f2b5481d84a28014603",
+          "url": "https://github.com/lambdaclass/ethrex/commit/aca533e892a69c5978d4fceed7eef34c794a2828"
+        },
+        "date": 1754666374266,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161878911311,
+            "range": "± 190512168",
             "unit": "ns/iter"
           }
         ]
