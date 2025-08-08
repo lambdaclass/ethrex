@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754668451568,
+  "lastUpdate": 1754669071770,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8065,6 +8065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159898576640,
             "range": "± 346954854",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "230d247751b142c6fb57a57c48338b3b3c99aa7a",
+          "message": "fix(l1): decode the fork ID as a list (#3492)\n\nThis PR decodes the fork ID of a node record's \"eth\" entry as a list.\nPreviously, we were assuming the list was small enough to have a length\nof a single byte.",
+          "timestamp": "2025-08-08T14:33:01Z",
+          "tree_id": "6d5bbd826043b03ef1901bd2613ea3bc777d37ee",
+          "url": "https://github.com/lambdaclass/ethrex/commit/230d247751b142c6fb57a57c48338b3b3c99aa7a"
+        },
+        "date": 1754669057059,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163280807639,
+            "range": "± 211634508",
             "unit": "ns/iter"
           }
         ]
