@@ -997,7 +997,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
             let membatch = OnceCell::new();
-            membatch.get_or_init(|| HashMap::new());
+            membatch.get_or_init(HashMap::new);
             let mut healing_done = false;
             while !healing_done {
                 // This if is an edge case for the skip snap sync scenario
@@ -1016,7 +1016,7 @@ impl Syncer {
                     continue;
                 }
                 // TODO: 💀💀💀 either remove or change to a debug flag
-                
+
                 // validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,

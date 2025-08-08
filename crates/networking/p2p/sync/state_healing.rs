@@ -102,6 +102,7 @@ async fn heal_state_trie(
     let mut longest_path_seen = 0;
     let mut downloads_success = 0;
     let mut downloads_fail = 0;
+    let mut leafs_healed = 0;
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -136,12 +137,12 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
                     paths.len()
                 );
             }
@@ -158,6 +159,10 @@ async fn heal_state_trie(
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
+                    leafs_healed += nodes
+                        .iter()
+                        .filter(|node| matches!(node, Node::Leaf(leaf_node)))
+                        .count();
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
                     scores.entry(peer_id).and_modify(|score| {
