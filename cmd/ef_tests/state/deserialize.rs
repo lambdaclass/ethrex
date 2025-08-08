@@ -56,6 +56,9 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerGas
                     }
+                    "TransactionException.RLP_INVALID_VALUE" => {
+                        TransactionExpectedException::RlpInvalidValue
+                    }
                     "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
                         TransactionExpectedException::GasLimitPriceProductOverflow
                     }
@@ -68,7 +71,7 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
                     }
-                    _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
+                    _other => TransactionExpectedException::Other, //TODO: Support additional exceptions that may enter here.
                 }
             })
             .collect();
