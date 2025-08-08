@@ -20,12 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
-use std::sync::Arc;
+use std::{backtrace::Backtrace, fmt::Debug};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use std::{str::FromStr, sync::Arc};
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -140,6 +140,17 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+        let missing_hash =
+            hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -346,6 +357,17 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+        let missing_hash =
+            hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -365,6 +387,17 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+        let missing_hash =
+            hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -405,6 +438,17 @@ impl Store {
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
+            let missing_hash =
+                hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                    .unwrap();
+            if hashed_address == missing_hash {
+                if state_trie.get(&hashed_address).is_err() {
+                    let backtrace = Backtrace::capture();
+                    tracing::error!(
+                        "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                    );
+                }
+            }
             let mut account_state = match state_trie.get(&hashed_address)? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
@@ -465,6 +509,18 @@ impl Store {
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
+                let missing_hash = hex::decode(
+                    "0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5",
+                )
+                .unwrap();
+                if hashed_address == missing_hash {
+                    if state_trie.get(&hashed_address).is_err() {
+                        let backtrace = Backtrace::capture();
+                        tracing::error!(
+                            "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                        );
+                    }
+                }
                 let mut account_state = match state_trie.get(&hashed_address)? {
                     Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
@@ -861,6 +917,17 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+        let missing_hash =
+            hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(encoded_account) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -904,6 +971,17 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
+        let missing_hash =
+            hex::decode("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -961,6 +1039,17 @@ impl Store {
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root)?;
+        let missing_hash =
+            H256::from_str("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address.as_bytes().to_vec()).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
@@ -998,6 +1087,17 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root)?;
+        let missing_hash =
+            H256::from_str("0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5")
+                .unwrap();
+        if hashed_address == missing_hash {
+            if state_trie.get(&hashed_address.as_bytes().to_vec()).is_err() {
+                let backtrace = Backtrace::capture();
+                tracing::error!(
+                    "Failed to get 0xbd1c37cb15f54fd35ca10e081970a516864d069b507576ca5a0a9da8a91db1a5, {backtrace}"
+                );
+            }
+        }
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
