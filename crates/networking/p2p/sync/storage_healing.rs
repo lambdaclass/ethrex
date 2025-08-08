@@ -410,21 +410,34 @@ async fn ask_peers_for_nodes(
                 Message::GetTrieNodes(GetTrieNodes {
                     id: req_id,
                     root_hash: state_root,
-                    paths: download_chunk
-                        .into_iter()
-                        .map(|request| {
-                            vec![
-                                Bytes::from(request.acc_path.to_bytes()),
-                                Bytes::from(request.storage_path.to_bytes()),
-                            ]
-                        })
-                        .collect(),
+                    paths: create_node_requests(download_chunk),
                     bytes: MAX_RESPONSE_BYTES,
                 }),
                 self_handler.clone(),
             ))
             .await;
     }
+}
+
+fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>> {
+    let mut mapped_requests: HashMap<Nibbles, Vec<Nibbles>> = HashMap::new();
+
+    for request in node_requests {
+        mapped_requests
+            .entry(request.acc_path.clone())
+            .or_insert(vec![request.acc_path])
+            .push(request.storage_path);
+    }
+
+    mapped_requests
+        .into_values()
+        .map(|storage_paths| {
+            storage_paths
+                .into_iter()
+                .map(|path| Bytes::from(path.to_bytes()))
+                .collect()
+        })
+        .collect()
 }
 
 fn zip_requeue_node_responses_score_peer(
