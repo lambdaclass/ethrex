@@ -63,7 +63,10 @@ jobs:
 
       - name: Build image
         if: ${{ inputs.job_type != 'main' }}
-        run: make build-image
+        run: |
+          make build-image
+          # Tests use ethrex:latest so we retag it
+          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:latest
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}
