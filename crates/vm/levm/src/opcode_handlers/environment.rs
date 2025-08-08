@@ -250,7 +250,7 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = self.substate.accessed_addresses.insert(address);
-        let account_code_length = self.db.get_account(address)?.code.len().into();
+        let account_code_length = self.db.get_account_code(address)?.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -288,7 +288,7 @@ impl<'a> VM<'a> {
 
         // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = &self.db.get_account(address)?.code;
+        let bytecode = self.db.get_account_code(address)?;
 
         let mut data = vec![0u8; size];
         if offset < bytecode.len() {

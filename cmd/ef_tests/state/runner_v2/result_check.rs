@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate, Fork, Genesis, code_hash},
+    types::{AccountUpdate, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
+    account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::VM,
@@ -259,27 +260,27 @@ pub fn check_accounts_state(
     for (addr, expected_account) in expected_accounts_state {
         let acc_genesis_state = genesis.alloc.get(&addr);
         // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
-        let account: &mut Account = if let Some(account) = db.current_accounts_state.get_mut(&addr)
-        {
-            if account.storage.is_empty() && acc_genesis_state.is_some() {
-                account.storage = acc_genesis_state
-                    .unwrap()
-                    .storage
-                    .iter()
-                    .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
-                    .collect();
-            }
-            account
-        } else {
-            // Else, we take its info from the Genesis state, assuming it has not changed.
-            if let Some(account) = acc_genesis_state {
-                &mut Into::<Account>::into(account.clone())
+        let account: &mut LevmAccount =
+            if let Some(account) = db.current_accounts_state.get_mut(&addr) {
+                if account.storage.is_empty() && acc_genesis_state.is_some() {
+                    account.storage = acc_genesis_state
+                        .unwrap()
+                        .storage
+                        .iter()
+                        .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                        .collect();
+                }
+                account
             } else {
-                // If we can't find it in any of the previous mappings, we provide a default account that will not pass
-                // the comparisons checks.
-                &mut Account::default()
-            }
-        };
+                // Else, we take its info from the Genesis state, assuming it has not changed.
+                if let Some(account) = acc_genesis_state {
+                    &mut Into::<LevmAccount>::into(account.clone())
+                } else {
+                    // If we can't find it in any of the previous mappings, we provide a default account that will not pass
+                    // the comparisons checks.
+                    &mut LevmAccount::default()
+                }
+            };
 
         // We verify if the account matches the expected post state.
         let account_mismatch = verify_matching_accounts(addr, account, &expected_account);
@@ -299,7 +300,7 @@ pub fn check_accounts_state(
 /// Compare every field of the expected account vs. the actual obtained account state.
 fn verify_matching_accounts(
     addr: Address,
-    actual_account: &Account,
+    actual_account: &LevmAccount,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
     let mut formatted_expected_storage = BTreeMap::new();
@@ -308,7 +309,7 @@ fn verify_matching_accounts(
         formatted_expected_storage.insert(formatted_key, *value);
     }
     let mut account_mismatch = AccountMismatch::default();
-    let code_matches = actual_account.code == expected_account.code;
+    let code_matches = actual_account.info.code_hash == keccak(&expected_account.code);
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
     let storage_matches = formatted_expected_storage == actual_account.storage;

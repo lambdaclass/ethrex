@@ -169,28 +169,11 @@ impl Account {
             storage,
         }
     }
+}
 
-    pub fn has_nonce(&self) -> bool {
-        self.info.nonce != 0
-    }
-
-    pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_code_or_nonce(&self) -> bool {
-        self.has_code() || self.has_nonce()
-    }
-
+impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero()
-            && self.info.nonce == 0
-            && self.info.code_hash == *EMPTY_KECCACK_HASH
-    }
-
-    pub fn set_code(&mut self, code: Bytes) {
-        self.info.code_hash = keccak(code.as_ref()).0.into();
-        self.code = code;
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
     }
 }
 
