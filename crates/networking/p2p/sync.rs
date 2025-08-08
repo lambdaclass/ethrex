@@ -1000,8 +1000,11 @@ impl Syncer {
             membatch.get_or_init(|| HashMap::new());
             let mut healing_done = false;
             while !healing_done {
-                (pivot_header, staleness_timestamp) =
-                    update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
+                // This if is an edge case for the skip snap sync scenario
+                if current_unix_time() > staleness_timestamp {
+                    (pivot_header, staleness_timestamp) =
+                        update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
+                }
                 healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
