@@ -2,6 +2,17 @@
 
 Ethrex is an execution client. Since Ethereum swapped from [proof-of-work](https://ethereum.org/en/developers/docs/consensus-mechanisms/pow) to [proof-of-stake](https://ethereum.org/en/developers/docs/consensus-mechanisms/pos), ethrex needs to run alongside a [consensus client](https://ethereum.org/en/developers/docs/nodes-and-clients/#consensus-clients).
 
+## Consensus clients
+
+There are several consensus clients and all of them work with ethrex. When choosing a consensus client we suggest you keep in mind [client diversity](https://ethereum.org/en/developers/docs/nodes-and-clients/client-diversity).
+
+- [Lighthouse](https://lighthouse.sigmaprime.io/)
+- [Lodestar](https://lodestar.chainsafe.io/)
+- [Nimbus](https://nimbus.team/)
+- [Prysm](https://prysm.offchainlabs.com/)
+- [Teku](https://consensys.io/teku)
+- [Grandline](https://docs.grandine.io/)
+
 # Configuring ethrex
 
 ## JWT secret
