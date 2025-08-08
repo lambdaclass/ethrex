@@ -289,17 +289,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn mark_chain_as_canonical(
-        &self,
-        numbers_and_hashes: &[(BlockNumber, BlockHash)],
-    ) -> Result<(), StoreError> {
-        let key_values = numbers_and_hashes
-            .iter()
-            .map(|(n, h)| (*n, (*h).into()))
-            .collect();
-        self.write_batch::<CanonicalBlockHashes>(key_values).await
-    }
-
     async fn get_block_body(
         &self,
         block_number: BlockNumber,
@@ -527,17 +516,6 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::FinalizedBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::FinalizedBlockNumber)
@@ -550,14 +528,6 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::SafeBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::SafeBlockNumber)
@@ -568,17 +538,6 @@ impl StoreEngine for Store {
                 .map(Some)
                 .map_err(|_| StoreError::DecodeError),
         }
-    }
-
-    async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::LatestBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
     }
 
     async fn update_pending_block_number(
@@ -619,15 +578,6 @@ impl StoreEngine for Store {
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
         Ok(Trie::open(db, state_root))
-    }
-
-    async fn set_canonical_block(
-        &self,
-        number: BlockNumber,
-        hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        self.write::<CanonicalBlockHashes>(number, hash.into())
-            .await
     }
 
     async fn get_canonical_block_hash(
@@ -712,14 +662,57 @@ impl StoreEngine for Store {
         Ok(Some(Block::new(header, body)))
     }
 
-    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            db.begin_readwrite()
-                .map_err(StoreError::LibmdbxError)?
-                .delete::<CanonicalBlockHashes>(number, None)
-                .map(|_| ())
-                .map_err(StoreError::LibmdbxError)
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // Update canonical block hashes
+            if let Some(new_canonical_blocks) = new_canonical_blocks {
+                for (number, hash) in new_canonical_blocks {
+                    tx.upsert::<CanonicalBlockHashes>(number, hash.into())
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            // Remove anything after the head from the canonical chain.
+            for number in (head_number + 1)..(latest + 1) {
+                tx.delete::<CanonicalBlockHashes>(number, None)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // Make head canonical and label all special blocks correctly
+            tx.upsert::<CanonicalBlockHashes>(head_number, head_hash.into())
+                .map_err(StoreError::LibmdbxError)?;
+
+            if let Some(finalized) = finalized {
+                tx.upsert::<ChainData>(
+                    ChainDataIndex::FinalizedBlockNumber,
+                    finalized.encode_to_vec(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            if let Some(safe) = safe {
+                tx.upsert::<ChainData>(ChainDataIndex::SafeBlockNumber, safe.encode_to_vec())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<ChainData>(
+                ChainDataIndex::LatestBlockNumber,
+                head_number.encode_to_vec(),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
