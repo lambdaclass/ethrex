@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754684229719,
+  "lastUpdate": 1754684808200,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8155,6 +8155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159894788071,
             "range": "± 207368478",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0b49b19f80363f72edb2b48bbcf3537b84830f14",
+          "message": "refactor(l2): remove ProofCoordinator dev_mode (#3999)\n\n**Motivation**\n\nWe can infer the `Exec` proof type from the contract.\n\n**Description**\n\n- Removes the `dev_mode` ProofCoordinator CLI option.\n- If no other proof type is needed, defaults to `Exec`.\n\nCloses #3698",
+          "timestamp": "2025-08-08T19:37:11Z",
+          "tree_id": "c88de0ebbff81a374a0ff883616da59414194d8b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0b49b19f80363f72edb2b48bbcf3537b84830f14"
+        },
+        "date": 1754684793613,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159824040584,
+            "range": "± 342099188",
             "unit": "ns/iter"
           }
         ]
