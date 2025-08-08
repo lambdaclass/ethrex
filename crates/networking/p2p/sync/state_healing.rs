@@ -146,6 +146,18 @@ async fn heal_state_trie(
                     paths.len()
                 );
             }
+            downloads_success = 0;
+            downloads_fail = 0;
+
+            let peers_table = peers
+                .peer_table
+                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .await;
+
+            for (peer_id, _) in peers_table {
+                downloaders.entry(peer_id).or_insert(true);
+                scores.entry(peer_id).or_insert(0);
+            }
         }
 
         // Attempt to receive a response from one of the peers
