@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754666388772,
+  "lastUpdate": 1754668401291,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18060,6 +18060,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006295905660377359,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "319c050790d47825ed8dcd156644f0503fd2457e",
+          "message": "chore(l1): remove unused genesis path constants (#3969)\n\nThis PR removes some unused constants and functions related to genesis\npaths.",
+          "timestamp": "2025-08-08T12:54:48Z",
+          "tree_id": "ccd86490d65450164c7b0dbf4b82ee2f8a9c7577",
+          "url": "https://github.com/lambdaclass/ethrex/commit/319c050790d47825ed8dcd156644f0503fd2457e"
+        },
+        "date": 1754668385422,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012013789378937894,
             "unit": "Mgas/s"
           }
         ]
