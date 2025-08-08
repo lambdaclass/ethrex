@@ -11,9 +11,7 @@ use ethrex_l2_rpc::{
     signer::{LocalSigner, Signer},
 };
 use ethrex_rpc::clients::eth::L1MessageProof;
-use ethrex_rpc::clients::eth::{
-    EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
-};
+use ethrex_rpc::clients::eth::{EthClient, Overrides, WrappedTransaction, errors::EthClientError};
 use ethrex_rpc::types::receipt::RpcReceipt;
 
 use keccak_hash::keccak;

@@ -10,7 +10,7 @@ use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{EthClient, eth_sender::Overrides},
+    clients::eth::{EthClient, Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;

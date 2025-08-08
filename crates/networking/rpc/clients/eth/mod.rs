@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     clients::eth::errors::{
-        GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
+        CallError, GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
     },
     mempool::MempoolContent,
     types::{
@@ -19,7 +19,6 @@ use errors::{
     GetNonceError, GetRawBlockError, GetTransactionByHashError, GetTransactionReceiptError,
     SendRawTransactionError,
 };
-use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, Signature, U256,
     types::{
@@ -41,7 +40,6 @@ use serde_json::{Value, json};
 use std::{ops::Div, str::FromStr};
 
 pub mod errors;
-pub mod eth_sender;
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
@@ -60,6 +58,21 @@ pub struct EthClient {
     pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct Overrides {
+    pub from: Option<Address>,
+    pub to: Option<TxKind>,
+    pub value: Option<U256>,
+    pub nonce: Option<u64>,
+    pub chain_id: Option<u64>,
+    pub gas_limit: Option<u64>,
+    pub max_fee_per_gas: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
+    pub access_list: Vec<(Address, Vec<H256>)>,
+    pub gas_price_per_blob: Option<U256>,
+    pub block: Option<BlockIdentifier>,
 }
 
 #[derive(Debug, Clone)]
@@ -417,6 +430,53 @@ impl EthClient {
                     error_response.error.message, error_data
                 ))
                 .into())
+            }
+        }
+    }
+
+    pub async fn call(
+        &self,
+        to: Address,
+        calldata: Bytes,
+        overrides: Overrides,
+    ) -> Result<String, EthClientError> {
+        let tx = GenericTransaction {
+            to: TxKind::Call(to),
+            input: calldata,
+            value: overrides.value.unwrap_or_default(),
+            from: overrides.from.unwrap_or_default(),
+            gas: overrides.gas_limit,
+            gas_price: if let Some(gas_price) = overrides.max_fee_per_gas {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
+            ..Default::default()
+        };
+        let params = Some(vec![
+            json!({
+                "to": match tx.to {
+                    TxKind::Call(addr) => format!("{addr:#x}"),
+                    TxKind::Create => format!("{:#x}", Address::zero()),
+                },
+                "input": format!("0x{:#x}", tx.input),
+                "value": format!("{:#x}", tx.value),
+                "from": format!("{:#x}", tx.from),
+            }),
+            overrides
+                .block
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::String("latest".to_string())),
+        ]);
+
+        let request = RpcRequest::new("eth_call", params);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(CallError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(CallError::RPCError(error_response.error.message).into())
             }
         }
     }
