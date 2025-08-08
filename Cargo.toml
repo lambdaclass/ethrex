@@ -102,8 +102,8 @@ tokio-util = { version = "0.7.15", features = ["rt"] }
 tokio-stream = "0.1.17"
 futures = "0.3.31"
 async-trait = "0.1.88"
-spawned-concurrency = "0.2.1"
-spawned-rt = "0.2.1"
+spawned-concurrency = "0.2.2"
+spawned-rt = "0.2.2"
 rayon = "1.10.0"
 
 cfg-if = "1.0.0"

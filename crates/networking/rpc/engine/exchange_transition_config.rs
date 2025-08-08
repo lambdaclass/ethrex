@@ -1,7 +1,7 @@
 use ethrex_common::{H256, serde_utils};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -48,7 +48,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: {self}");
+        debug!("Requested new engine request: {self}");
         let payload = &self.payload;
 
         let chain_config = context.storage.get_chain_config()?;
