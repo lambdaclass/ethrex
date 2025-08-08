@@ -106,6 +106,7 @@ fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             blob_commitment: l2_fields.blob_commitment,
             blob_proof: l2_fields.blob_proof,
+            chain_config: db.chain_config,
         })
     }
 }
