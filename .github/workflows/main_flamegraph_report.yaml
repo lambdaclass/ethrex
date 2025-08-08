@@ -232,9 +232,9 @@ jobs:
         shell: bash
         run: |
           rm -rf target/release/ethrex
-          cargo build --release --bin ethrex --features dev
+          cargo build --release --bin ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --release --features dev -- \
+          --bin ethrex --release -- \
           --dev --network /home/runner/work/ethrex/ethrex/fixtures/genesis/load-test.json --http.port 1729 &
           sleep 10
           echo "Executing load test..."

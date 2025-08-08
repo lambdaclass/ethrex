@@ -6,6 +6,7 @@ use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork},
 };
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_vm::EvmError;
 use itertools::Itertools;
@@ -568,7 +569,7 @@ impl EFTestReportForkResult {
         transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
-        levm_cache: BTreeMap<Address, Account>,
+        levm_cache: BTreeMap<Address, LevmAccount>,
     ) {
         self.failed_vectors.insert(
             failed_vector,

@@ -3850,6 +3850,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
+ "ethrex-prover",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
@@ -4102,6 +4103,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -4172,6 +4174,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "url",
  "zkvm_interface",
 ]
 
