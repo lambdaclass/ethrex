@@ -27,6 +27,7 @@ use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -38,7 +39,8 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
+        .from_env_lossy()
+        .add_directive(Directive::from_str("hyper_util=off").unwrap());
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
         .finish();

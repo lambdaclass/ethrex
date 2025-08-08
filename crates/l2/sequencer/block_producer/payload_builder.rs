@@ -132,6 +132,7 @@ pub async fn fill_transactions(
 
         // Fetch the next transaction
         let Some(head_tx) = txs.peek() else {
+            debug!("No more transactions, breaking");
             break;
         };
 
@@ -194,7 +195,10 @@ pub async fn fill_transactions(
 
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
-            Ok(receipt) => receipt,
+            Ok(receipt) => {
+                debug!(%tx_hash, ?receipt, "Executed tx successfully");
+                receipt
+            }
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
