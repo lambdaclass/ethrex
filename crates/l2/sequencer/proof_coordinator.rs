@@ -5,6 +5,7 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
+use ethers::types::transaction::request;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
@@ -13,6 +14,7 @@ use ethrex_common::{
     types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -21,13 +23,20 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 use tracing::{debug, error, info, warn};
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+#[cfg(feature = "metrics")]
+use std::time::SystemTime;
 
 #[serde_as]
 #[derive(Serialize, Deserialize)]
@@ -173,6 +182,8 @@ pub struct ProofCoordinator {
     validium: bool,
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
+    #[cfg(feature = "metrics")]
+    request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
 }
 
 impl ProofCoordinator {
@@ -220,6 +231,8 @@ impl ProofCoordinator {
             validium: config.validium,
             needed_proof_types,
             commit_hash: get_commit_hash(),
+            #[cfg(feature = "metrics")]
+            request_timestamp: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -324,10 +337,20 @@ impl ProofCoordinator {
             } else {
                 let input = self.create_prover_input(batch_to_verify).await?;
                 debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+                metrics!(
+                    // First request starts a timer until a proof is received. The elapsed time will be
+                    // the estimated proving time.
+                    // This should be used for development only and runs on the assumption that:
+                    //   1. There's a single prover
+                    //   2. Communication does not fail and adds negligible overhead
+                    let mut lock = self.request_timestamp.lock().await;
+                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
+                );
                 ProofData::batch_response(batch_to_verify, input)
             };
 
         send_response(stream, &response).await?;
+
         info!("BatchResponse sent for batch number: {batch_to_verify}");
 
         Ok(())
@@ -355,6 +378,19 @@ impl ProofCoordinator {
                 "A proof was received for a batch and type that is already stored"
             );
         } else {
+            metrics!(
+                let lock = self.request_timestamp.lock().await;
+                let request_timestamp = lock.get(&batch_number).ok_or(
+                    ProofCoordinatorError::InternalError(
+                        "request timestamp could not be found".to_string(),
+                    ),
+                )?;
+                let proving_time = request_timestamp
+                    .elapsed()
+                    .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
+                    .as_secs();
+                METRICS.set_batch_proving_time(batch_number, proving_time as i64);
+            );
             // If not, store it
             self.rollup_store
                 .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)

@@ -11,6 +11,10 @@ pub struct Metrics {
     l1_gas_price: IntGauge,
     l2_gas_price: IntGauge,
     blob_usage: Gauge,
+    batch_size: IntGaugeVec,
+    batch_gas_used: IntGaugeVec,
+    batch_proving_time: IntGaugeVec,
+    batch_verification_gas: IntGaugeVec,
 }
 
 impl Default for Metrics {
@@ -43,6 +47,38 @@ impl Metrics {
             blob_usage: Gauge::new(
                 "l2_blob_usage",
                 "Keeps track of the percentage of blob usage for a batch commitment",
+            )
+            .unwrap(),
+            batch_size: IntGaugeVec::new(
+                Opts::new(
+                    "batch_size",
+                    "Batch size in blocks, labeled by batch number",
+                ),
+                &["batch_number"],
+            )
+            .unwrap(),
+            batch_gas_used: IntGaugeVec::new(
+                Opts::new(
+                    "batch_gas_used",
+                    "Batch total gas used, labeled by batch number",
+                ),
+                &["batch_number"],
+            )
+            .unwrap(),
+            batch_proving_time: IntGaugeVec::new(
+                Opts::new(
+                    "batch_proving_time",
+                    "Time it took to prove a batch in seconds, labeled by batch number",
+                ),
+                &["batch_number"],
+            )
+            .unwrap(),
+            batch_verification_gas: IntGaugeVec::new(
+                Opts::new(
+                    "batch_verification_gas",
+                    "Batch verification gas cost in L1, labeled by batch number",
+                ),
+                &["batch_number"],
             )
             .unwrap(),
         }
@@ -90,6 +126,53 @@ impl Metrics {
     pub fn set_blob_usage_percentage(&self, usage: f64) {
         self.blob_usage.set(usage);
     }
+    pub fn set_batch_size(&self, batch_number: u64, size: i64) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_size
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(size);
+        Ok(())
+    }
+
+    pub fn set_batch_gas_used(
+        &self,
+        batch_number: u64,
+        total_gas: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_gas_used
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(total_gas);
+        Ok(())
+    }
+
+    pub fn set_batch_proving_time(
+        &self,
+        batch_number: u64,
+        proving_time: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_proving_time
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(proving_time);
+        Ok(())
+    }
+
+    pub fn set_batch_verification_gas(
+        &self,
+        batch_number: u64,
+        verification_gas: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_verification_gas
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(verification_gas);
+        Ok(())
+    }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
@@ -103,6 +186,14 @@ impl Metrics {
         r.register(Box::new(self.operations_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.blob_usage.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_size.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_gas_used.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_proving_time.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_verification_gas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

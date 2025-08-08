@@ -165,7 +165,9 @@ impl L1Committer {
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = self.prepare_batch_from_block(*last_block).await?;
+                ) = self
+                    .prepare_batch_from_block(*last_block, batch_to_commit)
+                    .await?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -242,6 +244,7 @@ impl L1Committer {
     async fn prepare_batch_from_block(
         &mut self,
         mut last_added_block_number: BlockNumber,
+        batch_number: u64,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -255,7 +258,10 @@ impl L1Committer {
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
-        let mut _blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut batch_gas_used = 0_u64;
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -290,6 +296,9 @@ impl L1Committer {
                     .ok_or(CommitterError::InternalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
+                metrics!(
+                    batch_gas_used += receipt.cumulative_gas_used;
+                );
                 txs.push(tx.clone());
                 receipts.push(receipt);
             }
@@ -371,7 +380,10 @@ impl L1Committer {
 
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
-            _blob_size = latest_blob_size;
+
+            metrics!(
+                blob_size = latest_blob_size;
+            );
 
             privileged_transactions_hashes.extend(
                 privileged_transactions
@@ -403,9 +415,13 @@ impl L1Committer {
                         tracing::error!("Failed to update operations metric: {}", e.to_string())
                     });
             }
+            tracing::warn!("batch gas used: {batch_gas_used}");
+            tracing::warn!("batch number: {batch_number}");
             #[allow(clippy::as_conversions)]
-            let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
+            METRICS.set_batch_gas_used(batch_number, batch_gas_used as i64);
+            METRICS.set_batch_size(batch_number, (last_added_block_number - first_block_of_batch + 1) as i64);
         );
 
         let privileged_transactions_hash =
