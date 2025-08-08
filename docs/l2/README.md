@@ -4,9 +4,9 @@ In this mode, the ethrex code is repurposed to run a rollup that settles on Ethe
 
 The main differences between this mode and regular ethrex are:
 
-- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
+- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the chain. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
 - Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.
-- A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
+- A set of Solidity contracts to be deployed to the L1 are included as part of chain initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
 
 At a high level, the following new parts are added to the node:

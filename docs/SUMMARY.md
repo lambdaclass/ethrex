@@ -21,7 +21,7 @@
   - [Sync modes](./l1/fundamentals/sync_modes.md)
   - [Pruning]()
 
-# Ethrex for L2 networks
+# Ethrex for L2 chain
 - [Getting started](./l2/README.md)
 - [Deploying a node](./l2/running/README.md)
 - [Guides](./l2/guides/README.md)
