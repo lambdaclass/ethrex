@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-06
+
+- Fetch receipts for block in single DB transaction for the RCP queries [#xxxx](https://github.com/lambdaclass/ethrex/pull/xxxx)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
