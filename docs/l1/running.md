@@ -15,7 +15,7 @@ For more information about sync modes please read the [sync modes document](./fu
 
 ## Syncing to an Ethreum network
 
-This guide will assume that you already [installed ethrex](../getting-started/installation/README.md) and you know how to set up a [consensus client](../getting-started/consensus_client.md) to communicate with ethrex.
+This guide will assume that you already [installed ethrex](../getting-started/installation/installation.md) and you know how to set up a [consensus client](../getting-started/consensus_client.md) to communicate with ethrex.
 
 To sync with mainnet
 
