@@ -16,15 +16,14 @@ thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-cfg-if = "1.0.0"
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
 
-ethrex-metrics = { path = "./metrics", default-features = false }
+ethrex-metrics.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-hex = "0.4.3"
+hex.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lib]
