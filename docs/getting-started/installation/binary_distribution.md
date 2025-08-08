@@ -4,28 +4,28 @@
 
 Download the latest ethrex release for your OS from the [packaged binaries](https://github.com/lambdaclass/ethrex/releases)
 
+#### For Linux x86_64:
 ```sh
-# For Linux x86_64
 curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -O ethrex
-
-# For Linux ARM
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -O ethrex
-
-# For MacOS
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -O ethrex
 ```
 
+#### For Linux ARM:
+```sh
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
+```
 
-Set the executable flag by running
+#### For MacOS (Apple Silicon):
+```sh
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
+```
+
+## Give execution permissions to the binary
 
 ```
 chmod +x ethrex
 ```
 
-After that, you can verify the program is working by running:
+Finally, you can verify the program is working by running:
 
 ```sh
 ./ethrex --version
