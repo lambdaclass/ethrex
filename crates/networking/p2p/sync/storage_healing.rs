@@ -209,6 +209,7 @@ impl GenServer for StorageHealer {
                             .expect("We launched the storage healer without a membatch"),
                         &mut self.leafs_healed,
                         &mut self.roots_healed,
+                        &mut self.maximum_length_seen,
                     ); // TODO: if we have a stor error we should stop
                 };
                 clear_inflight_requests(
@@ -389,7 +390,7 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(1);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         requests.insert(
@@ -520,17 +521,21 @@ fn process_node_responses(
     membatch: &mut Membatch,
     leafs_healed: &mut usize,
     roots_healed: &mut usize,
+    maximum_length_seen: &mut usize,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
         if let Node::Leaf(_) = &node_response.node {
             *leafs_healed += 1
         };
-        debug!("Debugging downloaded node responses: {:?}", node_response);
+
+        *maximum_length_seen = usize::max(
+            *maximum_length_seen,
+            node_response.node_request.storage_path.len(),
+        );
 
         let (missing_children_nibbles, missing_children_count) =
             determine_missing_children(&node_response, store.clone(), membatch)?;
-        debug!("Debugging missing children: {:?}", missing_children_nibbles);
 
         if missing_children_count == 0 {
             // We flush to the database this node
