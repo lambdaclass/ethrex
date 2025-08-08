@@ -125,8 +125,8 @@ RPC options:
 ## ethrex l2
 
 ```
-Usage: ethrex-macos_aarch64 l2 [OPTIONS]
-       ethrex-macos_aarch64 l2 <COMMAND>
+Usage: ethrex l2 [OPTIONS]
+       ethrex l2 <COMMAND>
 
 Commands:
   prover        Initialize an ethrex prover [aliases: p]
@@ -452,7 +452,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex-macos_aarch64 l2 prover [OPTIONS] --proof-coordinator <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinator <URL>
 
 Options:
   -h, --help
