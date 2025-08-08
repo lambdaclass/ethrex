@@ -204,8 +204,7 @@ impl GenServer for StorageHealer {
                         &mut nodes_from_peer,
                         &mut self.download_queue,
                         self.store.clone(),
-                        &mut self
-                            .membatch
+                        self.membatch
                             .get_mut()
                             .expect("We launched the storage healer without a membatch"),
                         &mut self.leafs_healed,
@@ -434,7 +433,7 @@ fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>>
         .map(|storage_paths| {
             storage_paths
                 .into_iter()
-                .map(|path| Bytes::from(path.to_bytes()))
+                .map(|path| Bytes::from(path.encode_compact()))
                 .collect()
         })
         .collect()

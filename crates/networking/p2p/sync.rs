@@ -1031,8 +1031,8 @@ impl Syncer {
                     staleness_timestamp,
                 )
                 .await;
-                validate_storage_root(store.clone(), pivot_header.state_root).await;
             }
+            validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
 
