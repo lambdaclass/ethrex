@@ -728,6 +728,8 @@ impl Trie {
         let mut buffer = Vec::with_capacity(4096);
         let mut stack = TrieStack::new(len - 1);
         for i in 1..len.min(128) {
+            // encode+clear could be part of push_leaf to avoid repetition,
+            // just pass the buffer and encode function.
             encode(&items[i], &mut buffer);
             stack.push_leaf(i as u32, path(i, len), &buffer);
             buffer.clear();
