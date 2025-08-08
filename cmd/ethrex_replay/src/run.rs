@@ -3,10 +3,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
 };
-use ethrex_levm::{
-    db::{CacheDB, gen_db::GeneralizedDatabase},
-    vm::VMType,
-};
+use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
@@ -43,7 +40,7 @@ pub async fn run_tx(
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
-        let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
+        let mut db = GeneralizedDatabase::new(store.clone());
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
