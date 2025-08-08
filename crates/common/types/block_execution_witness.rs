@@ -121,7 +121,7 @@ impl ExecutionWitnessResult {
         .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
     }
 
-    // This funciton is an option because we expect it to fail sometimes, and we just want to filter it
+    // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
 
