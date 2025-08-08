@@ -191,7 +191,7 @@ impl SubcommandExecute {
                 // Take this into account if you are fixing this command.
                 if let Network::PublicNetwork(_) = network {
                     return Err(eyre::Error::msg(
-                        "Batch execution is only supported ",
+                        "Batch execution is only supported on L2 networks.",
                     ));
                 }
                 let chain_config = network.get_genesis()?.config;
