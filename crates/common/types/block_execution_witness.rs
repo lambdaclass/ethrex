@@ -382,14 +382,7 @@ impl Serialize for ExecutionWitnessResult {
                 .collect(),
         };
 
-        let mut map = serializer.serialize_map(Some(4))?;
-
-        map.serialize_entry("state", &response.state)?;
-        map.serialize_entry("keys", &response.keys)?;
-        map.serialize_entry("codes", &response.codes)?;
-        map.serialize_entry("headers", &response.headers)?;
-
-        map.end()
+        RpcExecutionWitness::serialize(&response, serializer)
     }
 }
 
