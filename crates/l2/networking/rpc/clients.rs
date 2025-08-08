@@ -31,10 +31,6 @@ pub async fn send_generic_transaction(
 
             signed_tx.encode_to_vec()
         }
-        TxType::Privileged => {
-            let tx: EIP1559Transaction = generic_tx.into();
-            tx.encode_to_vec()
-        }
         TxType::EIP4844 => {
             let mut tx = WrappedEIP4844Transaction::from_generic(generic_tx)
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
