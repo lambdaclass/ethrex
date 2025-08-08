@@ -277,7 +277,7 @@ pub async fn heal_storage_trie_wrap(
     info!("Total filtered accounts: {}", filtered_accounts.len());
     let mut account_path_nibbles: Vec<Nibbles> = filtered_accounts
         .into_iter()
-        .map(|(hashed_key, _)| Nibbles::from_bytes(hashed_key.as_bytes()))
+        .map(|(hashed_key, _)| Nibbles::from_raw(&hashed_key.as_bytes(), true))
         .collect();
     heal_storage_trie(
         state_root,
