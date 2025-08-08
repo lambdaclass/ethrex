@@ -130,6 +130,11 @@ async fn heal_state_trie(
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     loop {
+        let peers_table = peers
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
             let downloads_rate =
@@ -137,22 +142,19 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    peers_table.len(),
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    peers_table.len(),
                     paths.len()
                 );
             }
             downloads_success = 0;
             downloads_fail = 0;
-
-            let peers_table = peers
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-                .await;
 
             for (peer_id, _) in peers_table {
                 downloaders.entry(peer_id).or_insert(true);
