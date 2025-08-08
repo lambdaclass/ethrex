@@ -46,6 +46,7 @@
   - [contracts](./l2/based/contracts.md)
 
 # Ethrex for developers
+- [Getting started](./developers/README.md)
 - [Installing](./developers/installing.md)
 - [L1](./developers/l1/README.md)
   - [Ethrex as a local development node](./developers/l1/dev-mode.md)
