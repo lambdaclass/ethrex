@@ -141,7 +141,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
         if state_trie.get(&hashed_address).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -355,7 +355,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
         if state_trie.get(&hashed_address).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -381,7 +381,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
         if state_trie.get(&hashed_address).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -428,7 +428,7 @@ impl Store {
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
             if state_trie.get(&hashed_address).is_err() {
-                let backtrace = Backtrace::capture();
+                let backtrace = Backtrace::force_capture();
                 tracing::error!(
                     "Failed to get {}, {backtrace}",
                     hex::encode(hashed_address.clone())
@@ -495,7 +495,7 @@ impl Store {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 if state_trie.get(&hashed_address).is_err() {
-                    let backtrace = Backtrace::capture();
+                    let backtrace = Backtrace::force_capture();
                     tracing::error!(
                         "Failed to get {}, {backtrace}",
                         hex::encode(hashed_address.clone())
@@ -898,7 +898,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
         if state_trie.get(&hashed_address).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -948,7 +948,7 @@ impl Store {
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
         if state_trie.get(&hashed_address).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -1012,7 +1012,7 @@ impl Store {
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root)?;
         if state_trie.get(&hashed_address.as_bytes().to_vec()).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
@@ -1056,7 +1056,7 @@ impl Store {
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root)?;
         if state_trie.get(&hashed_address.as_bytes().to_vec()).is_err() {
-            let backtrace = Backtrace::capture();
+            let backtrace = Backtrace::force_capture();
             tracing::error!(
                 "Failed to get {}, {backtrace}",
                 hex::encode(hashed_address.clone())
