@@ -27,13 +27,13 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
+                    chain_config: input.db.chain_config,
                     db: input.db,
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,
                     #[cfg(feature = "l2")]
                     blob_proof: input.blob_proof,
-                    chain_config: input.db.chain_config,
                 },
             )),
             _ => Err("No blocks to prove.".to_owned()),

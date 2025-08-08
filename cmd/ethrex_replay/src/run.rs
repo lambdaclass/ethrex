@@ -81,9 +81,9 @@ fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
 
         Ok(ProgramInput {
             blocks,
+            chain_config: network.get_genesis()?.config,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            chain_config: network.get_genesis()?.config,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
             // 'zkvm_interface' is active (due to workspace compilation).
@@ -102,11 +102,11 @@ fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
 
         Ok(ProgramInput {
             blocks,
+            chain_config: db.chain_config,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             blob_commitment: l2_fields.blob_commitment,
             blob_proof: l2_fields.blob_proof,
-            chain_config: db.chain_config,
         })
     }
 }
