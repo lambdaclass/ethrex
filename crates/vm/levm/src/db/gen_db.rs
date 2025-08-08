@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use ethrex_common::types::AccountUpdate;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
@@ -19,6 +18,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 use std::collections::btree_map::Entry;
+pub use ethrex_common::types::AccountUpdate;
 
 pub type CacheDB = BTreeMap<Address, LevmAccount>;
 
