@@ -201,6 +201,23 @@ start-holesky-metrics-docker: ## Start L1 docker compose, lighthouse in backgrou
 	@echo "Starting ethrex..."
 	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex-holesky
 
+import-with-metrics: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
+ifndef RLP_FILE
+	$(error "RLP file with blocks not provided")
+endif
+ifndef NETWORK
+	$(error "NETWORK not provided")
+endif
+	@echo "Starting L1 docker compose with metrics..."
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	@echo "Starting ethrex..."
+	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
+	--network $(NETWORK) \
+	--metrics \
+	--metrics.port 3701 \
+	import $(RLP_FILE) \
+	--removedb 
+
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
 	$(error "Log file not provided")

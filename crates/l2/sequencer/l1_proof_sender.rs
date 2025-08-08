@@ -76,22 +76,6 @@ impl L1ProofSender {
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 
-        if cfg.dev_mode {
-            return Ok(Self {
-                eth_client,
-                signer: cfg.signer.clone(),
-                on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
-                needed_proof_types: vec![ProverType::Exec],
-                proof_send_interval_ms: cfg.proof_send_interval_ms,
-                sequencer_state,
-                rollup_store,
-                l1_chain_id,
-                network: aligned_cfg.network.clone(),
-                fee_estimate,
-                aligned_sp1_elf_path,
-            });
-        }
-
         Ok(Self {
             eth_client,
             signer: cfg.signer.clone(),

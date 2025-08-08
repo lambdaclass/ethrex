@@ -433,7 +433,7 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
-        let numbers_and_hashes = blocks
+        let mut numbers_and_hashes = blocks
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
@@ -464,19 +464,16 @@ pub async fn import_blocks(
                 })?;
         }
 
-        _ = store
-            .mark_chain_as_canonical(&numbers_and_hashes)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
         // Make head canonical and label all special blocks correctly.
-        if let Some(block) = blocks.last() {
+        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
-                .update_finalized_block_number(block.header.number)
-                .await?;
-            store.update_safe_block_number(block.header.number).await?;
-            store
-                .update_latest_block_number(block.header.number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    head_number,
+                    head_hash,
+                    Some(head_number),
+                    Some(head_number),
+                )
                 .await?;
         }
 

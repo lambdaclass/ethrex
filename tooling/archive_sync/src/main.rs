@@ -90,11 +90,13 @@ pub async fn archive_sync(
     }
     // Fetch the block itself so we can mark it as canonical
     let rlp_block = dump_reader.read_rlp_block().await?;
-    dump_processor.process_rlp_block(rlp_block).await?;
     // Fetch the block hashes of the previous `BLOCK_HASH_LOOKUP_DEPTH` blocks
     // as we might need them to execute the next blocks after archive sync
     let block_hashes = dump_reader.read_block_hashes().await?;
-    dump_processor.process_block_hahes(block_hashes).await?;
+    // Process both as part of a FCU
+    dump_processor
+        .process_rlp_block_and_block_hashes(rlp_block, block_hashes)
+        .await?;
     let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
     info!("Archive Sync complete in {sync_time}");
     Ok(())
@@ -268,11 +270,18 @@ impl DumpProcessor {
         Ok(should_continue)
     }
 
-    /// Process incoming the incoming RLP-encoded Block by either writing it to a file and/or adding it as head of the canonical chain.
+    /// Process the incoming RLP-encoded Block by either writing it to a file and/or adding it as head of the canonical chain.
     /// In the later case, the rebuilt state root will be chacked againts the block's state root
-    async fn process_rlp_block(&mut self, rlp_block: Vec<u8>) -> eyre::Result<()> {
+    /// Processes the incoming list of block hashes by either writing them to a file and/or marking
+    /// them as part of the canonical chain. This will be necessary in order to execute blocks after the target block
+    async fn process_rlp_block_and_block_hashes(
+        &mut self,
+        rlp_block: Vec<u8>,
+        block_hashes: Vec<(BlockNumber, BlockHash)>,
+    ) -> eyre::Result<()> {
         if let Some(writer) = self.writer.as_mut() {
             writer.write_rlp_block(&rlp_block)?;
+            writer.write_hashes_file(&block_hashes)?;
         }
         if let Some((current_root, store)) = self.sync_state.as_ref() {
             let block = Block::decode(&rlp_block)?;
@@ -286,24 +295,10 @@ impl DumpProcessor {
             }
 
             store.add_block(block).await?;
-            store.set_canonical_block(block_number, block_hash).await?;
-            store.update_latest_block_number(block_number).await?;
+            store
+                .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
+                .await?;
             info!("Head of local chain is now block {block_number} with hash {block_hash}");
-        }
-        Ok(())
-    }
-
-    /// Processes the incoming list of block hashes by either writing them to a file and/or marking
-    /// them as part of the canonical chain. This will be necessary in order to execute blocks after the target block
-    async fn process_block_hahes(
-        &mut self,
-        block_hashes: Vec<(BlockNumber, BlockHash)>,
-    ) -> eyre::Result<()> {
-        if let Some(writer) = self.writer.as_mut() {
-            writer.write_hashes_file(&block_hashes)?;
-        }
-        if let Some((_, store)) = self.sync_state.as_ref() {
-            store.mark_chain_as_canonical(&block_hashes).await?;
         }
         Ok(())
     }
