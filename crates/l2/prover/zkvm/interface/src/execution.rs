@@ -169,10 +169,10 @@ pub fn stateless_validation_l2(
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
         codes_map: db.codes_map.clone(),
+        state: db.state.clone(),
+        keys: db.keys.clone(),
         state_trie: None,
         storage_tries: None,
-        state: todo!(),
-        keys: todo!(),
     };
 
     let StatelessResult {
