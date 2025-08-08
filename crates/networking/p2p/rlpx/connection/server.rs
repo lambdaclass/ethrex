@@ -349,17 +349,14 @@ impl GenServer for RLPxConnection {
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.inner_state {
-            InnerState::Established(established_state) => {
+            InnerState::Established(mut established_state) => {
                 log_peer_debug(
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-                // TODO: snap sync: remove peer from kademlia table
-                // established_state
-                //     .table
-                //     .lock()
-                //     .await
-                //     .replace_peer(established_state.node.node_id());
+                established_state
+                    .table
+                    .remove_peer(&established_state.node.node_id()).await;
                 established_state.teardown().await;
             }
             _ => {
