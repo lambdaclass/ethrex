@@ -1013,6 +1013,7 @@ impl Syncer {
                     continue;
                 }
                 // TODO: 💀💀💀 either remove or change to a debug flag
+                
                 // validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
