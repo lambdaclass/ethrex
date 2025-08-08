@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754693580330,
+  "lastUpdate": 1754693812527,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18534,6 +18534,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001266349146110057,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "230d247751b142c6fb57a57c48338b3b3c99aa7a",
+          "message": "fix(l1): decode the fork ID as a list (#3492)\n\nThis PR decodes the fork ID of a node record's \"eth\" entry as a list.\nPreviously, we were assuming the list was small enough to have a length\nof a single byte.",
+          "timestamp": "2025-08-08T14:33:01Z",
+          "tree_id": "6d5bbd826043b03ef1901bd2613ea3bc777d37ee",
+          "url": "https://github.com/lambdaclass/ethrex/commit/230d247751b142c6fb57a57c48338b3b3c99aa7a"
+        },
+        "date": 1754693794741,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006542803921568628,
             "unit": "Mgas/s"
           }
         ]
