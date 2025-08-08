@@ -309,7 +309,9 @@ impl<'a> MPTDeserializer<'a> {
 
         // Jump to the root node position and start deserializing
         self.position = root_offset as usize;
-        self.decode_node()
+        let node = self.decode_node().unwrap();
+        node.compute_hash();
+        Ok(node)
     }
 
     /// Decodes a single node from the current position.
