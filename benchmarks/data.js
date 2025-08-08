@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754687079620,
+  "lastUpdate": 1754687133385,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18386,6 +18386,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012313025830258302,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "02b02a5c49458ebd448199c1d7e624c8a8ac1938",
+          "message": "refactor(l2): use recover_address from common types (#3795)\n\n**Motivation**\n\nWhen #2999 was introduced, the initial refactor for using\nrecover_address was added, but some refactoring was still missing. See\n[here](https://github.com/lambdaclass/ethrex/pull/2999#discussion_r2219846846)\nfor the relevant conversation.\n\n**Description**\n\n- Remove the `recover_address` function from `rlpx/utils.rs` in favor of\nusing the one in `ethrex_common`\n- Modify all L2 Messages to use `Signature` struct from `ethereum_types`\ninstead of a `[u8; 64]` and one `u8`.\n- Remove the `based.rs` file which became unused after the refactor made\nin #2999",
+          "timestamp": "2025-08-08T14:23:55Z",
+          "tree_id": "27eef7a8e886890f16e36af68696461ac2c3ff96",
+          "url": "https://github.com/lambdaclass/ethrex/commit/02b02a5c49458ebd448199c1d7e624c8a8ac1938"
+        },
+        "date": 1754687117709,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006575034482758621,
             "unit": "Mgas/s"
           }
         ]
