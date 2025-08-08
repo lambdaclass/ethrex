@@ -93,8 +93,6 @@ pub enum StatelessExecutionError {
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
-    let chain_id = input.db.chain_config.chain_id;
-
     let ProgramInput {
         blocks,
         mut db,
@@ -121,12 +119,18 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
-            chain_id,
+            chain_config.chain_id,
             first_header,
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id, first_header)
+    stateless_validation_l1(
+        &blocks,
+        db,
+        elasticity_multiplier,
+        chain_config.chain_id,
+        first_header,
+    )
 }
 
 pub fn stateless_validation_l1(
