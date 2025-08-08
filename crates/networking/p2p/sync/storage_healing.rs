@@ -446,6 +446,12 @@ fn zip_requeue_node_responses_score_peer(
     peer.in_flight = false;
 
     let nodes_size = trie_nodes.nodes.len();
+    if nodes_size == 0 {
+        *failed_downloads += 1;
+        peer.score -= 1;
+        download_queue.extend(request.requests);
+        None
+    }
 
     if request.requests.len() < nodes_size {
         panic!("The node responded with more data than us!");
@@ -474,7 +480,7 @@ fn zip_requeue_node_responses_score_peer(
     } else {
         *failed_downloads += 1;
         peer.score -= 1;
-        download_queue.extend(request.requests.into_iter());
+        download_queue.extend(request.requests);
         None
     }
 }
