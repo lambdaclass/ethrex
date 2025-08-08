@@ -1,7 +1,7 @@
 # Summary
 # Introduction
 - [Getting started](./getting-started/README.md)
-- [Installation](./getting-started/installation/README.md)
+- [Installation](./getting-started/installation/installation.md)
   - [Binary distribution](./getting-started/installation/binary_distribution.md)
   - [Package manager](./getting-started/installation/package_manager.md)
   - [Docker image](./getting-started/installation/docker_images.md)
