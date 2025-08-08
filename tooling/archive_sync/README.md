@@ -54,9 +54,27 @@ This executable takes 3 arguments:
 With these arguments you can run the following command from this directory:
 
 ```bash
- cargo run --release IPC_PATH BLOCK_NUMBER
+ cargo run --release  BLOCK_NUMBER --ipc_path IPC_PATH
 ```
 
 And adding `--datadir DATADIR` if you want to use a custom directory
 
 While archive sync is faster than the alternatives (snap, full) it can still take a long time on later blocks of large chains
+
+## Usage without an active archive node connection
+
+We can avoid relying on an active archive node connection once we have already performed the first sync by writing the state dump to a directory. Note that this will still require an active archive node for the first step.
+
+### Step 1: Run the `archive_sync` executable as usual with `--output_dir` flag
+
+```bash
+ cargo run --release BLOCK_NUMBER --ipc_path IPC_PATH --output_dir STATE_DUMP_DIR
+```
+
+If we don't need the node to be synced (for example if we plan to move the state dump to another server after the sync) we can also add the flag `--no_sync` to skip the state sync and only write the state data to files.
+
+### Step 2: Run the `archive_sync` executable with `--input_dir` instead of `--ipc-path`
+
+```bash
+ cargo run --release BLOCK_NUMBER --input_dir STATE_DUMP_DIR
+```
