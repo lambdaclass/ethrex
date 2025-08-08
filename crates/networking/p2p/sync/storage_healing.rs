@@ -1,6 +1,6 @@
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PeerHandler},
+    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
     rlpx::{
         connection::server::CastMessage,
         message::Message,
@@ -27,6 +27,7 @@ use tracing::{info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: usize = 777;
+const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -179,7 +180,6 @@ impl GenServer for StorageHealer {
                     &mut self.failed_downloads,
                 )
                 .await;
-                info!("We have cleared the inflight requests");
                 ask_peers_for_nodes(
                     &mut self.download_queue,
                     &mut self.requests,
@@ -189,7 +189,6 @@ impl GenServer for StorageHealer {
                     handle.clone(),
                 )
                 .await;
-                info!("We have asked the peers for nodes");
             }
             StorageHealerMsg::TrieNodes(trie_nodes) => {
                 if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
@@ -200,7 +199,7 @@ impl GenServer for StorageHealer {
                     &mut self.succesful_downloads,
                     &mut self.failed_downloads,
                 ) {
-                    process_node_responses(
+                    let _ = process_node_responses(
                         &mut nodes_from_peer,
                         &mut self.download_queue,
                         self.store.clone(),
@@ -355,8 +354,8 @@ async fn clear_inflight_requests(
     failed_downloads: &mut usize,
 ) {
     // Inneficiant use extract_if when available for people (rust 1.88)
-    requests.retain(|req_id, inflight_request| {
-        if inflight_request.sent_time.elapsed() > PEER_REPLY_TIMEOUT {
+    requests.retain(|_, inflight_request: &mut InflightRequest| {
+        if inflight_request.sent_time.elapsed() > INFLIGHT_TIMEOUT {
             *failed_downloads += 1;
             download_queue.extend(inflight_request.requests.clone());
             scored_peers
@@ -568,7 +567,6 @@ pub fn determine_missing_children(
             }
         }
         Node::Extension(node) => {
-            let hash = node.child.compute_hash();
             if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 count += 1;
                 paths.extend(determine_membatch_missing_children(
