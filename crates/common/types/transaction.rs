@@ -6,7 +6,7 @@ use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction};
+pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
@@ -2056,6 +2056,14 @@ mod serde_impl {
         }
     }
 
+    #[derive(Debug, thiserror::Error)]
+    pub enum GenericTransactionError {
+        #[error("Invalid transaction type: {0}")]
+        InvalidTxType(TxType),
+        #[error("Blob bundle error: {0}")]
+        BlobBundleError(#[from] BlobsBundleError),
+    }
+
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
     /// Used to perform gas estimations and access list creation
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
@@ -2156,9 +2164,15 @@ mod serde_impl {
         }
     }
 
-    impl From<GenericTransaction> for EIP1559Transaction {
-        fn from(value: GenericTransaction) -> Self {
-            Self {
+    impl TryFrom<GenericTransaction> for EIP1559Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP1559 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+
+            Ok(Self {
                 nonce: value.nonce.unwrap_or_default(),
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
@@ -2173,7 +2187,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
-            }
+            })
         }
     }
 
@@ -2206,7 +2220,7 @@ mod serde_impl {
 
     #[cfg(feature = "c-kzg")]
     impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
-        type Error = BlobsBundleError;
+        type Error = GenericTransactionError;
 
         fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
             let blobs = value
@@ -2221,15 +2235,20 @@ mod serde_impl {
                 .collect();
 
             Ok(Self {
-                tx: value.into(),
+                tx: value.try_into()?,
                 blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
             })
         }
     }
 
-    impl From<GenericTransaction> for EIP4844Transaction {
-        fn from(value: GenericTransaction) -> Self {
-            Self {
+    impl TryFrom<GenericTransaction> for EIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP4844 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
                 nonce: value.nonce.unwrap_or_default(),
                 to: match value.to {
                     TxKind::Call(to) => to,
@@ -2249,7 +2268,7 @@ mod serde_impl {
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
-            }
+            })
         }
     }
 
@@ -2313,9 +2332,14 @@ mod serde_impl {
         }
     }
 
-    impl From<GenericTransaction> for PrivilegedL2Transaction {
-        fn from(value: GenericTransaction) -> Self {
-            Self {
+    impl TryFrom<GenericTransaction> for PrivilegedL2Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::Privileged {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
                 nonce: value.nonce.unwrap_or_default(),
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
@@ -2330,7 +2354,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 chain_id: value.chain_id.unwrap_or_default(),
                 from: value.from,
-            }
+            })
         }
     }
 

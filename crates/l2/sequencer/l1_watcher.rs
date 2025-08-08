@@ -417,6 +417,6 @@ impl PrivilegedTransactionData {
                 },
             )
             .await?;
-        Ok(generic_tx.into())
+        Ok(generic_tx.try_into()?)
     }
 }
