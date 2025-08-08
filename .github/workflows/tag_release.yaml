@@ -83,6 +83,19 @@ jobs:
           method: "network"
           sub-packages: '["nvcc"]'
 
+      - name: Install solc
+        if: ${{ matrix.platform != 'ubuntu-22.04-arm' }}
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install solc
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
+        run: |
+          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
+          sudo chmod +x /usr/local/bin/solc
+
       - name: Set compiler envs
         if: ${{ matrix.os == 'linux' }}
         run: |
@@ -90,7 +103,7 @@ jobs:
 
       - name: Build ethrex
         run: |
-          ${{ env.COMPILE_FLAGS }} cargo build --release --features "${{ matrix.prover_features }}" --bin ethrex
+          COMPILE_CONTRACTS=true ${{ env.COMPILE_FLAGS }} cargo build --release --features "${{ matrix.prover_features }}" --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Copy verification keys

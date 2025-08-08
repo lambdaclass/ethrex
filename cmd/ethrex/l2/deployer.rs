@@ -343,7 +343,7 @@ impl Default for DeployerOptions {
                 .as_bytes(),
             )
             .unwrap(),
-            env_file_path: None,
+            env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
             private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
             genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
