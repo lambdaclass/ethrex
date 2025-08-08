@@ -431,14 +431,14 @@ impl<'de> Deserialize<'de> for ExecutionWitnessResult {
             .map(|header| (header.number, header.clone()))
             .collect::<HashMap<_, _>>();
 
-        let last_block_number = block_headers.keys().max().ok_or(de::Error::custom(
+        let parent_block_number = block_headers.keys().max().ok_or(de::Error::custom(
             "No block headers found in the execution witness result",
         ))?;
 
         let parent_header = block_headers
-            .get(&(last_block_number.saturating_sub(1)))
+            .get(parent_block_number)
             .ok_or(de::Error::custom(
-                format!("No parent block header found for block {last_block_number} in the execution witness result"),
+                format!("No parent block header found for block {parent_block_number} in the execution witness result"),
             ))?;
 
         let state_trie =
