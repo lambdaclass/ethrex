@@ -17,8 +17,8 @@ use crate::errors::VMError;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
-use std::collections::btree_map::Entry;
 pub use ethrex_common::types::AccountUpdate;
+use std::collections::btree_map::Entry;
 
 pub type CacheDB = BTreeMap<Address, LevmAccount>;
 
@@ -157,9 +157,7 @@ impl GeneralizedDatabase {
         Ok(())
     }
 
-    pub fn get_state_transitions(
-        &mut self,
-    ) -> Result<Vec<AccountUpdate>, VMError> {
+    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
@@ -210,8 +208,10 @@ impl GeneralizedDatabase {
                     acc_info_updated = true;
                     // code should be in `codes`
                     Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
-                        VMError::Internal(InternalError::Custom(format!("Failed to get code for account {address}")),
-                    ))?)
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        ))),
+                    )?)
                 } else {
                     None
                 };

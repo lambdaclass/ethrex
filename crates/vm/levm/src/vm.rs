@@ -18,7 +18,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    tracing::CallType, types::{Fork, Log, Transaction}, Address, H160, H256, U256
+    Address, H160, H256, U256,
+    tracing::CallType,
+    types::{Fork, Log, Transaction},
 };
 use std::{
     cell::RefCell,
