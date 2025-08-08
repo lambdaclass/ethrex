@@ -331,6 +331,7 @@ impl Command {
                     .expect("Genesis block not found");
 
                 let mut last_block_number = 0;
+                let mut new_canonical_blocks = vec![];
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
@@ -412,9 +413,7 @@ impl Command {
                     store
                         .add_block_number(new_block_hash, state_diff.last_header.number)
                         .await?;
-                    store
-                        .set_canonical_block(state_diff.last_header.number, new_block_hash)
-                        .await?;
+                    new_canonical_blocks.push((state_diff.last_header.number, new_block_hash));
                     println!(
                         "Stored last block of blob. Block {}. State root {}",
                         new_block.number, new_block.state_root
@@ -441,7 +440,18 @@ impl Command {
                         .map_err(|e| format!("Error storing batch: {e}"))
                         .unwrap();
                 }
-                store.update_latest_block_number(last_block_number).await?;
+                let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
+                    return Err(eyre::eyre!("No blocks found in blobs directory"));
+                };
+                store
+                    .forkchoice_update(
+                        Some(new_canonical_blocks),
+                        last_number,
+                        last_hash,
+                        None,
+                        None,
+                    )
+                    .await?;
             }
             Command::RevertBatch {
                 batch,
@@ -483,7 +493,6 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
 
                 rollup_store.revert_to_batch(batch).await?;
-                store.update_latest_block_number(last_kept_block).await?;
 
                 let mut block_to_delete = last_kept_block + 1;
                 while store
@@ -494,6 +503,13 @@ impl Command {
                     store.remove_block(block_to_delete).await?;
                     block_to_delete += 1;
                 }
+                let last_kept_header = store
+                    .get_block_header(last_kept_block)?
+                    .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
+                store
+                    .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+                    .await?;
+
                 if let Some(private_key) = private_key {
                     info!("Unpausing OnChainProposer...");
                     call_contract(&client, &private_key, contract_address, "unpause()", vec![])
