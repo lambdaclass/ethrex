@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::info;
+use tracing::{info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -75,6 +75,7 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
@@ -374,6 +375,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
+    #[instrument(level = "trace", name = "Trie update", skip_all)]
     pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,

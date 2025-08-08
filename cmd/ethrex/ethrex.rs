@@ -40,6 +40,7 @@ async fn main() -> eyre::Result<()> {
     init_tracing(&opts);
 
     let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
+
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
     tokio::select! {

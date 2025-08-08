@@ -21,6 +21,7 @@ use revm::REVM;
 use revm::db::EvmState;
 use std::fmt;
 use std::sync::Arc;
+use tracing::instrument;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
@@ -122,6 +123,7 @@ impl Evm {
         }
     }
 
+    #[instrument(level = "trace", name = "Block execution", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
