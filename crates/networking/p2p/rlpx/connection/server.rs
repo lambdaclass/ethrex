@@ -364,17 +364,9 @@ impl GenServer for RLPxConnection {
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-
                 established_state
                     .table
-                    .remove_peer(&established_state.node.node_id())
-                    .await;
-                METRICS
-                    .record_new_rlpx_conn_disconnection(
-                        &established_state.node.version.clone().unwrap_or_default(),
-                        DisconnectReason::InvalidReason,
-                    )
-                    .await;
+                    .remove_peer(&established_state.node.node_id()).await;
                 established_state.teardown().await;
             }
             _ => {
@@ -751,6 +743,13 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let reason = msg_data.reason();
 
             log_peer_debug(&state.node, &format!("Received Disconnect: {reason}"));
+
+            METRICS
+                .record_new_rlpx_conn_disconnection(
+                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
+                    reason,
+                )
+                .await;
 
             state.table.peers.lock().await.remove(&state.node.node_id());
 
