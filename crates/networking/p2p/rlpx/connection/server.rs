@@ -119,7 +119,7 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Arc<Mutex<Kademlia>>,
+    pub(crate) table: Kademlia,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
@@ -393,8 +393,6 @@ where
 
     state
         .table
-        .lock()
-        .await
         .set_connected_peer(state.node.clone(), peer_channels)
         .await;
 
@@ -552,7 +550,7 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(_table: Arc<Mutex<Kademlia>>) -> Result<(), RLPxError> {
+async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
     // TODO: disabled on snap sync, reenable before merge to main
     // Check if connected peers exceed the limit
     // let peer_count = {
@@ -746,15 +744,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            // TODO: snap sync: check if this is correct
-            state
-                .table
-                .lock()
-                .await
-                .peers
-                .lock()
-                .await
-                .remove(&state.node.node_id());
+            state.table.peers.lock().await.remove(&state.node.node_id());
 
             // TODO handle the disconnection request
 
