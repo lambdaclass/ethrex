@@ -284,7 +284,7 @@ impl<'a> MPTDeserializer<'a> {
     /// then the deserializer jumps to that position to start reading the root node.
     fn decode_tree(&mut self) -> Result<Node, TrieError> {
         if self.buffer.len() < 4 {
-            return Err(TrieError::InvalidData);
+            panic!("Invalid buffer length when trying to read root offset");
         }
 
         // Read root offset from the end of the buffer (last 4 bytes)
@@ -412,7 +412,7 @@ impl<'a> MPTDeserializer<'a> {
     /// Reads a single byte from the buffer.
     fn read_byte(&mut self) -> Result<u8, TrieError> {
         if self.position >= self.buffer.len() {
-            return Err(TrieError::InvalidData);
+            panic!("Invalid buffer length when trying to read byte");
         }
         let byte = self.buffer[self.position];
         self.position += 1;
@@ -423,7 +423,7 @@ impl<'a> MPTDeserializer<'a> {
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), TrieError> {
         let end = self.position + buf.len();
         if end > self.buffer.len() {
-            return Err(TrieError::InvalidData);
+            panic!("Invalid buffer length when trying to read exact bytes");
         }
         buf.copy_from_slice(&self.buffer[self.position..end]);
         self.position = end;
