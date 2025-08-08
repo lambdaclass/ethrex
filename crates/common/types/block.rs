@@ -873,7 +873,7 @@ mod test {
 
     #[test]
     // The values for this test were taken from sepolia testnet block number 6029872
-    // Where a silent overflow within base fee calculations lead to the wrong expected base fee
+    // Where a silent overflow within base fee calculations led to the wrong expected base fee
     fn test_calculate_base_fee_per_gas_big_numbers() {
         let expected_base_fee = Some(1317727380375);
         let block_gas_limit = 30000000;
