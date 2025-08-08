@@ -274,8 +274,19 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    // the first byte is ignored as an array within an array is received
-                    decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
+                    // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+                    // entry-value = [[ forkHash, forkNext ], ...]
+                    let Ok(decoder) = Decoder::new(&value) else {
+                        continue;
+                    };
+                    // Here we decode fork-id = [ forkHash, forkNext ]
+                    // TODO(#3494): here we decode as optional to ignore any errors,
+                    // but we should return an error if we can't decode it
+                    let (fork_id, decoder) = decoder.decode_optional_field();
+
+                    // As per the spec, we should ignore any additional list elements in entry-value
+                    decoder.finish_unchecked();
+                    decoded_pairs.eth = fork_id;
                 }
                 _ => {}
             }
@@ -554,10 +565,10 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let mut record = NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         // Drop fork ID since the test doesn't use it
         record.pairs.retain(|(k, _)| k != "eth");
-        record.sign_inplace(&signer).unwrap();
+        record.sign_record(&signer).unwrap();
 
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
