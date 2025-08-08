@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754693812527,
+  "lastUpdate": 1754694157923,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8335,6 +8335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161273833833,
             "range": "± 321850392",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b57e2b9c8fb5adf745a7afa03d6e373689eabfe",
+          "message": "fix(l1): re-tag image as latest in hive report (#4001)\n\n**Motivation**\n\n[The daily report workflow is\nfailing.](https://github.com/lambdaclass/ethrex/actions/runs/16821221966/job/47648330723)\n\n**Description**\n\nThis PR re-tags `ethrex:unstable` as `ethrex:latest`, so hive finds the\nimage. You can see this is working\n[here](https://github.com/lambdaclass/ethrex/actions/runs/16839851386).",
+          "timestamp": "2025-08-08T22:10:35Z",
+          "tree_id": "4d86d6f391f780e3d3a1cec8143d4bdf5651b652",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9b57e2b9c8fb5adf745a7afa03d6e373689eabfe"
+        },
+        "date": 1754694142476,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162767136803,
+            "range": "± 414851057",
             "unit": "ns/iter"
           }
         ]
