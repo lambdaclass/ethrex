@@ -18,55 +18,11 @@ At a high level, the following new parts are added to the node:
 - L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.
 - The EVM is lightly modified with new features to process deposits and withdrawals accordingly.
 
-## Prerequisites
-
-For how to install our dependencies, go to their official documentation:
-
-- [Rust](https://www.rust-lang.org/tools/install)
-- [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
-- [Docker](https://docs.docker.com/engine/install/)
-
-## How to run
-
-### Initialize the network
-
-> [!IMPORTANT]
-> Before this step:
->
-> 1. Make sure you are inside the `crates/l2` directory.
-> 2. Make sure the Docker daemon is running.
-
-```sh
-make init
-```
-
-This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an ethrex L2 node pointing to it.
-
-### Restarting the network
-
-> [!WARNING]
-> This command will cleanup your running L1 and L2 nodes.
-
-```sh
-make restart
-```
-
-### Local L1 Rich Wallets
-
-Most of them are specified in [ethereum-package](https://github.com/ethpandaops/ethereum-package/blob/main/src/prelaunch_data_generator/genesis_constants/genesis_constants.star), but there's an extra one:
-
-```json
-{
-    "address": "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
-    "private_key": "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
-}
-```
-
 ## Ethrex L2 documentation
 
 For general documentation, see:
 
 - [General overview](./overview.md) for a high-level view of the ethrex L2 stack.
 - [Smart contracts](./fundamentals/contracts.md) has information on L1 and L2 smart contracts.
-- [Components](./fundamentals/components/README.md) for more detailed documentation on each off-chain component.
+- [Components](./fundamentals/components/components.md) for more detailed documentation on each off-chain component.
 - [Based roadmap (draft)](./based/roadmap.md) contains ethrex's roadmap for becoming based.

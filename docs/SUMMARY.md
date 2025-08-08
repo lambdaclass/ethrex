@@ -28,7 +28,7 @@
     - [Depositing assets](./l2/guides/depositing.md)
     - [Withdrawing assets](./l2/guides/withdrawing.md)
 - [Fundamentals](./l2/overview.md)
-  - [Components](./l2/fundamentals/components/README.md)
+  - [Components](./l2/fundamentals/components/components.md)
     - [Sequencer](./l2/fundamentals/components/sequencer.md)
     - [Prover](./l2/fundamentals/components/prover.md)
     - [Aligned mode](./l2/fundamentals/components/aligned_mode.md)
