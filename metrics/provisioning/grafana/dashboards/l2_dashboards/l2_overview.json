@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 4,
   "links": [],
   "panels": [
     {
@@ -200,32 +200,22 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
             "fillOpacity": 10,
-            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 5
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
           "mappings": [],
           "thresholds": {
@@ -258,6 +248,10 @@
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -267,13 +261,70 @@
       "pluginVersion": "12.0.2",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
           "expr": "batch_size",
-          "legendFormat": "Batch Size",
-          "refId": "A"
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
         }
       ],
       "title": "Batch Size",
-      "type": "timeseries"
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "join": [
+              "batch_number"
+            ],
+            "value": "__name__"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "disabled": true,
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "reduceFields",
+            "reducers": [
+              "max"
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "batch_number"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -292,32 +343,22 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
             "fillOpacity": 10,
-            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 5
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
           "mappings": [],
           "thresholds": {
@@ -350,6 +391,10 @@
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -365,7 +410,52 @@
         }
       ],
       "title": "Batch Gas Used",
-      "type": "timeseries"
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "join": [
+              "batch_number"
+            ],
+            "value": "__name__"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "disabled": true,
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "reduceFields",
+            "reducers": [
+              "max"
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "batch_number"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -384,32 +474,22 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
             "fillOpacity": 10,
-            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 5
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
           "mappings": [],
           "thresholds": {
@@ -442,6 +522,10 @@
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -457,7 +541,52 @@
         }
       ],
       "title": "Batch Proving Time",
-      "type": "timeseries"
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "join": [
+              "batch_number"
+            ],
+            "value": "__name__"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "disabled": true,
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "reduceFields",
+            "reducers": [
+              "max"
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "batch_number"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -476,32 +605,22 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
             "fillOpacity": 10,
-            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 5
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
           "mappings": [],
           "thresholds": {
@@ -534,6 +653,10 @@
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -549,7 +672,52 @@
         }
       ],
       "title": "Batch Verification Gas",
-      "type": "timeseries"
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "join": [
+              "batch_number"
+            ],
+            "value": "__name__"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "disabled": true,
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "reduceFields",
+            "reducers": [
+              "max"
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "batch_number"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -617,7 +785,20 @@
         },
         "mapping": "auto",
         "series": [
-          {}
+          {
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "batch_gas_used"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "batch_proving_time"
+              }
+            }
+          }
         ],
         "tooltip": {
           "hideZeros": false,
@@ -648,8 +829,28 @@
       "title": "Batch Gas Used vs. Proving Time (fixed)",
       "transformations": [
         {
-          "id": "merge",
+          "id": "joinByLabels",
+          "options": {
+            "join": [
+              "batch_number"
+            ],
+            "value": "__name__"
+          }
+        },
+        {
+          "id": "convertFieldType",
           "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "batch_number"
+              }
+            ]
+          }
         }
       ],
       "type": "xychart"
@@ -660,7 +861,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 26
       },
       "id": 105,
       "panels": [],
@@ -733,7 +934,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 27
       },
       "id": 17,
       "options": {
@@ -826,7 +1027,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 27
       },
       "id": 19,
       "options": {
@@ -859,7 +1060,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 35
       },
       "id": 7,
       "panels": [],
@@ -908,7 +1109,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 36
       },
       "id": 10,
       "options": {
@@ -1005,7 +1206,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 36
       },
       "id": 8,
       "options": {
@@ -1038,7 +1239,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 44
       },
       "id": 4,
       "panels": [],
@@ -1071,7 +1272,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 45
       },
       "id": 13,
       "options": {
@@ -1116,7 +1317,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 53
       },
       "id": 23,
       "panels": [],
@@ -1161,7 +1362,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 62
+        "y": 54
       },
       "id": 21,
       "links": [
@@ -1278,7 +1479,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 62
+        "y": 54
       },
       "id": 22,
       "links": [
@@ -1371,7 +1572,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Ethrex L2 - Overview",
-  "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5099",
-  "version": 1
+  "title": "Ethrex L2 - Overview latest",
+  "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091",
+  "version": 4
 }
