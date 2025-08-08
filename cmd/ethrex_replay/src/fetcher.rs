@@ -95,13 +95,13 @@ pub async fn get_blockdata(
 
     info!("Caching block {requested_block_number}");
 
-    let block_cachh_start_time = SystemTime::now();
+    let block_cache_start_time = SystemTime::now();
 
     let cache = Cache::new(vec![block], witness);
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
-    let block_cache_duration = block_cachh_start_time.elapsed().unwrap_or_else(|e| {
+    let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
         panic!("SystemTime::elapsed failed: {e}");
     });
 
