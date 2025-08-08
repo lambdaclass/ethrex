@@ -996,10 +996,6 @@ impl Syncer {
         // If we need to, we star to heal now.
         if pivot_is_stale {
             info!("pivot is stale, starting healing process");
-            store
-                .set_state_heal_paths(Vec::new())
-                .await
-                .map_err(SyncError::Store)?;
             let membatch = OnceCell::new();
             membatch.get_or_init(HashMap::new);
             let mut healing_done = false;
