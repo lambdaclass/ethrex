@@ -31,5 +31,5 @@ jobs:
 
       - name: Check all dependencies are from workspace
         run: |
-          chmod +x .github/scripts/use_workspace_depencencies.sh
-          .github/scripts/use_workspace_depencencies.sh
+          chmod +x .github/scripts/use_workspace_dependencies.sh
+          .github/scripts/use_workspace_dependencies.sh
