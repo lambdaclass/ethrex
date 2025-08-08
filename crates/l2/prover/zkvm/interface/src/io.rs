@@ -1,6 +1,6 @@
 use ethrex_common::{
     H256, U256,
-    types::{Block, block_execution_witness::ExecutionWitnessResult},
+    types::{Block, ChainConfig, block_execution_witness::ExecutionWitnessResult},
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
@@ -26,6 +26,7 @@ pub struct ProgramInput {
     /// KZG opening for a challenge over the blob commitment
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    pub chain_config: ChainConfig,
 }
 
 /// JSON serializable program input. This struct is forced to serialize into JSON format.
@@ -45,6 +46,7 @@ impl Default for ProgramInput {
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
             blob_proof: [0; 48],
+            chain_config: ChainConfig::default(),
         }
     }
 }

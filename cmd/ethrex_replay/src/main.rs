@@ -4,8 +4,8 @@ use tracing_subscriber::filter::Directive;
 mod bench;
 mod cache;
 mod cli;
-mod constants;
 mod fetcher;
+mod networks;
 mod plot_composition;
 mod run;
 

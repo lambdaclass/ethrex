@@ -1,5 +1,5 @@
-use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::{ChainConfig, blobs_bundle};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -35,9 +35,12 @@ impl Cache {
     }
 }
 
-pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
+// FIXME: The chain config is not properly set.
+pub fn load_cache(file_name: &str, chain_config: ChainConfig) -> eyre::Result<Cache> {
     let file = BufReader::new(File::open(file_name)?);
-    Ok(serde_json::from_reader(file)?)
+    let mut cache: Cache = serde_json::from_reader(file)?;
+    cache.witness.chain_config = chain_config;
+    Ok(cache)
 }
 
 pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
@@ -45,5 +48,5 @@ pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
         return Err(eyre::Error::msg("cache can't be empty"));
     }
     let file = BufWriter::new(File::create(file_name)?);
-    Ok(serde_json::to_writer(file, cache)?)
+    Ok(serde_json::to_writer_pretty(file, cache)?)
 }

@@ -108,6 +108,7 @@ impl Prover {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
+                chain_config: input.db.chain_config, // FIXME: This might break some L2 tests.
                 db: input.db,
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]

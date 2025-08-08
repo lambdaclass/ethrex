@@ -410,8 +410,6 @@ async fn re_run_stateless(
     // Set a default witness if execution should fail as db will not have the required data to generate the witness
     if test_should_fail && witness.is_err() {
         witness = Ok(ExecutionWitnessResult {
-            state_trie_nodes: Some(Vec::new()),
-            storage_trie_nodes: Some(HashMap::new()),
             ..Default::default()
         })
     } else if !test_should_fail && witness.is_err() {
