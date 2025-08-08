@@ -16,7 +16,7 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
     l2::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
@@ -489,7 +489,7 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let store = load_store(&data_dir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
