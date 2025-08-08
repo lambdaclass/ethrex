@@ -406,7 +406,10 @@ async fn ask_peers_for_nodes(
                 sent_time: Instant::now(),
             },
         );
-        peer.1
+        // If the genserver is dead we handle it by just clearing the request in clear_inflight_requests
+        // and re enqueing it later. Not the most graceful solution, but it works.
+        let _ = peer
+            .1
             .connection
             .cast(CastMessage::BackendRequest(
                 Message::GetTrieNodes(GetTrieNodes {
@@ -425,8 +428,7 @@ async fn ask_peers_for_nodes(
                 }),
                 self_handler.clone(),
             ))
-            .await
-            .expect("We should be able to send mesages to our peers");
+            .await;
     }
 }
 

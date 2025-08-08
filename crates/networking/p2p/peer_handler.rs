@@ -2111,7 +2111,7 @@ impl PeerHandler {
             .await
             .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
             .inspect_err(|err| error!(err))
-            .expect("############### Error peer_channel connection");
+            .ok()?;
         let response = tokio::time::timeout(Duration::from_secs(5), async move {
             let response = receiver.recv().await;
             if response.is_none() {
