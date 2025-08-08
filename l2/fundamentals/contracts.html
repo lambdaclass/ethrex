@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Smart contracts - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,45 +237,84 @@
 }
 
 </style>
-<h1 id="ethrex-l2"><a class="header" href="#ethrex-l2">Ethrex L2</a></h1>
-<p>In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
-<p>The main differences between this mode and regular ethrex are:</p>
+<h1 id="ethrex-l2-contracts"><a class="header" href="#ethrex-l2-contracts">Ethrex L2 contracts</a></h1>
+<p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.</p>
+<h2 id="l1-side"><a class="header" href="#l1-side">L1 side</a></h2>
+<h3 id="commonbridge"><a class="header" href="#commonbridge"><code>CommonBridge</code></a></h3>
+<p>Allows L1&lt;-&gt;L2 communication from L1. It both sends messages from L1 to L2 and receives messages from L2.</p>
+<h4 id="deposit-functions"><a class="header" href="#deposit-functions">Deposit Functions</a></h4>
+<h5 id="simple-deposits"><a class="header" href="#simple-deposits">Simple Deposits</a></h5>
 <ul>
-<li>In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the chain. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.</li>
-<li>Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.</li>
-<li>A set of Solidity contracts to be deployed to the L1 are included as part of chain initialization.</li>
-<li>Two new types of transactions are included: deposits (native token mints) and withdrawals.</li>
+<li>Send ETH directly to the contract address using a standard transfer</li>
+<li>The contract's <code>receive()</code> function automatically forwards funds to your identical address on L2</li>
+<li>No additional parameters needed</li>
 </ul>
-<p>At a high level, the following new parts are added to the node:</p>
+<h5 id="deposits-with-contract-interaction"><a class="header" href="#deposits-with-contract-interaction">Deposits with Contract Interaction</a></h5>
+<pre><code class="language-solidity">function deposit(DepositValues calldata depositValues) public payable
+</code></pre>
+<p>Parameters:</p>
 <ul>
-<li>A <code>proposer</code> component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the <code>forkChoiceUpdate</code> -&gt; <code>getPayload</code> -&gt; <code>NewPayload</code> Engine API flow in communication with the consensus layer.</li>
-<li>A <code>prover</code> subsystem, which itself consists of two parts:
-<ul>
-<li>A <code>proverClient</code> that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.</li>
-<li>A <code>proverServer</code> component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.</li>
+<li><code>to</code>: Target address on L2</li>
+<li><code>recipient</code>: Address that will receive the ETH on L2 (can differ from sender)</li>
+<li><code>gasLimit</code>: Maximum gas for L2 execution</li>
+<li><code>data</code>: Calldata to execute on the target L2 contract</li>
 </ul>
+<p>This method enables atomic operations like:</p>
+<ul>
+<li>Depositing ETH while simultaneously interacting with L2 contracts</li>
+<li>Funding another user's L2 account</li>
+</ul>
+<h3 id="onchainoperator"><a class="header" href="#onchainoperator"><code>OnChainOperator</code></a></h3>
+<p>Ensures the advancement of the L2. It is used by the operator to commit batches of blocks and verify batch proofs.</p>
+<h3 id="verifier"><a class="header" href="#verifier"><code>Verifier</code></a></h3>
+<p>TODO</p>
+<h2 id="l2-side"><a class="header" href="#l2-side">L2 side</a></h2>
+<h3 id="l1messagesender"><a class="header" href="#l1messagesender"><code>L1MessageSender</code></a></h3>
+<p>TODO</p>
+<h2 id="upgrade-the-contracts"><a class="header" href="#upgrade-the-contracts">Upgrade the contracts</a></h2>
+<p>To upgrade a contract, you have to create the new contract and, as the original one, inherit from OpenZeppelin's <code>UUPSUpgradeable</code>. Make sure to implement the <code>_authorizeUpgrade</code> function and follow the <a href="https://docs.openzeppelin.com/upgrades-plugins/writing-upgradeable">proxy pattern restrictions</a>.</p>
+<p>Once you have the new contract, you need to do the following three steps:</p>
+<ol>
+<li>
+<p>Deploy the new contract</p>
+<pre><code class="language-sh">rex deploy &lt;NEW_IMPLEMENTATION_BYTECODE&gt; 0 &lt;DEPLOYER_PRIVATE_KEY&gt;
+</code></pre>
 </li>
-<li>L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.</li>
-<li>The EVM is lightly modified with new features to process deposits and withdrawals accordingly.</li>
-</ul>
-<h2 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h2>
-<p>For general documentation, see:</p>
-<ul>
-<li><a href="./overview.html">General overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./fundamentals/contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
-<li><a href="./fundamentals/components/components.html">Components</a> for more detailed documentation on each off-chain component.</li>
-<li><a href="./based/roadmap.html">Based roadmap (draft)</a> contains ethrex's roadmap for becoming based.</li>
-</ul>
+<li>
+<p>Upgrade the proxy by calling the method <code>upgradeToAndCall(address newImplementation, bytes memory data)</code>. The <code>data</code> parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.</p>
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION_ADDRESS&gt; &lt;INITIALIZATION_CALLDATA&gt; --private-key &lt;PRIVATE_KEY&gt;
+</code></pre>
+</li>
+<li>
+<p>Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:</p>
+<pre><code class="language-sh">curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [&lt;PROXY_ADDRESS&gt;, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+</code></pre>
+</li>
+</ol>
+<h2 id="transfer-ownership"><a class="header" href="#transfer-ownership">Transfer ownership</a></h2>
+<p>The contracts are <code>Ownable2Step</code>, that means that whenever you want to transfer the ownership, the new owner have to accept it to effectively apply the change. This is an extra step of security, to avoid accidentally transfer ownership to a wrong account. You can make the transfer in these steps:</p>
+<ol>
+<li>
+<p>Start the transfer:</p>
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'transferOwnership(address)' &lt;NEW_OWNER_ADDRESS&gt; --private-key &lt;CURRENT_OWNER_PRIVATE_KEY&gt;
+</code></pre>
+</li>
+<li>
+<p>Accept the ownership:</p>
+<pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'acceptOwnership()' --private-key &lt;NEW_OWNER_PRIVATE_KEY&gt;
+</code></pre>
+</li>
+</ol>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l1/fundamentals/sync_modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/withdrawals.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/running.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/based/roadmap.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -285,11 +324,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l1/fundamentals/sync_modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/withdrawals.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/running.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/based/roadmap.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -304,17 +343,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>

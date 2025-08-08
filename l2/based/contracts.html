@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>contracts - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,45 +237,104 @@
 }
 
 </style>
-<h1 id="ethrex-l2"><a class="header" href="#ethrex-l2">Ethrex L2</a></h1>
-<p>In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
-<p>The main differences between this mode and regular ethrex are:</p>
+<h1 id="ethrex-l2-contracts"><a class="header" href="#ethrex-l2-contracts">ethrex L2 Contracts</a></h1>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>This documentation is about the current state of the <code>based</code> feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This is an extension of the <a href="../fundamentals/contracts.html">ethrex-L2-Contracts documentation</a> and is intended to be merged with it in the future.</p>
+</div>
+<h2 id="l1-side"><a class="header" href="#l1-side">L1 Side</a></h2>
+<p>In addition to the components described in the <a href="../fundamentals/contracts.html">ethrex-L2-Contracts documentation</a>, the based feature introduces new contracts and modifies existing ones to enhance decentralization, security, and transparency. Below are the key updates and additions:</p>
+<h3 id="onchainproposer-modified"><a class="header" href="#onchainproposer-modified">OnChainProposer (Modified)</a></h3>
+<p>The <code>OnChainProposer</code> contract, which handles batch proposals and management on L1, has been updated with the following modifications:</p>
 <ul>
-<li>In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the chain. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.</li>
-<li>Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.</li>
-<li>A set of Solidity contracts to be deployed to the L1 are included as part of chain initialization.</li>
-<li>Two new types of transactions are included: deposits (native token mints) and withdrawals.</li>
-</ul>
-<p>At a high level, the following new parts are added to the node:</p>
+<li><strong>New Constant:</strong>
+A public constant <code>SEQUENCER_REGISTRY</code> has been added. This constant holds the address of the <code>SequencerRegistry</code> contract, linking the two contracts for sequencer management.</li>
+<li><strong>Modifier Update:</strong>
+The <code>onlySequencer</code> modifier has been renamed to <code>onlyLeadSequencer</code>. It now checks whether the caller is the current lead Sequencer, as determined by the <code>SequencerRegistry</code> contract. This ensures that only the designated leader can commit batches.</li>
+<li><strong>Initialization:</strong>
+The <code>initialize</code> method now accepts the address of the <code>SequencerRegistry</code> contract as a parameter. During initialization, this address is set to the <code>SEQUENCER_REGISTRY</code> constant, establishing the connection between the contracts.</li>
+<li><strong>Batch Commitment:</strong>
+The <code>commitBatch</code> method has been revised to improve data availability and streamline sequencer validation:
 <ul>
-<li>A <code>proposer</code> component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the <code>forkChoiceUpdate</code> -&gt; <code>getPayload</code> -&gt; <code>NewPayload</code> Engine API flow in communication with the consensus layer.</li>
-<li>A <code>prover</code> subsystem, which itself consists of two parts:
-<ul>
-<li>A <code>proverClient</code> that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.</li>
-<li>A <code>proverServer</code> component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.</li>
+<li>It now requires an RLP-encoded list of blocks included in the batch. This list is published on L1 to ensure transparency and enable verification.</li>
+<li>The list of sequencers has been removed from the method parameters. Instead, the <code>SequencerRegistry</code> contract is now responsible for tracking and validating sequencers.</li>
 </ul>
 </li>
-<li>L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.</li>
-<li>The EVM is lightly modified with new features to process deposits and withdrawals accordingly.</li>
-</ul>
-<h2 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h2>
-<p>For general documentation, see:</p>
+<li><strong>Event Modification:</strong>
+The <code>BatchCommitted</code> event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.</li>
+<li><strong>Batch Verification:</strong>
+The <code>verifyBatch</code> method has been made more flexible and decentralized:
 <ul>
-<li><a href="./overview.html">General overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./fundamentals/contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
-<li><a href="./fundamentals/components/components.html">Components</a> for more detailed documentation on each off-chain component.</li>
-<li><a href="./based/roadmap.html">Based roadmap (draft)</a> contains ethrex's roadmap for becoming based.</li>
+<li>The <code>onlySequencer</code> modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.</li>
+<li>The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.</li>
+</ul>
+</li>
+</ul>
+<h3 id="sequencerregistry-new-contract"><a class="header" href="#sequencerregistry-new-contract">SequencerRegistry (New Contract)</a></h3>
+<p>The <code>SequencerRegistry</code> is a new contract designed to manage the pool of Sequencers and oversee the leader election process in a decentralized manner.</p>
+<ul>
+<li>
+<p><strong>Registration:</strong></p>
+<ul>
+<li>Anyone can register as a Sequencer by calling the <code>register</code> method and depositing a minimum collateral of 1 ETH. This collateral serves as a Sybil resistance mechanism, ensuring that only committed participants join the network.</li>
+<li>Sequencers can exit the registry by calling the <code>unregister</code> method, which refunds their 1 ETH collateral upon successful deregistration.</li>
+</ul>
+</li>
+<li>
+<p><strong>Leader Election:</strong>
+The leader election process operates on a round-robin basis to fairly distribute the lead Sequencer role:</p>
+<ul>
+<li><strong>Single Sequencer Case:</strong> If only one Sequencer is registered, it remains the lead Sequencer indefinitely.</li>
+<li><strong>Multiple Sequencers:</strong> When two or more Sequencers are registered, the lead Sequencer rotates every 32 batches. This ensures that no single Sequencer dominates the network for an extended period.</li>
+</ul>
+</li>
+<li>
+<p><strong>Future Leader Prediction:</strong>
+The <code>futureLeaderSequencer</code> method allows querying the lead Sequencer for a batch n batches in the future. The calculation is based on the following logic:</p>
+<p><strong>Inputs:</strong></p>
+<ul>
+<li><code>sequencers</code>: An array of registered Sequencer addresses.</li>
+<li><code>currentBatch</code>: The next batch to be committed, calculated as <code>lastCommittedBatch() + 1</code> from the <code>OnChainProposer</code> contract.</li>
+<li><code>nBatchesInTheFuture</code>: A parameter specifying how many batches ahead to look.</li>
+<li><code>targetBatch</code>: Calculated as <code>currentBatch</code> + <code>nBatchesInTheFuture</code>.</li>
+<li><code>BATCHES_PER_SEQUENCER</code>: A constant set to 32, representing the number of batches each lead Sequencer gets to commit.</li>
+</ul>
+<p><strong>Logic:</strong></p>
+<pre><code class="language-solidity">uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER).lastCommittedBatch() + 1;
+uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
+uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
+address _leader = sequencers[_id % sequencers.length];
+</code></pre>
+<p><strong>Example:</strong> Assume 3 Sequencers are registered: <code>[S0, S1, S2]</code>, and the current committed batch is 0:</p>
+<ul>
+<li>For batches 0–31: <code>_id = 0 / 32 = 0, 0 % 3 = 0</code>, lead Sequencer = <code>S0</code>.</li>
+<li>For batches 32–63: <code>_id = 32 / 32 = 1, 1 % 3 = 1</code>, lead Sequencer = <code>S1</code>.</li>
+<li>For batches 64–95: <code>_id = 64 / 32 = 2, 2 % 3 = 2</code>, lead Sequencer = <code>S2</code>.</li>
+<li>For batches 96–127: <code>_id = 96 / 32 = 3, 3 % 3 = 0</code>, lead Sequencer = <code>S0</code>.</li>
+</ul>
+<p>This round-robin rotation repeats every 96 committed batches (32 committed batches per Sequencer × 3 Sequencers), ensuring equitable distribution of responsibilities.</p>
+</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l1/fundamentals/sync_modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/based/sequencer.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/running.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../developers/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -285,11 +344,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l1/fundamentals/sync_modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/based/sequencer.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/running.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../developers/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -304,17 +363,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>General overview - Ethrex</title>
+        <title>Fundamentals - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -242,7 +242,7 @@
 <h2 id="intro"><a class="header" href="#intro">Intro</a></h2>
 <p>At a high level, the way an L2 works is as follows:</p>
 <ul>
-<li>There is a contract in L1 that tracks the current state of the L2. Anyone who wants to know the current state of the network need only consult this contract.</li>
+<li>There is a contract in L1 that tracks the current state of the L2. Anyone who wants to know the current state of the chain need only consult this contract.</li>
 <li>Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a batch of new L2 blocks and publishes it to L1. We will call this the <code>commit</code> L1 transaction.</li>
 <li>For L2 batches to be considered finalized, a zero-knowledge proof attesting to the validity of the batch needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that all blocks in the batch were valid and thus the new state is. We call this the <code>verification</code> L1 transaction.</li>
 </ul>
@@ -259,7 +259,7 @@
 <p>What's usually less clear is how you prove state. Let's say we want to prove a new L2 batch of blocks that were just built. Running the <code>ethrex</code> <code>execute_block</code> function on a Rust <code>zkVM</code> for all the blocks in the batch does the trick, but that only proves that you ran the VM correctly on <strong>some</strong> previous state/batch. How do you know it was the actual previous state of the L2 and not some other, modified one?</p>
 <p>In other words, how do you ensure that:</p>
 <ul>
-<li>Every time the EVM <strong>reads</strong> from some storage slot (think an account balance, some contract's bytecode), the value returned matches the actual value present on the previous state of the network.</li>
+<li>Every time the EVM <strong>reads</strong> from some storage slot (think an account balance, some contract's bytecode), the value returned matches the actual value present on the previous state of the chain.</li>
 </ul>
 <p>For this, the VM needs to take as a public input the previous state of the L2, so the prover can show that every storage slot it reads is consistent with it, and the verifier contract on L1 can check that the given public input is the actual previous state it had stored. However, we can't send the entire previous state as public input because it would be too big; this input needs to be sent on the <code>verification</code> transaction, and the entire L2 state does not fit on it.</p>
 <p>To solve this, we do what we always do: instead of having the actual previous state be the public input, we build a <strong>Merkle Tree</strong> of the state and <strong>use its root as the input</strong>. Now the state is compressed into a single 32-byte value, an unforgeable representation of it; if you try to change a single bit, the root will change. This means we now have, for every L2 batch, a single hash that we use to represent it, which we call the batch <code>commitment</code> (we call it "commitment" and not simply "state root" because, as we'll see later, this won't just be the state root, but rather the hash of a few different values including the state root).</p>
@@ -274,18 +274,18 @@
 <p>These two ideas will be used extensively throughout the rest of the documentation:</p>
 <ul>
 <li>Whenever we need to add some state as input, we build a merkle tree and use its <strong>root</strong> instead. Whenever we use some part of that state in some way, the prover provides merkle paths to the values involved. Sometimes, if we don't care about efficient inclusion proofs of parts of the state, we just hash the data altogether and use that instead.</li>
-<li>To keep the batch commitment (i.e. the value attesting to the entire state of the network) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on <code>commit</code>, checks their validity and then squashes them into one through hashing.</li>
+<li>To keep the batch commitment (i.e. the value attesting to the entire state of the chain) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on <code>commit</code>, checks their validity and then squashes them into one through hashing.</li>
 </ul>
 <h2 id="reconstructing-statedata-availability"><a class="header" href="#reconstructing-statedata-availability">Reconstructing state/Data Availability</a></h2>
-<p>While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the network. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the network or some of their funds.</p>
-<p>This is called the <strong>Data Availability</strong> problem. As discussed before, sending the entire state of the network on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
+<p>While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.</p>
+<p>This is called the <strong>Data Availability</strong> problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
 <ul>
 <li>For every new L2 batch, send as part of the <code>commit</code> transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all <code>commit</code> transactions, start executing them from the beginning and recontruct the state.</li>
 </ul>
 <p>This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see <a href="https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans">this post</a> for the calculation on legacy transactions) and 128 KB as <a href="https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53">a reasonable transaction size limit</a> we get around ~650 transactions at maximum per <code>commit</code> transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).</p>
 <p>Going a bit further, instead of posting the entire transaction, we could just post which accounts have been modified and their new values (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we only need to record balance updates of two accounts, which requires sending just two <code>(address, balance)</code> pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.</p>
-<p>This is called <code>state diffs</code>. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.</p>
-<p>Detailed documentation on <a href="./state_diffs.html">the state diffs spec</a>.</p>
+<p>This is called <code>state diffs</code>. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the chain.</p>
+<p>Detailed documentation on <a href="./fundamentals/state_diffs.html">the state diffs spec</a>.</p>
 <h3 id="how-do-we-prevent-the-sequencer-from-publishing-the-wrong-state-diffs"><a class="header" href="#how-do-we-prevent-the-sequencer-from-publishing-the-wrong-state-diffs">How do we prevent the sequencer from publishing the wrong state diffs?</a></h3>
 <p>Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing all blocks in the batch. As always, the actual state diffs are not part of the public input, but <strong>their hash</strong> is, so the size is a fixed 32 bytes. This hash is then part of the batch commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed blocks).</p>
 <p>There's still a problem however: the L1 contract needs to have the actual state diff for data availability, not just the hash. This is sent as part of calldata of the <code>commit</code> transaction (actually later as a blob, we'll get to that), so the sequencer could in theory send the wrong state diff. To make sure this can't happen, the L1 contract hashes it to make sure that it matches the actual state diff hash that is included as part of the public input.</p>
@@ -332,9 +332,9 @@
 <p>To communicate between L1 and L2, we use two mechanisms called <em>Privileged transactions</em>, and <em>L1 messages</em>.
 In this section we talk a bit about them, first going through the more specific use cases for <em>Deposits</em> and <em>Withdrawals</em>.</p>
 <h3 id="deposits"><a class="header" href="#deposits">Deposits</a></h3>
-<p>The mechanism for depositing funds to L2 from L1 is explained in detail in <a href="./deposits.html">"Deposits"</a>.</p>
+<p>The mechanism for depositing funds to L2 from L1 is explained in detail in <a href="./fundamentals/deposits.html">"Deposits"</a>.</p>
 <h3 id="withdrawals"><a class="header" href="#withdrawals">Withdrawals</a></h3>
-<p>The mechanism for withdrawing funds from L2 back to L1 is explained in detail in <a href="./withdrawals.html">"Withdrawals"</a>.</p>
+<p>The mechanism for withdrawing funds from L2 back to L1 is explained in detail in <a href="./fundamentals/withdrawals.html">"Withdrawals"</a>.</p>
 <h2 id="recap"><a class="header" href="#recap">Recap</a></h2>
 <h3 id="batch-commitment"><a class="header" href="#batch-commitment">Batch Commitment</a></h3>
 <p>An L2 batch commitment is the hash of the following things:</p>
@@ -389,7 +389,7 @@ In this section we talk a bit about them, first going through the more specific 
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/state_diffs.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../l2/fundamentals/components/components.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -403,7 +403,7 @@ In this section we talk a bit about them, first going through the more specific 
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/state_diffs.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../l2/fundamentals/components/components.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

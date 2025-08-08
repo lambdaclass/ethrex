@@ -1,0 +1,631 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Based roadmap (draft) - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="draft-ethrex-roadmap-for-becoming-based"><a class="header" href="#draft-ethrex-roadmap-for-becoming-based">[DRAFT] Ethrex roadmap for becoming based</a></h1>
+<p><em>Special thanks to <a href="https://x.com/_eltitan">Lorenzo</a> and <a href="https://x.com/kubimensah">Kubi</a>, <a href="https://x.com/gd_gattaca">George</a>, and Louis from <a href="https://x.com/gattacahq">Gattaca</a>, <a href="https://x.com/jasnoodle">Jason</a> from <a href="https://x.com/fabric_ethereum">Fabric</a>, and <a href="https://x.com/mteamisloading">Matthew</a> from <a href="https://x.com/Spire_Labs">Spire Labs</a> for their feedback and suggestions.</em></p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This document is still under development, and everything stated in it is subject to change after feedback and iteration.
+Feedback is more than welcome.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>We believe that <a href="https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733">Gattaca's model</a>—permissionless with preconfs using L1 proposers (either directly or through delegations) as L2 sequencers—is the ideal approach. However, this model cannot achieve permissionlessness until the deterministic lookahead becomes available after Fusaka. In the meantime, we consider the Spire approach, based on a Dutch auction, to be the most suitable for our current needs. It is important to note that Rogue cannot implement a centralized mechanism for offering preconfs, so we have chosen to prioritize a permissionless structure before enabling preconfirmations. This initial approach is <strong>decentralized</strong> and <strong>permissionless</strong> but not <strong>based</strong> yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward <a href="https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016">Justin Drake's definition</a>.</p>
+</div>
+<p>From the beginning, <a href="https://github.com/lambdaclass/ethrex">ethrex</a> was conceived not just as an Ethereum L1 client, but also as an L2 (ZK Rollup). This means anyone will be able to use ethrex to deploy an EVM-equivalent, multi-prover (supporting SP1, RISC Zero, and TEEs) based rollup with just one command. We recently wrote a <a href="https://blog.lambdaclass.com/celebrating-a-year-of-ethrex/">blog post</a> where we expand this idea more in depth.</p>
+<p>The purpose of this document is to provide a high-level overview of how ethrex will implement its based rollup feature.</p>
+<h2 id="state-of-the-art"><a class="header" href="#state-of-the-art">State of the art</a></h2>
+<p>Members of the Ethereum Foundation are actively discussing and proposing EIPs to integrate based sequencing into the Ethereum network. Efforts are also underway to coordinate and standardize the components required for these based rollups; one such initiative is <a href="https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640">FABRIC</a>.</p>
+<p>The following table provides a high-level comparison of different based sequencing approaches, setting the stage for our own proposal.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This table compares the different based rollups in the ecosystem based on their current development state, not their final form.</p>
+</div>
+<div class="table-wrapper"><table><thead><tr><th>Based Rollup</th><th>Protocol</th><th>Sequencer Election</th><th>Proof System</th><th>Preconfs</th><th>Additional Context</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/taikoxyz/taiko-mono">Taiko Alethia (Taiko Labs)</a></td><td>Permissioned</td><td>Fixed Deterministic Lookahead</td><td>Multi-proof (sgxGeth (TEE), and sgxReth (ZK/TEE))</td><td>Yes</td><td>-</td></tr>
+<tr><td><a href="https://github.com/gattaca-com/based-op">Gattaca's Based OP (Gattaca + Lambdaclass)</a></td><td>Permissioned</td><td>Round Robin</td><td>Single Proof (optimistic)</td><td>Yes</td><td>For phase 1, the Sequencer/Gateway was centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.</td></tr>
+<tr><td><a href="https://ethereumr1.org/">R1</a></td><td>Permissionless</td><td>Total Anarchy</td><td>Multi-proof (ZK, TEE, Guardian)</td><td>No</td><td>R1 is yet to be specified but plans are for it to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs</td></tr>
+<tr><td><a href="https://github.com/NethermindEth/surge">Surge (Nethermind)</a></td><td>Permissionless</td><td>Total Anarchy</td><td>Multi-proof (ZK, TEE, Guardian)</td><td>No</td><td>Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. Surge is not designed to compete with existing rollups for users or market share. Instead, it serves as a technical showcase, experimentation platform, and reference implementation.</td></tr>
+<tr><td><a href="https://github.com/spire-labs/based-stack">Spire (Spire Labs)</a></td><td>Permissionless</td><td>Dutch Auction</td><td>Single Proof (optimistic)</td><td>Yes</td><td>-</td></tr>
+<tr><td><a href="https://x.com/fede_intern/status/1846035499799978475">Rogue (LambdaClass)</a></td><td>Permissionless</td><td>Dutch Auction</td><td>Multi-Proof (ZK + TEE)</td><td>Not Yet</td><td>We are prioritizing decentralization and permissionlessness at the expense of preconfirmations until the deterministic lookahead is available after Fusaka</td></tr>
+</tbody></table>
+</div>
+<p>Other based rollups not mentioned will be added later.</p>
+<h2 id="ethrex-proposal-for-based-sequencing"><a class="header" href="#ethrex-proposal-for-based-sequencing">Ethrex proposal for based sequencing</a></h2>
+<p>According to Justin Drake's definition of "based", being "based" implies that the L1 proposers are the ones who, at the end of the day, sequence the L2, either directly or by delegating the responsibility to a third party.</p>
+<p>However, today, the "based" ecosystem is very immature. Despite the constant efforts of various teams, no stack is fully prepared to meet this definition. Additionally, L1 proposers do not have sufficient economic incentives to be part of the protocol.</p>
+<p>But there's a way out. As mentioned in Spire's <a href="https://docs.spire.dev/education-hub/what-is-a-based-rollup">"What is a based rollup?"</a></p>
+<blockquote>
+<p>The key to this definition is that sequencing is "driven" by a base layer and not controlled by a completely external party.</p>
+</blockquote>
+<p>Following this, our proposal's main focus is <strong>decentralization</strong> and <strong>low operation cost</strong>, and we don't want to sacrifice them in favor of preconfirmations or composability.</p>
+<p>Considering this, after researching existing approaches, we concluded that a decentralized, permissionless ticket auction is the most practical first step for ethrex's based sequencing solution.</p>
+<p>Ultimately, we aim to align with <a href="https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733">Gattaca's model for based sequencing</a> and collaborate with <a href="https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640">FABRIC</a> efforts to standardize based rollups and helping interoperability.</p>
+<p><a href="https://x.com/fede_intern/status/1846035499799978475">Rogue</a> and many upcoming rollups will be following this approach.</p>
+<h2 id="benefits-of-our-approach"><a class="header" href="#benefits-of-our-approach">Benefits of our approach</a></h2>
+<p>The key benefits of our approach to based sequencing are:</p>
+<ul>
+<li><strong>Decentralization and Permissionlessness from the Get-Go:</strong> We've decentralized ethrex L2 by allowing anyone to participate in the L2 block proposal; actors willing to participate on it can do this permissionlessly, as the execution ticket auction approach we are taking provides a governance free leader election mechanism.</li>
+<li><strong>Robust Censorship Resistance:</strong> By being decentralized and permissionless, and with the addition of Sequencer challenges, we increased the cost of censorship in the protocol.</li>
+<li><strong>Low Operational Cost:</strong> We strived to make the sequencer operating costs as low as possible by extending the sequencing window, allowing infrequent L1 finalization for low traffic periods.</li>
+<li><strong>Configurability:</strong> We intentionally designed our protocol to be configurable at its core. This allows different rollup setups to be tailored based on their unique needs, ensuring optimal performance, efficiency, and UX.</li>
+</ul>
+<h2 id="key-points"><a class="header" href="#key-points">Key points</a></h2>
+<h3 id="terminology"><a class="header" href="#terminology">Terminology</a></h3>
+<ul>
+<li><strong>Ticket:</strong> non-transferable right of a Sequencer to build and commit an L2 batch. One or more are auctioned during each <strong>auction period</strong>.</li>
+<li><strong>Sequencing Period:</strong> the period during which a ticket holder has sequencing rights.</li>
+<li><strong>Auction Period:</strong> the period during which the auction is performed.</li>
+<li><strong>Auction Challenge:</strong> instance within a sequencing period where lead Sequencer sequencing rights can be challenged.</li>
+<li><strong>Challenge Period:</strong> the period during which a lead sequencer can be challenged.</li>
+<li><strong>Allocated Period:</strong> the set of <strong>contiguous sequencing periods</strong> allocated among the winners <strong>of the corresponding auctioning period</strong> -during an auctioning period, multiple sequencing periods are auctioned, the set of these is the allocated period.</li>
+<li><strong>L2 batch:</strong> A collection of L2 blocks submitted to L1 in a single transaction.</li>
+<li><strong>Block/Batch Soft-commit Message:</strong> A signed P2P message from the Lead Sequencer publishing a new block or sealed batch.</li>
+<li><strong>Commit Transaction:</strong> An L1 transaction submitted by the Lead Sequencer to commit to an L2 batch execution. It is also called Batch Commitment.</li>
+<li><strong>Sequencer:</strong> An L2 node registered in the designated L1 contract.</li>
+<li><strong>Lead Sequencer:</strong> The Sequencer currently authorized to build L2 blocks and post L2 batches during a specific L1 block.</li>
+<li><strong>Follower:</strong> Non-Lead Sequencer nodes, which may be Sequencers awaiting leadership or passive nodes.</li>
+</ul>
+<h3 id="how-it-will-work"><a class="header" href="#how-it-will-work">How it will work</a></h3>
+<p>As outlined earlier, sequencing rights for future blocks are allocated through periodic ticket auctions. To participate, sequencers must register and provide collateral. Each auction occurs during a designated auction period, which spans a defined range of L1 blocks. These auctions are held a certain number of blocks in advance of the allocated period.</p>
+<p>During each auction period, a configurable number of tickets are auctioned off. Each ticket grants its holder the right to sequence transactions during one sequencing period within the allocated period. However, at the time of the auction, the specific sequencing period assigned to each ticket remains undetermined. Once the auction period ends, the sequencing periods are randomly assigned (shuffled) among the ticket holders, thereby determining which sequencing period each ticket corresponds to.</p>
+<p>Parameters like the amount of tickets auctioned (i.e. amount of sequencing periods per allocated period), the duration of the auction periods, the duration of the sequencing periods, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.</p>
+<p><img src="../img/leader_election_process.png" alt="Diagram showing leader election process" /></p>
+<ol>
+<li>Sequencers individually opt in before auction period <code>n</code> ends, providing collateral via an L1 contract. This registration is a one-time process per Sequencer.</li>
+<li>During the auction, registered Sequencers bid for sequencing rights for a yet-to-be-revealed sequencing period within the allocated period.</li>
+<li>At the auction's conclusion, sequencing rights for the sequencing periods within the allocated period are assigned among the ticket holders.</li>
+<li>Finally, Sequencers submit L2 batch transactions to L1 during their assigned sequencing period (note: this step does not immediately follow step 3, as additional auctions and sequencing might occur in-between).</li>
+</ol>
+<p>In each sequencing period, the Lead Sequencer is initially determined through a bidding process. However, this position can be contested by other Sequencers who are willing to pay a higher price than the winning bid. The number of times such challenges can occur within a single sequencing period is configurable, allowing for control over the stability of the leadership. Should a challenge succeed, the challenging Sequencer takes over as the Lead Sequencer for the remainder of the period, and the original Lead Sequencer is refunded a portion of their bid corresponding to the time left in the period. For example, if a challenge is successful at the midpoint of the sequencing period, the original Lead Sequencer would be refunded half of their bid.</p>
+<p>The following example assumes a sequencing period of 1 day, 1 auction challenge per hour with challenge periods of 1 hour.</p>
+<p><img src="../img/challenges_to_leaders.png" alt="Diagram showing how challenges work" /></p>
+<ol>
+<li>Auction winner (Sequencer green) starts as the lead Sequencer of the sequencing period.</li>
+<li>No one can challenge the lead in the first hour.</li>
+<li>During the second hour, the first auction challenge starts, and multiple Sequencers bid to challenge the lead. Finally, the lead Sequencer is overthrown and the new lead (Sequencer blue) starts sequencing.</li>
+<li>In the third hour a new auction challenge opens and the former lead Sequencer takes back the lead.</li>
+<li>Until the last hour of the sequencing period, the same cycle repeats having many leader changes.</li>
+</ol>
+<p>To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:</p>
+<p><img src="../img/l2_p2p_diagram.png" alt="Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer" /></p>
+<ol>
+<li>A User: sends a transaction to the network.</li>
+<li>Any node: Gossips in the P2P a received transaction. So every transaction lives in a public distributed mempool</li>
+<li>The Lead Sequencer: Produces an L2 block including that transaction.</li>
+<li>The Lead Sequencer: Broadcasts the L2 block, including the transaction, to the network via P2P.</li>
+<li>Any node: Executes the block, gossips it, and keeps its state up to date.</li>
+<li>The Lead Sequencer: Seals the batch in L2.</li>
+<li>The Lead Sequencer: Posts the batch to the L1 in a single transaction.</li>
+<li>The Lead Sequencer: Broadcasts the "batch sealed" message to the network via P2P.</li>
+<li>Any node: Seals the batch locally and gossips the message.</li>
+<li>A User: Receives a non-null receipt for the transaction.</li>
+</ol>
+<!--
+Lead Sequencers will follow the following pipeline for L2 block building and batch commitment:
+
+TODO: add updated graph with L1 block time distribution
+-->
+<h2 id="protocol-details"><a class="header" href="#protocol-details">Protocol details</a></h2>
+<h3 id="additional-terminology"><a class="header" href="#additional-terminology">Additional Terminology</a></h3>
+<ul>
+<li><strong>Next Batch</strong>: The L2 batch being built by the lead Sequencer.</li>
+<li><strong>Up-to-date Nodes:</strong> Nodes that have the last committed batch in their storage and only miss the next batch.</li>
+<li><strong>Following:</strong> We say that up-to-date nodes are <strong>following</strong> the lead Sequencer.</li>
+<li><strong>Syncing:</strong> Nodes are <strong>syncing</strong> if they are not up-to-date. They’ll stop syncing after they reach the <strong>following</strong> state.</li>
+<li><strong>Verify Transaction:</strong> An L1 transaction submitted by anyone to verify a ZK proof to an L2 batch execution.</li>
+</ul>
+<h3 id="network-participants"><a class="header" href="#network-participants">Network participants</a></h3>
+<ul>
+<li>Sequencer Nodes: Nodes that have opted in to serve as Sequencers.</li>
+<li>Follower Nodes: State or RPC Nodes.</li>
+<li>Prover Nodes:</li>
+</ul>
+<p>By default, every ethrex L2 node begins as a Follower Node. A process will periodically query the L1 smart contract registry for the Lead Sequencer's address and update each node's state accordingly.</p>
+<h3 id="network-parameters"><a class="header" href="#network-parameters">Network parameters</a></h3>
+<p>A list of all the configurable parameters of the network.</p>
+<ul>
+<li>Sequencing period duration</li>
+<li>Auction period duration</li>
+<li>Number of sequencing periods in an allocated period</li>
+<li>Time between auction and allocated period</li>
+<li>L2 block time</li>
+<li>Minimum collateral in ETH for Sequencers registration</li>
+<li>Withdrawal delay for Sequencers that quit the protocol</li>
+<li>Initial ticket auction price multiplier</li>
+<li>Batch verification time limit</li>
+<li>Amount of auction challenges within a sequencing period</li>
+<li>Challenge period duration</li>
+<li>Time between auction challenges</li>
+<li>Challenge price multiplier</li>
+</ul>
+<h3 id="lead-sequencer-election"><a class="header" href="#lead-sequencer-election">Lead Sequencer election</a></h3>
+<ul>
+<li>Aspiring Lead Sequencers must secure sequencing rights through a Dutch auction in advance, enabling them to post L2 batches to L1.</li>
+<li>Sequencing rights are tied to tickets: one ticket grants the right to sequence and post batches during a specific sequencing period.</li>
+<li>For each sequencing period within an allocated period, sequencing rights are randomly assigned from the pool of ticket holders.</li>
+<li>Each auction period determines tickets for the nth epoch ahead (configurable).</li>
+<li>Once Ethereum incorporates deterministic lookahead (e.g., <a href="https://eips.ethereum.org/EIPS/eip-7917">EIP-7917</a>), the Lead Sequencer for a given L1 slot will be the current proposer, provided they hold a ticket.</li>
+</ul>
+<h3 id="auction-challenges"><a class="header" href="#auction-challenges">Auction challenges</a></h3>
+<ul>
+<li>During a sequencing period, other Sequencers can pay a higher price than the winning bid to challenge the Lead Sequencer.</li>
+<li>This can only happen a configurable number of times per sequencing period.</li>
+<li>After a successful challenge, the current Lead Sequencer is replaced by the challenging sequencer for the rest of the Sequencing Period and is refunded the portion of its bid corresponding to the remaining sequencing period (e.g. half of its bid if it loses half of its sequencing period).</li>
+</ul>
+<h3 id="sequencers-registry"><a class="header" href="#sequencers-registry">Sequencers registry</a></h3>
+<ul>
+<li>L1 contract that manages Sequencer registration and ticket auctions for sequencing rights.</li>
+<li>Sequencers can register permissionlessly by providing a minimum collateral in ETH.</li>
+<li>Sequencers may opt out of an allocated period by not purchasing tickets for that period.</li>
+<li>Sequencers can unregister and withdraw their collateral after a delay.</li>
+</ul>
+<h3 id="lead-sequencers-role"><a class="header" href="#lead-sequencers-role">Lead Sequencers role</a></h3>
+<ul>
+<li>Build L2 blocks and post L2 batches to the L1 within the sequencing period.</li>
+<li>Broadcast to the network:
+<ul>
+<li>Transactions.</li>
+<li>Sequenced blocks as they are built.</li>
+<li>Batch seal messages to prompt the network to seal the batch locally.</li>
+</ul>
+</li>
+<li>Serve state.</li>
+</ul>
+<h3 id="follower-nodes-role"><a class="header" href="#follower-nodes-role">Follower nodes role</a></h3>
+<ul>
+<li>Broadcast to the network:
+<ul>
+<li>Transactions.</li>
+<li>Sequenced blocks.</li>
+<li>Batch seal messages.</li>
+</ul>
+</li>
+<li>Store incoming blocks sequentially.</li>
+<li>Seal batches upon receiving batch seal messages (after storing all batch blocks).</li>
+<li>Serve state.</li>
+<li>Monitor the L1 contract for batch updates and reorgs.</li>
+</ul>
+<h3 id="prover-nodes-role"><a class="header" href="#prover-nodes-role">Prover nodes role</a></h3>
+<ul>
+<li>For this stage, it is the Sequencers' responsibility to prove their own batches.</li>
+<li>The prover receives the proof generation inputs of a batch from another node and returns a proof.</li>
+</ul>
+<h3 id="batch-commitmentproposal"><a class="header" href="#batch-commitmentproposal">Batch commitment/proposal</a></h3>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
+</div>
+<ul>
+<li>Only lead Sequencer can post batches.</li>
+<li>Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.</li>
+<li>Batch commitment now includes posting the list of blocks in the batch to the L1 for data availability.</li>
+</ul>
+<h3 id="batch-verification"><a class="header" href="#batch-verification">Batch verification</a></h3>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>To enrich the understanding of this part, we suggest reading <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md">ethrex L2 High-Level docs</a> as this only details the diff with what we already have.</p>
+</div>
+<ul>
+<li>Anyone can verify batches.</li>
+<li>Only one valid verification is required to advance the network.</li>
+<li>Valid proofs include the blocks of the batch being verified.</li>
+<li>In this initial version, the lead Sequencer is penalized if they fail to correctly verify the batches they post.</li>
+</ul>
+<h3 id="p2p"><a class="header" href="#p2p">P2P</a></h3>
+<ul>
+<li>Ethrex's L1 P2P network will be used to gossip transactions and for out-of-date nodes to sync.</li>
+<li>A new capability will be added for gossipping L2 blocks and batch seal messages (<code>NewBlock</code> and <code>BatchSealed</code>).</li>
+<li>The <code>NewBlock</code> message includes an RLP-encoded list of transactions in the block, along with metadata for re-execution and validation. It is signed, and receivers must verify the signature (additional data may be required in practice).</li>
+<li>The <code>SealedBatch</code> message specifies the batch number and the number of blocks it contains (additional data may be needed in practice).</li>
+<li>Follower Nodes must validate all messages. They add <code>NewBlock</code>s to storage sequentially and seal the batch when the <code>SealedBatch</code> message arrives. If a node's current block is <code>n</code> and it receives block <code>n + 2</code>, it queues <code>n + 2</code>, waits for <code>n + 1</code>, adds it, then processes <code>n + 2</code>. Similarly, a SealedBatch message includes block numbers, and the node delays sealing until all listed blocks are stored.</li>
+</ul>
+<h3 id="syncing"><a class="header" href="#syncing">Syncing</a></h3>
+<p>Nodes that join a live network will need to sync up to the latest state.</p>
+<p>For this we'll divide nodes into two different states:</p>
+<ul>
+<li><strong>Following nodes</strong>: These will keep up-to-date via the based P2P.</li>
+<li><strong>Syncing nodes</strong>: These will sync via 2 different mechanisms:
+<ul>
+<li><strong>P2P Syncing:</strong> This is the same as full-sync and snap-sync on L1, but with some changes.</li>
+<li><strong>L1 Syncing:</strong> Also used by provers to download batches from the L1.</li>
+<li>In practice, these methods will compete to sync the node.</li>
+</ul>
+</li>
+</ul>
+<h2 id="downsides"><a class="header" href="#downsides">Downsides</a></h2>
+<p>Below we list some of the risks and known issues we are aware of that this protocol introduces. Some of them were highlighted thanks to the feedback of different teams that took the time to review our first draft.</p>
+<ul>
+<li><strong>Inconsistent UX:</strong> If a Sequencer fails to include its batch submit transaction in the L1, the blocks it contains will simply be reorged out once the first batch of the next sequencer is published. Honest sequencers can avoid this by not building new batches some slots before their turn ends. The next Sequencer can, in turn, start building their first batch earlier to avoid dead times. This is similar to Taiko’s permissioned network, where sequencers coordinate to stop proposing 4 slots before their turn ends to avoid reorgs.</li>
+<li><strong>Batch Stealing:</strong> Lead Sequencers that fail to publish their batches before their sequencing period ends might have their batches "stolen" by the next Lead Sequencer, which can republish those batches as their own. We can mitigate in the same way as the last point.</li>
+<li><strong>Long Finalization Times:</strong> Since publishing batches to L1 is infrequent, users might experience long finalization times during low traffic periods. We can solve this by assuming a transaction in an L2 block transmitted through P2P will eventually be published to L1, and punishing Sequencers that don't include some of their blocks in a batch.</li>
+<li><strong>Temporary Network Blinding:</strong> A dishonest Sequencer may blind the network if they don't gossip blocks nor publish the batches to the L1 as part of the commit transactions' calldata. While the first case alone is mitigated through an L1 syncing mechanism, if the necessary data to sync is not available we can't rely on it. In this case, the prover ensures this doesn't happen by requiring the batch as a public input to the proof verification. That way, the bad batch can't be verified, and will be reverted.</li>
+<li><strong>High-Fee Transactions Hoarding:</strong> A dishonest Sequencer might not share high-fee transactions with the Lead Sequencer with the hope of processing them once it's their turn to be Lead Sequencer. This is a non-issue, since transaction senders can simply propagate their transaction themselves, either by sending it to multiple RPC providers, or to their own node.</li>
+<li><strong>Front-running and Sandwiching Attacks:</strong> Lead Sequencers have the right to reorder transactions as they like and we expect they'll use this to extract MEV, including front-running and sandwiching attacks, which impact user experience. We don't have plans to address this at the protocol level, but we expect solutions to appear at the application level, same as in L1.</li>
+<li><strong>No Sequencers Scenario:</strong> If a sequencing period has no elected Lead Sequencer, we establish Full Anarchy during that period, so anyone can advance the chain. This is a last resort, and we don't expect this happening in practice.</li>
+</ul>
+<h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
+<p>To preserve decentralization and permissionlessness, we chose ticket auctions for leader election, at the expense of preconfirmations and composability.</p>
+<p>As mentioned at the beginning, this approach does not fully align with <a href="https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016">Justin Drake's definition</a> of "based" rollups but is "based enough" to serve as a starting point. Although the current design cannot guarantee that sequencing rights are assigned exclusively to the L1 proposer for each slot, we're interested in achieving this, and will do so once the conditions are met, namely, that L1 proposer lookahead is available.</p>
+<p>So what about "based" Ethrex tomorrow? Eventually, there will be enough incentives for L1 proposers to either run their own L2 Sequencers or delegate their L1 rights to an external one. At that stage, the auction and assignment of L2 sequencing rights will be linked to the current L1 proposer or their delegated Sequencer. Periods may also adjust as lookahead tables, such as the <a href="https://eips.ethereum.org/EIPS/eip-7917">Deterministic Lookahead Proposal</a> or <a href="https://eth-fabric.github.io/website/research/raid">RAID</a>, become viable.</p>
+<p>This proposal is intentionally minimalistic and adaptable for future refinements. How this will change and adapt to future necessities is something we don't know right now, and we don't care about it until those necessities arrive; this is <a href="https://blog.lambdaclass.com/lambdas-engineering-philosophy/">Lambda's engineering philosophy</a>.</p>
+<h2 id="further-considerations"><a class="header" href="#further-considerations">Further considerations</a></h2>
+<p>The following are things we are looking to tackle in the future, but which are not blockers for our current work.</p>
+<ul>
+<li>Ticket Pricing Strategies.</li>
+<li>Delegation Processes.</li>
+<li>Preconfirmations.</li>
+<li>Bonding.</li>
+<li>L1 Reorgs Handling.</li>
+</ul>
+<h2 id="references-and-acknowledgements"><a class="header" href="#references-and-acknowledgements">References and acknowledgements</a></h2>
+<p>The following links, repos, and projects have been important in the development of this document, we have learned a lot from them and want to thank and acknowledge them.</p>
+<h3 id="context"><a class="header" href="#context">Context</a></h3>
+<ul>
+<li><a href="https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe">Stages of a Rollup</a></li>
+<li><a href="https://ethereum.org/en/roadmap/pbs/">PBS</a></li>
+<li><a href="https://vitalik.eth.limo/general/2021/01/05/rollup.html">Total Anarchy</a></li>
+<li><a href="https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640">FABRIC</a></li>
+</ul>
+<h3 id="intro-to-based-rollups"><a class="header" href="#intro-to-based-rollups">Intro to based rollups</a></h3>
+<ul>
+<li><a href="https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016">Based Rollups by Justin Drake (current accepted definition)</a></li>
+<li><a href="https://docs.spire.dev/education-hub/what-is-a-based-rollup">Based Rollups by Spire</a></li>
+<li><a href="https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/based-rollups/">Based Rollups by Taiko</a></li>
+<li><a href="https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733">Based Rollups by Gattaca</a>
+<ul>
+<li><a href="https://docs.spire.dev/education-hub/based-rollups-overview">Analysis on Gattaca's Based Rollup Approach by Spire</a></li>
+</ul>
+</li>
+</ul>
+<h3 id="based-rollups-benefits"><a class="header" href="#based-rollups-benefits">Based rollups benefits</a></h3>
+<ul>
+<li><a href="https://ethresear.ch/t/based-preconfirmations/17353">Based Preconfirmations</a></li>
+</ul>
+<h3 id="based-rollups--extra-steps"><a class="header" href="#based-rollups--extra-steps">Based rollups + extra steps</a></h3>
+<ul>
+<li><a href="https://hackmd.io/@Perseverance/Syk2oQU36">Based Ticketing Rollup by George Spasov</a></li>
+<li><a href="https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup">Based Contestable Rollup by Taiko (Taiko Alethia)</a></li>
+<li><a href="https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/">Native Based Rollup by Taiko (Taiko Gwyneth)</a></li>
+</ul>
+<h3 id="misc"><a class="header" href="#misc">Misc</a></h3>
+<ul>
+<li><a href="https://ethresear.ch/t/understanding-based-rollups-pga-challenges-total-anarchy-and-potential-solutions/21320">Why Total Anarchy Doesn't Pay the Bills</a></li>
+<li><a href="https://hackmd.io/@EspressoSystems/BasedEspresso">Based Espresso: Based Sequencing for all L2s</a></li>
+</ul>
+<h3 id="execution-tickets"><a class="header" href="#execution-tickets">Execution tickets</a></h3>
+<ul>
+<li><a href="https://ethresear.ch/t/execution-tickets/17944">Execution Tickets</a></li>
+<li><a href="https://ethresear.ch/t/execution-auctions-as-an-alternative-to-execution-tickets/19894">Execution Tickets vs Execution Auctions</a></li>
+<li><a href="https://ethresear.ch/t/economic-analysis-of-execution-tickets/18894">Economic Analysis of Execution Tickets</a></li>
+<li><a href="https://www.ephema.io/blog/beyond-the-stars-an-introduction-to-execution-tickets-on-ethereum">Beyond the Stars: An Introduction to Execution Tickets on Ethereum</a></li>
+</ul>
+<h3 id="current-based-rollups"><a class="header" href="#current-based-rollups">Current based rollups</a></h3>
+<ul>
+<li><a href="https://x.com/fede_intern/status/1846035499799978475">Rogue (LambdaClass)</a></li>
+<li><a href="https://github.com/NethermindEth/surge">Surge (Nethermind)</a></li>
+<li><a href="https://github.com/taikoxyz/taiko-mono">Taiko Alethia (Taiko Labs)</a>
+<ul>
+<li>Whitelisted preconfers:
+<ul>
+<li><a href="https://github.com/gattaca-com/taiko-gateway">Gattaca's</a></li>
+<li><a href="https://github.com/chainbound/taiko-mk1">Chainbound's</a></li>
+<li><a href="https://github.com/NethermindEth/Taiko-Preconf-AVS">Nethermind's</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="https://github.com/gattaca-com/based-op">Based OP (Gattaca + Lambdaclass)</a></li>
+<li><a href="https://ethereumr1.org/">R1</a></li>
+<li><a href="https://github.com/OpenZeppelin/minimal-rollup">Minimal Rollup (OpenZeppelin)</a></li>
+</ul>
+<h3 id="educational-sources"><a class="header" href="#educational-sources">Educational sources</a></h3>
+<ul>
+<li><a href="https://eth-fabric.github.io/website/education">FABRIC's list</a></li>
+<li><a href="https://docs.spire.dev/education-hub/based-resources">Spire's list</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l2/fundamentals/contracts.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../l2/based/sequencer.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l2/fundamentals/contracts.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../l2/based/sequencer.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>

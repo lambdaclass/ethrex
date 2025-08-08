@@ -1,0 +1,618 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Prover - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../../favicon.svg">
+        <link rel="shortcut icon" href="../../../favicon.png">
+        <link rel="stylesheet" href="../../../css/variables.css">
+        <link rel="stylesheet" href="../../../css/general.css">
+        <link rel="stylesheet" href="../../../css/chrome.css">
+        <link rel="stylesheet" href="../../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="ethrex-l2-prover"><a class="header" href="#ethrex-l2-prover">Ethrex L2 prover</a></h1>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The shipping/deploying process and the <code>Prover</code> itself are under development.</p>
+</div>
+<h2 id="intro"><a class="header" href="#intro">Intro</a></h2>
+<p>The prover consists of two main components: handling incoming proving data from the <code>L2 proposer</code>, specifically from the <code>ProofCoordinator</code> component, and the <code>zkVM</code>. The <code>Prover</code> is responsible for this first part, while the <code>zkVM</code> serves as a RISC-V emulator executing code specified in <code>crates/l2/prover/zkvm/interface/guest/src</code>.
+Before the <code>zkVM</code> code (or guest), there is a directory called <code>interface</code>, which indicates that we access the <code>zkVM</code> through the "interface" crate.</p>
+<p>In summary, the <code>Prover</code> manages the inputs from the <code>ProofCoordinator</code> and then "calls" the <code>zkVM</code> to perform the proving process and generate the <code>groth16</code> ZK proof.</p>
+<h2 id="workflow"><a class="header" href="#workflow">Workflow</a></h2>
+<p>The <code>ProofCoordinator</code> monitors requests for new jobs from the <code>Prover</code>, which are sent when the prover is available. Upon receiving a new job, the Prover generates the proof, after which the <code>Prover</code> sends the proof back to the <code>ProofCoordinator</code>.</p>
+<pre class="mermaid">sequenceDiagram
+    participant zkVM
+    participant Prover
+    participant ProofCoordinator
+    Prover-&gt;&gt;+ProofCoordinator: ProofData::Request
+    ProofCoordinator--&gt;&gt;-Prover: ProofData::Response(batch_number, ProverInputs)
+    Prover-&gt;&gt;+zkVM: Prove(ProverInputs)
+    zkVM--&gt;&gt;-Prover: Creates zkProof
+    Prover-&gt;&gt;+ProofCoordinator: ProofData::Submit(batch_number, zkProof)
+    ProofCoordinator--&gt;&gt;-Prover: ProofData::SubmitAck(batch_number)
+</pre>
+<h2 id="how"><a class="header" href="#how">How</a></h2>
+<p><strong>Dependencies:</strong></p>
+<ul>
+<li><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a>
+<ol>
+<li><code>curl -L https://risczero.com/install | bash</code></li>
+<li><code>rzup install cargo-risczero 2.3.1</code></li>
+</ol>
+</li>
+<li><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a>
+<ol>
+<li><code>curl -L https://sp1up.succinct.xyz | bash</code></li>
+<li><code>sp1up --version 5.0.8</code></li>
+</ol>
+</li>
+<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">SOLC</a></li>
+</ul>
+<p>After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.</p>
+<h3 id="l1-block-proving"><a class="header" href="#l1-block-proving">L1 block proving</a></h3>
+<p>ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet blocks. An example binary was created for this purpose in <code>crates/l2/prover/bench</code>. Refer to its README for usage.</p>
+<h3 id="dev-mode"><a class="header" href="#dev-mode">Dev Mode</a></h3>
+<p>To run the blockchain (<code>proposer</code>) and prover in conjunction, start the <code>Prover</code>, use the following command:</p>
+<pre><code class="language-sh">make init-prover T="prover_type (risc0,sp1) G=true"
+</code></pre>
+<h4 id="run-the-whole-system-with-the-prover---in-one-machine"><a class="header" href="#run-the-whole-system-with-the-prover---in-one-machine">Run the whole system with the prover - In one Machine</a></h4>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>Used for development purposes.</p>
+</div>
+<ol>
+<li><code>cd crates/l2</code></li>
+<li><code>make rm-db-l2 &amp;&amp; make down</code>
+<ul>
+<li>It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.data_dir.html">data_dir</a>.</li>
+</ul>
+</li>
+<li><code>make init</code>
+<ul>
+<li>Make sure you have the <code>solc</code> compiler installed in your system.</li>
+<li>Init the L1 in a docker container on port <code>8545</code>.</li>
+<li>Deploy the needed contracts for the L2 on the L1.</li>
+<li>Start the L2 locally on port <code>1729</code>.</li>
+</ul>
+</li>
+<li>In a new terminal → <code>make init-prover T="(sp1,risc0)"</code>.</li>
+</ol>
+<p>After this initialization we should have the prover running in <code>dev_mode</code> → No real proofs.</p>
+<h3 id="gpu-mode"><a class="header" href="#gpu-mode">GPU mode</a></h3>
+<p><strong>Steps for Ubuntu 22.04 with Nvidia A4000:</strong></p>
+<ol>
+<li>Install <code>docker</code> → using the <a href="https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository">Ubuntu apt repository</a>
+<ul>
+<li>Add the <code>user</code> you are using to the <code>docker</code> group → command: <code>sudo usermod -aG docker $USER</code>. (needs reboot, doing it after CUDA installation)</li>
+<li><code>id -nG</code> after reboot to check if the user is in the group.</li>
+</ul>
+</li>
+<li>Install <a href="https://www.rust-lang.org/tools/install">Rust</a></li>
+<li>Install <a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></li>
+<li>Install <a href="https://developer.nvidia.com/cuda-downloads?target_os=Linux&amp;target_arch=x86_64&amp;Distribution=Ubuntu&amp;target_version=22.04&amp;target_type=deb_local">CUDA for Ubuntu</a>
+<ul>
+<li>Install <code>CUDA Toolkit Installer</code> first. Then the <code>nvidia-open</code> drivers.</li>
+</ul>
+</li>
+<li>Reboot</li>
+<li>Run the following commands:</li>
+</ol>
+<pre><code class="language-sh">sudo apt-get install libssl-dev pkg-config libclang-dev clang
+echo 'export PATH=/usr/local/cuda/bin:$PATH' &gt;&gt; ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' &gt;&gt; ~/.bashrc
+</code></pre>
+<h4 id="run-the-whole-system-with-a-gpu-prover"><a class="header" href="#run-the-whole-system-with-a-gpu-prover">Run the whole system with a GPU Prover</a></h4>
+<p>Two servers are required: one for the <code>Prover</code> and another for the <code>sequencer</code>. If you run both components on the same machine, the <code>Prover</code> may consume all available resources, leading to potential stuttering or performance issues for the <code>sequencer</code>/<code>node</code>.</p>
+<ul>
+<li>The number 1 simbolizes a machine with GPU for the <code>Prover</code>.</li>
+<li>The number 2 simbolizes a machine for the <code>sequencer</code>/L2 node itself.</li>
+</ul>
+<ol>
+<li><code>Prover</code>/<code>zkvm</code> → prover with gpu, make sure to have all the required dependencies described at the beginning of <a href="#gpu-mode">Gpu Mode</a> section.
+<ol>
+<li><code>cd ethrex/crates/l2</code></li>
+<li>You can set the following environment variables to configure the prover:
+<ul>
+<li>PROVER_CLIENT_PROVER_SERVER_ENDPOINT: The address of the server where the client will request the proofs from</li>
+<li>PROVER_CLIENT_PROVING_TIME_MS: The amount of time to wait before requesting new data to prove</li>
+</ul>
+</li>
+</ol>
+</li>
+</ol>
+<ul>
+<li><code>Finally</code>, to start the <code>Prover</code>/<code>zkvm</code>, run:
+<ul>
+<li><code>make init-prover T=(sp1,risc0) G=true</code></li>
+</ul>
+</li>
+</ul>
+<ol start="2">
+<li><code>ProofCoordinator</code>/<code>sequencer</code> → this server just needs rust installed.
+<ol>
+<li>
+<p><code>cd ethrex/crates/l2</code></p>
+</li>
+<li>
+<p>Create a <code>.env</code> file with the following content:</p>
+<pre><code class="language-env">// Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+ETHREX_DEPLOYER_L1_PRIVATE_KEY=&lt;private_key&gt;
+// Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=&lt;private_key&gt;
+// Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+ETHREX_COMMITTER_L1_PRIVATE_KEY=&lt;private_key&gt;
+// Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=&lt;private_key&gt;
+// Used to handle TCP communication with other servers from any network interface.
+ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
+// Set to true to randomize the salt.
+ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+// Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+// Check the if the contract is present on your preferred network.
+ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=&lt;address&gt;
+// It can be deployed. Check the if the contract is present on your preferred network.
+ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=&lt;address&gt;
+// Set to any L1 endpoint.
+ETHREX_ETH_RPC_URL=&lt;url&gt;
+</code></pre>
+</li>
+<li>
+<p><code>source .env</code></p>
+</li>
+</ol>
+</li>
+</ol>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>Make sure to have funds, if you want to perform a quick test <code>0.2[ether]</code> on each account should be enough.</p>
+</div>
+<ul>
+<li>
+<p><code>Finally</code>, to start the <code>proposer</code>/<code>l2 node</code>, run:</p>
+<ul>
+<li><code>make rm-db-l2 &amp;&amp; make down</code></li>
+<li><code>make deploy-l1 &amp;&amp; make init-l2</code> (if running a risc0 prover, see the next step before invoking the L1 contract deployer)</li>
+</ul>
+</li>
+<li>
+<p>If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions <a href="https://github.com/risc0/risc0-ethereum/tree/main/contracts/script">here</a>.</p>
+</li>
+<li>
+<p>For a local L1 running with ethrex, we do the following:</p>
+<ol>
+<li>clone the risc0-ethereum repo</li>
+<li>edit the <code>risc0-ethereum/contracts/deployment.toml</code> file by adding
+<pre><code class="language-toml">[chains.ethrex]
+name = "Ethrex local devnet"
+id = 9
+</code></pre>
+</li>
+<li>export env. variables (we are using an ethrex's rich L1 account)
+<pre><code class="language-bash">export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export CHAIN_KEY="ethrex"
+export RPC_URL="http://localhost:8545"
+
+export ETHERSCAN_URL="dummy"
+export ETHERSCAN_API_KEY="dummy"
+</code></pre>
+the last two variables need to be defined with some value even if not used, else the deployment script fails.</li>
+<li>cd into <code>risc0-ethereum/</code></li>
+<li>run the deployment script
+<pre><code class="language-bash">bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
+</code></pre>
+</li>
+<li>if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the <code>ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=&lt;address&gt;</code> env. variable.
+if you get an error like <code>risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)</code>, try to update the git submodules (foundry dependencies) with <code>git submodule update --init --recursive</code>.</li>
+</ol>
+</li>
+</ul>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Configuration is done through environment variables or CLI flags.
+You can see a list of available flags by passing <code>--help</code> to the CLI.</p>
+<p>The following environment variables are available to configure the <code>Prover</code>:</p>
+<ul>
+<li><code>CONFIGS_PATH</code>: The path where the <code>PROVER_CLIENT_CONFIG_FILE</code> is located at.</li>
+<li><code>PROVER_CLIENT_CONFIG_FILE</code>: The <code>.toml</code> that contains the config for the <code>Prover</code>.</li>
+<li><code>PROVER_ENV_FILE</code>: The name of the <code>.env</code> that has the parsed <code>.toml</code> configuration.</li>
+<li><code>PROVER_CLIENT_PROVER_SERVER_ENDPOINT</code>: Prover Server's Endpoint used to connect the Client to the Server.</li>
+</ul>
+<p>The following environment variables are used by the ProverServer:</p>
+<ul>
+<li><code>PROVER_SERVER_LISTEN_IP</code>: IP used to start the Server.</li>
+<li><code>PROVER_SERVER_LISTEN_PORT</code>: Port used to start the Server.</li>
+<li><code>PROVER_SERVER_VERIFIER_ADDRESS</code>: The address of the account that sends the zkProofs on-chain and interacts with the <code>OnChainProposer</code> <code>verify()</code> function.</li>
+<li><code>PROVER_SERVER_VERIFIER_PRIVATE_KEY</code>: The private key of the account that sends the zkProofs on-chain and interacts with the <code>OnChainProposer</code> <code>verify()</code> function.</li>
+</ul>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The <code>PROVER_SERVER_VERIFIER</code> account must differ from the <code>COMMITTER_L1</code> account.</p>
+</div>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<p>The prover's sole purpose is to generate a block (or batch of blocks) execution proof. For this, ethrex-prover implements a blocks execution program and generates a proof of it using different RISC-V zkVMs (SP1, Risc0).</p>
+<p>The prover runs a process that polls another for new jobs. The job must provide the program inputs. A proof of the program's execution with the provided inputs is generated by the prover and sent back.</p>
+<h3 id="program-inputs"><a class="header" href="#program-inputs">Program inputs</a></h3>
+<p>The inputs for the blocks execution program (also called program inputs or prover inputs) are:</p>
+<ul>
+<li>the blocks to prove (header and body)</li>
+<li>the first block's parent header</li>
+<li>an execution witness</li>
+<li>the blocks' deposits hash</li>
+<li>the blocks' withdrawals Merkle root</li>
+<li>the blocks' state diff hash</li>
+</ul>
+<p>The last three inputs are L2 specific.</p>
+<p>These inputs are required for proof generation, but not all of them are committed as public inputs, which are needed for proof verification. The proof's public inputs (also called program outputs) will be:</p>
+<ul>
+<li>the initial state hash (from the first block's parent header)</li>
+<li>the final state hash (from the last block's header)</li>
+<li>the blocks' deposits hash</li>
+<li>the blocks' withdrawals Merkle root</li>
+<li>the blocks' state diff hash</li>
+</ul>
+<h4 id="execution-witness"><a class="header" href="#execution-witness">Execution witness</a></h4>
+<p>The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.</p>
+<p>An execution witness (represented by the <code>ProverDB</code> type) contains:</p>
+<ol>
+<li>all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.</li>
+<li>Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.</li>
+</ol>
+<p>An execution witness is created from a prior execution of the blocks. Before proving, we need to:</p>
+<ol>
+<li>execute the blocks (also called "pre-execution").</li>
+<li>log every initial state value accessed or updated during this execution.</li>
+<li>store each logged value in an in-memory key-value database (<code>ProverDB</code>, implemented just using hash maps).</li>
+<li>retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.</li>
+</ol>
+<p>Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections <a href="#step-1-initial-state-validation">initial state validation</a> and <a href="#step-3-final-state-validation">final state validation</a> we explain what are pruned tries and in which case they get restructured.</p>
+<p>If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:</p>
+<p><strong>Case 1</strong></p>
+<p><img src="../../img/execw_case1.png" alt="Image showing restructuration for case 1" /></p>
+<p>Here, only <strong>leaf 1</strong> is part of the execution witness, so we lack the proof (and thus the node data) for <strong>leaf 2</strong>. After removing <strong>leaf 1</strong>, <strong>branch 1</strong> becomes redundant. During trie restructuring, it's replaced by <strong>leaf 3</strong>, whose path is the path of <strong>leaf 2</strong> concatenated with a prefix nibble (<code>k</code>) representing the choice taken at the original <strong>branch 1</strong>, and keeping <strong>leaf 2</strong>'s value.</p>
+<pre><code class="language-text">branch1 = {c_1, c_2, ..., c_k, ..., c_16} # Only c_k = hash(leaf2) is non-empty
+leaf2 = {value, path}
+leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
+</code></pre>
+<p>Without <strong>leaf 2</strong>'s data, we cannot construct <strong>leaf 3</strong>. The solution is to fetch the <em>final</em> state proof for the key of <strong>leaf 2</strong>. This yields an exclusion proof containing <strong>leaf 3</strong>. By removing the prefix nibble <code>k</code>, we can reconstruct the original path and value of <strong>leaf 2</strong>. This process might need to be repeated if similar restructuring occurred at higher levels of the trie.</p>
+<p><strong>Case 2</strong></p>
+<p><img src="../../img/execw_case2.png" alt="Image showing restructuration for case 2" /></p>
+<p>In this case, restructuring requires information about <strong>branch/ext 2</strong> (which could be a branch or extension node), but this node might not be in the witness. Checking the final <strong>extension</strong> node might seem sufficient to deduce <strong>branch/ext 2</strong> in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final <strong>extension</strong> node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing <strong>branch/ext 2</strong> node.</p>
+<p>The solution is to fetch the missing node directly using a <code>debug</code> JSON-RPC method, like <code>debug_dbGet</code> (or <code>debug_accountRange</code> and <code>debug_storageRangeAt</code> if using a Geth node).</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>These problems arise when creating the execution witness solely from state proofs fetched via standard JSON-RPC. In the L2 context, where we control the sequencer, we could develop a protocol to easily retrieve all necessary data more directly. However, the problems remain relevant when proving L1 blocks (e.g., for testing/benchmarking).</p>
+</div>
+<h3 id="blocks-execution-program"><a class="header" href="#blocks-execution-program">Blocks execution program</a></h3>
+<p>The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic blocks execution.</p>
+<p>The following sections outline the steps taken by the execution program.</p>
+<h4 id="prelude-1-state-trie-basics"><a class="header" href="#prelude-1-state-trie-basics">Prelude 1: state trie basics</a></h4>
+<p>We recommend learning about Merkle Patricia Tries (MPTs) to better understand this section.</p>
+<p>Each executed block transitions the Ethereum state from an initial state to a final state. State values are stored in MPTs:</p>
+<ol>
+<li>Each account has a Storage Trie containing its storage values.</li>
+<li>The World State Trie contains all account information, including each account's storage root hash (linking storage tries to the world trie).</li>
+</ol>
+<p>Hashing the root node of the world state trie generates a unique identifier for a particular Ethereum state, known as the "state hash".</p>
+<p>There are two kinds of MPT proofs:</p>
+<ol>
+<li>Inclusion proofs: Prove that <code>key: value</code> is a valid entry in the MPT with root hash <code>h</code>.</li>
+<li>Exclusion proofs: Prove that <code>key</code> does not exist in the MPT with root hash <code>h</code>.
+These proofs allow verifying that a value is included (or its key doesn't exist) in a specific state.</li>
+</ol>
+<h4 id="prelude-2-deposits-withdrawals-and-state-diffs"><a class="header" href="#prelude-2-deposits-withdrawals-and-state-diffs">Prelude 2: deposits, withdrawals and state diffs</a></h4>
+<p>These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.</p>
+<p>For more details, refer to <a href="../../overview.html">Overview</a>, <a href="../withdrawals.html">Withdrawals</a>, and <a href="../state_diffs.html">State diffs</a>.</p>
+<h4 id="step-1-initial-state-validation"><a class="header" href="#step-1-initial-state-validation">Step 1: initial state validation</a></h4>
+<p>The program validates the <code>ProverDB</code> by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the <code>verify_db()</code> function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.</p>
+<p>Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.</p>
+<h4 id="step-2-blocks-execution"><a class="header" href="#step-2-blocks-execution">Step 2: blocks execution</a></h4>
+<p>After validating the initial state, the program executes the blocks. This leverages the existing ethrex execution logic used by the L2 client itself.</p>
+<h4 id="step-3-final-state-validation"><a class="header" href="#step-3-final-state-validation">Step 3: final state validation</a></h4>
+<p>During execution, state values are updated (modified, created, or removed). After execution, the program calculates the final state by applying these state updates to the initial pruned tries.</p>
+<p>Applying the updates results in a new world state root node for the pruned tries. Hashing this node yields the calculated final state hash. The program then verifies that this calculated hash matches the expected final state hash (from the last block header), thus validating the final state.</p>
+<p>As mentioned earlier, removing values can sometimes require information not present in the initial witness to correctly restructure the pruned tries. The <a href="#execution-witness">Execution witness</a> section details this problem and its solution.</p>
+<h4 id="step-4-deposit-hash-calculation"><a class="header" href="#step-4-deposit-hash-calculation">Step 4: deposit hash calculation</a></h4>
+<p>After execution and final state validation, the program calculates a hash encompassing all deposits made within the blocks (extracting deposit info from <code>PrivilegedL2Transaction</code> type transactions). This hash is committed as a public input, required for verification on the L1 bridge contract.</p>
+<h4 id="step-5-withdrawals-merkle-root-calculation"><a class="header" href="#step-5-withdrawals-merkle-root-calculation">Step 5: withdrawals Merkle root calculation</a></h4>
+<p>Similarly, the program constructs a binary Merkle tree of all withdrawals initiated in the blocks and calculates its root hash. This hash is also committed as a public input. Later, L1 accounts can claim their withdrawals by providing a Merkle proof of inclusion that validates against this root hash on the L1 bridge contract.</p>
+<h4 id="step-6-state-diff-calculation-and-commitment"><a class="header" href="#step-6-state-diff-calculation-and-commitment">Step 6: state diff calculation and commitment</a></h4>
+<p>Finally, the program calculates the state diffs (changes between initial and final state) intended for publication to L1 as blob data. It creates a commitment to this data (a Merkle root hash), which is committed as a public input. Using proof of equivalence logic within the L1 bridge contract, this Merkle commitment can be verified against the KZG commitment of the corresponding blob data.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../l2/fundamentals/components/sequencer.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../l2/fundamentals/components/aligned_mode.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../l2/fundamentals/components/sequencer.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../l2/fundamentals/components/aligned_mode.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../../elasticlunr.min.js"></script>
+        <script src="../../../mark.min.js"></script>
+        <script src="../../../searcher.js"></script>
+
+        <script src="../../../clipboard.min.js"></script>
+        <script src="../../../highlight.js"></script>
+        <script src="../../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../../mermaid.min.js"></script>
+        <script src="../../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>
