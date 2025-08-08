@@ -53,13 +53,24 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (NodeHash, NodeRLP);
 
+/// Tag for [`Node::Leaf`]
 const TAG_LEAF: u8 = 0;
+/// Tag for [`Node::Extension`]
 const TAG_EXTENSION: u8 = 1;
+/// Tag for [`Node::Branch`]
 const TAG_BRANCH: u8 = 2;
 
+/// Tag for [`SerializedNodeRef::Hash`]
 const REF_HASH: u8 = 0;
+/// Tag for [`SerializedNodeRef::Offset`]
 const REF_NODE: u8 = 1;
 
+/// Tag for [`NodeHash::Hashed`]
+const TAG_HASHED: u8 = 0;
+/// Tag for [`NodeHash::Inline`]
+const TAG_INLINE: u8 = 1;
+
+/// Represents a node reference in the serialized trie.
 enum SerializedNodeRef {
     /// Node hash
     /// TODO: This is not supported in the MVP version. We only serialize empty hashes.
@@ -74,13 +85,13 @@ enum SerializedNodeRef {
 /// before their parent nodes. The root node is serialized last.
 ///
 /// Node Types:
-/// - [LeafNode]: `[TAG_LEAF(0x00), nibbles_len(4 bytes), nibbles..., value_len(4 bytes), value...]`
-/// - [ExtensionNode]: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
-/// - [BranchNode]: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
+/// - [`LeafNode`]: `[TAG_LEAF(0x00), nibbles_len(4 bytes), nibbles..., value_len(4 bytes), value...]`
+/// - [`ExtensionNode`]: `[TAG_EXTENSION(0x01), prefix_len(4 bytes), prefix..., child_ref]`
+/// - [`BranchNode`]: `[TAG_BRANCH(0x02), child_ref_0, ..., child_ref_15, value_len(4 bytes), value...]`
 ///
 /// child_ref:
-/// - REF_HASH - Not supported in the MVP version. We only serialize empty hashes.
-/// - [REF_NODE, offset(4 bytes)] - If the child is a node, it will be serialized and the offset will be written in the parent node
+/// - `REF_HASH` - Not supported in the MVP version. We only serialize empty hashes.
+/// - `[REF_NODE, offset(4 bytes)]` - If the child is a node, it will be serialized and the offset will be written in the parent node
 ///
 /// Buffer structure: `[serialized_nodes..., root_offset(4 bytes)]`
 struct MPTSerializer {
@@ -101,7 +112,7 @@ impl MPTSerializer {
 
     /// Serializes an entire trie starting from the root node.
     pub fn serialize_tree(mut self, root: &Node) -> Result<Vec<u8>, TrieError> {
-        // Serialize the root node and all its children
+        // Serialize recursively the root node and all its children
         let root_offset = self.serialize_node(root)?;
         self.root_offset = Some(root_offset);
 
@@ -122,7 +133,7 @@ impl MPTSerializer {
     }
 
     /// Serializes a leaf node.
-    /// Format: [TAG_LEAF, nibbles_len, nibbles, value_len, value]
+    /// Format: `[TAG_LEAF, nibbles_len, nibbles, value_len, value]`
     fn serialize_leaf(&mut self, leaf: &LeafNode) -> Result<usize, TrieError> {
         // Remember current position - this will be returned as the node's offset
         let offset = self.buffer.len();
@@ -139,9 +150,9 @@ impl MPTSerializer {
     }
 
     /// Serializes an extension node.
-    /// Format: [TAG_EXTENSION, prefix_len, prefix, child_ref]
-    /// If child is a Node, it will be serialized first and then the offset of the child will be written
-    /// in the Extension node. With this information, you know where is child is in the buffer.
+    /// Format: `[TAG_EXTENSION, prefix_len, prefix, child_ref]`
+    /// If child is a [NodeRef::Node], it will be serialized first and then the offset of the child will be written
+    /// in the Extension node. With this information, you know where the child is in the buffer.
     fn serialize_extension(&mut self, extension: &ExtensionNode) -> Result<usize, TrieError> {
         // Process the child first (post-order traversal)
         let child_ref = self.process_node_ref(&extension.child);
@@ -159,9 +170,9 @@ impl MPTSerializer {
     }
 
     /// Serializes a branch node.
-    /// Format: [TAG_BRANCH, child_ref_0, ..., child_ref_15, value_len, value]
-    /// If child is a Node, it will be serialized first and then the offset of the child will be written
-    /// in the Branch node. With this information, you know where is child is in the buffer.
+    /// Format: `[TAG_BRANCH, child_ref_0, ..., child_ref_15, value_len, value]`
+    /// If child is a [NodeRef::Node], it will be serialized first and then the offset of the child will be written
+    /// in the Branch node. With this information, you know where the child is in the buffer.
     fn serialize_branch(&mut self, branch: &BranchNode) -> Result<usize, TrieError> {
         // Process all 16 children first (post-order traversal)
         let mut children_refs = Vec::with_capacity(16);
@@ -182,12 +193,12 @@ impl MPTSerializer {
         Ok(offset)
     }
 
-    /// Processes a NodeRef and returns a SerializedNodeRef.
+    /// Processes a [NodeRef] and returns a [SerializedNodeRef].
     ///
-    /// - If the NodeRef contains an embedded node (NodeRef::Node), it serializes
+    /// - If the NodeRef contains an embedded node ([NodeRef::Node]), it serializes
     ///   the node recursively and returns an offset reference.
     ///
-    /// NOTE: the NodeRef contains a hash (NodeRef::Hash), it checks if it's empty/default.
+    /// NOTE: If the [NodeRef] contains a hash ([NodeRef::Hash]), it checks if it's empty/default.
     /// Empty hashes are serialized, but non-empty hashes cause a panic since they
     /// require database access to resolve (not supported in MVP).
     /// We need to serialize empty hashes since the default [NodeRef::default()] is an empty hash.
@@ -214,8 +225,8 @@ impl MPTSerializer {
     /// Writes a node reference to the buffer.
     ///
     /// Format depends on reference type:
-    /// - Hash: [REF_HASH, hash_type, hash_data]
-    /// - Offset: [REF_NODE, offset(4 bytes)]
+    /// - Hash: `[REF_HASH, hash_type, hash_data]`
+    /// - Offset: `[REF_NODE, offset(4 bytes)]`
     fn write_node_ref(&mut self, node_ref: SerializedNodeRef) {
         match node_ref {
             SerializedNodeRef::Hash(hash) => {
@@ -232,16 +243,16 @@ impl MPTSerializer {
     /// Writes a NodeHash to the buffer.
     ///
     /// Format depends on hash type:
-    /// - Hashed: [0x00, hash(32 bytes)]
-    /// - Inline: [0x01, data(31 bytes), length(1 byte)]
+    /// - Hashed: `[0x00, hash(32 bytes)]`
+    /// - Inline: `[0x01, data(31 bytes), length(1 byte)]`
     fn write_node_hash(&mut self, hash: NodeHash) {
         match hash {
             NodeHash::Hashed(hash) => {
-                self.buffer.push(0);
+                self.buffer.push(TAG_HASHED);
                 self.buffer.extend_from_slice(&hash.to_fixed_bytes());
             }
             NodeHash::Inline((data, len)) => {
-                self.buffer.push(1);
+                self.buffer.push(TAG_INLINE);
                 self.buffer.extend_from_slice(&data);
                 self.buffer.push(len);
             }
@@ -249,7 +260,7 @@ impl MPTSerializer {
     }
 
     /// Writes a byte array with its length prefix.
-    /// Format: [length(4 bytes), data...]
+    /// Format: `[length(4 bytes), data...]`
     fn write_bytes_with_len(&mut self, bytes: &[u8]) {
         let len = bytes.len() as u32;
         self.buffer.extend_from_slice(&len.to_le_bytes());
@@ -259,7 +270,7 @@ impl MPTSerializer {
 
 /// Deserializes a Merkle Patricia Trie from a byte buffer.
 ///
-/// The deserializer reads the binary format produced by `MPTSerializer`.
+/// The deserializer reads the binary format produced by [`MPTSerializer`].
 /// It starts by reading the root offset from the end of the buffer, then
 /// deserializes nodes on-demand by following offset references.
 pub struct MPTDeserializer<'a> {
@@ -318,7 +329,7 @@ impl<'a> MPTDeserializer<'a> {
     }
 
     /// Decodes a leaf node.
-    /// Format: [nibbles_len, nibbles, value_len, value]
+    /// Format: `[nibbles_len, nibbles, value_len, value]`
     fn decode_leaf(&mut self) -> Result<Node, TrieError> {
         let compact_nibbles = self.read_bytes_with_len()?;
         let partial = Nibbles::decode_compact(&compact_nibbles);
@@ -328,7 +339,7 @@ impl<'a> MPTDeserializer<'a> {
     }
 
     /// Decodes an extension node.
-    /// Format: [prefix_len, prefix, child_ref]
+    /// Format: `[prefix_len, prefix, child_ref]`
     fn decode_extension(&mut self) -> Result<Node, TrieError> {
         let compact_prefix = self.read_bytes_with_len()?;
         let prefix = Nibbles::decode_compact(&compact_prefix);
@@ -338,7 +349,7 @@ impl<'a> MPTDeserializer<'a> {
     }
 
     /// Decodes a branch node.
-    /// Format: [child_ref_0, ..., child_ref_15, value_len, value]
+    /// Format: `[child_ref_0, ..., child_ref_15, value_len, value]`
     fn decode_branch(&mut self) -> Result<Node, TrieError> {
         let mut children_refs: [NodeRef; 16] = Default::default();
         for child in children_refs.iter_mut() {
@@ -386,20 +397,20 @@ impl<'a> MPTDeserializer<'a> {
         }
     }
 
-    /// Reads a NodeHash from the buffer.
+    /// Reads a [`NodeHash`] from the buffer.
     ///
     /// Format depends on hash type:
-    /// - Type 0 (Hashed): [hash(32 bytes)]
-    /// - Type 1 (Inline): [data(31 bytes), length(1 byte)]
+    /// - Type 0 (Hashed): `[hash(32 bytes)]`
+    /// - Type 1 (Inline): `[data(31 bytes), length(1 byte)]`
     fn read_node_hash(&mut self) -> Result<NodeHash, TrieError> {
         let tag = self.read_byte().unwrap();
         match tag {
-            0 => {
+            TAG_HASHED => {
                 let mut h256 = [0u8; 32];
                 self.read_exact(&mut h256)?;
                 Ok(NodeHash::Hashed(H256::from_slice(&h256)))
             }
-            1 => {
+            TAG_INLINE => {
                 let mut data = [0u8; 31];
                 self.read_exact(&mut data)?;
                 let len = self.read_byte().unwrap();
@@ -438,7 +449,7 @@ impl<'a> MPTDeserializer<'a> {
     }
 
     /// Reads a byte array with length prefix.
-    /// Format: [length(4 bytes LE), data...]
+    /// Format: `[length(4 bytes), data...]`
     fn read_bytes_with_len(&mut self) -> Result<Vec<u8>, TrieError> {
         // Read length prefix
         let mut len_bytes = [0u8; 4];
