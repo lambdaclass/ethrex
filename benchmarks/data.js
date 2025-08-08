@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754687133385,
+  "lastUpdate": 1754688887309,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8245,6 +8245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160352077030,
             "range": "± 281609776",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "895de3ec8cedefc4383737f411b64e1f9291fab1",
+          "message": "fix(l2): compile contracts on releases (#4002)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWithout compiling contracts, `ethrex l2 --dev` doesn't work.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd `COMPILE_CONTRACTS` env var to compilation. Also default `.env` file\nto cwd instead of cargo manifest path\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-08T20:43:16Z",
+          "tree_id": "ddfe5b223c46ef02342ff837e2771c3ffb0ff602",
+          "url": "https://github.com/lambdaclass/ethrex/commit/895de3ec8cedefc4383737f411b64e1f9291fab1"
+        },
+        "date": 1754688872686,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161048062305,
+            "range": "± 460657933",
             "unit": "ns/iter"
           }
         ]
