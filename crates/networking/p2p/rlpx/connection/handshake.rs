@@ -64,13 +64,13 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator { context, node, .. }) => {
+        InnerState::Initiator(Initiator { mut context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
-                    // context.table.lock().await.replace_peer(node.node_id());
+                    context.table.remove_peer(&node.node_id()).await;
                     return Err(error)?;
                 }
             };
@@ -133,7 +133,7 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            table: Arc::new(Mutex::new(context.table.clone())),
+            table: context.table.clone(),
             backend_channel: None,
             backend_table: HashMap::new(),
             _inbound: inbound,

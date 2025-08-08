@@ -32,7 +32,11 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::{SendMessageError, current_unix_time},
+    utils::{
+        SendMessageError, current_unix_time, get_account_state_snapshot_file,
+        get_account_state_snapshots_dir, get_account_storages_snapshot_file,
+        get_account_storages_snapshots_dir,
+    },
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -527,7 +531,7 @@ impl PeerHandler {
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
-        // ret.sort_by(|x, y| x.number.cmp(&y.number));
+        ret.sort_by(|x, y| x.number.cmp(&y.number));
         // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
@@ -821,6 +825,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
+        // TODO: handle this error
+        let account_state_snapshots_dir = get_account_state_snapshots_dir()
+            .expect("Failed to get account_state_snapshots directory");
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -832,21 +839,30 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
-                    .expect("Failed")
-                {
-                    std::fs::create_dir_all(
-                        "/home/admin/.local/share/ethrex/account_state_snapshots",
-                    )
-                    .expect("Failed to create accounts_state_snapshot dir");
+                if !std::fs::exists(&account_state_snapshots_dir).expect("Failed") {
+                    std::fs::create_dir_all(&account_state_snapshots_dir)
+                        .expect("Failed to create accounts_state_snapshot dir");
                 }
 
+                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.clone();
                 let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                 tokio::task::spawn(async move {
-                    let path = format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}");
+                    let path = get_account_state_snapshot_file(
+                        account_state_snapshots_dir_cloned,
+                        chunk_file,
+                    );
                     // TODO: check the error type and handle it properly
-                    let result = std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| AccountDumpError{path, contents: account_state_chunk});
-                    dump_account_result_sender_cloned.send(result).await.unwrap();
+                    let result =
+                        std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| {
+                            AccountDumpError {
+                                path,
+                                contents: account_state_chunk,
+                            }
+                        });
+                    dump_account_result_sender_cloned
+                        .send(result)
+                        .await
+                        .unwrap();
                 })
                 .await
                 .unwrap();
@@ -1107,18 +1123,19 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
-            if !std::fs::exists("/home/admin/.local/share/ethrex/account_state_snapshots")
-                .expect("Failed")
-            {
-                std::fs::create_dir_all("/home/admin/.local/share/ethrex/account_state_snapshots")
+            if !std::fs::exists(&account_state_snapshots_dir).expect("Failed") {
+                std::fs::create_dir_all(&account_state_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
             }
 
             tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_state_snapshots/account_state_chunk.rlp.{chunk_file}"), account_state_chunk).unwrap_or_else(|_| panic!("Failed to write account_state_snapshot chunk {chunk_file}"));
-                })
-                .await
-                .unwrap();
+                let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
+                std::fs::write(path, account_state_chunk).unwrap_or_else(|_| {
+                    panic!("Failed to write account_state_snapshot chunk {chunk_file}")
+                });
+            })
+            .await
+            .unwrap();
         }
 
         *METRICS.accounts_downloads_tasks_queued.lock().await =
@@ -1494,6 +1511,7 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
                 let current_account_hashes = account_storage_roots
@@ -1509,17 +1527,19 @@ impl PeerHandler {
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
-                if !std::fs::exists("/home/admin/.local/share/ethrex/account_storages_snapshots")
-                    .expect("Failed")
-                {
-                    std::fs::create_dir_all(
-                        "/home/admin/.local/share/ethrex/account_storages_snapshots",
-                    )
-                    .expect("Failed to create accounts_state_snapshot dir");
+                if !std::fs::exists(&account_storages_snapshots_dir).expect("Failed") {
+                    std::fs::create_dir_all(&account_storages_snapshots_dir)
+                        .expect("Failed to create accounts_state_snapshot dir");
                 }
-
+                let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
                 tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
+                    let path = get_account_storages_snapshot_file(
+                        account_storages_snapshots_dir_cloned,
+                        chunk_index,
+                    );
+                    std::fs::write(path, snapshot).unwrap_or_else(|_| {
+                        panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
+                    });
                 })
                 .await
                 .expect("");
@@ -1922,20 +1942,22 @@ impl PeerHandler {
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
-            if !std::fs::exists("/home/admin/.local/share/ethrex/account_storages_snapshots")
-                .expect("Failed")
-            {
-                std::fs::create_dir_all(
-                    "/home/admin/.local/share/ethrex/account_storages_snapshots",
-                )
-                .expect("Failed to create accounts_state_snapshot dir");
+            if !std::fs::exists(&account_storages_snapshots_dir).expect("Failed") {
+                std::fs::create_dir_all(&account_storages_snapshots_dir)
+                    .expect("Failed to create accounts_state_snapshot dir");
             }
-
+            let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
             tokio::task::spawn(async move {
-                    std::fs::write(format!("/home/admin/.local/share/ethrex/account_storages_snapshots/account_storages_chunk.rlp.{chunk_index}"), snapshot).unwrap_or_else(|_| panic!("Failed to write account_storages_snapshot chunk {chunk_index}"));
-                })
-                .await
-                .expect("");
+                let path = get_account_storages_snapshot_file(
+                    account_storages_snapshots_dir_cloned,
+                    chunk_index,
+                );
+                std::fs::write(path, snapshot).unwrap_or_else(|_| {
+                    panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
+                });
+            })
+            .await
+            .expect("");
         }
 
         *METRICS.storages_downloads_tasks_queued.lock().await =

@@ -132,6 +132,11 @@ impl Kademlia {
         self.peers.lock().await.insert(new_peer_id, new_peer);
     }
 
+    pub async fn remove_peer(&mut self, peer_id: &H256) {
+        debug!("Removing peer with ID: {:?}", peer_id);
+        self.peers.lock().await.remove(peer_id);
+    }
+
     pub async fn get_peer_channels(
         &self,
         _capabilities: &[Capability],

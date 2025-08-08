@@ -102,3 +102,27 @@ pub enum SendMessageError {
     #[error("RLP decode error")]
     RLPDecodeError(RLPDecodeError),
 }
+
+pub fn get_account_storages_snapshots_dir() -> Option<String> {
+    let home_dir = std::env::home_dir()?;
+    let home_dir = home_dir.to_str()?;
+    let account_storages_snapshots_dir =
+        format!("{home_dir}/.local/share/ethrex/account_storages_snapshots");
+    Some(account_storages_snapshots_dir)
+}
+
+pub fn get_account_state_snapshots_dir() -> Option<String> {
+    let home_dir = std::env::home_dir()?;
+    let home_dir = home_dir.to_str()?;
+    let account_state_snapshots_dir =
+        format!("{home_dir}/.local/share/ethrex/account_state_snapshots");
+    Some(account_state_snapshots_dir)
+}
+
+pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> String {
+    format!("{directory}/account_state_chunk.rlp.{chunk_index}")
+}
+
+pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -> String {
+    format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
+}
