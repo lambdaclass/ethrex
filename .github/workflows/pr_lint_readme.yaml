@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "cmd/ethrex/**"
-      - "docs/l1/dev-setup-l1.md"
+      - "docs/CLI.md"
       - ".github/workflows/pr_lint_readme.yaml"
 
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
 
 env:
   # Remember to update the triggers whenever this path changes
-  MDFILE_WITH_CLI_HELP: docs/l1/dev-setup-l1.md
+  MDFILE_WITH_CLI_HELP: docs/CLI.md
 
 jobs:
   check-cli-help:

@@ -29,4 +29,4 @@ Once the deposit is made you can verify the balance has increase with:
 rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
 ```
 
-For more information on what you can do with the `CommonBridge` see [Ethrex L2 contracts](../contracts.md).
+For more information on what you can do with the `CommonBridge` see [Ethrex L2 contracts](../fundamentals/contracts.md).

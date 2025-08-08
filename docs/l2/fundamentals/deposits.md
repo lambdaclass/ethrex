@@ -253,7 +253,7 @@ By modifying the address of L1 contracts by adding a constant, we prevent this a
 
 ## Forced Inclusion
 
-Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the network halts until the sequencer processes every expired transaction.
+Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the chain halts until the sequencer processes every expired transaction.
 
 After an extended downtime, the sequencer can catch up by sending batches made solely out of privileged transactions.
 

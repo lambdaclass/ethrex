@@ -1,18 +1,17 @@
-# Quickstart guide
-
-This document covers how the code in the node is organized by looking at different end to end flows. If we start too high level we'll need to start at consensus, and if we start too low level, we'll need to start at the EVM. Let's start somewhere in the middle: importing blocks.
-
 ## Importing blocks
 
 The simplest task a node can do is import blocks offline. We would do so like this:
 
-```bash
-# Build in release mode
-cargo build --release --bin ethrex
+## Prerequisites
 
+This guide assumes you've read the dev [installation guide](../installing.md)
+
+## Import blocks
+
+```bash
 # Execute the import
 # Notice that the .rlp file is stored with Git LFS, it needs to be downloaded before importing
-./target/release/ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
+ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 ```
 
 - The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.

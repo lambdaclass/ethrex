@@ -6,7 +6,7 @@ This document aims to explain how the Lambda ethrex L2 and all its moving parts 
 
 At a high level, the way an L2 works is as follows:
 
-- There is a contract in L1 that tracks the current state of the L2. Anyone who wants to know the current state of the network need only consult this contract.
+- There is a contract in L1 that tracks the current state of the L2. Anyone who wants to know the current state of the chain need only consult this contract.
 - Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a batch of new L2 blocks and publishes it to L1. We will call this the `commit` L1 transaction.
 - For L2 batches to be considered finalized, a zero-knowledge proof attesting to the validity of the batch needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that all blocks in the batch were valid and thus the new state is. We call this the `verification` L1 transaction.
 
@@ -27,7 +27,7 @@ What's usually less clear is how you prove state. Let's say we want to prove a n
 
 In other words, how do you ensure that:
 
-- Every time the EVM **reads** from some storage slot (think an account balance, some contract's bytecode), the value returned matches the actual value present on the previous state of the network.
+- Every time the EVM **reads** from some storage slot (think an account balance, some contract's bytecode), the value returned matches the actual value present on the previous state of the chain.
 
 For this, the VM needs to take as a public input the previous state of the L2, so the prover can show that every storage slot it reads is consistent with it, and the verifier contract on L1 can check that the given public input is the actual previous state it had stored. However, we can't send the entire previous state as public input because it would be too big; this input needs to be sent on the `verification` transaction, and the entire L2 state does not fit on it.
 
@@ -45,13 +45,13 @@ As a final note, to keep the public input a 32 byte value, instead of passing th
 These two ideas will be used extensively throughout the rest of the documentation:
 
 - Whenever we need to add some state as input, we build a merkle tree and use its **root** instead. Whenever we use some part of that state in some way, the prover provides merkle paths to the values involved. Sometimes, if we don't care about efficient inclusion proofs of parts of the state, we just hash the data altogether and use that instead.
-- To keep the batch commitment (i.e. the value attesting to the entire state of the network) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on `commit`, checks their validity and then squashes them into one through hashing.
+- To keep the batch commitment (i.e. the value attesting to the entire state of the chain) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on `commit`, checks their validity and then squashes them into one through hashing.
 
 ## Reconstructing state/Data Availability
 
-While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the network. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the network or some of their funds.
+While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.
 
-This is called the **Data Availability** problem. As discussed before, sending the entire state of the network on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
+This is called the **Data Availability** problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
 
 - For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and recontruct the state.
 
@@ -59,9 +59,9 @@ This is now feasible; if we take 200 bytes as a rough estimate for the size of a
 
 Going a bit further, instead of posting the entire transaction, we could just post which accounts have been modified and their new values (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we only need to record balance updates of two accounts, which requires sending just two `(address, balance)` pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.
 
-This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
+This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the chain.
 
-Detailed documentation on [the state diffs spec](./state_diffs.md).
+Detailed documentation on [the state diffs spec](./fundamentals/state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -114,11 +114,11 @@ In this section we talk a bit about them, first going through the more specific 
 
 ### Deposits
 
-The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./deposits.md).
+The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./fundamentals/deposits.md).
 
 ### Withdrawals
 
-The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./withdrawals.md).
+The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./fundamentals/withdrawals.md).
 
 ## Recap
 
