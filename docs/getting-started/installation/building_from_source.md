@@ -3,9 +3,9 @@
 ## Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install)
-- [Git](https://git-scm.com/downloads) (Only if building the binary with `cargo build`)
+- [Git](https://git-scm.com/downloads)
 
-## Installing using cargo install
+## Installing using `cargo install`
 
 To install the client simply run 
 
@@ -27,7 +27,7 @@ After that, you can verify the program is working by running:
 ethrex --version
 ```
 
-## Building the binary with cargo build
+## Building the binary with `cargo build`
 
 You can download the source code of a release from the [GitHub releases page](https://github.com/lambdaclass/ethrex/releases), or by cloning the repository at that version:
 
