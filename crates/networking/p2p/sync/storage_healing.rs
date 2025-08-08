@@ -406,15 +406,27 @@ async fn ask_peers_for_nodes(
             .1
             .connection
             .cast(CastMessage::BackendRequest(
-                Message::GetTrieNodes(GetTrieNodes {
-                    id: req_id,
-                    root_hash: state_root,
-                    paths: create_node_requests(download_chunk),
-                    bytes: MAX_RESPONSE_BYTES,
-                }),
+                Message::GetTrieNodes(create_get_trie_nodes_request(
+                    req_id,
+                    state_root,
+                    download_chunk,
+                )),
                 self_handler.clone(),
             ))
             .await;
+    }
+}
+
+fn create_get_trie_nodes_request(
+    req_id: u64,
+    state_root: H256,
+    download_chunk: VecDeque<NodeRequest>,
+) -> GetTrieNodes {
+    GetTrieNodes {
+        id: req_id,
+        root_hash: state_root,
+        paths: create_node_requests(download_chunk),
+        bytes: MAX_RESPONSE_BYTES,
     }
 }
 
@@ -424,17 +436,21 @@ fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>>
     for request in node_requests {
         mapped_requests
             .entry(request.acc_path.clone())
-            .or_insert(vec![request.acc_path])
+            .or_insert(vec![])
             .push(request.storage_path);
     }
 
     mapped_requests
-        .into_values()
-        .map(|storage_paths| {
-            storage_paths
-                .into_iter()
-                .map(|path| Bytes::from(path.encode_compact()))
-                .collect()
+        .into_iter()
+        .map(|(acc_path, storage_paths)| {
+            vec![
+                vec![Bytes::from(acc_path.to_bytes())],
+                storage_paths
+                    .into_iter()
+                    .map(|path| Bytes::from(path.encode_compact()))
+                    .collect(),
+            ]
+            .concat()
         })
         .collect()
 }
@@ -565,7 +581,10 @@ pub fn determine_missing_children(
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_storage_trie(
+        H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
+        *EMPTY_TRIE_HASH,
+    )?;
     let trie_state = trie.db();
     match &node {
         Node::Branch(node) => {
@@ -706,4 +725,64 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     }
 
     chosen_peer
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
+
+    use crate::{rlpx::message::RLPxMessage, sync::storage_healing::get_initial_downloads};
+
+    #[test]
+    fn basic_test() {
+        let acc_path: Nibbles = Nibbles::from_bytes(
+            &hex::decode("0687Da33b5cd62B5B6d5b2d0933F8D2510961D43").expect("Should open"),
+        );
+        let gtn = create_get_trie_nodes_request(
+            0,
+            *EMPTY_TRIE_HASH,
+            get_initial_downloads(&vec![acc_path]),
+        );
+        println!("{:?}", gtn);
+
+        let mut buf: Vec<u8> = Vec::new();
+        println!("{:?}", gtn.encode(&mut buf));
+        println!("{:?}", buf);
+
+        let gtn = GetTrieNodes::decode(&buf).expect("This should work");
+        println!("{:?}", gtn);
+    }
+    #[test]
+    fn complex_test() {
+        let acc_path: Nibbles = Nibbles::from_bytes(
+            &hex::decode("0687Da33b5cd62B5B6d5b2d0933F8D2510961D43").expect("Should open"),
+        );
+        let nibbles: Nibbles = Nibbles::default();
+
+        let gtn = create_get_trie_nodes_request(
+            0,
+            *EMPTY_TRIE_HASH,
+            vec![
+                NodeRequest {
+                    acc_path: acc_path.clone(),
+                    storage_path: nibbles.append_new(1),
+                    parent: Nibbles::default(),
+                },
+                NodeRequest {
+                    acc_path: acc_path,
+                    storage_path: nibbles.append_new(2),
+                    parent: Nibbles::default(),
+                },
+            ]
+            .into(),
+        );
+        println!("{:?}", gtn);
+
+        let mut buf: Vec<u8> = Vec::new();
+        println!("{:?}", gtn.encode(&mut buf));
+        println!("{:?}", buf);
+
+        let gtn = GetTrieNodes::decode(&buf).expect("This should work");
+        println!("{:?}", gtn);
+    }
 }
