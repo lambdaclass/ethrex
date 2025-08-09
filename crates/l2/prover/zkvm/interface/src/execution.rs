@@ -124,7 +124,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_config.chain_id)
+    stateless_validation_l1(
+        &blocks,
+        db,
+        elasticity_multiplier,
+        chain_config.chain_id,
+        first_header,
+    )
 }
 
 pub fn stateless_validation_l1(
@@ -132,6 +138,7 @@ pub fn stateless_validation_l1(
     db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
     chain_id: u64,
+    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -139,7 +146,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -168,11 +175,13 @@ pub fn stateless_validation_l2(
     let mut initial_db = ExecutionWitnessResult {
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
-        codes_map: db.codes_map.clone(),
-        state: db.state.clone(),
+        codes: db.codes.clone(),
         keys: db.keys.clone(),
         state_trie: None,
         storage_tries: None,
+        state_trie_nodes: db.state_trie_nodes.clone(),
+        storage_trie_nodes: db.storage_trie_nodes.clone(),
+        parent_block_header: db.parent_block_header.clone(),
     };
 
     let StatelessResult {
@@ -183,7 +192,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -238,9 +247,13 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    db: ExecutionWitnessResult,
+    mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
+    first_header: &BlockHeader,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    db.rebuild_tries(first_header)
+        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())

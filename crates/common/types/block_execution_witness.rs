@@ -1,39 +1,68 @@
-use std::collections::HashMap;
+use std::fmt;
+use std::{collections::HashMap, str::FromStr};
 
-use crate::serde_utils;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
+    serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    utils::decode_hex,
 };
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::de::{SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
 use sha3::{Digest, Keccak256};
+
+type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    /* Useful fields */
-    pub state: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
     pub keys: Vec<Bytes>,
-    /* Our fields */
+    // Rlp encoded state trie nodes
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub state_trie_nodes: Vec<Bytes>,
+    // Indexed by account
+    // Rlp encoded state trie nodes
+    #[serde(
+        serialize_with = "serialize_storage_tries",
+        deserialize_with = "deserialize_storage_tries"
+    )]
+    pub storage_trie_nodes: Option<StorageTrieNodes>,
     // Indexed by code hash
     // Used evm bytecodes
-    pub codes_map: HashMap<H256, Bytes>,
+    #[serde(
+        serialize_with = "serialize_code",
+        deserialize_with = "deserialize_code"
+    )]
+    pub codes: HashMap<H256, Bytes>,
     // Pruned state MPT
+    #[serde(skip)]
     pub state_trie: Option<Trie>,
     // Indexed by account
     // Pruned storage MPT
+    #[serde(skip)]
     pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
+    // Parent block header to get the initial state root
+    pub parent_block_header: BlockHeader,
     // Chain config
     pub chain_config: ChainConfig,
 }
@@ -61,7 +90,7 @@ impl ExecutionWitnessResult {
     ) -> Result<(), ExecutionWitnessError> {
         let parent_header = self.get_block_parent_header(first_header.number)?;
 
-        let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state)?;
+        let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state_trie_nodes)?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
@@ -78,7 +107,7 @@ impl ExecutionWitnessResult {
                 .filter_map(|addr| {
                     Some((
                         *addr,
-                        Self::rebuild_storage_trie(addr, &state_trie, &self.state)?,
+                        Self::rebuild_storage_trie(addr, &state_trie, &self.state_trie_nodes)?,
                     ))
                 })
                 .collect::<Vec<(Address, Trie)>>(),
@@ -167,7 +196,7 @@ impl ExecutionWitnessResult {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes_map.insert(info.code_hash, code.clone());
+                        self.codes.insert(info.code_hash, code.clone());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -342,7 +371,7 @@ impl ExecutionWitnessResult {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.codes_map.get(&code_hash) {
+        match self.codes.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(ExecutionWitnessError::Database(format!(
                 "Could not find code for hash {code_hash}"
@@ -351,123 +380,206 @@ impl ExecutionWitnessResult {
     }
 }
 
-impl Serialize for ExecutionWitnessResult {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO: Extract and merge with the Deserialize impl
-        #[derive(Serialize)]
-        struct RpcExecutionWitness {
-            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
-            state: Vec<Bytes>,
-            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
-            keys: Vec<Bytes>,
-            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
-            codes: Vec<Bytes>,
-            #[serde(serialize_with = "serde_utils::bytes::vec::serialize")]
-            headers: Vec<Bytes>,
-        }
+pub fn serialize_code<S>(map: &HashMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
+    for (code_hash, code) in map {
+        let code_hash = format!("0x{}", hex::encode(code_hash));
+        let code = format!("0x{}", hex::encode(code));
 
-        let response = RpcExecutionWitness {
-            state: self.state.clone(),
-            keys: self.keys.clone(),
-            codes: self.codes_map.values().cloned().collect(),
-            headers: self
-                .block_headers
-                .values()
-                .map(BlockHeader::encode_to_vec)
-                .map(Into::into)
-                .collect(),
-        };
+        let mut obj = serde_json::Map::new();
+        obj.insert(code_hash, serde_json::Value::String(code));
 
-        RpcExecutionWitness::serialize(&response, serializer)
+        seq_serializer.serialize_element(&obj)?;
     }
+    seq_serializer.end()
 }
 
-// TODO: Make an RpcExecutionWitness struct to decouple the RPC response from the execution witness result.
-impl<'de> Deserialize<'de> for ExecutionWitnessResult {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // TODO: Extract and merge with the Serialize impl
-        #[derive(Deserialize)]
-        struct RpcExecutionWitness {
-            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
-            state: Vec<Bytes>,
-            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
-            keys: Vec<Bytes>,
-            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
-            codes: Vec<Bytes>,
-            #[serde(deserialize_with = "serde_utils::bytes::vec::deserialize")]
-            headers: Vec<Bytes>,
-        }
+pub fn serialize_storage_tries<S>(
+    map: &Option<HashMap<H160, Vec<Vec<u8>>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let Some(map) = map else {
+        return Err(ser::Error::custom("Storage trie nodes is empty"));
+    };
+    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
 
-        let response = RpcExecutionWitness::deserialize(deserializer)?;
-
-        let codes_map = response
-            .codes
+    for (address, keys) in map {
+        let address_hex = format!("0x{}", hex::encode(address));
+        let values_hex: Vec<String> = keys
             .iter()
-            .map(|code| (keccak_hash::keccak(code), code.clone()))
-            .collect::<HashMap<_, _>>();
-
-        let block_headers = response
-            .headers
-            .iter()
-            .map(Bytes::as_ref)
-            .map(BlockHeader::decode)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(de::Error::custom)?
-            .iter()
-            .map(|header| (header.number, header.clone()))
-            .collect::<HashMap<_, _>>();
-
-        let parent_block_number = block_headers.keys().max().ok_or(de::Error::custom(
-            "No block headers found in the execution witness result",
-        ))?;
-
-        let parent_header = block_headers
-            .get(parent_block_number)
-            .ok_or(de::Error::custom(
-                format!("No parent block header found for block {parent_block_number} in the execution witness result"),
-            ))?;
-
-        let state_trie =
-            rebuild_trie(parent_header.state_root, &response.state).map_err(de::Error::custom)?;
-
-        // Keys can either be account addresses or storage slots. They have different sizes,
-        // so we filter them by size. The from_slice method panics if the input has the wrong size.
-        let addresses: Vec<Address> = response
-            .keys
-            .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
+            .map(|v| format!("0x{}", hex::encode(v)))
             .collect();
 
-        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-            addresses
-                .iter()
-                .filter_map(|addr| {
-                    Some((
-                        *addr,
-                        rebuild_storage_trie(addr, &state_trie, &response.state)?,
-                    ))
-                })
-                .collect::<Vec<(Address, Trie)>>(),
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            address_hex,
+            serde_json::Value::Array(
+                values_hex
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         );
 
-        Ok(Self {
-            // FIXME: Figure out if we want the following 2 to be empty.
-            state: response.state,
-            keys: response.keys,
-            codes_map,
-            state_trie: Some(state_trie),
-            storage_tries: Some(storage_tries),
-            block_headers,
-            chain_config: ChainConfig::default(),
-        })
+        seq_serializer.serialize_element(&obj)?;
     }
+
+    seq_serializer.end()
+}
+
+pub fn deserialize_state<'de, D>(deserializer: D) -> Result<Option<Vec<Vec<u8>>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct HexVecVisitor;
+
+    impl<'de> Visitor<'de> for HexVecVisitor {
+        type Value = Option<Vec<Vec<u8>>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a list of hex-encoded strings")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut out = Vec::new();
+            while let Some(s) = seq.next_element::<String>()? {
+                let bytes = decode_hex(&s).map_err(de::Error::custom)?;
+                out.push(bytes);
+            }
+            Ok(Some(out))
+        }
+    }
+
+    deserializer.deserialize_seq(HexVecVisitor)
+}
+
+pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BytesVecVisitor;
+
+    impl<'de> Visitor<'de> for BytesVecVisitor {
+        type Value = HashMap<H256, Bytes>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a list of hex-encoded strings")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut map = HashMap::new();
+
+            #[derive(Deserialize)]
+            struct CodeEntry(HashMap<String, String>);
+
+            while let Some(CodeEntry(entry)) = seq.next_element::<CodeEntry>()? {
+                if entry.len() != 1 {
+                    return Err(de::Error::custom(
+                        "Each object must contain exactly one key",
+                    ));
+                }
+
+                for (k, v) in entry {
+                    let code_hash =
+                        H256::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
+
+                    let bytecode =
+                        decode_hex(v.trim_start_matches("0x")).map_err(de::Error::custom)?;
+
+                    map.insert(code_hash, Bytes::from(bytecode));
+                }
+            }
+            Ok(map)
+        }
+    }
+
+    deserializer.deserialize_seq(BytesVecVisitor)
+}
+
+pub fn deserialize_storage_tries<'de, D>(
+    deserializer: D,
+) -> Result<Option<StorageTrieNodes>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct KeysVisitor;
+
+    impl<'de> Visitor<'de> for KeysVisitor {
+        type Value = Option<StorageTrieNodes>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str(
+                "a list of maps with H160 keys and array of hex-encoded strings as values",
+            )
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut map = HashMap::new();
+
+            #[derive(Deserialize)]
+            struct KeyEntry(HashMap<String, Vec<String>>);
+
+            while let Some(entry) = seq.next_element::<KeyEntry>()? {
+                let obj = entry.0;
+                if obj.len() != 1 {
+                    return Err(de::Error::custom(
+                        "Each object must contain exactly one key",
+                    ));
+                }
+
+                for (k, v) in obj {
+                    let h160 =
+                        H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
+
+                    let vecs = v
+                        .into_iter()
+                        .map(|s| {
+                            let s = s.trim_start_matches("0x");
+                            hex::decode(s).map_err(de::Error::custom)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    map.insert(h160, vecs);
+                }
+            }
+
+            Ok(Some(map))
+        }
+    }
+
+    deserializer.deserialize_seq(KeysVisitor)
+}
+
+pub fn serialize_proofs<S>(
+    state_trie_nodes: &Option<Vec<Vec<u8>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let Some(state_trie_nodes) = state_trie_nodes else {
+        return Err(ser::Error::custom("State trie nodes is empty"));
+    };
+    let mut seq_serializer = serializer.serialize_seq(Some(state_trie_nodes.len()))?;
+    for encoded_node in state_trie_nodes {
+        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
+    }
+    seq_serializer.end()
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
