@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754745539025,
+  "lastUpdate": 1754747974724,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18999,6 +18999,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001422955223880597,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f43e1731f5c363c92e6408f702da8a628aa49dc6",
+          "message": "docs(l1,l2): refactor documentation (#3978)\n\n**Motivation**\n\nThe documentation is too messy and has internal development instructions\nmixed with the instruction for the actual users\n\n**Description**\n\nThe best way to review this pr by looking at the final result using\n`make docs-serve` in the root of the repo. If it's your first time using\nmdbook you might need to run `make docs-deps` first\n\nCloses #issue_number",
+          "timestamp": "2025-08-08T22:01:53Z",
+          "tree_id": "7dc2f9da7faac060d56a5d4c6c4ceee32d2a72b0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f43e1731f5c363c92e6408f702da8a628aa49dc6"
+        },
+        "date": 1754747974226,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014619189485213582,
             "unit": "Mgas/s"
           }
         ]
