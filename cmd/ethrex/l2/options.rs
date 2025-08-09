@@ -191,6 +191,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                l2_rpc_url: opts.watcher_opts.l2_rpc_url,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -348,6 +349,15 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
+    #[arg(
+        long = "watcher.l2-rpc-url",
+        default_value = "http://localhost:1729",
+        value_name = "URL",
+        env = "ETHREX_WATCHER_L2_RPC_URL",
+        help = "L2 RPC URL for the L1 watcher to connect to.",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_rpc_url: String,
 }
 
 impl Default for WatcherOptions {
@@ -357,6 +367,7 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            l2_rpc_url: "http://localhost:1729".to_string(),
         }
     }
 }
