@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754743089083,
+  "lastUpdate": 1754745539025,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18970,6 +18970,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0066736600000000005,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3478a18011f20016479d5b5fe351480dd656d1f9",
+          "message": "fix(l1): load Store state when exporting blocks (#3998)\n\n**Motivation**\n\n`ethrex export` is broken due to #3878\n\n**Description**\n\nThis PR fixes the `Export` subcommand by adding an initial state loading\nfrom the DB to initialize the `latest_block_header` cache.\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-08-08T21:01:42Z",
+          "tree_id": "d05802812c5ba2873bd988730958756215737c11",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3478a18011f20016479d5b5fe351480dd656d1f9"
+        },
+        "date": 1754745538556,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001422955223880597,
             "unit": "Mgas/s"
           }
         ]
