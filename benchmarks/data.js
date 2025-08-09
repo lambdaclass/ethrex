@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754733619814,
+  "lastUpdate": 1754735988018,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18796,6 +18796,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0067071959798994975,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9f0505edf49e6715d08204fa2fdc6d1e5926ee28",
+          "message": "fix(l1): commit forkchoice update in a single db tx (#3927)\n\n**Motivation**\n\nA bug was found in our L2 integration tests caused by a race condition\nduring the forkchoice update. More context\n[here](https://github.com/lambdaclass/ethrex/issues/3887).\n\n**Description**\n- Creates `forkchoice_update` method in the L1 store to perform all\ncanonical updates and block labeling in a single tx in the db.\n- Removes the following `Store` methods:\n    - `mark_chain_as_canonical`\n    - `update_finalized_block_number`\n    - `update_safe_block_number`\n    - `update_latest_block_number`\n    - `set_canonical_block`\n    - `unset_canonical_block`\n- Updates the calls to the removed methods to use the new one.\n\nCloses #3887",
+          "timestamp": "2025-08-08T20:06:04Z",
+          "tree_id": "15dbdb332c777d8a05fe2b48f43dac629da014fa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9f0505edf49e6715d08204fa2fdc6d1e5926ee28"
+        },
+        "date": 1754735987528,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014445151515151515,
             "unit": "Mgas/s"
           }
         ]
