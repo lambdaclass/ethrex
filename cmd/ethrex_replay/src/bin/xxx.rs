@@ -87,6 +87,8 @@ async fn xxx(rpc_url: &str, network: Network) {
             panic!("SystemTime::elapsed failed: {e}");
         });
 
+        // Wait at most 12 seconds for executing the next block.
+        // This will only wait if the execution took less than 12 seconds.
         tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
     }
 }
