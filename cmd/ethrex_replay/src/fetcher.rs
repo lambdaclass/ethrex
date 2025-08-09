@@ -1,6 +1,4 @@
-use std::{
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::{ChainConfig, block_execution_witness::ExecutionWitnessResult};
 use ethrex_rpc::{
@@ -27,6 +25,10 @@ pub async fn get_blockdata(
     };
 
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
+
+    if let Network::PublicNetwork(_) = network {
+        info!("Executing block: https://{network}.etherscan.io/block/{latest_block_number}");
+    }
 
     info!(
         "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
