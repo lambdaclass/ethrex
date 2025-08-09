@@ -66,7 +66,7 @@ fn init_tracing() {
 }
 
 async fn xxx(rpc_url: &str, network: Network) {
-    tracing::info!("Starting execution for network: {network:?}");
+    tracing::info!("Starting execution for network: {network}");
 
     loop {
         let start = SystemTime::now();
