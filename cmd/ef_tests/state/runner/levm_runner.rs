@@ -149,7 +149,7 @@ pub fn prepare_vm_for_tx<'a>(
         .map(|arg| (arg.address, arg.storage_keys.clone()))
         .collect();
 
-    // Check if the tx has the authorization_lists field implemented by eip7702.
+    // Check if the tx has the authorization_list field implemented by eip7702.
     let authorization_list = test_tx.authorization_list.clone().map(|list| {
         list.iter()
             .map(|auth_tuple| AuthorizationTuple {
