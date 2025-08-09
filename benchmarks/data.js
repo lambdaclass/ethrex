@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754738356426,
+  "lastUpdate": 1754739150259,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18854,6 +18854,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001447648590021692,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c5db7a94930be77aa7ec90ac0ed87c2d8784d4fe",
+          "message": "feat(l1, l2, levm): profiling metrics (#3240)\n\n**Motivation**\n\nBeing able to profile the different sections of block processing in a\nway that let's us analyze them via graphs.\n\n**Description**\n\nThis PR adds the necessary instrumenting to measure the time spent in\ndifferent sections of code. A section can be measured with span, and the\naccumulated runtime for each section can be exported and reset with an\n`export_metrics` event. All metrics are also moved to a folder in the\nroot of the project to simplify things.\n\nTo test this PR, you can run the client with metrics enabled and the\nrequisite Grafana and Prometheus docker images up. In `tooling/sync`\nthere's a makefile with some targets to do this automatically.\n`start_hoodi_metrics_docker` and `start_holesky_metrics_docker`. You can\nalso test an import with the target `import_with_metrics` by passing it\nthe environment variable `RLP_FILE` with a path to the rlp file with the\nblocks you wanna add. Metrics can be seen on\n`http://localhost:3701/metrics` and the grafana dashboards are available\non `http://localhost:3001`\n\nExample of the graph output:\n\n![image](https://github.com/user-attachments/assets/aad508df-8772-4d83-b53a-2f9fea0ba4f5)\n\n---------\n\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>\nCo-authored-by: MrAzteca <azteca1998@users.noreply.github.com>\nCo-authored-by: Edgar <git@edgl.dev>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-08-08T20:10:30Z",
+          "tree_id": "eae2bc96040be8d2c1b26589de8ef3141a27cd78",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c5db7a94930be77aa7ec90ac0ed87c2d8784d4fe"
+        },
+        "date": 1754739149807,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006510887804878049,
             "unit": "Mgas/s"
           }
         ]
