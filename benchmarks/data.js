@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754709342036,
+  "lastUpdate": 1754723566209,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18622,6 +18622,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006915709844559585,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0a5e1f3407d95decc0bcd066aa54a0bb635519a2",
+          "message": "refactor(l1,levm): improve levm `Database` and `Account` (#3913)\n\n**Motivation**\n\n- Handle tech debt within LEVM Database and Accounts. Improve Database\ninterface when getting account info, decouple getting account info from\ncode, creating our type of Account for LEVM so that it enables future\nchanges.\n\n**Description**\n\n- Inside of LEVM use a brand new type of account called `LevmAccount`,\nthe difference with the previous `Account` type is that this one doesn't\nstore the code and it also has an `AccountStatus` that is useful in the\nEVM for various comparisons. The most important being if an account has\nbeen destroyed and re-created, which is an edge case that can cause\ntrouble. Also we can determine if an account state was modified or not,\nso if it wasn't accessed mutably we'll know we don't have to do any\ncheck when getting state transitions.\n- Change the API of the Database. Before we got the AccountInfo and code\nwithin get_account_info method, which is kinda wrong. Now we just get\nthe actual AccountInfo and the refactor of LevmAccount enables us to get\nthe code in another instant.\n- Now we get the code of an account only if we really need it! So there\nare not unnecessary accesses to the database and also as a side effect\n`ethrex_replay` will work better because before we tried to access some\ncode when the Execution Witness didn't have this and we failed on\nreplaying the block.\n- stop cloning account on withdrawal processing\n- add `get_account_mut` method to db. This is for accessing an account\nmutably from outside the VM, for example, when processing withdrawals.\n\nIt is shown to fix ethrex_replay withdrawal issues in this branch:\n`jere-test-refactor-levm-replay`\nIt has the changes of `fix_execution_witness_serde` and the changes of\nthis PR\n\nCreated Issues, some of them are follow-ups to this #3946 #3948 #3951\n\nCloses #3298\nCloses #3907\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-08-08T15:18:56Z",
+          "tree_id": "95fe7a8cb2a99155935d14ac7c3d7b091594eba4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0a5e1f3407d95decc0bcd066aa54a0bb635519a2"
+        },
+        "date": 1754723565632,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013831419689119171,
             "unit": "Mgas/s"
           }
         ]
