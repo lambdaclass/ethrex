@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754723566209,
+  "lastUpdate": 1754724351805,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -18651,6 +18651,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013831419689119171,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3316a5b10a992018a5dcc9c4f3d9ec084e343314",
+          "message": "refactor(l2): remove eth_sender module (#3997)\n\n**Motivation**\n\nThere is no reason to keep it in a separate module.\n\n**Description**\n\nMoves `EthClient.call()` method with the rest of methods.\n\nCloses #3751",
+          "timestamp": "2025-08-08T19:26:42Z",
+          "tree_id": "f00cbe8f12639b73d45cabe594e6afd10172c83f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3316a5b10a992018a5dcc9c4f3d9ec084e343314"
+        },
+        "date": 1754724351318,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
