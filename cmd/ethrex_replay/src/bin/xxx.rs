@@ -87,8 +87,6 @@ async fn xxx(rpc_url: &str, network: Network) {
             panic!("SystemTime::elapsed failed: {e}");
         });
 
-        if elapsed < Duration::from_secs(1) {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
+        tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
     }
 }
