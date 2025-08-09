@@ -37,8 +37,14 @@ fn main() {
 
     // Compile the ERC1967Proxy contract
     let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    ethrex_sdk_contract_utils::compile_contract(&contracts_path, &proxy_contract_path, false, None)
-        .expect("failed to compile ERC1967Proxy contract");
+    ethrex_sdk_contract_utils::compile_contract(
+        &contracts_path,
+        &proxy_contract_path,
+        false,
+        None,
+        &[&contracts_path],
+    )
+    .expect("failed to compile ERC1967Proxy contract");
 
     let contract_bytecode_hex =
         std::fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin"))

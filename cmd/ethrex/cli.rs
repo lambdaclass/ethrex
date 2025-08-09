@@ -16,8 +16,11 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
-    l2,
+    initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
+    l2::{
+        self,
+        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
+    },
     networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
@@ -32,7 +35,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -190,6 +193,49 @@ pub struct Options {
     pub discovery_port: String,
 }
 
+impl Options {
+    pub fn default_l1() -> Self {
+        Self {
+            network: Some(Network::LocalDevnet),
+            datadir: DB_ETHREX_DEV_L1.to_string(),
+            dev: true,
+            http_addr: "0.0.0.0".to_string(),
+            http_port: "8545".to_string(),
+            authrpc_port: "8551".to_string(),
+            metrics_port: "9090".to_string(),
+            authrpc_addr: "localhost".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".to_string(),
+            p2p_port: "30303".to_string(),
+            discovery_addr: "0.0.0.0".to_string(),
+            discovery_port: "30303".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn default_l2() -> Self {
+        Self {
+            network: Some(Network::LocalDevnetL2),
+            datadir: DB_ETHREX_DEV_L2.to_string(),
+            metrics_port: "3702".into(),
+            metrics_enabled: true,
+            dev: true,
+            http_addr: "0.0.0.0".into(),
+            http_port: "1729".into(),
+            authrpc_addr: "localhost".into(),
+            authrpc_port: "8551".into(),
+            authrpc_jwtsecret: "jwt.hex".into(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".into(),
+            p2p_port: "30303".into(),
+            discovery_addr: "0.0.0.0".into(),
+            discovery_port: "30303".into(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -317,6 +363,7 @@ impl Subcommand {
             }
             Subcommand::L2(command) => command.run().await?,
         }
+
         Ok(())
     }
 }
@@ -386,7 +433,7 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
-        let numbers_and_hashes = blocks
+        let mut numbers_and_hashes = blocks
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
@@ -417,19 +464,16 @@ pub async fn import_blocks(
                 })?;
         }
 
-        _ = store
-            .mark_chain_as_canonical(&numbers_and_hashes)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
         // Make head canonical and label all special blocks correctly.
-        if let Some(block) = blocks.last() {
+        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
-                .update_finalized_block_number(block.header.number)
-                .await?;
-            store.update_safe_block_number(block.header.number).await?;
-            store
-                .update_latest_block_number(block.header.number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    head_number,
+                    head_hash,
+                    Some(head_number),
+                    Some(head_number),
+                )
                 .await?;
         }
 
@@ -445,7 +489,7 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let store = load_store(&data_dir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

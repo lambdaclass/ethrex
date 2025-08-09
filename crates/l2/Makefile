@@ -1,5 +1,5 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
-	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 update-system-contracts \
+	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
 	init-prover build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
@@ -13,7 +13,7 @@
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-l1-docker update-system-contracts deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-l1-docker deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
 
@@ -28,8 +28,6 @@ L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1-dev.json
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
-ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
-ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
@@ -45,13 +43,12 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_PROOF_COORDINATOR_DEV_MODE?=true
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
@@ -60,15 +57,15 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 # ==============================================================================
 
 init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
+	docker compose up -d ethrex_l1
 
 down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
+	docker compose down ethrex_l1
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -81,7 +78,7 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -98,7 +95,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -117,9 +114,8 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 # ==============================================================================
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
-	export $(shell cat .env | xargs); \
-	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
+	export $(shell cat ../../cmd/.env | xargs); \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -138,10 +134,10 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
 	--proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
 
-update-system-contracts:
+init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
-	--l2-genesis-path ../../fixtures/genesis/l2.json
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+	l2 --dev
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -163,20 +159,23 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 # Prover
 # ==============================================================================
 
-init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	../../target/release/ethrex_prover \
-	--http.addr 127.0.0.1 \
-  	--http.port 3900 \
-	--log.level debug
+init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
+	@if [ -z "$$PROVER" ]; then \
+		PROVER="exec"; \
+	fi; \
+	BACKEND="$$PROVER" \
+	../../target/release/ethrex l2 prover \
+		--backend "$$PROVER" \
+		--proof-coordinator tcp://127.0.0.1:3900 \
+		--log.level debug
 
 build-prover:
-	rm -f ../../target/release/ethrex_prover
-	$(MAKE) ../../target/release/ethrex_prover
+	rm -f ../../target/release/ethrex
+	$(MAKE) ../../target/release/ethrex
 
-../../target/release/ethrex_prover: $(PROVER_SRC_FILES)
+../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
-		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
+		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
 		echo "Please provide it as an argument:"; \
 		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
@@ -189,9 +188,10 @@ build-prover:
 	fi; \
 
 	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release --features "$$PROVER$$GPU,l2" \
-	--manifest-path ./prover/Cargo.toml  \
-	--bin ethrex_prover
+	cargo build --release \
+		--manifest-path ../../Cargo.toml \
+		--bin ethrex \
+		--features "$$PROVER$$GPU"
 
 # ==============================================================================
 # TEE
@@ -213,43 +213,40 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	docker compose up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover -s SIGINT
+	killall ethrex -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	docker compose up --detach --build
 
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
 	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
+	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --bin ethrex -- \
+	cargo run --release --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
-	cargo b --manifest-path ../../Cargo.toml --release
-	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
-	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 
 	cargo test state_reconstruct --release
