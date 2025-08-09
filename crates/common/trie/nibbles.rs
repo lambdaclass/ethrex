@@ -13,6 +13,12 @@ pub struct Nibbles {
     data: Vec<u8>,
 }
 
+impl std::hash::Hash for Nibbles {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.data.hash(state);
+    }
+}
+
 impl Nibbles {
     /// Create `Nibbles` from  hex-encoded nibbles
     pub const fn from_hex(hex: Vec<u8>) -> Self {
