@@ -84,7 +84,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested batch with id: {}", self.batch_id);
+        debug!("Requested batch with id: {}", self.batch_id);
 
         let batch_number = match &self.batch_id {
             BlockIdentifier::Number(n) => *n,
