@@ -15,7 +15,6 @@ use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
 
 #[cfg(feature = "sp1")]
 const BACKEND: Backend = Backend::SP1;
@@ -25,14 +24,14 @@ const BACKEND: Backend = Backend::RISC0;
 const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
-#[command(name=BINARY_NAME, author, version=VERSION_STRING, about, long_about = None)]
+#[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
     #[command(subcommand)]
     command: EthrexReplayCommand,
 }
 
 #[derive(Subcommand)]
-enum SubcommandExecute {
+pub enum SubcommandExecute {
     #[command(about = "Execute a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
@@ -210,7 +209,7 @@ impl SubcommandExecute {
 }
 
 #[derive(Subcommand)]
-enum SubcommandProve {
+pub enum SubcommandProve {
     #[command(about = "Proves a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
@@ -334,7 +333,7 @@ impl SubcommandProve {
 }
 
 #[derive(Subcommand)]
-enum EthrexReplayCommand {
+pub enum EthrexReplayCommand {
     #[command(
         subcommand,
         about = "Execute blocks, ranges of blocks, or individual transactions."

@@ -1,14 +1,6 @@
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
-mod bench;
-mod cache;
-mod cli;
-mod fetcher;
-mod networks;
-mod plot_composition;
-mod run;
-
 #[tokio::main]
 async fn main() {
     let log_filter = tracing_subscriber::EnvFilter::builder()
@@ -24,7 +16,7 @@ async fn main() {
             .finish(),
     )
     .expect("setting default subscriber failed");
-    if let Err(e) = cli::start().await {
+    if let Err(e) = ethrex_replay::cli::start().await {
         tracing::error!("{e:?}");
         std::process::exit(1);
     }
