@@ -260,7 +260,11 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
+        // In this function we are assuming that we commit to the database after executing it, which now happens but it should be improved
         db.initial_accounts_state.clear();
+        // Destroyed accounts set should be cleared when committing to the database
+        // This has to be refactored: https://github.com/lambdaclass/ethrex/issues/3948
+        db.destroyed_accounts.clear();
         //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
         db.current_accounts_state.clear();
         db.codes.clear();
