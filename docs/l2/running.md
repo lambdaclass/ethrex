@@ -7,7 +7,7 @@ The contract's solidity code can be downloaded from the [GitHub releases](https:
 or by running:
 
 ```
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l1-contracts.tar.gz
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-contracts.tar.gz
 ```
 
 ## Starting the sequencer
