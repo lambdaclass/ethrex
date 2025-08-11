@@ -5,7 +5,7 @@ use ethrex::{
 use ethrex_blockchain::BlockchainType;
 use ethrex_common::Bytes;
 use ethrex_common::{H256, H512};
-use ethrex_p2p::types::Node;
+use ethrex_p2p::rlpx::connection::server::RLPxReceiver;
 use ethrex_p2p::utils::public_key_from_signing_key;
 use ethrex_p2p::{
     kademlia::Kademlia,
@@ -16,14 +16,27 @@ use ethrex_p2p::{
     },
 };
 use ethrex_p2p::{network::P2PContext, peer_handler::MAX_RESPONSE_BYTES};
+use ethrex_p2p::{rlpx::snap::TrieNodes, types::Node};
 use ethrex_storage::{EngineType, Store, error::StoreError};
 use ethrex_vm::EvmEngine;
 use spawned_concurrency::error::GenServerError;
-use std::str::FromStr;
 use std::sync::Arc;
+use std::{net::Ipv4Addr, str::FromStr};
 use std::{net::Ipv6Addr, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
+use tracing::{error, info, metadata::Level};
+use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
+
+pub fn init_tracing(log_level: Level) {
+    let log_filter = EnvFilter::builder()
+        .with_default_directive(Directive::from(log_level))
+        .from_env_lossy();
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(log_filter)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
 
 /// Simple function that creates a p2p context with a bunch of default values
 /// we assume ports, levm and inmemory implementation
@@ -75,21 +88,26 @@ pub enum ConsoleError {
 
 #[tokio::main]
 async fn main() -> Result<(), ConsoleError> {
+    init_tracing(Level::TRACE);
+
     let p2p_context = get_p2p_context()?;
     let other_node = Node::new(
-        Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(),
+        Ipv4Addr::new(100, 99, 113, 63).into(),
         30303, // Check this number, doesn't matter for now,
         30303,
         H512::from_str(OTHER_NODE_PUBLIC_KEY)?,
     );
 
-    let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &other_node).await;
+    p2p_context.set_fork_id();
 
-    tokio::time::sleep(Duration::from_secs(30)).await;
+    let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &other_node).await;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel::<TrieNodes>(1000);
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     rlpx_connection
-        .cast(CastMessage::BackendMessage(Message::GetTrieNodes(
-            GetTrieNodes {
+        .cast(CastMessage::BackendRequest(
+            Message::GetTrieNodes(GetTrieNodes {
                 id: 0,
                 root_hash: H256::from_str(
                     "e96127ffd0b72f6c248b6f6c47e57c7978bf3b837b6cf54644e1a50ed07b2397",
@@ -98,9 +116,15 @@ async fn main() -> Result<(), ConsoleError> {
                     H256::from_str(SAI_TEST_TOKEN)?.0.to_vec(),
                 )]],
                 bytes: MAX_RESPONSE_BYTES,
-            },
-        )))
-        .await;
+            }),
+            RLPxReceiver::Channel(sender),
+        ))
+        .await?;
+
+    match receiver.blocking_recv() {
+        Some(nodes) => info!("We got these trienodes {:?}", nodes),
+        None => error!("Connection closed unexpectedly"),
+    }
 
     Ok(())
 }

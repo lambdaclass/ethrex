@@ -153,7 +153,7 @@ pub enum InnerState {
 #[derive(Clone, Debug)]
 pub enum RLPxReceiver {
     StorageHealer(GenServerHandle<StorageHealer>),
-    Channel(mpsc::Sender<TrieNodes>),
+    Channel(tokio::sync::mpsc::Sender<TrieNodes>),
 }
 
 impl RLPxReceiver {

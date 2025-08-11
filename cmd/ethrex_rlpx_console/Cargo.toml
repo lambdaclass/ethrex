@@ -15,4 +15,6 @@ spawned-concurrency.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-blockchain.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 tokio-util.workspace = true
