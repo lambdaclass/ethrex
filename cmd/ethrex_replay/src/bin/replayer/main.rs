@@ -179,7 +179,11 @@ async fn replay(
         let block_execution_report =
             BlockExecutionReport::new_for(block, network.clone(), execution_result, elapsed);
 
-        tracing::info!("{block_execution_report}");
+        if block_execution_report.execution_result.is_err() {
+            tracing::error!("{block_execution_report}");
+        } else {
+            tracing::info!("{block_execution_report}");
+        }
 
         if block_execution_report.execution_result.is_err() {
             try_send_failed_execution_report_to_slack(
