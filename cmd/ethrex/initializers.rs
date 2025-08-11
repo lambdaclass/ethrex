@@ -1,11 +1,11 @@
 use crate::{
     cli::Options,
-    networks::Network,
     utils::{
         get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
         set_datadir,
     },
 };
+use cmd_common::networks::Network;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 

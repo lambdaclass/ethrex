@@ -35,7 +35,7 @@ use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
 
-use crate::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
+use cmd_common::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
