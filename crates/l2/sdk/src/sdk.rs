@@ -10,10 +10,10 @@ use ethrex_l2_rpc::{
     clients::{send_eip1559_transaction, send_tx_bump_gas_exponential_backoff},
     signer::{LocalSigner, Signer},
 };
-use ethrex_rpc::clients::eth::{
-    EthClient, L1MessageProof, errors::EthClientError, eth_sender::Overrides,
+use ethrex_rpc::{
+    clients::eth::{EthClient, L1MessageProof, Overrides, errors::EthClientError},
+    types::receipt::RpcReceipt,
 };
-use ethrex_rpc::types::receipt::RpcReceipt;
 
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
