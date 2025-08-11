@@ -25,7 +25,7 @@ async fn main() {
 
     // TODO: These RPC URLs should be configurable via environment variables or command line arguments.
     let hoodi_rpc_url = "http://65.108.69.58:8545";
-    let sepolia_rpc_url = "";
+    let sepolia_rpc_url = "http://65.109.97.102:8545";
     let mainnet_rpc_url = "http://157.180.1.98:8545";
 
     let replayers = [
