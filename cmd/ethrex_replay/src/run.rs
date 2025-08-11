@@ -81,7 +81,6 @@ fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
 
         Ok(ProgramInput {
             blocks,
-            chain_config: network.get_genesis()?.config,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             // The L2 specific fields (blob_commitment, blob_proof)
@@ -102,7 +101,6 @@ fn get_input(cache: Cache, network: Network) -> eyre::Result<ProgramInput> {
 
         Ok(ProgramInput {
             blocks,
-            chain_config: db.chain_config,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             blob_commitment: l2_fields.blob_commitment,

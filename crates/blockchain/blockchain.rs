@@ -353,6 +353,7 @@ impl Blockchain {
         Ok(ExecutionWitnessResult {
             keys: keys.into_iter().map(Bytes::from).collect(),
             codes,
+            // state and storage tries will be initialized if 
             state_trie: None,
             storage_tries: None,
             block_headers,

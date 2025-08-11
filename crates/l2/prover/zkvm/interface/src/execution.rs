@@ -95,21 +95,20 @@ pub enum StatelessExecutionError {
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        mut db,
+        db,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
         blob_proof,
-        chain_config,
     } = input;
-
-    db.chain_config = chain_config;
 
     let first_header = &blocks
         .first()
         .ok_or(StatelessExecutionError::EmptyBatchError)?
         .header;
+
+    let chain_id = db.chain_config.chain_id;
 
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
@@ -119,18 +118,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
-            chain_config.chain_id,
+            chain_id,
             first_header,
         );
     }
 
-    stateless_validation_l1(
-        &blocks,
-        db,
-        elasticity_multiplier,
-        chain_config.chain_id,
-        first_header,
-    )
+    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id, first_header)
 }
 
 pub fn stateless_validation_l1(

@@ -123,7 +123,7 @@ impl TryFrom<RpcExecutionWitness> for ExecutionWitnessResult {
             state_trie: Some(state_trie),
             storage_tries: Some(storage_tries),
             block_headers,
-            // FIXME: Should this be default?
+            // FIXME: Should this be default? Nope
             chain_config: ChainConfig::default(),
             // FIXME: Should this be default? We could probably avoid having storage_trie_nodes if we have `keys``.
             storage_trie_nodes: Some(HashMap::default()),
