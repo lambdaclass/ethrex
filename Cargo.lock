@@ -4398,6 +4398,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "rustc-hex",
+ "spawned-concurrency",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",

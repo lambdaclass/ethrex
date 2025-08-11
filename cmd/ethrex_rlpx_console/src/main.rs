@@ -1,21 +1,29 @@
-use ethrex_p2p::{kademlia::Kademlia, rlpx::connection::server::RLPxConnection};
-use std::net::Ipv6Addr;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio_util::task::TaskTracker;
-
 use ethrex::{
     initializers::{get_local_node_record, get_signer, init_blockchain},
     utils::get_client_version,
 };
 use ethrex_blockchain::BlockchainType;
-use ethrex_common::H512;
-use ethrex_p2p::network::P2PContext;
+use ethrex_common::Bytes;
+use ethrex_common::{H256, H512};
 use ethrex_p2p::types::Node;
 use ethrex_p2p::utils::public_key_from_signing_key;
+use ethrex_p2p::{
+    kademlia::Kademlia,
+    rlpx::{
+        connection::server::{CastMessage, RLPxConnection},
+        message::Message,
+        snap::GetTrieNodes,
+    },
+};
+use ethrex_p2p::{network::P2PContext, peer_handler::MAX_RESPONSE_BYTES};
 use ethrex_storage::{EngineType, Store, error::StoreError};
 use ethrex_vm::EvmEngine;
+use spawned_concurrency::error::GenServerError;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::{net::Ipv6Addr, time::Duration};
+use tokio::sync::Mutex;
+use tokio_util::task::TaskTracker;
 
 /// Simple function that creates a p2p context with a bunch of default values
 /// we assume ports, levm and inmemory implementation
@@ -50,7 +58,8 @@ fn get_p2p_context() -> Result<P2PContext, StoreError> {
     ))
 }
 
-const SAI_TEST_TOKEN: &'static str = "0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359";
+const SAI_TEST_TOKEN: &'static str =
+    "998abd7945acf1765167f39605e218cbad5644f90c6fa434177865c14c218cf2";
 
 const OTHER_NODE_PUBLIC_KEY: &'static str = "f070a8dc0ec1b1ca687e9e26cd57a70fca2957c37f801ace47f9cc9d7e50e8267a3972653b2dc4dc4b02b269017db4b1f2fd29231d1d275f5fc2397ca05774d3";
 
@@ -60,6 +69,8 @@ pub enum ConsoleError {
     StoreError(#[from] StoreError),
     #[error("Hex Decode error: {0}")]
     FromHexError(#[from] rustc_hex::FromHexError),
+    #[error("Genserver error: {0}")]
+    GenServerError(#[from] GenServerError),
 }
 
 #[tokio::main]
@@ -72,7 +83,24 @@ async fn main() -> Result<(), ConsoleError> {
         H512::from_str(OTHER_NODE_PUBLIC_KEY)?,
     );
 
-    let rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &other_node).await;
+    let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &other_node).await;
+
+    tokio::time::sleep(Duration::from_secs(30)).await;
+
+    rlpx_connection
+        .cast(CastMessage::BackendMessage(Message::GetTrieNodes(
+            GetTrieNodes {
+                id: 0,
+                root_hash: H256::from_str(
+                    "e96127ffd0b72f6c248b6f6c47e57c7978bf3b837b6cf54644e1a50ed07b2397",
+                )?,
+                paths: vec![vec![Bytes::from(
+                    H256::from_str(SAI_TEST_TOKEN)?.0.to_vec(),
+                )]],
+                bytes: MAX_RESPONSE_BYTES,
+            },
+        )))
+        .await;
 
     Ok(())
 }

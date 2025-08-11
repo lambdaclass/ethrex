@@ -11,6 +11,7 @@ ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 thiserror.workspace = true
 rustc-hex.workspace = true
+spawned-concurrency.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-blockchain.workspace = true
