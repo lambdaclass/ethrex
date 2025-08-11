@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use clap::Parser;
 use ethrex_replay::{
     cli::SubcommandExecute,
     networks::{Network, PublicNetwork},
@@ -13,39 +14,52 @@ use crate::block_execution_report::BlockExecutionReport;
 mod block_execution_report;
 mod slack;
 
+#[derive(Parser)]
+pub struct Options {
+    #[arg(long, env = "SLACK_WEBHOOK_URL")]
+    pub slack_webhook_url: Option<Url>,
+    #[arg(long, env = "HOODI_RPC_URL")]
+    pub hoodi_rpc_url: Url, // TODO: Make optional.
+    #[arg(long, env = "SEPOLIA_RPC_URL")]
+    pub sepolia_rpc_url: Url, // TODO: Make optional.
+    #[arg(long, env = "MAINNET_RPC_URL")]
+    pub mainnet_rpc_url: Url, // TODO: Make optional.
+}
+
 #[tokio::main]
 async fn main() {
-    if std::env::var("SLACK_WEBHOOK_URL").is_err() {
+    init_tracing();
+
+    let opts = Options::parse();
+
+    if opts.slack_webhook_url.is_none() {
         tracing::warn!(
-            "SLACK_WEBHOOK_URL environment variable is not set. Slack notifications will not be sent."
+            "SLACK_WEBHOOK_URL environment variable is not set and --slack-webhook-url was not passed. Slack notifications will not be sent."
         );
     }
 
-    init_tracing();
-
-    // TODO: These RPC URLs should be configurable via environment variables or command line arguments.
-    let hoodi_rpc_url = "http://65.108.69.58:8545";
-    let sepolia_rpc_url = "http://65.109.97.102:8545";
-    let mainnet_rpc_url = "http://157.180.1.98:8545";
-
     let replayers = [
-        (Network::PublicNetwork(PublicNetwork::Hoodi), hoodi_rpc_url),
         (
-            Network::PublicNetwork(PublicNetwork::Sepolia),
-            sepolia_rpc_url,
+            opts.hoodi_rpc_url.clone(),
+            Network::PublicNetwork(PublicNetwork::Hoodi),
         ),
         (
+            opts.sepolia_rpc_url.clone(),
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+        ),
+        (
+            opts.mainnet_rpc_url.clone(),
             Network::PublicNetwork(PublicNetwork::Mainnet),
-            mainnet_rpc_url,
         ),
     ];
 
     let mut replayers_handles = Vec::new();
 
-    for (network, rpc_url) in replayers {
-        tracing::info!("Starting replayer for network: {network} with RPC URL: {rpc_url}");
+    for (rpc_url, network) in replayers.into_iter() {
+        let slack_webhook_url = opts.slack_webhook_url.clone();
 
-        let handle = tokio::spawn(async move { replay(rpc_url, network).await });
+        let handle =
+            tokio::spawn(async move { replay(rpc_url, network.clone(), slack_webhook_url).await });
 
         replayers_handles.push(handle);
     }
@@ -53,11 +67,15 @@ async fn main() {
     // TODO: These tasks are spawned outside the above loop to be able to handled
     // in the tokio::select!. We should find a way to spawn them inside the loop
     // and still be able to handle them in the tokio::select!.
-    let hoodi_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(hoodi_rpc_url).await });
+    let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
+    let hoodi_rpc_revalidation_handle =
+        tokio::spawn(async move { revalidate_rpc(hoodi_rpc_url).await });
+    let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
     let sepolia_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(sepolia_rpc_url).await });
+        tokio::spawn(async move { revalidate_rpc(sepolia_rpc_url).await });
+    let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
     let mainnet_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(mainnet_rpc_url).await });
+        tokio::spawn(async move { revalidate_rpc(mainnet_rpc_url).await });
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -68,8 +86,9 @@ async fn main() {
             if let Err(e) = res {
                 tracing::error!("Hoodi RPC failed: {e}");
                 try_notify_no_longer_valid_rpc_to_slack(
-                    hoodi_rpc_url,
+                    opts.hoodi_rpc_url,
                     Network::PublicNetwork(PublicNetwork::Hoodi),
+                    opts.slack_webhook_url,
                 ).await.unwrap_or_else(|e| {
                     tracing::error!("Failed to notify Slack about invalid Hoodi RPC: {e}");
                 });
@@ -80,8 +99,9 @@ async fn main() {
             if let Err(e) = res {
                 tracing::error!("Sepolia RPC failed: {e}");
                 try_notify_no_longer_valid_rpc_to_slack(
-                    sepolia_rpc_url,
+                    opts.sepolia_rpc_url,
                     Network::PublicNetwork(PublicNetwork::Sepolia),
+                    opts.slack_webhook_url,
                 ).await.unwrap_or_else(|e| {
                     tracing::error!("Failed to notify Slack about invalid Sepolia RPC: {e}");
                 });
@@ -92,8 +112,9 @@ async fn main() {
             if let Err(e) = res {
                 tracing::error!("Mainnet RPC failed: {e}");
                 try_notify_no_longer_valid_rpc_to_slack(
-                    mainnet_rpc_url,
+                    opts.mainnet_rpc_url,
                     Network::PublicNetwork(PublicNetwork::Mainnet),
+                    opts.slack_webhook_url,
                 ).await.unwrap_or_else(|e| {
                     tracing::error!("Failed to notify Slack about invalid Mainnet RPC: {e}");
                 });
@@ -124,10 +145,14 @@ fn init_tracing() {
     .expect("setting default subscriber failed");
 }
 
-async fn replay(rpc_url: &str, network: Network) -> Result<(), EthClientError> {
-    tracing::info!("Starting execution for network: {network}");
+async fn replay(
+    rpc_url: Url,
+    network: Network,
+    slack_webhook_url: Option<Url>,
+) -> Result<(), EthClientError> {
+    tracing::info!("Starting replayer for network: {network} with RPC URL: {rpc_url}");
 
-    let eth_client = EthClient::new(rpc_url).unwrap();
+    let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
     let mut latest_block = eth_client.get_block_number().await?.as_usize();
 
@@ -140,7 +165,7 @@ async fn replay(rpc_url: &str, network: Network) -> Result<(), EthClientError> {
 
         let execution_result = SubcommandExecute::Block {
             block: Some(latest_block), // This will execute the latest block
-            rpc_url: Url::parse(rpc_url).unwrap(),
+            rpc_url: rpc_url.clone(),
             network: network.clone(),
             bench: false,
         }
@@ -160,11 +185,14 @@ async fn replay(rpc_url: &str, network: Network) -> Result<(), EthClientError> {
         tracing::info!("{block_execution_report}");
 
         if block_execution_report.execution_result.is_err() {
-            try_send_failed_execution_report_to_slack(block_execution_report)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to post to Slack webhook: {e}");
-                });
+            try_send_failed_execution_report_to_slack(
+                block_execution_report,
+                slack_webhook_url.clone(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to post to Slack webhook: {e}");
+            });
         }
 
         // Wait at most 12 seconds for executing the next block.
@@ -181,8 +209,8 @@ async fn replay(rpc_url: &str, network: Network) -> Result<(), EthClientError> {
     }
 }
 
-async fn revalidate_rpc(rpc_url: &str) -> Result<(), EthClientError> {
-    let eth_client = EthClient::new(rpc_url).unwrap();
+async fn revalidate_rpc(rpc_url: Url) -> Result<(), EthClientError> {
+    let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
     loop {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
@@ -195,8 +223,9 @@ async fn revalidate_rpc(rpc_url: &str) -> Result<(), EthClientError> {
 
 async fn try_send_failed_execution_report_to_slack(
     report: BlockExecutionReport,
+    slack_webhook_url: Option<Url>,
 ) -> Result<(), reqwest::Error> {
-    let Ok(webhook_url) = std::env::var("SLACK_WEBHOOK_URL") else {
+    let Some(webhook_url) = slack_webhook_url else {
         return Ok(());
     };
 
@@ -210,10 +239,11 @@ async fn try_send_failed_execution_report_to_slack(
 }
 
 async fn try_notify_no_longer_valid_rpc_to_slack(
-    rpc_url: &str,
+    rpc_url: Url,
     network: Network,
+    slack_webhook_url: Option<Url>,
 ) -> Result<(), reqwest::Error> {
-    let Ok(webhook_url) = std::env::var("SLACK_WEBHOOK_URL") else {
+    let Some(webhook_url) = slack_webhook_url else {
         return Ok(());
     };
 
