@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754935965312,
+  "lastUpdate": 1754938350126,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8515,6 +8515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161496760952,
             "range": "± 210552005",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "48914d88570975b838373416d47e6c2672b8bb44",
+          "message": "fix(l2): fix default vk paths of deployer (#4013)\n\n**Motivation**\n\nPaths were invalid because now the L2 is run from the `cmd/ethrex`\nbinary crate.\n\nIntegration tests were passing because the vk paths are overwritten in\nthe L2 config, to point into the vk file that's on the container's\nvolume root dir.",
+          "timestamp": "2025-08-11T18:00:25Z",
+          "tree_id": "6aabf873212f791d35b8ae1c673d7936359f2534",
+          "url": "https://github.com/lambdaclass/ethrex/commit/48914d88570975b838373416d47e6c2672b8bb44"
+        },
+        "date": 1754938334199,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163253346043,
+            "range": "± 557815289",
             "unit": "ns/iter"
           }
         ]
