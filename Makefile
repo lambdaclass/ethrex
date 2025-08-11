@@ -150,6 +150,15 @@ run-hive-eest-engine: ## Run hive EEST Engine tests
 run-hive-eest-rlp: ## Run hive EEST Engine tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
 
+run-hive-benchmarks: build-image setup-hive ## 🧪 Generic command for running Hive EEST benchmarks. Specify EEST_SIM
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures="https://github.com/ethereum/execution-spec-tests/releases/download/benchmark%40v0.0.4/fixtures_benchmark.tar.gz"
+
+run-hive-benchmarks-engine: ## Run hive EEST Engine benchmarks
+	$(MAKE) run-hive-benchmarks EEST_SIM=ethereum/eest/consume-engine
+
+run-hive-benchmarks-rlp: ## Run hive EEST Engine benchmarks
+	$(MAKE) run-hive-benchmarks EEST_SIM=ethereum/eest/consume-rlp
+
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
