@@ -125,8 +125,8 @@ impl ExecutionPayload {
             base_fee_per_gas: Some(self.base_fee_per_gas),
             withdrawals_root: body
                 .withdrawals
-                .clone()
-                .map(|w| compute_withdrawals_root(&w)),
+                .as_ref()
+                .map(|w| compute_withdrawals_root(w)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,

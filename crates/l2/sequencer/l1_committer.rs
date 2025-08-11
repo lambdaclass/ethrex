@@ -30,7 +30,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    clients::eth::{EthClient, Overrides, WrappedTransaction},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -203,6 +203,8 @@ impl L1Committer {
             "Sending commitment for batch {}",
             batch.number,
         );
+
+        self.rollup_store.update_precommit_privileged(None).await?;
 
         match self.send_commitment(&batch).await {
             Ok(commit_tx_hash) => {
