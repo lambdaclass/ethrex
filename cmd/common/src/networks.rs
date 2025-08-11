@@ -6,6 +6,7 @@ use std::{
 
 use ethrex_common::types::{Genesis, GenesisError};
 
+//TODO: Look for a better place to move some of these files
 const MAINNET_BOOTNODES: &str = include_str!("../../ethrex/networks/mainnet/bootnodes.json");
 const HOLESKY_BOOTNODES: &str = include_str!("../../ethrex/networks/holesky/bootnodes.json");
 const SEPOLIA_BOOTNODES: &str = include_str!("../../ethrex/networks/sepolia/bootnodes.json");
