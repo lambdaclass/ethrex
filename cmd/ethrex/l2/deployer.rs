@@ -140,7 +140,7 @@ pub struct DeployerOptions {
     /// Deploy the SP1 verifier contract and use its address.
     #[arg(
         long = "deployer.deploy-sp1",
-        value_name = "BOOLEAN",
+        value_name = "BOOL",
         default_value = "false",
         default_missing_value = "true",
         num_args = 0..=1,
@@ -156,7 +156,7 @@ pub struct DeployerOptions {
     /// Deploy the TDX verifier contracts and use its address.
     #[arg(
         long = "deployer.deploy-tdx",
-        value_name = "BOOLEAN",
+        value_name = "BOOL",
         default_value = "false",
         default_missing_value = "true",
         num_args = 0..=1,
@@ -215,7 +215,7 @@ pub struct DeployerOptions {
     /// Run on validium mode, meaning it will not publish state diffs to the L1.
     #[arg(
         long = "l2.validium",
-        value_name = "BOOLEAN",
+        value_name = "BOOL",
         default_value = "false",
         default_missing_value = "true",
         num_args = 0..=1,
@@ -297,7 +297,7 @@ pub struct DeployerOptions {
     /// Deploy the SequencerRegistry contract and the based version of OnChainProposer.
     #[arg(
         long = "deployer.based",
-        value_name = "BOOLEAN",
+        value_name = "BOOL",
         default_value = "false",
         default_missing_value = "true",
         num_args = 0..=1,
@@ -324,6 +324,7 @@ impl Default for DeployerOptions {
         Self {
             eth_options: EthOptions::default(),
             #[allow(clippy::unwrap_used)]
+            // 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
             private_key: SecretKey::from_slice(
                 H256([
                     0x38, 0x5c, 0x54, 0x64, 0x56, 0xb6, 0xa6, 0x03, 0xa1, 0xcf, 0xca, 0xa9, 0xec,
@@ -334,8 +335,8 @@ impl Default for DeployerOptions {
             )
             .unwrap(),
             env_file_path: Some(PathBuf::from(".env")),
-            private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
-            genesis_l2_path: Some("../../fixtures/genesis/l2.json".into()),
+            private_keys_file_path: None,
+            genesis_l2_path: None,
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([
                 0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43,
@@ -346,39 +347,17 @@ impl Default for DeployerOptions {
                 0xe2, 0x55, 0x83, 0x09, 0x9b, 0xa1, 0x05, 0xd9, 0xec, 0x0a, 0x67, 0xf5, 0xae, 0x86,
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
-            risc0_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            sp1_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
+            risc0_verifier_address: None,
+            sp1_verifier_address: None,
             sp1_deploy_verifier: false,
-            tdx_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
+            tdx_verifier_address: None,
             tdx_deploy_verifier: false,
-            aligned_aggregator_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
+            aligned_aggregator_address: None,
             create2_salt: None,
             validium: false,
-            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
-            // (also found on fixtures/keys/private_keys_l1.txt)
-            on_chain_proposer_owner: Some(H160([
-                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
-                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ])),
+            on_chain_proposer_owner: None,
             on_chain_proposer_owner_pk: None,
-            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            bridge_owner: Some(H160([
-                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
-                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ])),
+            bridge_owner: None,
             // sp1_vk_path: format!(
             //     "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
             //     env!("CARGO_MANIFEST_DIR")
