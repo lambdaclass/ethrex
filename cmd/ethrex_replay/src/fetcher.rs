@@ -26,10 +26,6 @@ pub async fn get_blockdata(
 
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    if let Network::PublicNetwork(_) = network {
-        info!("Executing block: https://{network}.etherscan.io/block/{latest_block_number}");
-    }
-
     info!(
         "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
         latest_block_number - requested_block_number
