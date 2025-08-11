@@ -11,7 +11,7 @@ async fn main() {
     init_tracing();
 
     let hoodi_task_handle = tokio::spawn(async {
-        xxx(
+        replay(
             "http://65.108.69.58:8545",
             Network::PublicNetwork(PublicNetwork::Hoodi),
         )
@@ -19,7 +19,7 @@ async fn main() {
     });
 
     // let sepolia_task_handle = tokio::spawn(async {
-    //     xxx(
+    //     replay(
     //         "",
     //         Network::PublicNetwork(PublicNetwork::Sepolia),
     //     )
@@ -27,7 +27,7 @@ async fn main() {
     // });
 
     // let mainnet_task_handle = tokio::spawn(async {
-    //     xxx(
+    //     replay(
     //         "http://157.180.1.98:8545",
     //         Network::PublicNetwork(PublicNetwork::Mainnet),
     //     )
@@ -65,7 +65,7 @@ fn init_tracing() {
     .expect("setting default subscriber failed");
 }
 
-async fn xxx(rpc_url: &str, network: Network) {
+async fn replay(rpc_url: &str, network: Network) {
     tracing::info!("Starting execution for network: {network}");
 
     loop {
