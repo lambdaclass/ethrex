@@ -16,7 +16,8 @@ pub const MAINNET_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
 pub const HOLESKY_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
-pub const HOODI_GENESIS_CONTENTS: &str = include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
+pub const HOODI_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str =

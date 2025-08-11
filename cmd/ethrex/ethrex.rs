@@ -4,13 +4,13 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, store_node_config_file},
 };
+use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_p2p::types::NodeRecord;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
 };
-use ethrex_p2p::kademlia::KademliaTable;
-use ethrex_p2p::types::NodeRecord;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 

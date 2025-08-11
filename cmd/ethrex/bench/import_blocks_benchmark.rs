@@ -1,3 +1,4 @@
+use cmd_common::networks::Network;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
     DEFAULT_DATADIR,
@@ -6,7 +7,6 @@ use ethrex::{
 };
 use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
-use cmd_common::networks::Network;
 
 #[inline]
 fn block_import() {
