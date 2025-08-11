@@ -127,7 +127,7 @@ impl SubcommandExecute {
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -148,7 +148,7 @@ impl SubcommandExecute {
                 let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -199,7 +199,7 @@ impl SubcommandExecute {
                 let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -286,7 +286,7 @@ impl SubcommandProve {
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -307,7 +307,7 @@ impl SubcommandProve {
                 let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -323,7 +323,7 @@ impl SubcommandProve {
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;

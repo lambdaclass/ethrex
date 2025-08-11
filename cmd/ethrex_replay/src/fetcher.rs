@@ -1,8 +1,9 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::{ChainConfig, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{
     EthClient,
+    debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
@@ -56,10 +57,9 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let mut witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => {
-            ExecutionWitnessResult::try_from(witness).expect("Failed to convert witness")
-        }
+    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+        Ok(witness) => execution_witness_from_rpc_chain_config(witness, chain_config)
+            .expect("Failed to convert witness"),
         Err(e) => {
             error!("{e}");
             todo!("Retry with eth_getProofs")
@@ -76,9 +76,6 @@ pub async fn get_blockdata(
         "Got execution witness for block {requested_block_number} in {}",
         format_duration(execution_witness_retrieval_duration)
     );
-
-    // TODO: Make sure other ExecutionWitness users use the correct chain config.
-    witness.chain_config = chain_config;
 
     info!("Getting block data from RPC for block {requested_block_number}");
 
@@ -172,7 +169,8 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let mut witness = ExecutionWitnessResult::try_from(witness).expect("Failed to convert witness");
+    let witness = execution_witness_from_rpc_chain_config(witness, chain_config)
+        .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
@@ -184,8 +182,6 @@ async fn fetch_rangedata_from_client(
         "Got execution witness for blocks {from} to {to} in {}",
         format_duration(execution_witness_retrieval_duration)
     );
-
-    witness.chain_config = chain_config;
 
     let cache = Cache::new(blocks, witness);
 
