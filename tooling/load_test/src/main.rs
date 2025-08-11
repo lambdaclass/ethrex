@@ -41,6 +41,7 @@ struct Cli {
         long,
         short = 'n',
         default_value = "http://localhost:8545",
+        env = "RPC_ENDPOINT",
         help = "URL of the node being tested."
     )]
     node: String,
@@ -204,8 +205,9 @@ async fn load_test(
     client: EthClient,
     chain_id: u64,
     tx_builder: TxBuilder,
-) -> eyre::Result<()> {
+) -> eyre::Result<Vec<H256>> {
     let mut tasks = FuturesUnordered::new();
+    let mut tx_hashes = Vec::with_capacity(tx_amount as usize * accounts.len());
     for account in accounts {
         let client = client.clone();
         let tx_builder = tx_builder.clone();
@@ -216,6 +218,7 @@ async fn load_test(
                 .unwrap();
             let src = account.address();
             let encoded_src: String = src.encode_hex();
+            let mut tx_hashes = Vec::with_capacity(tx_amount as usize);
 
             for i in 0..tx_amount {
                 let (value, calldata, dst) = tx_builder.build_tx();
@@ -237,67 +240,49 @@ async fn load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = send_eip1559_transaction(&client, &tx, &account).await?;
+                let tx_hash = send_eip1559_transaction(&client, &tx, &account).await?;
+                tx_hashes.push(tx_hash);
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
-            Ok::<(), EthClientError>(())
+            Ok::<_, EthClientError>(tx_hashes)
         });
     }
 
     while let Some(result) = tasks.next().await {
-        result?; // Propagate errors from tasks
+        let account_tx_hashes = result?; // Propagate errors from tasks
+        tx_hashes.extend(account_tx_hashes);
     }
-    Ok(())
+    Ok(tx_hashes)
 }
 
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
-    timeout: Option<Duration>,
     accounts: Vec<Signer>,
-    tx_amount: u64,
+    tx_hashes: &[H256],
 ) -> Result<(), String> {
     for account in accounts {
         let client = client.clone();
         let src = account.address();
         let encoded_src: String = src.encode_hex();
-        let mut last_updated = tokio::time::Instant::now();
-        let mut last_nonce = 0;
 
-        loop {
-            let nonce = client
-                .get_nonce(src, BlockIdentifier::Tag(BlockTag::Latest))
-                .await
-                .unwrap();
-            if nonce >= tx_amount {
-                println!(
-                    "All transactions sent from {encoded_src} have been included in blocks. Nonce: {nonce}",
-                );
-                break;
-            } else {
-                println!(
-                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Needs: {tx_amount}. Percentage: {:2}%.",
-                    (nonce as f64 / tx_amount as f64) * 100.0
-                );
-            }
-
-            if let Some(timeout) = timeout {
-                if last_nonce == nonce {
-                    let inactivity_time = last_updated.elapsed();
-                    if inactivity_time > timeout {
-                        return Err(format!(
-                            "Node inactive for {} seconds. Timeout reached.",
-                            inactivity_time.as_secs()
-                        ));
-                    }
-                } else {
-                    last_nonce = nonce;
-                    last_updated = tokio::time::Instant::now();
-                }
-            }
-
-            sleep(Duration::from_secs(5)).await;
+        let mut tasks = FuturesUnordered::new();
+        for tx_hash in tx_hashes {
+            tasks.push(client.wait_for_transaction_receipt(*tx_hash, 50));
         }
+
+        let mut completed_tasks = 0;
+        while let Some(result) = tasks.next().await {
+            let result = result.map_err(|err| err.to_string())?;
+            assert!(result.receipt.status);
+            completed_tasks += 1;
+            println!(
+                "{:2} of transactions were included from {encoded_src}",
+                (completed_tasks as f64 / tasks.len() as f64) * 100.0
+            );
+        }
+
+        println!("All transactions sent from {encoded_src} have been included in blocks",);
     }
 
     Ok(())
@@ -379,7 +364,7 @@ async fn main() {
     );
     let time_now = tokio::time::Instant::now();
 
-    load_test(
+    let tx_hashes = load_test(
         cli.tx_amount,
         accounts.clone(),
         client.clone(),
@@ -389,14 +374,8 @@ async fn main() {
     .await
     .expect("Failed to load test");
 
-    let wait_time = if cli.wait > 0 {
-        Some(Duration::from_secs(cli.wait * 60))
-    } else {
-        None
-    };
-
     println!("Waiting for all transactions to be included in blocks...");
-    wait_until_all_included(client, wait_time, accounts, cli.tx_amount)
+    wait_until_all_included(client,  accounts, &tx_hashes)
         .await
         .unwrap();
 
