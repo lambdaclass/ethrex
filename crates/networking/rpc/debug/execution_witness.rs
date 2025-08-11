@@ -125,8 +125,6 @@ pub fn execution_witness_from_rpc_chain_config(
         storage_tries: Some(storage_tries),
         block_headers,
         chain_config,
-        // FIXME: Should this be default? We could probably avoid having storage_trie_nodes if we have `keys`.
-        storage_trie_nodes: Some(HashMap::default()),
         parent_block_header: parent_header,
     })
 }

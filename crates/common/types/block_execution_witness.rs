@@ -18,8 +18,6 @@ use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
 use sha3::{Digest, Keccak256};
 
-type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
-
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
@@ -27,6 +25,8 @@ type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
+    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable.
+    // Ideally we implement serialization for these and stop needing the first 2 attributes.
     #[serde(
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
@@ -38,13 +38,6 @@ pub struct ExecutionWitnessResult {
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
     pub state_trie_nodes: Vec<Bytes>,
-    // Indexed by account
-    // Rlp encoded storage trie nodes
-    #[serde(
-        serialize_with = "serialize_storage_tries",
-        deserialize_with = "deserialize_storage_tries"
-    )]
-    pub storage_trie_nodes: Option<StorageTrieNodes>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
@@ -478,63 +471,6 @@ where
     }
 
     deserializer.deserialize_seq(BytesVecVisitor)
-}
-
-pub fn deserialize_storage_tries<'de, D>(
-    deserializer: D,
-) -> Result<Option<StorageTrieNodes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct KeysVisitor;
-
-    impl<'de> Visitor<'de> for KeysVisitor {
-        type Value = Option<StorageTrieNodes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str(
-                "a list of maps with H160 keys and array of hex-encoded strings as values",
-            )
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = HashMap::new();
-
-            #[derive(Deserialize)]
-            struct KeyEntry(HashMap<String, Vec<String>>);
-
-            while let Some(entry) = seq.next_element::<KeyEntry>()? {
-                let obj = entry.0;
-                if obj.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in obj {
-                    let h160 =
-                        H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let vecs = v
-                        .into_iter()
-                        .map(|s| {
-                            let s = s.trim_start_matches("0x");
-                            hex::decode(s).map_err(de::Error::custom)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    map.insert(h160, vecs);
-                }
-            }
-
-            Ok(Some(map))
-        }
-    }
-
-    deserializer.deserialize_seq(KeysVisitor)
 }
 
 pub fn serialize_proofs<S>(

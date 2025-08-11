@@ -360,7 +360,6 @@ impl Blockchain {
             block_headers,
             chain_config,
             state_trie_nodes: used_trie_nodes.into_iter().map(Bytes::from).collect(),
-            storage_trie_nodes: Some(encoded_storage_tries),
             parent_block_header: self
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?

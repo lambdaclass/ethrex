@@ -173,7 +173,6 @@ pub fn stateless_validation_l2(
         state_trie: None,
         storage_tries: None,
         state_trie_nodes: db.state_trie_nodes.clone(),
-        storage_trie_nodes: db.storage_trie_nodes.clone(),
         parent_block_header: db.parent_block_header.clone(),
     };
 
