@@ -8,6 +8,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
+    account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     opcodes::Opcode,
     tracing::LevmCallTracer,
@@ -141,7 +142,7 @@ fn main() {
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
-    let mut db = GeneralizedDatabase::new(Arc::new(store), initial_state);
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM
     let mut vm = VM::new(
@@ -155,7 +156,7 @@ fn main() {
 
     // Set initial stack and memory
     info!("Setting initial stack: {:?}", runner_input.initial_stack);
-    let stack = &mut vm.current_call_frame_mut().unwrap().stack;
+    let stack = &mut vm.current_call_frame.stack;
     for elem in runner_input.initial_stack {
         stack.push(&[elem]).expect("Stack Overflow");
     }
@@ -164,8 +165,7 @@ fn main() {
         runner_input.initial_memory
     );
     let _ = vm
-        .current_call_frame_mut()
-        .unwrap()
+        .current_call_frame
         .memory
         .store_data(0, &runner_input.initial_memory);
 
@@ -180,7 +180,7 @@ fn main() {
     }
 
     // Print final stack and memory
-    let callframe = vm.pop_call_frame().unwrap();
+    let callframe = vm.current_call_frame;
     info!(
         "Final Stack (bottom to top): {:?}",
         &callframe.stack.values[callframe.stack.offset..]
@@ -202,8 +202,8 @@ fn main() {
 
 /// Prints on screen difference between initial state and current one.
 fn compare_initial_and_current_accounts(
-    initial_accounts: BTreeMap<Address, Account>,
-    current_accounts: BTreeMap<Address, Account>,
+    initial_accounts: BTreeMap<Address, LevmAccount>,
+    current_accounts: BTreeMap<Address, LevmAccount>,
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
@@ -238,8 +238,11 @@ fn compare_initial_and_current_accounts(
                 );
             }
 
-            if prev.code != acc.code {
-                info!("    Code changed: {:?} -> {:?}", prev.code, acc.code);
+            if prev.info.code_hash != acc.info.code_hash {
+                info!(
+                    "    Code hash changed: {:?} -> {:?}",
+                    prev.info.code_hash, acc.info.code_hash
+                );
             }
 
             for (slot, value) in &acc.storage {
