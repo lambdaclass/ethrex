@@ -10,11 +10,11 @@ use crate::{
     utils::{parse_private_key, set_datadir},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
-use ethrex_config::networks::Network;
 use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
+use ethrex_config::networks::Network;
 use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
 use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
