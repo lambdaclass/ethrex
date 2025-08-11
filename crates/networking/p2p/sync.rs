@@ -747,10 +747,10 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
-        while current_unix_time() > staleness_timestamp {
-            (pivot_header, staleness_timestamp) =
-                update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
-        }
+        // while current_unix_time() > staleness_timestamp {
+        //     (pivot_header, staleness_timestamp) =
+        //         update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
+        // }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
@@ -901,7 +901,6 @@ impl Syncer {
                 // We need to fix this issue in request_storage_ranges and remove this filter.
                 account_storages_snapshot
                     .into_par_iter()
-                    .filter(|(_account_hash, storage)| !storage.is_empty())
                     .for_each_with(sender, |sender, (account_hash, key_value_pairs)| {
                         let account_storage_root = match maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").entry(account_hash) {
                             Entry::Occupied(occupied_entry) => *occupied_entry.get(),
@@ -917,7 +916,6 @@ impl Syncer {
                                 error!(
                                     "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
                                 );
-                                continue;
                             }
                         }
 
@@ -941,19 +939,21 @@ impl Syncer {
                 .await?;
         }
 
-        // for (account_hash, expected_storage_root) in &account_storage_roots {
-        //     let mut binding = maybe_big_account_storage_state_roots
-        //         .lock()
-        //         .expect("Failed to acquire lock");
+        for (account_hash, computed_storage_root) in
+            maybe_big_account_storage_state_roots.lock().unwrap().iter()
+        {
+            let account_state = store
+                .get_account_state_by_acc_hash(pivot_hash, *account_hash)
+                .unwrap()
+                .unwrap();
 
-        //     let computed_storage_root = binding.entry(*account_hash).or_default();
-
-        //     if *computed_storage_root != *expected_storage_root {
-        //         error!(
-        //             "Got different state roots for account hash: {account_hash:?}, expected: {expected_storage_root:?}, computed: {computed_storage_root:?}"
-        //         );
-        //     }
-        // }
+            if *computed_storage_root != account_state.storage_root {
+                error!(
+                    "Got different state roots for account hash: {account_hash:?}, expected: {:?}, computed: {computed_storage_root:?}",
+                    account_state.storage_root
+                );
+            }
+        }
 
         METRICS
             .storage_tries_state_roots_end_time
@@ -1005,7 +1005,11 @@ impl Syncer {
     }
 }
 
-async fn update_pivot(block_number: u64, peers: &PeerHandler, block_sync_state: &mut BlockSyncState) -> (BlockHeader, u64) {
+async fn update_pivot(
+    block_number: u64,
+    peers: &PeerHandler,
+    block_sync_state: &mut BlockSyncState,
+) -> (BlockHeader, u64) {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
@@ -1043,8 +1047,14 @@ async fn update_pivot(block_number: u64, peers: &PeerHandler, block_sync_state: 
         });
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
-            let block_headers = peers.request_block_headers(block_number, pivot.hash()).await.expect("failed to fetch headers");
-            sync_state.process_incoming_headers(block_headers).await.unwrap();
+            let block_headers = peers
+                .request_block_headers(block_number, pivot.hash())
+                .await
+                .expect("failed to fetch headers");
+            sync_state
+                .process_incoming_headers(block_headers)
+                .await
+                .unwrap();
         } else {
             panic!("Called update_pivot outside snapsync mode");
         }

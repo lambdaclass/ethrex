@@ -139,6 +139,21 @@ impl Store {
         }))
     }
 
+    pub fn get_account_state_by_acc_hash(
+        &self,
+        block_hash: BlockHash,
+        account_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let account_state = AccountState::decode(&encoded_state)?;
+        Ok(Some(account_state))
+    }
+
     pub async fn add_block_header(
         &self,
         block_hash: BlockHash,

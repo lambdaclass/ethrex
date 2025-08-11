@@ -407,7 +407,8 @@ impl StoreEngine for RedBStore {
                 )
             })
             .collect();
-        self.write_batch(BLOCK_NUMBERS_TABLE, hashes_and_headers).await;
+        self.write_batch(BLOCK_NUMBERS_TABLE, hashes_and_headers)
+            .await;
         let hashes_and_headers = block_headers
             .into_iter()
             .map(|header| {

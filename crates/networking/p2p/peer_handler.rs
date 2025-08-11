@@ -92,7 +92,7 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
 
-    match tokio::time::timeout(Duration::from_secs(1), async move {
+    match tokio::time::timeout(Duration::from_millis(100), async move {
         peer_channel.receiver.lock().await.recv().await
     })
     .await
@@ -1081,7 +1081,16 @@ impl PeerHandler {
                     } else {
                         None
                     };
-                    tx.send((accounts, free_peer_id, chunk_left)).await.ok();
+                    tx.send((
+                        accounts
+                            .into_iter()
+                            .filter(|unit| unit.hash <= chunk_end)
+                            .collect(),
+                        free_peer_id,
+                        chunk_left,
+                    ))
+                    .await
+                    .ok();
                 } else {
                     tracing::debug!("Failed to get account range");
                     tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
