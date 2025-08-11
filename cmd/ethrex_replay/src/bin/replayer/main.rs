@@ -7,7 +7,7 @@ use ethrex_replay::{
 };
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::block_execution_report::BlockExecutionReport;
 
@@ -58,8 +58,7 @@ async fn main() {
     for (rpc_url, network) in replayers.into_iter() {
         let slack_webhook_url = opts.slack_webhook_url.clone();
 
-        let handle =
-            tokio::spawn(async move { replay(rpc_url, network.clone(), slack_webhook_url).await });
+        let handle = tokio::spawn(async move { replay(rpc_url, network, slack_webhook_url).await });
 
         replayers_handles.push(handle);
     }
@@ -68,14 +67,13 @@ async fn main() {
     // in the tokio::select!. We should find a way to spawn them inside the loop
     // and still be able to handle them in the tokio::select!.
     let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
-    let hoodi_rpc_revalidation_handle =
-        tokio::spawn(async move { revalidate_rpc(hoodi_rpc_url).await });
+    let hoodi_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(hoodi_rpc_url).await });
     let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
     let sepolia_rpc_revalidation_handle =
-        tokio::spawn(async move { revalidate_rpc(sepolia_rpc_url).await });
+        tokio::spawn(async { revalidate_rpc(sepolia_rpc_url).await });
     let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
     let mainnet_rpc_revalidation_handle =
-        tokio::spawn(async move { revalidate_rpc(mainnet_rpc_url).await });
+        tokio::spawn(async { revalidate_rpc(mainnet_rpc_url).await });
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -83,42 +81,15 @@ async fn main() {
             shutdown(replayers_handles);
         }
         res = hoodi_rpc_revalidation_handle => {
-            if let Err(e) = res {
-                tracing::error!("Hoodi RPC failed: {e}");
-                try_notify_no_longer_valid_rpc_to_slack(
-                    opts.hoodi_rpc_url,
-                    Network::PublicNetwork(PublicNetwork::Hoodi),
-                    opts.slack_webhook_url,
-                ).await.unwrap_or_else(|e| {
-                    tracing::error!("Failed to notify Slack about invalid Hoodi RPC: {e}");
-                });
-            }
+            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
             shutdown(replayers_handles);
         }
         res = sepolia_rpc_revalidation_handle => {
-            if let Err(e) = res {
-                tracing::error!("Sepolia RPC failed: {e}");
-                try_notify_no_longer_valid_rpc_to_slack(
-                    opts.sepolia_rpc_url,
-                    Network::PublicNetwork(PublicNetwork::Sepolia),
-                    opts.slack_webhook_url,
-                ).await.unwrap_or_else(|e| {
-                    tracing::error!("Failed to notify Slack about invalid Sepolia RPC: {e}");
-                });
-            }
+            handle_rpc_revalidation_handle_result(res, opts.sepolia_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
             shutdown(replayers_handles);
         }
         res = mainnet_rpc_revalidation_handle => {
-            if let Err(e) = res {
-                tracing::error!("Mainnet RPC failed: {e}");
-                try_notify_no_longer_valid_rpc_to_slack(
-                    opts.mainnet_rpc_url,
-                    Network::PublicNetwork(PublicNetwork::Mainnet),
-                    opts.slack_webhook_url,
-                ).await.unwrap_or_else(|e| {
-                    tracing::error!("Failed to notify Slack about invalid Mainnet RPC: {e}");
-                });
-            }
+            handle_rpc_revalidation_handle_result(res, opts.mainnet_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
             shutdown(replayers_handles);
         }
     }
@@ -269,6 +240,25 @@ async fn try_notify_no_longer_valid_rpc_to_slack(
     client.post(webhook_url).json(&payload).send().await?;
 
     Ok(())
+}
+
+async fn handle_rpc_revalidation_handle_result(
+    res: Result<Result<(), EthClientError>, JoinError>,
+    rpc_url: Url,
+    slack_webhook_url: Option<Url>,
+) {
+    if let Err(e) = res {
+        tracing::error!("Sepolia RPC failed: {e}");
+        try_notify_no_longer_valid_rpc_to_slack(
+            rpc_url,
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+            slack_webhook_url,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to notify Slack about invalid Sepolia RPC: {e}");
+        });
+    }
 }
 
 fn shutdown(handles: Vec<JoinHandle<Result<(), EthClientError>>>) {
