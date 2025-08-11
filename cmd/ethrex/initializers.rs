@@ -60,14 +60,12 @@ pub fn init_tracing(opts: &Options) {
             let fmt_layer = fmt::layer().with_filter(log_filter);
             Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
         }
+    } else if let Some(writer) = writer {
+        let fmt_layer = fmt::layer().with_writer(writer).with_filter(log_filter);
+        Box::new(Registry::default().with(fmt_layer))
     } else {
-        if let Some(writer) = writer {
-            let fmt_layer = fmt::layer().with_writer(writer).with_filter(log_filter);
-            Box::new(Registry::default().with(fmt_layer))
-        } else {
-            let fmt_layer = fmt::layer().with_filter(log_filter);
-            Box::new(Registry::default().with(fmt_layer))
-        }
+        let fmt_layer = fmt::layer().with_filter(log_filter);
+        Box::new(Registry::default().with(fmt_layer))
     };
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
