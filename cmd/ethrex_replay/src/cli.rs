@@ -215,7 +215,7 @@ pub enum SubcommandProve {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
@@ -280,7 +280,7 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {

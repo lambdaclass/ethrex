@@ -3,22 +3,27 @@ use std::{fmt::Display, time::Duration};
 use ethrex_common::types::Block;
 use ethrex_replay::networks::{Network, PublicNetwork};
 
-use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
+use crate::{
+    ReplayerMode,
+    slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest},
+};
 
-pub struct BlockExecutionReport {
+pub struct BlockRunReport {
     pub network: Network,
     pub number: u64,
     pub gas: u64,
     pub txs: u64,
-    pub execution_result: Result<(), eyre::Report>,
+    pub run_result: Result<(), eyre::Report>,
+    pub replayer_mode: ReplayerMode,
     pub time_taken: Duration,
 }
 
-impl BlockExecutionReport {
+impl BlockRunReport {
     pub fn new_for(
         block: Block,
         network: Network,
-        execution_result: Result<(), eyre::Report>,
+        run_result: Result<(), eyre::Report>,
+        replayer_mode: ReplayerMode,
         time_taken: Duration,
     ) -> Self {
         Self {
@@ -26,7 +31,8 @@ impl BlockExecutionReport {
             number: block.header.number,
             gas: block.header.gas_used,
             txs: block.body.transactions.len() as u64,
-            execution_result,
+            run_result,
+            replayer_mode,
             time_taken,
         }
     }
@@ -36,10 +42,19 @@ impl BlockExecutionReport {
             blocks: vec![
                 SlackWebHookBlock::Header {
                     text: Box::new(SlackWebHookBlock::PlainText {
-                        text: if self.execution_result.is_err() {
-                            String::from("⚠️ Failed to Execute Block with SP1")
-                        } else {
-                            String::from("✅ Successfully Executed Block with SP1")
+                        text: match (&self.run_result, &self.replayer_mode) {
+                            (Ok(_), ReplayerMode::Execute) => {
+                                String::from("✅ Successfully Executed Block")
+                            }
+                            (Ok(_), ReplayerMode::Prove) => {
+                                String::from("✅ Successfully Proved Block")
+                            }
+                            (Err(_), ReplayerMode::Execute) => {
+                                String::from("⚠️ Failed to Execute Block")
+                            }
+                            (Err(_), ReplayerMode::Prove) => {
+                                String::from("⚠️ Failed to Prove Block")
+                            }
                         },
                         emoji: true,
                     }),
@@ -52,9 +67,9 @@ impl BlockExecutionReport {
                             number = self.number,
                             gas = self.gas,
                             txs = self.txs,
-                            execution_result = if self.execution_result.is_err() {
+                            execution_result = if self.run_result.is_err() {
                                 "Error: ".to_string()
-                                    + &self.execution_result.as_ref().err().unwrap().to_string()
+                                    + &self.run_result.as_ref().err().unwrap().to_string()
                             } else {
                                 "Success".to_string()
                             }
@@ -82,9 +97,9 @@ impl BlockExecutionReport {
     }
 }
 
-impl Display for BlockExecutionReport {
+impl Display for BlockRunReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let execution_result = if let Err(e) = &self.execution_result {
+        let execution_result = if let Err(e) = &self.run_result {
             format!("Error: {e}")
         } else {
             "Success".to_string()
@@ -92,22 +107,24 @@ impl Display for BlockExecutionReport {
         if let Network::PublicNetwork(_) = self.network {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, Execution Result: {execution_result}, Time Taken: {time_taken} | https://{network}.etherscan.io/block/{number}",
+                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | https://{network}.etherscan.io/block/{number}",
                 network = self.network,
                 number = self.number,
                 gas = self.gas,
                 txs = self.txs,
+                replayer_mode = self.replayer_mode,
                 execution_result = execution_result,
                 time_taken = format_duration(self.time_taken),
             )
         } else {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, Execution Result: {execution_result}, Time Taken: {time_taken}",
+                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken}",
                 network = self.network,
                 number = self.number,
                 gas = self.gas,
                 txs = self.txs,
+                replayer_mode = self.replayer_mode,
                 execution_result = execution_result,
                 time_taken = format_duration(self.time_taken),
             )
@@ -134,10 +151,11 @@ mod tests {
 
     #[test]
     fn test_slack_message_failed_mainnet_execution() {
-        let report = BlockExecutionReport::new_for(
+        let report = BlockRunReport::new_for(
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Mainnet),
             Err(eyre::Report::msg("Execution failed")),
+            ReplayerMode::Execute,
             Duration::from_secs(1),
         );
 
@@ -152,7 +170,7 @@ mod tests {
       "type": "header",
       "text": {
         "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block with SP1",
+        "text": "⚠️ Failed to Execute Block",
         "emoji": true
       }
     },
@@ -185,10 +203,11 @@ mod tests {
 
     #[test]
     fn test_slack_message_failed_hoodi_execution() {
-        let report = BlockExecutionReport::new_for(
+        let report = BlockRunReport::new_for(
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Hoodi),
             Err(eyre::Report::msg("Execution failed")),
+            ReplayerMode::Execute,
             Duration::from_secs(1),
         );
 
@@ -203,7 +222,7 @@ mod tests {
       "type": "header",
       "text": {
         "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block with SP1",
+        "text": "⚠️ Failed to Execute Block",
         "emoji": true
       }
     },
@@ -236,10 +255,11 @@ mod tests {
 
     #[test]
     fn test_slack_message_failed_sepolia_execution() {
-        let report = BlockExecutionReport::new_for(
+        let report = BlockRunReport::new_for(
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Sepolia),
             Err(eyre::Report::msg("Execution failed")),
+            ReplayerMode::Execute,
             Duration::from_secs(1),
         );
 
@@ -254,7 +274,7 @@ mod tests {
       "type": "header",
       "text": {
         "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block with SP1",
+        "text": "⚠️ Failed to Execute Block",
         "emoji": true
       }
     },
