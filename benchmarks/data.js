@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754943476404,
+  "lastUpdate": 1754950211906,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19469,6 +19469,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0061226238532110094,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b7b7c1bf19e873c93e1791687a7bf038fad490ae",
+          "message": "refactor(l1): tooling/sync make targets to be generic across networks (#3869)\n\n**Motivation**\nThe current Makefile on tooling/sync has a bunch of different yet very\nsimilar targets that vary depending on whether they are used on hoodi or\nholesky networks. This is not much of an issue with just two networks,\nbut would become quite bloated if we wanted to also add targets for\nsepolia and mainnet networks.\nThe aim of this PR is to refactor these duplicated targets into a single\none leveraging the `NETWORK` env var and also allow these targets to\nsupport mainnet and sepolia networks\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Replace inner targets `holesky-lighthouse` & `hoodi-lighthouse` with\ngeneric `start-lighthouse` target that depends on `NETWORK` env var\n* Replace inner targets `start-ethrex-holesky` & `start-ethrex-hoodi`\nwith generic `start-ethrex` target that depends on `NETWORK` env var\n* Replace targets `start-holesky-metrics-docker` &\n`start-hoodi-metrics-docker` with generic `start-metrics-docker` target\nthat depends on `NETWORK` env var + A wildcard target\n`start-%-metrics-docker` that sets the `NETWORK` env var to the wildcard\nso that previous targets are still functional.\n* Replace targets `flamegraph-holesky` & `flamegraph-hoodi` with generic\n`flamegraph-inner` target (as `flamegraph` is already its own target)\nthat depends on `NETWORK` env var + A wildcard target `flamegraph-%r`\nthat sets the `NETWORK` env var to the wildcard so that previous targets\nare still functional.\n* `NETWORK` env var is no longer strictly required, and has default\nvalue set to mainnet (Docs updated)\n* Removed check for `NETWORK` env var being present (as it now uses\ndefault value)\n* Updated handling of BOOTNODES:\n* Removed `HOLESKY_BOOTNODES` and `HOODI_BOOTNODES` as they are already\npresent on the preset bootnodes file\n* Only set the `--bootnodes` flag when running ethrex if the `BOOTNODES`\nenv var was set\n* (Misc) Fix `help` target so that it also includes wildcard targets +\nset it as default target\n* (Misc) Mention installing `flamegraph` crate on README`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3838 (No longer needed with this change)\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-08-11T15:17:54Z",
+          "tree_id": "3afab62f322b5356269e8499e105b6899e1dd18b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b7b7c1bf19e873c93e1791687a7bf038fad490ae"
+        },
+        "date": 1754950210908,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001404981052631579,
             "unit": "Mgas/s"
           }
         ]
