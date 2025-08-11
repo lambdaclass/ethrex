@@ -29,7 +29,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
-  "tooling/archive_sync",
+  "tooling/archive_sync", "cmd/ethrex_rlpx_console",
 ]
 resolver = "2"
 
