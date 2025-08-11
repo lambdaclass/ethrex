@@ -30,9 +30,11 @@ pub async fn validate_status(
 
     //Check networkID
     if msg_data.get_network_id() != chain_config.chain_id {
-        return Err(RLPxError::HandshakeError(
-            "Network Id does not match".to_string(),
-        ));
+        return Err(RLPxError::HandshakeError(format!(
+            "Network Id does not match, {} expected but {} found",
+            chain_config.chain_id,
+            msg_data.get_network_id()
+        )));
     }
     //Check Protocol Version
     if msg_data.get_eth_version() != eth_capability.version {

@@ -134,6 +134,7 @@ async fn heal_state_trie(
             .peer_table
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
+        let peers_table_2 = peers.peer_table.get_peer_channels(&[]).await;
 
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
@@ -142,14 +143,16 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
+                    peers_table_2.len(),
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
+                    peers_table_2.len(),
                     paths.len()
                 );
             }
