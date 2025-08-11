@@ -27,7 +27,7 @@ charming = { version = "0.4.0", features = ["ssr"] }
 
 [[bin]]
 name = "replayer"
-path = "src/bin/replayer.rs"
+path = "src/bin/replayer/main.rs"
 
 [features]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
