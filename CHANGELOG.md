@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-01
+
+- Reuse jumpdest filters within the same VM instance [#3905](https://github.com/lambdaclass/ethrex/pull/3905)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
