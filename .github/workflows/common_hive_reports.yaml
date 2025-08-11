@@ -57,8 +57,6 @@ jobs:
         if: ${{ inputs.job_type != 'main' }}
         run: |
           make build-image
-          # Tests use ethrex:latest so we retag it
-          docker tag ethrex:unstable ethrex:latest
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}

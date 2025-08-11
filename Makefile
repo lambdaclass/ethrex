@@ -22,6 +22,8 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
 	docker build -t ethrex:unstable .
+	# Tests use ethrex:latest so we retag it
+	docker tag ethrex:unstable ethrex:latest
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
