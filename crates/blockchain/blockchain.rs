@@ -12,7 +12,6 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
@@ -22,6 +21,7 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
+use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{
@@ -124,6 +124,7 @@ impl Blockchain {
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
+
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -145,9 +146,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-
         let execution_result = vm.execute_block(block)?;
-
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -606,9 +605,15 @@ impl Blockchain {
     ) -> Result<H256, MempoolError> {
         // Validate blobs bundle
 
-        blobs_bundle.validate(&transaction)?;
+        let fork = self.current_fork().await?;
+
+        blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
+        let hash = transaction.compute_hash();
+        if self.mempool.contains_tx(hash)? {
+            return Ok(hash);
+        }
         let sender = transaction.sender()?;
 
         // Validate transaction
@@ -617,7 +622,6 @@ impl Blockchain {
         }
 
         // Add transaction and blobs bundle to storage
-        let hash = transaction.compute_hash();
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
@@ -633,13 +637,15 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
+        let hash = transaction.compute_hash();
+        if self.mempool.contains_tx(hash)? {
+            return Ok(hash);
+        }
         let sender = transaction.sender()?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
-
-        let hash = transaction.compute_hash();
 
         // Add transaction to storage
         self.mempool
@@ -833,6 +839,17 @@ impl Blockchain {
             BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
         };
         Ok(evm)
+    }
+
+    /// Get the current fork of the chain, based on the latest block's timestamp
+    pub async fn current_fork(&self) -> Result<Fork, StoreError> {
+        let chain_config = self.storage.get_chain_config()?;
+        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block = self
+            .storage
+            .get_block_header(latest_block_number)?
+            .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
+        Ok(chain_config.fork(latest_block.timestamp))
     }
 }
 

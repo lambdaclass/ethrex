@@ -270,6 +270,13 @@ impl Mempool {
         Ok(tx)
     }
 
+    pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
+        self.transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()).into())
+            .map(|pool| pool.contains_key(&tx_hash))
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
@@ -413,8 +420,9 @@ mod tests {
         let block_number = header.number;
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
+        store
+            .forkchoice_update(None, block_number, block_hash, None, None)
+            .await?;
         store.set_chain_config(&config).await?;
         Ok(store)
     }
