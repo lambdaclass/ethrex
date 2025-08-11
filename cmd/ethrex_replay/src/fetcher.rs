@@ -1,6 +1,4 @@
-use std::{
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::{ChainConfig, block_execution_witness::ExecutionWitnessResult};
 use ethrex_rpc::{
