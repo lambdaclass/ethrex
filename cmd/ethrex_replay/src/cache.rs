@@ -37,8 +37,7 @@ impl Cache {
 
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
     let file = BufReader::new(File::open(file_name)?);
-    let cache: Cache = serde_json::from_reader(file)?;
-    Ok(cache)
+    Ok(serde_json::from_reader(file)?)
 }
 
 pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
