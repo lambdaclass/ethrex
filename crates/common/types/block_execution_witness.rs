@@ -90,7 +90,7 @@ impl ExecutionWitnessResult {
     ) -> Result<(), ExecutionWitnessError> {
         let parent_header = self.get_block_parent_header(first_header.number)?;
 
-        let state_trie = Self::rebuild_trie(parent_header.state_root, &self.state_trie_nodes)?;
+        let state_trie = rebuild_trie(parent_header.state_root, &self.state_trie_nodes)?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
@@ -119,31 +119,6 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
-    fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
-        let mut initial_node = None;
-
-        for node in state.iter() {
-            // If the node is empty we skip it
-            if node == &vec![128_u8] {
-                continue;
-            }
-            let x = Node::decode_raw(node).map_err(|_| {
-                ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
-            })?;
-            let hash = x.compute_hash().finalize();
-            if hash == initial_state {
-                initial_node = Some(node.clone());
-                break;
-            }
-        }
-
-        Trie::from_nodes(
-            initial_node.map(|b| b.to_vec()).as_ref(),
-            &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
-        )
-        .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
-    }
-
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
@@ -154,7 +129,7 @@ impl ExecutionWitnessResult {
             return None;
         }
 
-        Self::rebuild_trie(account_state.storage_root, state).ok()
+        rebuild_trie(account_state.storage_root, state).ok()
     }
 
     pub fn apply_account_updates(
