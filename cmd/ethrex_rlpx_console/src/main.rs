@@ -1,9 +1,10 @@
+use ethrex::networks::Network;
 use ethrex::{
-    initializers::{get_local_node_record, get_signer, init_blockchain},
+    initializers::{get_local_node_record, get_signer, init_blockchain, init_store},
     utils::get_client_version,
 };
 use ethrex_blockchain::BlockchainType;
-use ethrex_common::Bytes;
+use ethrex_common::{Bytes, types::ChainConfig};
 use ethrex_common::{H256, H512};
 use ethrex_p2p::rlpx::connection::server::RLPxReceiver;
 use ethrex_p2p::utils::public_key_from_signing_key;
@@ -40,7 +41,7 @@ pub fn init_tracing(log_level: Level) {
 
 /// Simple function that creates a p2p context with a bunch of default values
 /// we assume ports, levm and inmemory implementation
-fn get_p2p_context() -> Result<P2PContext, StoreError> {
+async fn get_p2p_context() -> Result<P2PContext, StoreError> {
     let data_dir = "jwt/secrets";
     let signer = get_signer(data_dir);
     let local_node = Node::new(
@@ -56,7 +57,10 @@ fn get_p2p_context() -> Result<P2PContext, StoreError> {
     )));
     let tracker = TaskTracker::new();
     let peer_table = Kademlia::new();
-    let storage = Store::new("", EngineType::InMemory)?;
+    let genesis = Network::mainnet()
+        .get_genesis()
+        .expect("We should have the genesis mainnet");
+    let storage = init_store("memory", genesis).await;
     let blockchain = init_blockchain(EvmEngine::LEVM, storage.clone(), BlockchainType::L1);
     Ok(P2PContext::new(
         local_node,
@@ -90,7 +94,7 @@ pub enum ConsoleError {
 async fn main() -> Result<(), ConsoleError> {
     init_tracing(Level::TRACE);
 
-    let p2p_context = get_p2p_context()?;
+    let p2p_context = get_p2p_context().await?;
     let other_node = Node::new(
         Ipv4Addr::new(100, 99, 113, 63).into(),
         30303, // Check this number, doesn't matter for now,
