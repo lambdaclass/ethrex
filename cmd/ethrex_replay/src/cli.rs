@@ -41,10 +41,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -62,10 +59,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -81,10 +75,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -100,10 +91,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -219,10 +207,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -240,10 +225,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -259,10 +241,7 @@ enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -355,10 +334,7 @@ enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
