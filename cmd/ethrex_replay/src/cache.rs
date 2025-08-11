@@ -1,5 +1,5 @@
+use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
-use ethrex_common::types::{ChainConfig, blobs_bundle};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -35,11 +35,9 @@ impl Cache {
     }
 }
 
-// FIXME: The chain config is not properly set.
-pub fn load_cache(file_name: &str, chain_config: ChainConfig) -> eyre::Result<Cache> {
+pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
     let file = BufReader::new(File::open(file_name)?);
-    let mut cache: Cache = serde_json::from_reader(file)?;
-    cache.witness.chain_config = chain_config;
+    let cache: Cache = serde_json::from_reader(file)?;
     Ok(cache)
 }
 
