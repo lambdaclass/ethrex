@@ -70,6 +70,14 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
+const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
+const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
+const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
+const INITIALIZE_COMMON_BRIDGE_SIGNATURE: &str = "initialize(address,address,uint256)";
+const INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE: &str = "initialize(address,address)";
+
 #[derive(Parser)]
 pub struct DeployerOptions {
     #[command(flatten)]
@@ -95,15 +103,14 @@ pub struct DeployerOptions {
     /// Path to a file containing a list private keys, one per line.
     ///
     /// If set, a deposit will be done from those accounts via the newly created bridge.
+    /// Used for dev purposes.
     #[arg(
         long = "deployer.deposit-accounts",
         value_name = "PATH",
-        env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
-        required_if_eq("deposit_rich", "true"),
-        requires = "deposit_rich",
+        env = "ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH",
         help_heading = "Deployer options"
     )]
-    pub private_keys_file_path: Option<PathBuf>,
+    pub deposit_private_keys_file: Option<PathBuf>,
     /// Salt to use with CREATE2 deterministic deployer. Defaults to random.
     #[arg(
         long = "deployer.deterministic-salt",
@@ -116,7 +123,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "deployer.on-chain-proposer-owner",
         value_name = "ADDRESS",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
+        env = "ETHREX_DEPLOYER_ON_CHAIN_PROPOSER_OWNER_ADDRESS",
         help_heading = "Deployer options"
     )]
     pub on_chain_proposer_owner: Option<Address>,
@@ -124,7 +131,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "deployer.on-chain-proposer-owner-pk",
         value_name = "PRIVATE_KEY",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
+        env = "ETHREX_DEPLOYER_ON_CHAIN_PROPOSER_OWNER_PK",
         conflicts_with = "on_chain_proposer_owner",
         help_heading = "Deployer options"
     )]
@@ -133,7 +140,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "deployer.bridge-owner",
         value_name = "ADDRESS",
-        env = "ETHREX_BRIDGE_OWNER",
+        env = "ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS",
         help_heading = "Deployer options"
     )]
     pub bridge_owner: Option<Address>,
@@ -147,12 +154,12 @@ pub struct DeployerOptions {
         require_equals = true,
         action = ArgAction::Set,
         hide_possible_values = true,
-        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
+        env = "ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER",
         requires = "sp1_vk_path",
         conflicts_with = "sp1_verifier_address",
         help_heading = "Deployer options",
     )]
-    pub sp1_deploy_verifier: bool,
+    pub deploy_sp1_verifier: bool,
     /// Deploy the TDX verifier contracts and use its address.
     #[arg(
         long = "deployer.deploy-tdx",
@@ -163,11 +170,11 @@ pub struct DeployerOptions {
         require_equals = true,
         action = ArgAction::Set,
         hide_possible_values = true,
-        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
+        env = "ETHREX_DEPLOYER_DEPLOY_TDX_VERIFIER",
         conflicts_with = "tdx_verifier_address",
         help_heading = "Deployer options",
     )]
-    pub tdx_deploy_verifier: bool,
+    pub deploy_tdx_verifier: bool,
 
     // L2 options
     /// Path to the L2 genesis file
@@ -190,28 +197,28 @@ pub struct DeployerOptions {
         require_equals = true,
         action = ArgAction::Set,
         hide_possible_values = true,
-        env = "ETHREX_USE_COMPILED_GENESIS",
+        env = "ETHREX_DEPLOYER_DEV_GENESIS",
         help_heading = "L2 options",
     )]
-    pub use_compiled_genesis: bool,
+    pub use_dev_genesis: bool,
     /// Address of the account that commits the batches to L1.
     #[arg(
         long = "l2.l1-committer",
         default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS",
+        env = "ETHREX_DEPLOYER_L1_COMMITTER_ADDRESS",
         help_heading = "L2 options"
     )]
-    pub committer_l1_address: Address,
+    pub l1_committer: Address,
     /// Address of the account that sends the proofs to L1 to be verified.
     #[arg(
         long = "l2.l1-proof-sender",
         default_value = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS",
+        env = "ETHREX_DEPLOYER_L1_PROOF_SENDER_ADDRESS",
         help_heading = "L2 options"
     )]
-    pub proof_sender_l1_address: Address,
+    pub l1_proof_sender: Address,
     /// Run on validium mode, meaning it will not publish state diffs to the L1.
     #[arg(
         long = "l2.validium",
@@ -222,7 +229,7 @@ pub struct DeployerOptions {
         require_equals = true,
         action = ArgAction::Set,
         hide_possible_values = true,
-        env = "ETHREX_L2_VALIDIUM",
+        env = "ETHREX_DEPLOYER_VALIDIUM",
         help_heading = "L2 options",
     )]
     pub validium: bool,
@@ -231,7 +238,7 @@ pub struct DeployerOptions {
         long = "l2.inclusion-max-wait",
         value_name = "SECONDS",
         default_value = "3000",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        env = "ETHREX_DEPLOYER_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
         help_heading = "L2 options"
     )]
     pub inclusion_max_wait: u64,
@@ -242,7 +249,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.risc0",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
+        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER_ADDRESS",
         requires = "risc0_vk_path",
         help_heading = "Verifiers options"
     )]
@@ -260,7 +267,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.sp1",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
+        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER_ADDRESS",
         requires = "sp1_vk_path",
         conflicts_with = "sp1_deploy_verifier",
         help_heading = "Verifiers options"
@@ -279,7 +286,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.tdx",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
+        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER_ADDRESS",
         conflicts_with = "tdx_deploy_verifier",
         help_heading = "Verifiers options"
     )]
@@ -312,7 +319,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "deployer.sequener-registry-owner",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
+        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER_ADDRESS",
         required_if_eq("deploy_based_contracts", "true"),
         help_heading = "L2 Based options"
     )]
@@ -335,43 +342,35 @@ impl Default for DeployerOptions {
             )
             .unwrap(),
             env_file_path: Some(PathBuf::from(".env")),
-            private_keys_file_path: None,
+            deposit_private_keys_file: None,
             genesis_l2_path: None,
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-            committer_l1_address: H160([
+            l1_committer: H160([
                 0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43,
                 0xb3, 0xb3, 0x5d, 0x0d, 0x88, 0x5b,
             ]),
             // 0xE25583099BA105D9ec0A67f5Ae86D90e50036425
-            proof_sender_l1_address: H160([
+            l1_proof_sender: H160([
                 0xe2, 0x55, 0x83, 0x09, 0x9b, 0xa1, 0x05, 0xd9, 0xec, 0x0a, 0x67, 0xf5, 0xae, 0x86,
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
             risc0_verifier_address: None,
             sp1_verifier_address: None,
-            sp1_deploy_verifier: false,
+            deploy_sp1_verifier: false,
             tdx_verifier_address: None,
-            tdx_deploy_verifier: false,
+            deploy_tdx_verifier: false,
             aligned_aggregator_address: None,
             create2_salt: None,
             validium: false,
             on_chain_proposer_owner: None,
             on_chain_proposer_owner_pk: None,
             bridge_owner: None,
-            // sp1_vk_path: format!(
-            //     "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
-            //     env!("CARGO_MANIFEST_DIR")
-            // ),
-            // risc0_vk_path: format!(
-            //     "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
-            //     env!("CARGO_MANIFEST_DIR")
-            // ),
             sp1_vk_path: None,
             risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
-            use_compiled_genesis: true,
+            use_dev_genesis: true,
         }
     }
 }
@@ -403,14 +402,6 @@ pub enum DeployerError {
     #[error("Failed to read or parse genesis: {0}")]
     GenesisError(String),
 }
-
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
-const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
-const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
-const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const INITIALIZE_COMMON_BRIDGE_SIGNATURE: &str = "initialize(address,address,uint256)";
-const INITIALIZE_SEQUENCER_REGISTRY_SIGNATURE: &str = "initialize(address,address)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -447,7 +438,7 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
-    if opts.private_keys_file_path.is_some() {
+    if opts.deposit_private_keys_file.is_some() {
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
@@ -546,7 +537,7 @@ async fn deploy_contracts(
     // TODO: Add Risc0Verifier deployment
     let risc0_verifier_address = opts.risc0_verifier_address.unwrap_or(DEV_MODE_ADDRESS);
 
-    let sp1_verifier_address = if opts.sp1_deploy_verifier {
+    let sp1_verifier_address = if opts.deploy_sp1_verifier {
         info!("Deploying SP1 verifier");
         deploy_contract_from_bytecode(
             &[],
@@ -564,7 +555,7 @@ async fn deploy_contracts(
         opts.sp1_verifier_address.unwrap_or(DEV_MODE_ADDRESS)
     };
 
-    let tdx_verifier_address = if opts.tdx_deploy_verifier {
+    let tdx_verifier_address = if opts.deploy_tdx_verifier {
         info!("Deploying TDX verifier");
         deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)
             .inspect(|address| info!(?address, "TDX verifier deployed"))?
@@ -660,7 +651,7 @@ async fn initialize_contracts(
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
-    let genesis: Genesis = if opts.use_compiled_genesis {
+    let genesis: Genesis = if opts.use_dev_genesis {
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)
             .map_err(|e| DeployerError::GenesisError(e.to_string()))?
     } else {
@@ -747,8 +738,8 @@ async fn initialize_contracts(
             Value::FixedBytes(risc0_vk.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
-                Value::Address(opts.committer_l1_address),
-                Value::Address(opts.proof_sender_l1_address),
+                Value::Address(opts.l1_committer),
+                Value::Address(opts.l1_proof_sender),
             ]),
             Value::Uint(genesis.config.chain_id.into()),
         ];
@@ -886,8 +877,8 @@ async fn make_deposits(
 ) -> Result<(), DeployerError> {
     trace!("Making deposits");
 
-    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
-        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
+    let pks = read_to_string(opts.deposit_private_keys_file.clone().ok_or(
+        DeployerError::ConfigValueNotSet("--deployer.deposit-accounts".to_string()),
     )?)
     .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
