@@ -182,8 +182,8 @@ pub struct DeployerOptions {
         long = "l2.genesis",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
-        required_unless_present = "use_compiled_genesis",
-        required_if_eq("use_compiled_genesis", "false"),
+        required_unless_present = "use_dev_genesis",
+        required_if_eq("use_dev_genesis", "false"),
         help_heading = "L2 options"
     )]
     pub genesis_l2_path: Option<PathBuf>,
@@ -254,13 +254,22 @@ pub struct DeployerOptions {
         help_heading = "Verifiers options"
     )]
     pub risc0_verifier_address: Option<Address>,
-    /// Path to the RISC0 Image ID (verification key).
+    /// RISC0 Image ID (verification key).
     #[arg(
         long = "verifier.risc0-vk",
-        // default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_RISC0_VERIFICATION_KEY",
+        conflicts_with = "risc0_vk_path",
+        help_heading = "Verifiers options"
+    )]
+    pub risc0_vk: Option<H256>,
+    /// Path to the RISC0 Image ID (verification key).
+    #[arg(
+        long = "verifier.risc0-vk-path",
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
-        help_heading = "Verifiers options",
+        conflicts_with = "risc0_vk",
+        help_heading = "Verifiers options"
     )]
     pub risc0_vk_path: Option<PathBuf>,
     /// L1 address of the SP1 verifier. If not set, contract will omit SP1 verification.
@@ -273,12 +282,22 @@ pub struct DeployerOptions {
         help_heading = "Verifiers options"
     )]
     pub sp1_verifier_address: Option<Address>,
-    /// Path to the SP1 verification key.
+    /// SP1 verification key.
     #[arg(
         long = "verifier.sp1-vk",
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY",
+        conflicts_with = "sp1_vk_path",
+        help_heading = "Verifiers options"
+    )]
+    pub sp1_vk: Option<H256>,
+    /// Path to the SP1 verification key.
+    #[arg(
+        long = "verifier.sp1-vk-path",
         // default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")).into(),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        conflicts_with = "sp1_vk",
         help_heading = "Verifiers options",
     )]
     pub sp1_vk_path: Option<PathBuf>,
@@ -365,6 +384,8 @@ impl Default for DeployerOptions {
             on_chain_proposer_owner: None,
             on_chain_proposer_owner_pk: None,
             bridge_owner: None,
+            sp1_vk: None,
+            risc0_vk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
             deploy_based_contracts: false,
@@ -667,11 +688,13 @@ async fn initialize_contracts(
         .sp1_vk_path
         .as_ref()
         .map(read_vk)
+        .or(opts.sp1_vk)
         .unwrap_or(H256::zero());
     let risc0_vk = opts
         .risc0_vk_path
         .as_ref()
         .map(read_vk)
+        .or(opts.risc0_vk)
         .unwrap_or(H256::zero());
 
     let initializer_address = initializer.address();
