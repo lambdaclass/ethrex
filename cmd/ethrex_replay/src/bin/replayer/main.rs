@@ -170,10 +170,7 @@ async fn replay(
             bench: false,
         }
         .run()
-        .await
-        .inspect_err(|e| {
-            tracing::error!("Error executing block: {e:?}");
-        });
+        .await;
 
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
