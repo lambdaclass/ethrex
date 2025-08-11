@@ -420,6 +420,7 @@ async fn re_run_stateless(
 
     let program_input = ProgramInput {
         blocks,
+        chain_config: witness.chain_config,
         db: witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
