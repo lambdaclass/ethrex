@@ -41,7 +41,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -59,7 +59,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -75,7 +75,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -91,7 +91,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -207,7 +207,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -225,7 +225,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -241,7 +241,7 @@ enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -334,7 +334,7 @@ enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]

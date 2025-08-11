@@ -7,10 +7,10 @@ use crate::{
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::{Options, ProverClientOptions},
     },
-    networks::Network,
     utils::{parse_private_key, set_datadir},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
+use cmd_common::networks::Network;
 use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},

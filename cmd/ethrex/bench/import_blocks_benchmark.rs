@@ -1,8 +1,8 @@
+use cmd_common::networks::Network;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
     DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
-    networks::Network,
     utils::set_datadir,
 };
 use ethrex_blockchain::BlockchainType;

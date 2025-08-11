@@ -21,9 +21,9 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
+use cmd_common::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
