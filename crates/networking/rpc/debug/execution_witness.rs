@@ -58,16 +58,16 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
 
 // TODO: Ideally this would be a try_from but crate dependencies complicate this matter
 pub fn execution_witness_from_rpc_chain_config(
-    value: RpcExecutionWitness,
+    rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let codes = value
+    let codes = rpc_witness
         .codes
         .iter()
         .map(|code| (keccak_hash::keccak(code), code.clone()))
         .collect::<HashMap<_, _>>();
 
-    let block_headers = value
+    let block_headers = rpc_witness
         .headers
         .iter()
         .map(Bytes::as_ref)
@@ -88,11 +88,12 @@ pub fn execution_witness_from_rpc_chain_config(
             .cloned()
             .unwrap_or_else(|| panic!("No parent block header found for block {parent_block_number} in the RpcExecutionWitness"));
 
-    let state_trie = block_execution_witness::rebuild_trie(parent_header.state_root, &value.state)?;
+    let state_trie =
+        block_execution_witness::rebuild_trie(parent_header.state_root, &rpc_witness.state)?;
 
     // Keys can either be account addresses or storage slots. They have different sizes,
     // so we filter them by size. The from_slice method panics if the input has the wrong size.
-    let addresses: Vec<Address> = value
+    let addresses: Vec<Address> = rpc_witness
         .keys
         .iter()
         .filter(|k| k.len() == Address::len_bytes())
@@ -105,7 +106,11 @@ pub fn execution_witness_from_rpc_chain_config(
             .filter_map(|addr| {
                 Some((
                     *addr,
-                    block_execution_witness::rebuild_storage_trie(addr, &state_trie, &value.state)?,
+                    block_execution_witness::rebuild_storage_trie(
+                        addr,
+                        &state_trie,
+                        &rpc_witness.state,
+                    )?,
                 ))
             })
             .collect::<Vec<(Address, Trie)>>(),
@@ -113,8 +118,8 @@ pub fn execution_witness_from_rpc_chain_config(
 
     Ok(ExecutionWitnessResult {
         // FIXME: Figure out if we want the following 2 to be empty.
-        state_trie_nodes: value.state,
-        keys: value.keys,
+        state_trie_nodes: rpc_witness.state,
+        keys: rpc_witness.keys,
         codes,
         state_trie: Some(state_trie),
         storage_tries: Some(storage_tries),
