@@ -103,11 +103,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blob_proof,
     } = input;
 
-    let first_header = &blocks
-        .first()
-        .ok_or(StatelessExecutionError::EmptyBatchError)?
-        .header;
-
     let chain_id = db.chain_config.chain_id;
 
     if cfg!(feature = "l2") {
@@ -119,11 +114,10 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             blob_commitment,
             blob_proof,
             chain_id,
-            first_header,
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id, first_header)
+    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
@@ -131,7 +125,6 @@ pub fn stateless_validation_l1(
     db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
     chain_id: u64,
-    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -139,7 +132,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -163,7 +156,6 @@ pub fn stateless_validation_l2(
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
-    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let mut initial_db = ExecutionWitnessResult {
         block_headers: db.block_headers.clone(),
@@ -184,7 +176,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = execute_stateless(blocks, db, elasticity_multiplier, first_header)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -200,7 +192,7 @@ pub fn stateless_validation_l2(
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         initial_db
-            .rebuild_tries(first_header)
+            .rebuild_tries()
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
         let wrapped_db = ExecutionWitnessWrapper::new(initial_db);
         let state_diff = prepare_state_diff(
@@ -241,9 +233,8 @@ fn execute_stateless(
     blocks: &[Block],
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
-    first_header: &BlockHeader,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries(first_header)
+    db.rebuild_tries()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);

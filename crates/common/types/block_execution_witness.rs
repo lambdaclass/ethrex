@@ -77,13 +77,8 @@ pub enum ExecutionWitnessError {
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(
-        &mut self,
-        first_header: &BlockHeader,
-    ) -> Result<(), ExecutionWitnessError> {
-        let parent_header = self.get_block_parent_header(first_header.number)?;
-
-        let state_trie = rebuild_trie(parent_header.state_root, &self.state_trie_nodes)?;
+    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+        let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
