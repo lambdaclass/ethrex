@@ -1,4 +1,3 @@
-use cmd_common::networks::Network;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
     DEFAULT_DATADIR,
@@ -6,6 +5,7 @@ use ethrex::{
     utils::set_datadir,
 };
 use ethrex_blockchain::BlockchainType;
+use ethrex_config::networks::Network;
 use ethrex_vm::EvmEngine;
 
 #[inline]

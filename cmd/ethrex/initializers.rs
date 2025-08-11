@@ -5,9 +5,9 @@ use crate::{
         set_datadir,
     },
 };
-use cmd_common::networks::Network;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 

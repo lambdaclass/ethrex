@@ -9,10 +9,8 @@ use ethrex_rpc::{
 use eyre::WrapErr;
 use tracing::{error, info, warn};
 
-use crate::{
-    cache::{Cache, L2Fields, load_cache, write_cache},
-    networks::Network,
-};
+use crate::cache::{Cache, L2Fields, load_cache, write_cache};
+use ethrex_config::networks::Network;
 
 pub async fn get_blockdata(
     eth_client: EthClient,

@@ -23,7 +23,7 @@ use crate::{
     },
     utils::{self, get_client_version, set_datadir},
 };
-use cmd_common::networks::Network;
+use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]

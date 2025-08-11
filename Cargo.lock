@@ -2025,17 +2025,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmd-common"
-version = "0.1.0"
-dependencies = [
- "ethrex-common",
- "ethrex-p2p",
- "hex",
- "keccak-hash",
- "serde_json",
-]
-
-[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3851,11 +3840,11 @@ dependencies = [
  "cfg-if 1.0.1",
  "clap 4.5.40",
  "clap_complete",
- "cmd-common",
  "criterion",
  "directories",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
@@ -3940,6 +3929,17 @@ dependencies = [
  "tinyvec",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ethrex-config"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-p2p",
+ "hex",
+ "keccak-hash",
+ "serde_json",
 ]
 
 [[package]]
@@ -4196,8 +4196,8 @@ version = "0.1.0"
 dependencies = [
  "charming",
  "clap 4.5.40",
- "cmd-common",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-levm",
  "ethrex-p2p",
  "ethrex-prover",

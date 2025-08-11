@@ -9,10 +9,10 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
-use crate::networks::Network;
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");

@@ -7,7 +7,6 @@ mod cli;
 mod fetcher;
 mod plot_composition;
 mod run;
-use cmd_common::networks;
 
 #[tokio::main]
 async fn main() {
