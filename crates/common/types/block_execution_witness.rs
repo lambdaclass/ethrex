@@ -39,7 +39,7 @@ pub struct ExecutionWitnessResult {
     )]
     pub state_trie_nodes: Vec<Bytes>,
     // Indexed by account
-    // Rlp encoded state trie nodes
+    // Rlp encoded storage trie nodes
     #[serde(
         serialize_with = "serialize_storage_tries",
         deserialize_with = "deserialize_storage_tries"
@@ -119,10 +119,7 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
-    pub fn rebuild_trie(
-        initial_state: H256,
-        state: &[Bytes],
-    ) -> Result<Trie, ExecutionWitnessError> {
+    fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
         let mut initial_node = None;
 
         for node in state.iter() {
