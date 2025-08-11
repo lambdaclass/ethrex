@@ -250,7 +250,7 @@ impl DumpProcessor {
         // Sanity check
         if *self.state_root.get_or_insert(dump.state_root) != dump.state_root {
             return Err(eyre::ErrReport::msg(
-                "Archive node yieled different state roots for the same block dump",
+                "Archive node yielded different state roots for the same block dump",
             ));
         }
         let should_continue = dump.next.is_some();
