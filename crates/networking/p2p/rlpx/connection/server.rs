@@ -59,6 +59,7 @@ use crate::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
+        snap::TrieNodes,
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
@@ -122,7 +123,7 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Kademlia,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
-    pub(crate) backend_table: HashMap<u64, GenServerHandle<StorageHealer>>,
+    pub(crate) backend_table: HashMap<u64, RLPxReceiver>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
 }
@@ -150,11 +151,32 @@ pub enum InnerState {
 }
 
 #[derive(Clone, Debug)]
+pub enum RLPxReceiver {
+    StorageHealer(GenServerHandle<StorageHealer>),
+    Channel(mpsc::Sender<TrieNodes>),
+}
+
+impl RLPxReceiver {
+    async fn send(&mut self, trie_nodes: TrieNodes) {
+        match self {
+            RLPxReceiver::StorageHealer(gen_server_handle) => {
+                gen_server_handle
+                    .cast(StorageHealerMsg::TrieNodes(trie_nodes))
+                    .await;
+            }
+            RLPxReceiver::Channel(unbounded_sender) => {
+                unbounded_sender.send(trie_nodes);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
-    BackendRequest(Message, GenServerHandle<StorageHealer>),
+    BackendRequest(Message, RLPxReceiver),
     SendPing,
     SendNewPooledTxHashes,
     BlockRangeUpdate,
@@ -366,7 +388,8 @@ impl GenServer for RLPxConnection {
                 );
                 established_state
                     .table
-                    .remove_peer(&established_state.node.node_id()).await;
+                    .remove_peer(&established_state.node.node_id())
+                    .await;
                 established_state.teardown().await;
             }
             _ => {
@@ -887,11 +910,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         ref message @ Message::TrieNodes(ref resp) => {
             let id = resp.id;
-            if let Some(receiver) = state.backend_table.get(&id) {
-                receiver
-                    .clone()
-                    .cast(StorageHealerMsg::TrieNodes(resp.clone()))
-                    .await;
+            if let Some(receiver) = state.backend_table.get_mut(&id) {
+                receiver.send(resp.clone());
             } else {
                 log_peer_debug(
                     &state.node,
@@ -936,7 +956,7 @@ async fn handle_backend_message(
 async fn handle_backend_request(
     state: &mut Established,
     message: Message,
-    handler: GenServerHandle<StorageHealer>,
+    handler: RLPxReceiver,
 ) -> Result<(), RLPxError> {
     match &message {
         Message::GetTrieNodes(get_trie_nodes_message) => {

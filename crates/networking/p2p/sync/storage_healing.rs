@@ -2,7 +2,7 @@ use crate::{
     kademlia::PeerChannels,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
     rlpx::{
-        connection::server::CastMessage,
+        connection::server::{CastMessage, RLPxReceiver},
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -412,7 +412,7 @@ async fn ask_peers_for_nodes(
                     state_root,
                     download_chunk,
                 )),
-                self_handler.clone(),
+                RLPxReceiver::StorageHealer(self_handler.clone()),
             ))
             .await;
     }
