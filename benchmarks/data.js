@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754938350126,
+  "lastUpdate": 1754941014776,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19382,6 +19382,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006575034482758621,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7241f57e0594d79979bcf17eb1b9daab2e39dc58",
+          "message": "docs(l2): fix ethrex contracts download link (#4009)\n\n**Motivation**\n\nThe contracts are now bundled in a single file\n\n**Description**\n\nChange the link to use the new name `ethrex-contracts.tar.gz`",
+          "timestamp": "2025-08-11T13:43:13Z",
+          "tree_id": "dfd645841f253b947b36c565fed131107ff000c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7241f57e0594d79979bcf17eb1b9daab2e39dc58"
+        },
+        "date": 1754940996320,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013932484342379957,
             "unit": "Mgas/s"
           }
         ]
