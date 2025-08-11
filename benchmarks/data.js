@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754922279776,
+  "lastUpdate": 1754925286341,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8395,6 +8395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161624587919,
             "range": "± 307032962",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7241f57e0594d79979bcf17eb1b9daab2e39dc58",
+          "message": "docs(l2): fix ethrex contracts download link (#4009)\n\n**Motivation**\n\nThe contracts are now bundled in a single file\n\n**Description**\n\nChange the link to use the new name `ethrex-contracts.tar.gz`",
+          "timestamp": "2025-08-11T13:43:13Z",
+          "tree_id": "dfd645841f253b947b36c565fed131107ff000c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7241f57e0594d79979bcf17eb1b9daab2e39dc58"
+        },
+        "date": 1754925271624,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161173356175,
+            "range": "± 243873982",
             "unit": "ns/iter"
           }
         ]
