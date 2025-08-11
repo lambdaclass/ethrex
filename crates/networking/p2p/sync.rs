@@ -273,9 +273,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, block_sync_state).await?;
+            self.snap_sync(store, block_sync_state.clone()).await?;
 
             // Next sync will be full-sync
+            block_sync_state = block_sync_state.into_fullsync().await?;
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -483,18 +484,21 @@ async fn store_receipts(
 }
 
 /// Persisted State during the Block Sync phase
+#[derive(Clone)]
 enum BlockSyncState {
     Full(FullBlockSyncState),
     Snap(SnapBlockSyncState),
 }
 
 /// Persisted State during the Block Sync phase for SnapSync
+#[derive(Clone)]
 struct SnapBlockSyncState {
     block_hashes: Vec<H256>,
     store: Store,
 }
 
 /// Persisted State during the Block Sync phase for FullSync
+#[derive(Clone)]
 struct FullBlockSyncState {
     current_headers: Vec<BlockHeader>,
     current_blocks: Vec<Block>,
