@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754942453873,
+  "lastUpdate": 1754943476404,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19440,6 +19440,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0014214398296059638,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "97bdff0c672e0e01434b9a8363442f8de1f31a08",
+          "message": "fix(l1): potential overflows in `calculate_base_fee` (#3954)\n\n**Motivation**\nWhile the values used and the output of `calculate_base_fee` fit into\nu64, some results of internal multiplications can go over 64 bits. This\nPR fixes this potential overflows by using u128 to handle values that\ncan go over 64 bits during calculation (aka values involved in additions\nand multiplications)\nThis bug was first encountered on block 6029872 of sepolia testnet\n(which failed due to invalid base fee)\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Use `u128` to handle internal values which may overflow u64 during\n`calculate_base_fee`\n* Add test for `calculate_base_fee` using values that would overflow u64\nduring calcs\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed in order to progress through #1676\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-08-11T15:01:28Z",
+          "tree_id": "d96dc69d9df31690997790cdb63609e637b6f5d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/97bdff0c672e0e01434b9a8363442f8de1f31a08"
+        },
+        "date": 1754943475867,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0061226238532110094,
             "unit": "Mgas/s"
           }
         ]
