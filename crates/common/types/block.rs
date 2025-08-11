@@ -442,30 +442,36 @@ pub fn calculate_base_fee_per_gas(
 
     let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
-    Some(match parent_gas_used.cmp(&parent_gas_target) {
-        Ordering::Equal => parent_base_fee_per_gas,
+    match parent_gas_used.cmp(&parent_gas_target) {
+        Ordering::Equal => Some(parent_base_fee_per_gas),
         Ordering::Greater => {
             let gas_used_delta = parent_gas_used - parent_gas_target;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta =
                 max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
 
-            parent_base_fee_per_gas + base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
         Ordering::Less => {
             let gas_used_delta = parent_gas_target - parent_gas_used;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
 
-            parent_base_fee_per_gas - base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
-    })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -863,5 +869,24 @@ mod test {
                 .unwrap(),
         );
         assert_eq!(transactions_root, expected_root);
+    }
+
+    #[test]
+    // The values for this test were taken from sepolia testnet block number 6029872
+    // Where a silent overflow within base fee calculations led to the wrong expected base fee
+    fn test_calculate_base_fee_per_gas_big_numbers() {
+        let expected_base_fee = Some(1317727380375);
+        let block_gas_limit = 30000000;
+        let parent_gas_limit = 30000000;
+        let parent_gas_used = 1981764;
+        let parent_base_fee_per_gas = 1478077008012;
+        let calc_base_fee = calculate_base_fee_per_gas(
+            block_gas_limit,
+            parent_gas_limit,
+            parent_gas_used,
+            parent_base_fee_per_gas,
+            ELASTICITY_MULTIPLIER,
+        );
+        assert_eq!(calc_base_fee, expected_base_fee)
     }
 }
