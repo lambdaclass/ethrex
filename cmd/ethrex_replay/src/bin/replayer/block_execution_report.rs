@@ -107,7 +107,7 @@ impl Display for BlockRunReport {
         if let Network::PublicNetwork(_) = self.network {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | https://{network}.etherscan.io/block/{number}",
+                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | {block_url}",
                 network = self.network,
                 number = self.number,
                 gas = self.gas,
@@ -115,6 +115,14 @@ impl Display for BlockRunReport {
                 replayer_mode = self.replayer_mode,
                 execution_result = execution_result,
                 time_taken = format_duration(self.time_taken),
+                block_url = if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                    format!("https://etherscan.io/block/{}", self.number)
+                } else {
+                    format!(
+                        "https://{}.etherscan.io/block/{}",
+                        self.network, self.number
+                    )
+                },
             )
         } else {
             write!(
