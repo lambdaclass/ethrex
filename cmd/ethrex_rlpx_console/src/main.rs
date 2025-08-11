@@ -125,7 +125,7 @@ async fn main() -> Result<(), ConsoleError> {
         ))
         .await?;
 
-    match receiver.blocking_recv() {
+    match receiver.recv().await {
         Some(nodes) => info!("We got these trienodes {:?}", nodes),
         None => error!("Connection closed unexpectedly"),
     }

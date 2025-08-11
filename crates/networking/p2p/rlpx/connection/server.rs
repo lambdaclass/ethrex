@@ -160,12 +160,12 @@ impl RLPxReceiver {
     async fn send(&mut self, trie_nodes: TrieNodes) {
         match self {
             RLPxReceiver::StorageHealer(gen_server_handle) => {
-                gen_server_handle
+                let _ = gen_server_handle
                     .cast(StorageHealerMsg::TrieNodes(trie_nodes))
                     .await;
             }
             RLPxReceiver::Channel(unbounded_sender) => {
-                unbounded_sender.send(trie_nodes);
+                let _ = unbounded_sender.send(trie_nodes).await;
             }
         }
     }
@@ -911,7 +911,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         ref message @ Message::TrieNodes(ref resp) => {
             let id = resp.id;
             if let Some(receiver) = state.backend_table.get_mut(&id) {
-                receiver.send(resp.clone());
+                receiver.send(resp.clone()).await;
             } else {
                 log_peer_debug(
                     &state.node,
