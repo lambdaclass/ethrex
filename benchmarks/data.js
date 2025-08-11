@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754928667012,
+  "lastUpdate": 1754929251215,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19235,6 +19235,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006640457711442786,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "967ed78c2197a871a90a5f79420fd9f8a546d79a",
+          "message": "ci(l1,l2): use Ubuntu 24 instead of 22 for Linux ARM runners (#4004)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nUbuntu 22 has an old version of clang which is not compatible with `solc\n0.8.29`.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nBumped to Ubuntu 24.04\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-11T12:45:34Z",
+          "tree_id": "eb1e8ebd9974b1705b3b253c580bc3f773a9faa1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/967ed78c2197a871a90a5f79420fd9f8a546d79a"
+        },
+        "date": 1754929232455,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012846313763233879,
             "unit": "Mgas/s"
           }
         ]
