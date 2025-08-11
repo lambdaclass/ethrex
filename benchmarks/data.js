@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754929251215,
+  "lastUpdate": 1754929488750,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8485,6 +8485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163501150580,
             "range": "± 989127468",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d6d7c61120775c6bfea73f21eef22e6d126869c",
+          "message": "feat(l1): bump libmdbx max size to 8TB (#4011)\n\n**Motivation**\nRecently, we ran out of map space while full syncing on sepolia testnet\nat 2.1TB. This PR increases the max size of the DB so we don't run into\nthis problem again in the near future\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Increase `MAX_MAP_SIZE` constant from 2TB to 8TB\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed for #1676",
+          "timestamp": "2025-08-11T15:34:45Z",
+          "tree_id": "ed660011bc415a24b5a1cc07854e203bb934d98c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d6d7c61120775c6bfea73f21eef22e6d126869c"
+        },
+        "date": 1754929474443,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161496760952,
+            "range": "± 210552005",
             "unit": "ns/iter"
           }
         ]
