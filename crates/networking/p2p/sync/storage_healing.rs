@@ -390,7 +390,7 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(2);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         requests.insert(
@@ -478,12 +478,17 @@ fn zip_requeue_node_responses_score_peer(
     if nodes_size == 0 {
         *failed_downloads += 1;
         peer.score -= 1;
-        info!(
+        debug!(
             "The node returned empty in the request {:?}",
             request.requests
         );
         download_queue.extend(request.requests);
         return None;
+    } else {
+        debug!(
+            "The node returned {nodes_size} nodes in the request {:?}",
+            request.requests
+        );
     }
 
     if request.requests.len() < nodes_size {
