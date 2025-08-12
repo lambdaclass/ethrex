@@ -418,7 +418,7 @@ impl L1Committer {
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used as i64);
-            METRICS.set_batch_size(batch_number, (last_added_block_number - first_block_of_batch + 1) as i64);
+            METRICS.set_batch_size(batch_number, (last_added_block_number - first_block_of_batch) as i64);
             METRICS.set_batch_tx_count(batch_number, tx_count as i64);
         );
 
