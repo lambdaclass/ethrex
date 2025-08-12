@@ -21,7 +21,7 @@ use ethrex_p2p::{
 use ethrex_p2p::{network::P2PContext, peer_handler::MAX_RESPONSE_BYTES};
 use ethrex_p2p::{rlpx::snap::TrieNodes, types::Node};
 use ethrex_storage::{EngineType, Store, error::StoreError};
-use ethrex_trie::Nibbles;
+use ethrex_trie::{Nibbles, Node as TrieNode};
 use ethrex_vm::EvmEngine;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::error::GenServerError;
@@ -32,7 +32,7 @@ use std::{net::Ipv4Addr, str::FromStr};
 use std::{net::Ipv6Addr, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::{error, info, metadata::Level};
+use tracing::{debug, error, info, metadata::Level};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 pub fn init_tracing(log_level: Level) {
@@ -92,8 +92,6 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 const SAI_TEST_TOKEN: &'static str =
     "998abd7945acf1765167f39605e218cbad5644f90c6fa434177865c14c218cf2";
 
-const OTHER_NODE_PUBLIC_KEY: &'static str = "f070a8dc0ec1b1ca687e9e26cd57a70fca2957c37f801ace47f9cc9d7e50e8267a3972653b2dc4dc4b02b269017db4b1f2fd29231d1d275f5fc2397ca05774d3";
-
 #[derive(Debug, thiserror::Error)]
 pub enum ConsoleError {
     #[error("DB error: {0}")]
@@ -124,12 +122,73 @@ pub struct Options {
         help = "Receives the path to a `Config` struct in json format"
     )]
     pub config: String,
+    #[arg(help = "Receives the state root to ask the node")]
+    pub state_root: H256,
+    #[arg(
+        help = "Receives the nibbles to be search in the account. The format is the bytes separated by commas. example: 123,abc",
+        default_value = ""
+    )]
+    pub nibbles: String,
+}
+
+fn insert_zeros(input: &str) -> String {
+    let mut output: Vec<char> = Vec::new();
+    for character in input.chars() {
+        output.push('0');
+        output.push(character as char);
+    }
+    output.into_iter().collect()
+}
+
+fn parse_bytes(nibbles: String) -> Vec<Bytes> {
+    if nibbles.is_empty() {
+        return vec![Bytes::from(Nibbles::default().encode_compact())];
+    }
+    nibbles
+        .split(',')
+        .map(|input| insert_zeros(input))
+        .map(|input| hex::decode(input).expect("should work"))
+        .map(|hex| Nibbles::from_hex(hex))
+        .map(|nibs| Bytes::from(nibs.encode_compact()))
+        .collect()
+}
+
+fn print_trie_nodes(nodes: TrieNodes) {
+    info!(
+        "Printing trie nodes. We got {} nodes from the peers.",
+        nodes.nodes.len()
+    );
+    for node_bytes in nodes.nodes {
+        let node =
+            TrieNode::decode_raw(&node_bytes).expect("The node shouldn't send byzantine data");
+        match node {
+            TrieNode::Branch(branch_node) => {
+                info!(
+                    "We got a branch node with the childrens {:?}",
+                    branch_node
+                        .choices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, child)| {
+                            if child.is_valid() { Some(index) } else { None }
+                        })
+                        .collect::<Vec<usize>>()
+                )
+            }
+            TrieNode::Extension(extension_node) => info!("We got an extension node with the data"),
+            TrieNode::Leaf(leaf_node) => {
+                info!("We got a leaf node")
+            }
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), ConsoleError> {
     let opts = Options::parse();
     let Config { node, network } = read_config(opts.config);
+    let trienodes = parse_bytes(opts.nibbles);
+    println!("{:?}", trienodes);
 
     init_tracing(Level::DEBUG);
 
@@ -139,20 +198,19 @@ async fn main() -> Result<(), ConsoleError> {
     let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &node).await;
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<TrieNodes>(1000);
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let sai_account = H256::from_str(SAI_TEST_TOKEN)?.0;
     let account_path = sai_account.to_vec();
 
+    let mut paths = vec![vec![Bytes::from(account_path)]];
+
+    paths[0].extend(trienodes);
+
     let gtn = GetTrieNodes {
         id: 0,
-        root_hash: H256::from_str(
-            "a9cfa5bc8b546e8bccb850328ddb674f6a514d9f259ad94df833f3a0430f7b42",
-        )?,
-        paths: vec![vec![
-            Bytes::from(account_path),
-            Bytes::from(Nibbles::default().encode_compact()),
-        ]],
+        root_hash: opts.state_root,
+        paths,
         bytes: MAX_RESPONSE_BYTES,
     };
 
@@ -166,7 +224,9 @@ async fn main() -> Result<(), ConsoleError> {
         .await?;
 
     match receiver.recv().await {
-        Some(nodes) => info!("We got these trienodes {:?}", nodes),
+        Some(nodes) => {
+            print_trie_nodes(nodes);
+        }
         None => error!("Connection closed unexpectedly"),
     }
 
