@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-12
+
+- Remove unneeded RLP encoding from key/values in libmdbx / redb storage [#4020](https://github.com/lambdaclass/ethrex/pull/4020)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
