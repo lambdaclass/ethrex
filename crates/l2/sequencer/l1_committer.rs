@@ -419,6 +419,7 @@ impl L1Committer {
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used as i64);
             METRICS.set_batch_size(batch_number, (last_added_block_number - first_block_of_batch + 1) as i64);
+            METRICS.set_batch_tx_count(batch_number, tx_count as i64);
         );
 
         let privileged_transactions_hash =
@@ -556,7 +557,10 @@ impl L1Committer {
                 .get_transaction_receipt(commit_tx_hash)
                 .await?
                 .ok_or(CommitterError::InternalError("no verify tx receipt".to_string()))?;
-            METRICS.set_batch_commitment_gas(batch.number, commit_tx_receipt.receipt.cumulative_gas_used as i64);
+            METRICS.set_batch_commitment_gas(batch.number, commit_tx_receipt.tx_info.gas_used as i64);
+            if !self.validium {
+                METRICS.set_batch_commitment_blob_gas(batch.number, commit_tx_receipt.tx_info.blob_gas_used.unwrap() as i64);
+            }
         );
 
         info!("Commitment sent: {commit_tx_hash:#x}");

@@ -16,6 +16,8 @@ pub struct Metrics {
     batch_proving_time: IntGaugeVec,
     batch_verification_gas: IntGaugeVec,
     batch_commitment_gas: IntGaugeVec,
+    batch_commitment_blob_gas: IntGaugeVec,
+    batch_tx_count: IntGaugeVec,
 }
 
 impl Default for Metrics {
@@ -86,6 +88,20 @@ impl Metrics {
                 Opts::new(
                     "batch_commitment_gas",
                     "Batch commitment gas cost in L1, labeled by batch number",
+                ),
+                &["batch_number"],
+            ).unwrap(),
+            batch_commitment_blob_gas: IntGaugeVec::new(
+                Opts::new(
+                    "batch_commitment_blob_gas",
+                    "Batch commitment blob gas cost in L1, labeled by batch number",
+                ),
+                &["batch_number"],
+            ).unwrap(),
+            batch_tx_count: IntGaugeVec::new(
+                Opts::new(
+                    "batch_tx_count",
+                    "Batch transaction count, labeled by batch number",
                 ),
                 &["batch_number"],
             )
@@ -195,6 +211,33 @@ impl Metrics {
         builder.set(commitment_gas);
         Ok(())
     }
+
+    pub fn set_batch_commitment_blob_gas(
+        &self,
+        batch_number: u64,
+        commitment_blob_gas: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_commitment_blob_gas
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(commitment_blob_gas);
+        Ok(())
+    }
+
+    pub fn set_batch_tx_count(
+        &self,
+        batch_number: u64,
+        tx_count: i64,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .batch_tx_count
+            .get_metric_with_label_values(&[&batch_number.to_string()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        builder.set(tx_count);
+        Ok(())
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -217,6 +260,10 @@ impl Metrics {
         r.register(Box::new(self.batch_verification_gas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.batch_commitment_gas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_commitment_blob_gas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.batch_tx_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         let encoder = TextEncoder::new();
         let metric_families = r.gather();
