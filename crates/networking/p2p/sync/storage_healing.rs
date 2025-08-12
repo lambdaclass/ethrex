@@ -502,7 +502,11 @@ fn zip_requeue_node_responses_score_peer(
         .map(|(node_request, node_bytes)| {
             Ok(NodeResponse {
                 node_request: node_request.clone(),
-                node: Node::decode_raw(&node_bytes)?,
+                node: Node::decode_raw(&node_bytes).inspect_err(|err| {
+                    debug!(
+                        "We have found the error: {err}, while porcessing the node {node_bytes}"
+                    );
+                })?,
             })
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
