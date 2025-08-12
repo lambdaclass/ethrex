@@ -40,7 +40,7 @@ pub enum DiscoveryServerError {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscoveryServerState {
+pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
@@ -48,7 +48,7 @@ pub struct DiscoveryServerState {
     kademlia: Kademlia,
 }
 
-impl DiscoveryServerState {
+impl DiscoveryServer {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
@@ -224,6 +224,24 @@ impl DiscoveryServerState {
 
         Ok(())
     }
+
+    async fn handle_pong(&self, message: PongMessage, node_id: H256) {
+        let mut contacts = self.kademlia.table.lock().await;
+
+        // Received a pong from a node we don't know about
+        let Some(contact) = contacts.get_mut(&node_id) else {
+            return;
+        };
+        // Received a pong for an unknown ping
+        if !contact
+            .ping_hash
+            .map(|ph| ph == message.ping_hash)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        contact.ping_hash = None;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -236,14 +254,10 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
-pub struct DiscoveryServer;
-
 impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
@@ -251,11 +265,11 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer, fork_id.clone())
+            NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Failed to create local node record"),
         ));
 
-        let state = DiscoveryServerState::new(
+        let state = DiscoveryServer::new(
             local_node,
             local_node_record,
             signer,
@@ -287,22 +301,16 @@ impl GenServer for DiscoveryServer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = DiscoveryServerState;
     type Error = DiscoveryServerError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Listen => {
-                let _ = state.handle_listens().await.inspect_err(|e| {
+                let _ = self.handle_listens().await.inspect_err(|e| {
                     error!("Failed to handle listens: {e}");
                 });
                 CastResponse::Stop
@@ -388,12 +396,21 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
-#[derive(Debug, Default)]
-pub struct ConnectionHandler;
+#[derive(Debug, Clone)]
+pub struct ConnectionHandler {
+    discovery_server: DiscoveryServer,
+}
 
 impl ConnectionHandler {
-    pub async fn spawn(state: DiscoveryServerState) -> GenServerHandle<Self> {
-        ConnectionHandler::start(state)
+    pub fn new(discovery_server: DiscoveryServer) -> Self {
+        Self { discovery_server }
+    }
+}
+
+impl ConnectionHandler {
+    pub async fn spawn(discovery_server: DiscoveryServer) -> GenServerHandle<Self> {
+        let inner = Self::new(discovery_server);
+        inner.start()
     }
 }
 
@@ -401,18 +418,12 @@ impl GenServer for ConnectionHandler {
     type CallMsg = Unused;
     type CastMsg = ConnectionHandlerInMessage;
     type OutMsg = ConnectionHandlerOutMessage;
-    type State = DiscoveryServerState;
     type Error = ConnectionHandlerError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        mut self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-        state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Ping {
@@ -431,9 +442,13 @@ impl GenServer for ConnectionHandler {
                 let sender_ip = unmap_ipv4in6_address(from.ip());
                 let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
 
-                let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
-                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
-                });
+                let _ = self
+                    .discovery_server
+                    .handle_ping(hash, node)
+                    .await
+                    .inspect_err(|e| {
+                        error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    });
             }
             Self::CastMsg::Pong {
                 message,
@@ -443,7 +458,7 @@ impl GenServer for ConnectionHandler {
 
                 let node_id = node_id(&sender_public_key);
 
-                handle_pong(&state, message, node_id).await;
+                self.discovery_server.handle_pong(message, node_id).await;
             }
             Self::CastMsg::FindNode {
                 from,
@@ -458,7 +473,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let table = state.kademlia.table.lock().await;
+                let table = self.discovery_server.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     return CastResponse::Stop;
@@ -488,7 +503,7 @@ impl GenServer for ConnectionHandler {
                 // we are sending the neighbors in 2 different messages to avoid exceeding the
                 // maximum packet size
                 for chunk in neighbors.chunks(8) {
-                    let _ = state.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
+                    let _ = self.discovery_server.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
                         error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
                     });
                 }
@@ -506,14 +521,19 @@ impl GenServer for ConnectionHandler {
 
                 // TODO(#3746): check that we requested neighbors from the node
 
-                let mut contacts = state.kademlia.table.lock().await;
-                let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
+                let mut contacts = self.discovery_server.kademlia.table.lock().await;
+                let discarded_contacts = self
+                    .discovery_server
+                    .kademlia
+                    .discarded_contacts
+                    .lock()
+                    .await;
 
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
                         if !discarded_contacts.contains(&node_id)
-                            && node_id != state.local_node.node_id()
+                            && node_id != self.discovery_server.local_node.node_id()
                         {
                             vacant_entry.insert(Contact::from(node));
                             METRICS.record_new_discovery().await;
@@ -535,7 +555,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let mut table = state.kademlia.table.lock().await;
+                let mut table = self.discovery_server.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     return CastResponse::Stop;
@@ -545,7 +565,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                if let Err(err) = state.send_enr_response(hash, from).await {
+                if let Err(err) = self.discovery_server.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
                     return CastResponse::Stop;
                 }
@@ -570,20 +590,4 @@ impl GenServer for ConnectionHandler {
     }
 }
 
-async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id: H256) {
-    let mut contacts = state.kademlia.table.lock().await;
-
-    // Received a pong from a node we don't know about
-    let Some(contact) = contacts.get_mut(&node_id) else {
-        return;
-    };
-    // Received a pong for an unknown ping
-    if !contact
-        .ping_hash
-        .map(|ph| ph == message.ping_hash)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    contact.ping_hash = None;
-}
+// TODO: SNAP SYNC: REIMPL TESTS

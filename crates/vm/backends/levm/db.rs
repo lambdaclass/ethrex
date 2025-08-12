@@ -1,12 +1,13 @@
 use ethrex_common::U256 as CoreU256;
-use ethrex_common::types::Account;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::AccountInfo;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};
 
@@ -31,27 +32,18 @@ impl DatabaseLogger {
 }
 
 impl LevmDatabase for DatabaseLogger {
-    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
+    fn get_account_info(&self, address: CoreAddress) -> Result<AccountInfo, DatabaseError> {
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        let account = self
+        let info = self
             .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account(address)?;
-        // We have to treat the code as accessed because Account has access to the code
-        // And some parts of LEVM use the bytecode from the account instead of using get_account_code
-        if account.has_code() {
-            let mut code_accessed = self
-                .code_accessed
-                .lock()
-                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
-            code_accessed.push(account.info.code_hash);
-        }
-        Ok(account)
+            .get_account_info(address)?;
+        Ok(info)
     }
 
     fn get_storage_value(
@@ -94,7 +86,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
-        {
+        if code_hash != *EMPTY_KECCACK_HASH {
             let mut code_accessed = self
                 .code_accessed
                 .lock()
@@ -109,20 +101,12 @@ impl LevmDatabase for DatabaseLogger {
 }
 
 impl LevmDatabase for DynVmDatabase {
-    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
+    fn get_account_info(&self, address: CoreAddress) -> Result<AccountInfo, DatabaseError> {
         let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
-        let acc_code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
-
-        Ok(Account::new(
-            acc_info.balance,
-            acc_code,
-            acc_info.nonce,
-            BTreeMap::new(),
-        ))
+        Ok(acc_info)
     }
 
     fn get_storage_value(

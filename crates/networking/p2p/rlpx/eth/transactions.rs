@@ -3,6 +3,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
@@ -181,13 +182,11 @@ impl GetPooledTransactions {
         let txs = self
             .transaction_hashes
             .iter()
-            .map(|hash| blockchain.get_p2p_transaction_by_hash(hash))
-            // Return an error in case anything failed.
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
-            // taken out of the mempool due to payload building after being advertised.
-            .collect();
+            // As per the spec, skipping unavailable transactions is perfectly acceptable,
+            // for example if a transaction was taken out of the mempool due to payload
+            // building after being advertised.
+            .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
+            .collect::<Vec<_>>();
 
         Ok(PooledTransactions {
             id: self.id,
@@ -241,10 +240,11 @@ impl PooledTransactions {
     pub async fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
+        fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx)?;
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested

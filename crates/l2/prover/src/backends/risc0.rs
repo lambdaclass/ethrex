@@ -7,6 +7,7 @@ use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
+use std::time::Instant;
 use tracing::info;
 use zkvm_interface::{
     io::{JSONProgramInput, ProgramInput},
@@ -27,20 +28,25 @@ pub enum Error {
     ZkvmDyn(#[from] anyhow::Error),
 }
 
-pub fn execute(input: ProgramInput) -> Result<(), Error> {
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let env = ExecutorEnv::builder()
         .write(&JSONProgramInput(input))?
         .build()?;
 
     let executor = default_executor();
 
+    let now = Instant::now();
     let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
+    let elapsed = now.elapsed();
 
-    info!("Successfully generated session info.");
+    info!("Successfully generated session info in {:.2?}", elapsed);
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error> {
+pub fn prove(
+    input: ProgramInput,
+    _aligned_mode: bool,
+) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -62,8 +68,13 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof, Error> {
-    to_calldata(proof).map(BatchProof::ProofCalldata)
+pub fn to_batch_proof(
+    proof: Receipt,
+    _aligned_mode: bool,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
+    to_calldata(proof)
+        .map(BatchProof::ProofCalldata)
+        .map_err(Into::into)
 }
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {

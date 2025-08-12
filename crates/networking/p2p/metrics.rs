@@ -392,6 +392,30 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            RLPxError::RollupStoreError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("RollupStoreError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::BlockchainError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("BlockchainError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InternalError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("InternalError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::L2CapabilityNotNegotiated => {
+                failures_grouped_by_reason
+                    .entry("L2CapabilityNotNegotiated".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
         }
     }
 }
