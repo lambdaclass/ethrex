@@ -1,11 +1,13 @@
-use crate::cache::Cache;
+use crate::cache::{Cache, Proof};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
 };
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
-use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
+use ethrex_vm::{
+    DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM, prover_db,
+};
 use eyre::Ok;
 use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
@@ -32,33 +34,64 @@ pub async fn run_tx(
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let mut prover_db = cache.witness;
-    prover_db.rebuild_tries(&block.header)?;
-    let mut wrapped_db = ExecutionWitnessWrapper::new(prover_db);
+    let prover_db = cache.proof;
+    match prover_db {
+        Proof::Witness(mut witness) => {
+            witness.rebuild_tries(&block.header)?;
+            let mut wrapped_db = ExecutionWitnessWrapper::new(witness);
+            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
-    let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+            let changes = {
+                let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
+                let mut db = GeneralizedDatabase::new(store.clone());
+                LEVM::prepare_block(block, &mut db, vm_type)?;
+                LEVM::get_state_transitions(&mut db)?
+            };
+            wrapped_db.apply_account_updates(&changes)?;
 
-    let changes = {
-        let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
-        let mut db = GeneralizedDatabase::new(store.clone());
-        LEVM::prepare_block(block, &mut db, vm_type)?;
-        LEVM::get_state_transitions(&mut db)?
-    };
-    wrapped_db.apply_account_updates(&changes)?;
-
-    for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
-        let mut vm = if l2 {
-            Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
-        } else {
-            Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
-        };
-        let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
-        let account_updates = vm.get_state_transitions()?;
-        wrapped_db.apply_account_updates(&account_updates)?;
-        if tx.compute_hash() == tx_hash {
-            return Ok((receipt, account_updates));
+            for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
+                let mut vm = if l2 {
+                    Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
+                } else {
+                    Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
+                };
+                let (receipt, _) =
+                    vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
+                let account_updates = vm.get_state_transitions()?;
+                wrapped_db.apply_account_updates(&account_updates)?;
+                if tx.compute_hash() == tx_hash {
+                    return Ok((receipt, account_updates));
+                }
+            }
         }
-    }
+        Proof::DB(mut wrapped_db) => {
+            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+
+            let changes = {
+                let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
+                let mut db = GeneralizedDatabase::new(store.clone());
+                LEVM::prepare_block(block, &mut db, vm_type)?;
+                LEVM::get_state_transitions(&mut db)?
+            };
+            wrapped_db.apply_account_updates(&changes);
+
+            for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
+                let mut vm = if l2 {
+                    Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
+                } else {
+                    Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
+                };
+                let (receipt, _) =
+                    vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
+                let account_updates = vm.get_state_transitions()?;
+                wrapped_db.apply_account_updates(&account_updates);
+                if tx.compute_hash() == tx_hash {
+                    return Ok((receipt, account_updates));
+                }
+            }
+        }
+    };
+
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
@@ -67,7 +100,7 @@ pub async fn run_tx(
 fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        witness: db,
+        proof: db,
         l2_fields,
     } = cache;
 
