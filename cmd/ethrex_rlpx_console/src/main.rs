@@ -92,6 +92,9 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 const SAI_TEST_TOKEN: &'static str =
     "998abd7945acf1765167f39605e218cbad5644f90c6fa434177865c14c218cf2";
 
+const UNISWAP_TEST_TOKEN: &'static str =
+    "22002fe30a172d0a479f6add89c63b29dce29b6071b3c7e486b0fb4bc431f885";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConsoleError {
     #[error("DB error: {0}")]
@@ -202,10 +205,14 @@ async fn main() -> Result<(), ConsoleError> {
 
     let sai_account = H256::from_str(SAI_TEST_TOKEN)?.0;
     let account_path = sai_account.to_vec();
+    let uniswap_account = H256::from_str(UNISWAP_TEST_TOKEN)?.0;
+    let uniswap_path = sai_account.to_vec();
 
     let mut paths = vec![vec![Bytes::from(account_path)]];
 
-    paths[0].extend(trienodes);
+    paths[0].extend(trienodes.clone());
+    paths.push(vec![Bytes::from(uniswap_path)]);
+    paths[1].extend(trienodes);
 
     let gtn = GetTrieNodes {
         id: 0,

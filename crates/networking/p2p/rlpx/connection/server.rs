@@ -910,7 +910,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         ref message @ Message::TrieNodes(ref resp) => {
             let id = resp.id;
-            if let Some(receiver) = state.backend_table.get_mut(&id) {
+            if let Some(receiver) = state.backend_table.remove(&id) {
                 receiver.send(resp.clone()).await;
             } else {
                 log_peer_debug(
