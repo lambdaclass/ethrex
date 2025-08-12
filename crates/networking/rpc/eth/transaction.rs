@@ -78,7 +78,7 @@ pub struct AccessListResult {
 
 impl RpcHandler for CallRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_CallRequest");
+        let guard = perf_logger::add_time_till_drop("rpc_CallRequest");
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -96,10 +96,10 @@ impl RpcHandler for CallRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
-        Ok(CallRequest {
+        guard.wrap_return(Ok(CallRequest {
             transaction: serde_json::from_value(params[0].clone())?,
             block,
-        })
+        }))
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
@@ -197,7 +197,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard =
+        let guard =
             perf_logger::add_time_till_drop("rpc_GetTransactionByBlockHashAndIndexRequest");
         debug!(
             "Requested transaction at index: {} of block with hash: {:#x}",
@@ -221,7 +221,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             self.block,
             Some(self.transaction_index),
         )?;
-        serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
+       guard.wrap_return( serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
@@ -241,7 +241,7 @@ impl RpcHandler for GetTransactionByHashRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_GetTransactionByHashRequest");
+        let guard = perf_logger::add_time_till_drop("rpc_GetTransactionByHashRequest");
         let storage = &context.storage;
         debug!(
             "Requested transaction with hash: {:#x}",
@@ -269,7 +269,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             block_hash,
             Some(index as usize),
         )?;
-        serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
+     guard.wrap_return(   serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
@@ -289,7 +289,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_GetTransactionReceiptRequest");
+        let guard = perf_logger::add_time_till_drop("rpc_GetTransactionReceiptRequest");
         let storage = &context.storage;
         debug!(
             "Requested receipt for transaction {:#x}",
@@ -310,8 +310,8 @@ impl RpcHandler for GetTransactionReceiptRequest {
             block::get_all_block_rpc_receipts(block_number, block.header, block.body, storage)
                 .await?;
 
-        serde_json::to_value(receipts.get(index as usize))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+      guard.wrap_return(  serde_json::to_value(receipts.get(index as usize))
+            .map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
@@ -340,7 +340,7 @@ impl RpcHandler for CreateAccessListRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_CreateAccessList");
+        let guard = perf_logger::add_time_till_drop("rpc_CreateAccessList");
         let block = self.block.clone().unwrap_or_default();
         debug!("Requested access list creation for tx on block: {}", block);
         let block_number = match block.resolve_block_number(&context.storage).await? {
@@ -373,7 +373,7 @@ impl RpcHandler for CreateAccessListRequest {
             gas_used,
         };
 
-        serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
+       guard.wrap_return( serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
@@ -440,7 +440,7 @@ impl RpcHandler for EstimateGasRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_EstimateGasRequest");
+        let guard = perf_logger::add_time_till_drop("rpc_EstimateGasRequest");
         let storage = &context.storage;
         let blockchain = &context.blockchain;
         let block = self.block.clone().unwrap_or_default();
@@ -553,8 +553,8 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        serde_json::to_value(format!("{highest_gas_limit:#x}"))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(serde_json::to_value(format!("{highest_gas_limit:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
@@ -611,7 +611,6 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let _guard = perf_logger::add_time_till_drop("rpc_SendRawTransactionRequest");
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain

@@ -538,7 +538,7 @@ async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
-    let _guard = perf_logger::add_time_till_drop("handle_new_payload_v1_v2");
+    let guard_payload = perf_logger::add_time_till_drop("handle_new_payload_v1_v2");
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -558,9 +558,9 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let _guard = perf_logger::add_time_till_drop("try_execute_payload");
+    let guard = perf_logger::add_time_till_drop("try_execute_payload");
     let payload_status = try_execute_payload(&block, &context, latest_valid_hash).await?;
-    Ok(payload_status)
+    guard_payload.wrap_return(guard.wrap_return(Ok(payload_status)))
 }
 
 async fn handle_new_payload_v3(
@@ -569,7 +569,7 @@ async fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
-    let _guard = perf_logger::add_time_till_drop("handle_new_payload_v3");
+    let guard = perf_logger::add_time_till_drop("handle_new_payload_v3");
     // V3 specific: validate blob hashes
     let blob_versioned_hashes: Vec<H256> = block
         .body
@@ -584,7 +584,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    handle_new_payload_v1_v2(payload, block, context).await
+    guard.wrap_return(handle_new_payload_v1_v2(payload, block, context).await)
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -609,17 +609,19 @@ fn get_block_from_payload(
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
-    let _guard = perf_logger::add_time_till_drop("get_block_from_payload");
+    let guard = perf_logger::add_time_till_drop("get_block_from_payload");
     let block_hash = payload.block_hash;
     info!("Received new payload with block hash: {block_hash:#x}");
 
-    payload
-        .clone()
-        .into_block(parent_beacon_block_root, requests_hash)
+    guard.wrap_return(
+        payload
+            .clone()
+            .into_block(parent_beacon_block_root, requests_hash),
+    )
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
-    let _guard = perf_logger::add_time_till_drop("validate_block_hash");
+    let guard = perf_logger::add_time_till_drop("validate_block_hash");
     let block_hash = payload.block_hash;
     let actual_block_hash = block.hash();
     if block_hash != actual_block_hash {
@@ -627,7 +629,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
             "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
         )));
     }
-    Ok(())
+    guard.wrap_return(Ok(()))
 }
 
 async fn try_execute_payload(

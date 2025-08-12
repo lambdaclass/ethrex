@@ -32,6 +32,12 @@ pub struct DropLog {
     start: Instant,
 }
 
+impl DropLog {
+    pub fn wrap_return<T>(&self, inp: T) -> T {
+        inp
+    }
+}
+
 impl Drop for DropLog {
     fn drop(&mut self) {
         add_log(self.label.clone(), Value::Duration(self.start.elapsed()))

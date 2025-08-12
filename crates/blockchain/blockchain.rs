@@ -362,7 +362,7 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        let _guard = perf_logger::add_time_till_drop("blockchain_store_block");
+        let guard = perf_logger::add_time_till_drop("blockchain_store_block");
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -374,15 +374,17 @@ impl Blockchain {
             code_updates: account_updates_list.code_updates,
         };
 
-        self.storage
-            .clone()
-            .store_block_updates(update_batch)
-            .await
-            .map_err(|e| e.into())
+        guard.wrap_return(
+            self.storage
+                .clone()
+                .store_block_updates(update_batch)
+                .await
+                .map_err(|e| e.into()),
+        )
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        let _guard = perf_logger::add_time_till_drop("blockchain_add_block");
+        let guard = perf_logger::add_time_till_drop("blockchain_add_block");
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
@@ -398,7 +400,7 @@ impl Blockchain {
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, merkleized, stored);
-        result
+        guard.wrap_return(result)
     }
 
     fn print_add_block_logs(
@@ -624,7 +626,7 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        let _guard = perf_logger::add_time_till_drop("mempool_add_blob_transaction_to_pool");
+        let guard = perf_logger::add_time_till_drop("mempool_add_blob_transaction_to_pool");
         // Validate blobs bundle
 
         let fork = self.current_fork().await?;
@@ -647,7 +649,7 @@ impl Blockchain {
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        Ok(hash)
+        guard.wrap_return(Ok(hash))
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
@@ -655,7 +657,7 @@ impl Blockchain {
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
-        let _guard = perf_logger::add_time_till_drop("mempool_add_transaction_to_pool");
+        let guard = perf_logger::add_time_till_drop("mempool_add_transaction_to_pool");
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
@@ -674,7 +676,7 @@ impl Blockchain {
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
 
-        Ok(hash)
+        guard.wrap_return(Ok(hash))
     }
 
     /// Remove a transaction from the mempool
