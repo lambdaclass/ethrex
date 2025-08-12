@@ -606,7 +606,7 @@ impl Store {
                 error!(
                     "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, clear the database (e.g., run `ethrex removedb`) and try again."
                 );
-                return Err(StoreError::IncompatibleChainConfig());
+                return Err(StoreError::IncompatibleChainConfig);
             }
             None => {
                 self.engine
@@ -1439,11 +1439,9 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        let add_initial_state_handle =
-            tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
-        let result = add_initial_state_handle.await.unwrap();
+        let result = store.add_initial_state(genesis_hive).await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig())));
+        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
     }
 
     fn remove_test_dbs(path: &str) {

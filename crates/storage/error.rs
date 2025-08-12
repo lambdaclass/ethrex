@@ -53,5 +53,5 @@ pub enum StoreError {
     #[error("Failed to lock database for writing")]
     LockError,
     #[error("Incompatible chain configuration")]
-    IncompatibleChainConfig(),
+    IncompatibleChainConfig,
 }
