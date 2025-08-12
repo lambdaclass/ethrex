@@ -2139,9 +2139,19 @@ impl PeerHandler {
             if response.is_none() {
                 error!("############### Error Message");
             };
-            response.unwrap()
+            response
         })
         .await;
+
+        // TODO: we need to check, this seems a scenario where the peer channel does teardown
+        // after we sent the backend message
+        let response = match response.transpose() {
+            Some(message_result) => message_result,
+            None => {
+                warn!("The RLPxConnection closed the backend channel");
+                return None;
+            }
+        };
 
         match response {
             Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
