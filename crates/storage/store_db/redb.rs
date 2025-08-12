@@ -6,17 +6,14 @@ use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
     error::StoreError,
     rlp::{
-        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-        PayloadBundleRLP, ReceiptRLP, TupleRLP,
+        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
+        TupleRLP,
     },
 };
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
     H256, U256,
-    types::{
-        Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        payload::PayloadBundle,
-    },
+    types::{Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -50,8 +47,6 @@ const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
 const INVALID_ANCESTORS_TABLE: TableDefinition<BlockHashRLP, BlockHashRLP> =
     TableDefinition::new("InvalidAncestors");
-const PAYLOADS_TABLE: TableDefinition<BlockNumber, PayloadBundleRLP> =
-    TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
     TableDefinition::new("PendingBlocks");
 const TRANSACTION_LOCATIONS_TABLE: MultimapTableDefinition<
@@ -906,23 +901,6 @@ impl StoreEngine for RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write(
-            PAYLOADS_TABLE,
-            payload_id,
-            <PayloadBundle as Into<PayloadBundleRLP>>::into(PayloadBundle::from_block(block)),
-        )
-        .await
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        self.read(PAYLOADS_TABLE, payload_id)
-            .await?
-            .map(|b| b.value().to())
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
     async fn add_receipts(
         &self,
         block_hash: BlockHash,
@@ -966,19 +944,6 @@ impl StoreEngine for RedBStore {
             .await?;
 
         Ok(())
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.write(
-            PAYLOADS_TABLE,
-            payload_id,
-            <PayloadBundle as Into<PayloadBundleRLP>>::into(payload),
-        )
-        .await
     }
 
     fn get_receipts_for_block(
@@ -1409,7 +1374,6 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
     table_creation_txn.open_table(CHAIN_DATA_TABLE)?;
     table_creation_txn.open_table(BLOCK_BODIES_TABLE)?;
-    table_creation_txn.open_table(PAYLOADS_TABLE)?;
     table_creation_txn.open_table(PENDING_BLOCKS_TABLE)?;
     table_creation_txn.open_table(INVALID_ANCESTORS_TABLE)?;
     table_creation_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;

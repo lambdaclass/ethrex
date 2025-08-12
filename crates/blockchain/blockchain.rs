@@ -30,10 +30,12 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use payload::PayloadBuildResult;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -43,6 +45,8 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+
+const MAX_PAYLOADS: usize = 10;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -54,6 +58,11 @@ pub enum BlockchainType {
     L2,
 }
 
+pub type PayloadBuildTasks = Vec<(
+    u64,
+    tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
+)>;
+
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
@@ -64,6 +73,7 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
     pub r#type: BlockchainType,
+    pub payloads: Arc<TokioMutex<PayloadBuildTasks>>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +102,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            payloads: Arc::new(TokioMutex::new(PayloadBuildTasks::new())),
         }
     }
 
@@ -102,6 +113,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            payloads: Arc::new(TokioMutex::new(PayloadBuildTasks::new())),
         }
     }
 

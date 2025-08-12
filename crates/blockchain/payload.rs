@@ -2,6 +2,7 @@ use std::{
     cmp::{Ordering, max},
     collections::HashMap,
     ops::Div,
+    sync::Arc,
     time::Instant,
 };
 
@@ -30,7 +31,7 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 
 use crate::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainType, MAX_PAYLOADS,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -244,6 +245,7 @@ impl PayloadBuildContext {
     }
 }
 
+#[derive(Debug)]
 pub struct PayloadBuildResult {
     pub blobs_bundle: BlobsBundle,
     pub block_value: U256,
@@ -277,6 +279,36 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 }
 
 impl Blockchain {
+    pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
+        let mut payloads = self.payloads.lock().await;
+        let idx = payloads
+            .iter()
+            .position(|(id, _)| id == &payload_id)
+            .ok_or(ChainError::Custom(format!(
+                "Payload {payload_id} not found"
+            )))?;
+        payloads
+            .remove(idx)
+            .1
+            .await
+            .map_err(|_| ChainError::Custom("Failed to join task".to_string()))?
+    }
+
+    pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+        let self_clone = self.clone();
+        let payload_build_task =
+            tokio::task::spawn(async move { self_clone.build_payload(payload).await });
+        let mut payloads = self.payloads.lock().await;
+        if payloads.len() == MAX_PAYLOADS {
+            payloads.insert(0, (payload_id, payload_build_task));
+        } else {
+            self.payloads
+                .lock()
+                .await
+                .push((payload_id, payload_build_task));
+        }
+    }
+
     /// Completes the payload building process, return the block value
     pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
