@@ -70,44 +70,43 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    dev_mode: bool,
     rpc_urls: Vec<String>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
 
     let mut needed_proof_types = vec![];
-    if !dev_mode {
-        for prover_type in ProverType::all() {
-            let Some(getter) = prover_type.verifier_getter() else {
-                continue;
-            };
-            let calldata = keccak(getter)[..4].to_vec();
+    for prover_type in ProverType::all() {
+        let Some(getter) = prover_type.verifier_getter() else {
+            continue;
+        };
+        let calldata = keccak(getter)[..4].to_vec();
 
-            let response = eth_client
-                .call(
-                    on_chain_proposer_address,
-                    calldata.into(),
-                    Overrides::default(),
-                )
-                .await?;
-            // trim to 20 bytes, also removes 0x prefix
-            let trimmed_response = &response[26..];
+        let response = eth_client
+            .call(
+                on_chain_proposer_address,
+                calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
+        // trim to 20 bytes, also removes 0x prefix
+        let trimmed_response = &response[26..];
 
-            let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                EthClientError::Custom(format!(
-                    "Failed to parse OnChainProposer response {response}"
-                ))
-            })?;
+        let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
+            EthClientError::Custom(format!(
+                "Failed to parse OnChainProposer response {response}"
+            ))
+        })?;
 
-            if address != DEV_MODE_ADDRESS {
-                info!("{prover_type} proof needed");
-                needed_proof_types.push(prover_type);
-            }
+        if address != DEV_MODE_ADDRESS {
+            info!("{prover_type} proof needed");
+            needed_proof_types.push(prover_type);
         }
-    } else {
+    }
+    if needed_proof_types.is_empty() {
         needed_proof_types.push(ProverType::Exec);
     }
+
     Ok(needed_proof_types)
 }
 

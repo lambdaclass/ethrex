@@ -270,7 +270,7 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
@@ -279,7 +279,7 @@ pub struct DeployerOptions {
     pub sp1_vk_path: String,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
@@ -343,7 +343,7 @@ impl Default for DeployerOptions {
                 .as_bytes(),
             )
             .unwrap(),
-            env_file_path: None,
+            env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
             private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
             genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),

@@ -8,6 +8,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
+    account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     opcodes::Opcode,
     tracing::LevmCallTracer,
@@ -141,7 +142,7 @@ fn main() {
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
-    let mut db = GeneralizedDatabase::new(Arc::new(store), initial_state);
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM
     let mut vm = VM::new(
@@ -201,8 +202,8 @@ fn main() {
 
 /// Prints on screen difference between initial state and current one.
 fn compare_initial_and_current_accounts(
-    initial_accounts: BTreeMap<Address, Account>,
-    current_accounts: BTreeMap<Address, Account>,
+    initial_accounts: BTreeMap<Address, LevmAccount>,
+    current_accounts: BTreeMap<Address, LevmAccount>,
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
@@ -237,8 +238,11 @@ fn compare_initial_and_current_accounts(
                 );
             }
 
-            if prev.code != acc.code {
-                info!("    Code changed: {:?} -> {:?}", prev.code, acc.code);
+            if prev.info.code_hash != acc.info.code_hash {
+                info!(
+                    "    Code hash changed: {:?} -> {:?}",
+                    prev.info.code_hash, acc.info.code_hash
+                );
             }
 
             for (slot, value) in &acc.storage {

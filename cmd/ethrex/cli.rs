@@ -16,7 +16,7 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
     l2::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
@@ -433,7 +433,7 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
-        let numbers_and_hashes = blocks
+        let mut numbers_and_hashes = blocks
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
@@ -464,19 +464,16 @@ pub async fn import_blocks(
                 })?;
         }
 
-        _ = store
-            .mark_chain_as_canonical(&numbers_and_hashes)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
         // Make head canonical and label all special blocks correctly.
-        if let Some(block) = blocks.last() {
+        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
-                .update_finalized_block_number(block.header.number)
-                .await?;
-            store.update_safe_block_number(block.header.number).await?;
-            store
-                .update_latest_block_number(block.header.number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    head_number,
+                    head_hash,
+                    Some(head_number),
+                    Some(head_number),
+                )
                 .await?;
         }
 
@@ -492,7 +489,7 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let store = load_store(&data_dir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
