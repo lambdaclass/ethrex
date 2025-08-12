@@ -13,7 +13,9 @@ use crate::{
     },
     types::{Node, NodeRecord},
 };
+use bytes::buf::Chain;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use std::{

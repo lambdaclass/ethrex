@@ -4399,6 +4399,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "rustc-hex",
+ "serde_json",
  "spawned-concurrency",
  "thiserror 2.0.12",
  "tokio",
