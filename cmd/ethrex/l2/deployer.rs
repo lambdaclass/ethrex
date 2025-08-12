@@ -70,6 +70,22 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
+/// SP1 verification key.
+#[cfg(feature = "sp1")]
+const SP1_VERIFICATION_KEY: Option<&str> = Some(include_str!(concat!(
+    "../../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk"
+)));
+#[cfg(not(feature = "sp1"))]
+const SP1_VERIFICATION_KEY: Option<&str> = None;
+
+/// RISC0 verification key.
+#[cfg(feature = "risc0")]
+const RISC0_VERIFICATION_KEY: Option<&str> = Some(include_str!(concat!(
+    "../../../crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk"
+)));
+#[cfg(not(feature = "risc0"))]
+const RISC0_VERIFICATION_KEY: Option<&str> = None;
+
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
@@ -155,7 +171,6 @@ pub struct DeployerOptions {
         action = ArgAction::Set,
         hide_possible_values = true,
         env = "ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER",
-        requires = "sp1_vk_path",
         conflicts_with = "sp1_verifier_address",
         help_heading = "Deployer options",
     )]
@@ -250,7 +265,6 @@ pub struct DeployerOptions {
         long = "verifier.risc0",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER_ADDRESS",
-        requires = "risc0_vk_path",
         help_heading = "Verifiers options"
     )]
     pub risc0_verifier_address: Option<Address>,
@@ -277,7 +291,6 @@ pub struct DeployerOptions {
         long = "verifier.sp1",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER_ADDRESS",
-        requires = "sp1_vk_path",
         conflicts_with = "sp1_deploy_verifier",
         help_heading = "Verifiers options"
     )]
@@ -439,6 +452,25 @@ pub async fn deploy_l1_contracts(
     opts: DeployerOptions,
 ) -> Result<ContractAddresses, DeployerError> {
     debug!("Starting deployer binary");
+
+    #[cfg(not(feature = "sp1"))]
+    if (opts.deploy_sp1_verifier || opts.sp1_verifier_address.is_some())
+        && (opts.sp1_vk.is_none() && opts.sp1_vk_path.is_none())
+    {
+        return Err(DeployerError::ConfigValueNotSet(
+            "--verifier.sp1-vk and --verifier.sp1-vk-path".to_string(),
+        ));
+    }
+
+    #[cfg(not(feature = "risc0"))]
+    if opts.risc0_verifier_address.is_some()
+        && (opts.risc0_vk.is_none() && opts.risc0_vk_path.is_none())
+    {
+        return Err(DeployerError::ConfigValueNotSet(
+            "--verifier.risc0-vk and --verifier.risc0-vk-path".to_string(),
+        ));
+    }
+
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
@@ -689,12 +721,17 @@ async fn initialize_contracts(
         .as_ref()
         .map(read_vk)
         .or(opts.sp1_vk)
+        .or(SP1_VERIFICATION_KEY
+            .map(|vk| H256::from_str(vk).expect("Invalid embeded SP1 verification key")))
         .unwrap_or(H256::zero());
+
     let risc0_vk = opts
         .risc0_vk_path
         .as_ref()
         .map(read_vk)
         .or(opts.risc0_vk)
+        .or(SP1_VERIFICATION_KEY
+            .map(|vk| H256::from_str(vk).expect("Invalid embeded RISC0 verification key")))
         .unwrap_or(H256::zero());
 
     let initializer_address = initializer.address();
