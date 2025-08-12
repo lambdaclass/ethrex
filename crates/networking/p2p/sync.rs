@@ -1037,14 +1037,12 @@ impl Syncer {
 
 async fn get_number_of_storage_tries_to_download() -> u64 {
     let account_state_snapshots_dir = get_account_state_snapshots_dir().unwrap();
-    let mut number_of_accounts_with_non_empty_storage = 0_u64;
+    let mut number_of_accounts_with_non_empty_storage = 0;
     for entry in std::fs::read_dir(&account_state_snapshots_dir)
         .expect("Failed to read account_state_snapshots dir")
     {
         let entry = entry.expect("Failed to read dir entry");
-
         let snapshot_path = entry.path();
-
         let snapshot_contents = std::fs::read(&snapshot_path)
             .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
 
@@ -1053,18 +1051,13 @@ async fn get_number_of_storage_tries_to_download() -> u64 {
                 panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
             });
 
-        let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-            account_states_snapshot.iter().cloned().unzip();
-
-        let account_storage_roots: Vec<(H256, H256)> = account_hashes
+        // filter and the count accounts with non empty storage
+        let accounts_with_non_empty_storage = account_states_snapshot
             .iter()
-            .zip(account_states.iter())
-            .filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
-            })
-            .collect();
+            .filter(|(_account_hash, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
+            .count() as u64;
 
-        number_of_accounts_with_non_empty_storage += account_storage_roots.len() as u64;
+        number_of_accounts_with_non_empty_storage += accounts_with_non_empty_storage;
     }
     number_of_accounts_with_non_empty_storage
 }
