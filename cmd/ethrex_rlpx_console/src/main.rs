@@ -55,7 +55,7 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
             let reader = BufReader::new(file);
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
         }
-        &_ => Network::mainnet()
+        &_ => Network::from("hoodi")
             .get_genesis()
             .expect("We should have the genesis mainnet"),
     };
@@ -90,7 +90,7 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 }
 
 const SAI_TEST_TOKEN: &'static str =
-    "998abd7945acf1765167f39605e218cbad5644f90c6fa434177865c14c218cf2";
+    "fc828ea7a505851a004ddb57d4d51ca083ce92766ec867a54ffef9f29811910b";
 
 const UNISWAP_TEST_TOKEN: &'static str =
     "22002fe30a172d0a479f6add89c63b29dce29b6071b3c7e486b0fb4bc431f885";
@@ -211,8 +211,6 @@ async fn main() -> Result<(), ConsoleError> {
     let mut paths = vec![vec![Bytes::from(account_path)]];
 
     paths[0].extend(trienodes.clone());
-    paths.push(vec![Bytes::from(uniswap_path)]);
-    paths[1].extend(trienodes);
 
     let gtn = GetTrieNodes {
         id: 0,
