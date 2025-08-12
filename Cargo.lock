@@ -4390,6 +4390,7 @@ dependencies = [
 name = "ethrex_rlpx_console"
 version = "0.1.0"
 dependencies = [
+ "clap 4.5.40",
  "ethrex",
  "ethrex-blockchain",
  "ethrex-common",
@@ -4399,6 +4400,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "rustc-hex",
+ "serde",
  "serde_json",
  "spawned-concurrency",
  "thiserror 2.0.12",

@@ -1,3 +1,4 @@
+use clap::Parser;
 use ethrex::networks::Network;
 use ethrex::{
     initializers::{get_local_node_record, get_signer, init_blockchain, init_store},
@@ -22,6 +23,7 @@ use ethrex_p2p::{rlpx::snap::TrieNodes, types::Node};
 use ethrex_storage::{EngineType, Store, error::StoreError};
 use ethrex_trie::Nibbles;
 use ethrex_vm::EvmEngine;
+use serde::{Deserialize, Serialize};
 use spawned_concurrency::error::GenServerError;
 use std::fs::File;
 use std::io::BufReader;
@@ -45,7 +47,18 @@ pub fn init_tracing(log_level: Level) {
 
 /// Simple function that creates a p2p context with a bunch of default values
 /// we assume ports, levm and inmemory implementation
-async fn get_p2p_context() -> Result<P2PContext, StoreError> {
+async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
+    let genesis: Genesis = match network.as_str() {
+        "localnet" => {
+            let file = File::open("/Users/mateo/ethrex/local_testnet_data/genesis.json")
+                .expect("Failed to open genesis file");
+            let reader = BufReader::new(file);
+            serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
+        }
+        &_ => Network::mainnet()
+            .get_genesis()
+            .expect("We should have the genesis mainnet"),
+    };
     let data_dir = "jwt/secrets";
     let signer = get_signer(data_dir);
     let local_node = Node::new(
@@ -61,11 +74,6 @@ async fn get_p2p_context() -> Result<P2PContext, StoreError> {
     )));
     let tracker = TaskTracker::new();
     let peer_table = Kademlia::new();
-    let file = File::open("/Users/mateo/ethrex/local_testnet_data/genesis.json")
-        .expect("Failed to open genesis file");
-    let reader = BufReader::new(file);
-    let genesis: Genesis =
-        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
     let storage = init_store("memory", genesis).await;
     let blockchain = init_blockchain(EvmEngine::LEVM, storage.clone(), BlockchainType::L1);
     Ok(P2PContext::new(
@@ -84,7 +92,7 @@ async fn get_p2p_context() -> Result<P2PContext, StoreError> {
 const SAI_TEST_TOKEN: &'static str =
     "998abd7945acf1765167f39605e218cbad5644f90c6fa434177865c14c218cf2";
 
-const OTHER_NODE_PUBLIC_KEY: &'static str = "dbfa18978b2de8b8e7dddaebc27f0b9d9e4a021bb3a9130eded115f96cfa8b8d20baeb7e12338810995f3bed89d0c1438da1292af3de4434818629cad49f1165";
+const OTHER_NODE_PUBLIC_KEY: &'static str = "f070a8dc0ec1b1ca687e9e26cd57a70fca2957c37f801ace47f9cc9d7e50e8267a3972653b2dc4dc4b02b269017db4b1f2fd29231d1d275f5fc2397ca05774d3";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConsoleError {
@@ -96,20 +104,39 @@ pub enum ConsoleError {
     GenServerError(#[from] GenServerError),
 }
 
+pub fn read_config(file_path: String) -> Config {
+    let file = File::open(file_path).expect("Failed to open file");
+    let reader = BufReader::new(file);
+    serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    node: Node,
+    network: String,
+}
+
+#[derive(Parser, Debug)]
+pub struct Options {
+    #[arg(
+        long = "config",
+        value_name = "CONFIG_FILE_PATH",
+        help = "Receives the path to a `Config` struct in json format"
+    )]
+    pub config: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), ConsoleError> {
+    let opts = Options::parse();
+    let Config { node, network } = read_config(opts.config);
+
     init_tracing(Level::DEBUG);
 
-    let p2p_context = get_p2p_context().await?;
-    let other_node = Node::new(
-        Ipv4Addr::new(127, 0, 0, 1).into(),
-        51800, // Check this number, doesn't matter for now,
-        51800,
-        H512::from_str(OTHER_NODE_PUBLIC_KEY)?,
-    );
+    let p2p_context = get_p2p_context(network).await?;
 
     let _ = p2p_context.set_fork_id().await;
-    let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &other_node).await;
+    let mut rlpx_connection = RLPxConnection::spawn_as_initiator(p2p_context, &node).await;
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<TrieNodes>(1000);
 
     tokio::time::sleep(Duration::from_secs(5)).await;
