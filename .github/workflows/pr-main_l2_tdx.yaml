@@ -73,7 +73,7 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch ../../.env
           cd crates/l2
           make init-l1-docker;
           ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=./fixtures/keys/private_keys_l1.txt \

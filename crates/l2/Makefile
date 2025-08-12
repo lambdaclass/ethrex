@@ -213,7 +213,7 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
@@ -227,7 +227,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
@@ -239,7 +239,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 
 # State reconstruction tests
 state-diff-test:
-	touch .env
+	touch ../../.env
 	cargo run --release --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
