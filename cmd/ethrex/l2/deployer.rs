@@ -349,7 +349,7 @@ pub struct DeployerOptions {
     pub deploy_based_contracts: bool,
     /// Address of the SequencerRegistry' owner. Defaults to the deployer account.
     #[arg(
-        long = "deployer.sequener-registry-owner",
+        long = "deployer.sequencer-registry-owner",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER_ADDRESS",
         required_if_eq("deploy_based_contracts", "true"),
@@ -730,7 +730,7 @@ async fn initialize_contracts(
         .as_ref()
         .map(read_vk)
         .or(opts.risc0_vk)
-        .or(SP1_VERIFICATION_KEY
+        .or(RISC0_VERIFICATION_KEY
             .map(|vk| H256::from_str(vk).expect("Invalid embeded RISC0 verification key")))
         .unwrap_or(H256::zero());
 
