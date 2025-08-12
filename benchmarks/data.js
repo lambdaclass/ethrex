@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755031045540,
+  "lastUpdate": 1755032692546,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19967,6 +19967,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001419927659574468,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "154b2f7f7b706250ad8259736bef8022219f3e5e",
+          "message": "fix(l2): make tdx private key an optional argument (#3934)\n\n**Motivation**\n\nThe `proof-coordinator.tdx-private-key` flag was always required even\nwhen not actively used\n\n**Description**\n\n- Make the flag optional and handle the Option type in the required\nplaces\n\nCloses #3750",
+          "timestamp": "2025-08-12T18:47:46Z",
+          "tree_id": "e17429ab18be4bcb699347681cde03ffb993bbf1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/154b2f7f7b706250ad8259736bef8022219f3e5e"
+        },
+        "date": 1755032673557,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006295905660377359,
             "unit": "Mgas/s"
           }
         ]
