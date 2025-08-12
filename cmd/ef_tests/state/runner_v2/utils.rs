@@ -1,6 +1,6 @@
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{U256, types::Genesis};
-use ethrex_levm::db::{CacheDB, gen_db::GeneralizedDatabase};
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
 use keccak_hash::H256;
@@ -41,8 +41,9 @@ pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Stor
     let block_hash = genesis.get_block().hash();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage.clone(), block_hash));
 
+    // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
-        GeneralizedDatabase::new(Arc::new(store), CacheDB::new()),
+        GeneralizedDatabase::new(Arc::new(store)),
         block_hash,
         storage,
         genesis,

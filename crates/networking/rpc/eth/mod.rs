@@ -80,6 +80,7 @@ pub mod test_utils {
         block_count: u64,
         txs_per_block: Vec<Transaction>,
     ) {
+        let mut new_canonical_blocks = vec![];
         for block_num in 1..=block_count {
             let block_body = BlockBody {
                 transactions: txs_per_block.clone(),
@@ -89,12 +90,21 @@ pub mod test_utils {
             let block_header = test_header(block_num);
             let block = Block::new(block_header.clone(), block_body);
             storage.add_block(block).await.unwrap();
-            storage
-                .set_canonical_block(block_num, block_header.hash())
-                .await
-                .unwrap();
-            storage.update_latest_block_number(block_num).await.unwrap();
+            new_canonical_blocks.push((block_num, block_header.hash()));
         }
+        let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
+            return;
+        };
+        storage
+            .forkchoice_update(
+                Some(new_canonical_blocks),
+                last_number,
+                last_hash,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     fn legacy_tx_for_test(nonce: u64) -> Transaction {

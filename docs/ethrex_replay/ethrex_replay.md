@@ -1,6 +1,7 @@
 # ethrex-replay
 
 A tool for executing and proving Ethereum blocks, transactions, and L2 batches â€” inspired by [starknet-replay](https://github.com/lambdaclass/starknet-replay).
+Currently ethrex replay only works against ethrex nodes with the `debug_executionWitness` RPC endpoint.
 
 ## Getting Started
 
@@ -12,7 +13,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches â
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.1.0
+rzup install cargo-risczero 2.3.1
 rzup install rust
 ```
 

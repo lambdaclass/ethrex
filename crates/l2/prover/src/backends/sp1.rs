@@ -11,6 +11,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use std::time::Instant;
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -59,9 +60,11 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
     let setup = &*PROVER_SETUP;
 
+    let now = Instant::now();
     setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program.");
+    info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
 }
 

@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate, Fork, Genesis, code_hash},
+    types::{AccountUpdate, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
+    account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::VM,
@@ -19,11 +20,13 @@ use crate::runner_v2::{
     types::{AccountState, TestCase, TransactionExpectedException},
 };
 
+/// Keeps record of the post checks results for a test case, including if it passed
+/// and if it did not, the differences from the expected post state.
 pub struct PostCheckResult {
     pub fork: Fork,
     pub vector: (usize, usize, usize),
     pub passed: bool,
-    pub root_dif: Option<(H256, H256)>,
+    pub root_diff: Option<(H256, H256)>,
     pub accounts_diff: Option<Vec<AccountMismatch>>,
     pub logs_diff: Option<(H256, H256)>,
     pub exception_diff: Option<(Vec<TransactionExpectedException>, Option<VMError>)>,
@@ -34,7 +37,7 @@ impl Default for PostCheckResult {
             fork: Fork::Prague,
             vector: (0, 0, 0),
             passed: true,
-            root_dif: None,
+            root_diff: None,
             accounts_diff: None,
             logs_diff: None,
             exception_diff: None,
@@ -105,7 +108,7 @@ pub async fn check_root(
     let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
     if post_state_root != test_case.post.hash {
         check_result.passed = false;
-        check_result.root_dif = Some((test_case.post.hash, post_state_root));
+        check_result.root_diff = Some((test_case.post.hash, post_state_root));
     }
     Ok(())
 }
@@ -224,6 +227,7 @@ fn exception_matches_expected(
     })
 }
 
+/// Verifies the hash of the output logs is the one expected.
 pub fn check_logs(
     test_case: &TestCase,
     execution_report: &ExecutionReport,
@@ -238,6 +242,8 @@ pub fn check_logs(
     }
 }
 
+/// If the test case provides a `state` field in the post section, check account by account
+/// its state is the one expected after the execution of the transaction.
 pub fn check_accounts_state(
     db: &mut GeneralizedDatabase,
     test_case: &TestCase,
@@ -254,27 +260,27 @@ pub fn check_accounts_state(
     for (addr, expected_account) in expected_accounts_state {
         let acc_genesis_state = genesis.alloc.get(&addr);
         // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
-        let account: &mut Account = if let Some(account) = db.current_accounts_state.get_mut(&addr)
-        {
-            if account.storage.is_empty() && acc_genesis_state.is_some() {
-                account.storage = acc_genesis_state
-                    .unwrap()
-                    .storage
-                    .iter()
-                    .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
-                    .collect();
-            }
-            account
-        } else {
-            // Else, we take its info from the Genesis state, assuming it has not changed.
-            if let Some(account) = acc_genesis_state {
-                &mut Into::<Account>::into(account.clone())
+        let account: &mut LevmAccount =
+            if let Some(account) = db.current_accounts_state.get_mut(&addr) {
+                if account.storage.is_empty() && acc_genesis_state.is_some() {
+                    account.storage = acc_genesis_state
+                        .unwrap()
+                        .storage
+                        .iter()
+                        .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                        .collect();
+                }
+                account
             } else {
-                // If we can't find it in any of the previous mappings, we provide a default account that will not pass
-                // the comparisons checks.
-                &mut Account::default()
-            }
-        };
+                // Else, we take its info from the Genesis state, assuming it has not changed.
+                if let Some(account) = acc_genesis_state {
+                    &mut Into::<LevmAccount>::into(account.clone())
+                } else {
+                    // If we can't find it in any of the previous mappings, we provide a default account that will not pass
+                    // the comparisons checks.
+                    &mut LevmAccount::default()
+                }
+            };
 
         // We verify if the account matches the expected post state.
         let account_mismatch = verify_matching_accounts(addr, account, &expected_account);
@@ -283,15 +289,18 @@ pub fn check_accounts_state(
         }
     }
 
+    // If any of the accounts comparisons produced a mismatch, register it in the checks result.
+    // If we got to this point, root did not match, therefore the test has already been registered
+    // as failing, we do not need to set it again and just add the account diff.
     if !accounts_diff.is_empty() {
-        check_result.passed = false;
         check_result.accounts_diff = Some(accounts_diff);
     }
 }
 
+/// Compare every field of the expected account vs. the actual obtained account state.
 fn verify_matching_accounts(
     addr: Address,
-    actual_account: &Account,
+    actual_account: &LevmAccount,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
     let mut formatted_expected_storage = BTreeMap::new();
@@ -300,7 +309,7 @@ fn verify_matching_accounts(
         formatted_expected_storage.insert(formatted_key, *value);
     }
     let mut account_mismatch = AccountMismatch::default();
-    let code_matches = actual_account.code == expected_account.code;
+    let code_matches = actual_account.info.code_hash == keccak(&expected_account.code);
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
     let storage_matches = formatted_expected_storage == actual_account.storage;
