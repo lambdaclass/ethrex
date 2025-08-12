@@ -25,7 +25,7 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable.
+    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable. (#4023)
     // Ideally we implement serialization for these and stop needing the first 2 attributes.
     #[serde(
         serialize_with = "serde_utils::bytes::vec::serialize",
