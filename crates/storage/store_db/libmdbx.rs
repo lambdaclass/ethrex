@@ -6,6 +6,7 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store_db::Bytes32;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -29,7 +30,6 @@ use libmdbx::{
 };
 use serde_json;
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -1308,42 +1308,6 @@ table!(
     /// Value: block hash
     ( InvalidAncestors ) Bytes32 => Bytes32
 );
-
-/// Fixed size encoding for storing in the database, this allows to store H256 and U256 values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Bytes32(pub [u8; 32]);
-
-impl Deref for Bytes32 {
-    type Target = [u8; 32];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<H256> for Bytes32 {
-    fn from(value: H256) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<U256> for Bytes32 {
-    fn from(value: U256) -> Self {
-        Self(value.to_little_endian())
-    }
-}
-
-impl From<Bytes32> for U256 {
-    fn from(value: Bytes32) -> Self {
-        Self::from_little_endian(&value.0)
-    }
-}
-
-impl From<Bytes32> for H256 {
-    fn from(value: Bytes32) -> Self {
-        Self(value.0)
-    }
-}
 
 impl Encodable for Bytes32 {
     type Encoded = [u8; 32];
