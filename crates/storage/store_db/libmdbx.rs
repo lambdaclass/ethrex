@@ -2,9 +2,8 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
-    TriePathsRLP, TupleRLP,
+    AccountCodeRLP, AccountStateRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
+    PayloadBundleRLP, Rlp, TransactionHashRLP, TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -17,7 +16,6 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
-use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -31,6 +29,7 @@ use libmdbx::{
 };
 use serde_json;
 use std::fmt::{Debug, Formatter};
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -118,10 +117,9 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_sync::<CanonicalBlockHashes>(number)?
-            .map(|block_hash| block_hash.to())
-            .transpose()
-            .map_err(StoreError::from)
+        Ok(self
+            .read_sync::<CanonicalBlockHashes>(number)?
+            .map(H256::from))
     }
 }
 
@@ -586,9 +584,7 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(H256::from))
     }
 
     fn get_canonical_block_hash_sync(
@@ -596,9 +592,7 @@ impl StoreEngine for Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_sync::<CanonicalBlockHashes>(number)
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(H256::from))
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -855,10 +849,10 @@ impl StoreEngine for Store {
             .cursor::<StorageHealPaths>()
             .map_err(StoreError::LibmdbxError)?;
 
-        let mut res = Vec::new();
+        let mut res: Vec<(H256, Vec<Nibbles>)> = Vec::new();
         let mut cursor_it = cursor.walk(None);
         while let Some(Ok((hash, paths))) = cursor_it.next() {
-            res.push((hash.to()?, paths.to()?));
+            res.push((hash.into(), paths.to()?));
         }
 
         res = res.into_iter().take(limit).collect::<Vec<_>>();
@@ -1037,10 +1031,11 @@ impl StoreEngine for Store {
         let iter = cursor
             .walk(Some(start.into()))
             .map_while(|res| {
-                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
-                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
-                    _ => None,
-                })
+                res.ok()
+                    .map(|(hash, acc)| match (H256::from(hash), acc.to()) {
+                        (hash, Ok(acc)) => Some((hash, acc)),
+                        _ => None,
+                    })
             })
             .flatten()
             .take(MAX_SNAPSHOT_READS);
@@ -1072,9 +1067,7 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
             .await
-            .map(|o| o.map(|a| a.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(BlockHash::from))
     }
 
     async fn set_latest_valid_ancestor(
@@ -1208,25 +1201,33 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+    ( CanonicalBlockHashes ) BlockNumber => Bytes32
 );
 
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ///
+    /// Key: block hash
+    ( BlockNumbers ) Bytes32 => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ///
+    /// Key: block hash
+    ( Headers ) Bytes32 => BlockHeaderRLP
 );
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ///
+    /// Key: block hash
+    ( Bodies ) Bytes32 => BlockBodyRLP
 );
 table!(
     /// Account codes table.
-    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
+    ///
+    /// Keyt account code hash
+    ( AccountCodes ) Bytes32 => AccountCodeRLP
 );
 
 dupsort!(
@@ -1273,83 +1274,88 @@ table!(
 
 table!(
     /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
+    ///
+    /// Key: Block hash
+    ( PendingBlocks ) Bytes32 => BlockRLP
 );
 
 table!(
     /// State Snapshot used by an ongoing sync process
-    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+    ///
+    /// Key: Account hash
+    ( StateSnapShot ) Bytes32 => AccountStateRLP
 );
 
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+    ///
+    /// Key: Account hash
+    /// (storage key, storage value)[storage key]
+    ( StorageSnapShot ) Bytes32 => (Bytes32, Bytes32)[Bytes32]
 );
 
 table!(
     /// Storage trie paths in need of healing stored by hashed address
-    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
+    ///
+    /// Key: Account hash
+    ( StorageHealPaths ) Bytes32 => TriePathsRLP
 );
 
 table!(
     /// Stores invalid ancestors
-    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+    ///
+    /// Key: block hash
+    /// Value: block hash
+    ( InvalidAncestors ) Bytes32 => Bytes32
 );
 
-// Storage values are stored as bytes instead of using their rlp encoding
-// As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
-pub struct AccountStorageKeyBytes(pub [u8; 32]);
-pub struct AccountStorageValueBytes(pub [u8; 32]);
+/// Fixed size encoding for storing in the database, this allows to store H256 and U256 values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bytes32(pub [u8; 32]);
 
-impl Encodable for AccountStorageKeyBytes {
-    type Encoded = [u8; 32];
+impl Deref for Bytes32 {
+    type Target = [u8; 32];
 
-    fn encode(self) -> Self::Encoded {
-        self.0
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl Decodable for AccountStorageKeyBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageKeyBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for AccountStorageValueBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageValueBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageValueBytes(b.try_into()?))
-    }
-}
-
-impl From<H256> for AccountStorageKeyBytes {
+impl From<H256> for Bytes32 {
     fn from(value: H256) -> Self {
-        AccountStorageKeyBytes(value.0)
+        Self(value.0)
     }
 }
 
-impl From<U256> for AccountStorageValueBytes {
+impl From<U256> for Bytes32 {
     fn from(value: U256) -> Self {
-        AccountStorageValueBytes(u256_to_big_endian(value))
+        Self(value.to_little_endian())
     }
 }
 
-impl From<AccountStorageKeyBytes> for H256 {
-    fn from(value: AccountStorageKeyBytes) -> Self {
-        H256(value.0)
+impl From<Bytes32> for U256 {
+    fn from(value: Bytes32) -> Self {
+        Self::from_little_endian(&value.0)
     }
 }
 
-impl From<AccountStorageValueBytes> for U256 {
-    fn from(value: AccountStorageValueBytes) -> Self {
-        U256::from_big_endian(&value.0)
+impl From<Bytes32> for H256 {
+    fn from(value: Bytes32) -> Self {
+        Self(value.0)
+    }
+}
+
+impl Encodable for Bytes32 {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.0
+    }
+}
+
+impl Decodable for Bytes32 {
+    fn decode(b: &[u8]) -> anyhow::Result<Bytes32> {
+        Ok(Self(b.try_into()?))
     }
 }
 
