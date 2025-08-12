@@ -18,24 +18,14 @@ use redb::TypeName;
 use std::any::type_name;
 
 // Account types
-pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
-pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
 
 // Block types
-pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
-
-// Receipt types
-#[allow(unused)]
-pub type ReceiptRLP = Rlp<Receipt>;
-
-// Transaction types
-pub type TransactionHashRLP = Rlp<H256>;
 
 // Payload type
 pub type PayloadBundleRLP = Rlp<PayloadBundle>;

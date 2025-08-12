@@ -2,8 +2,8 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeRLP, AccountStateRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
-    PayloadBundleRLP, Rlp, TransactionHashRLP, TriePathsRLP, TupleRLP,
+    AccountCodeRLP, AccountStateRLP, BlockBodyRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp,
+    TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -1226,7 +1226,7 @@ table!(
 table!(
     /// Account codes table.
     ///
-    /// Keyt account code hash
+    /// Keyt account code hash => account code
     ( AccountCodes ) Bytes32 => AccountCodeRLP
 );
 
@@ -1243,7 +1243,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) Bytes32 => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1684,7 +1684,7 @@ mod tests {
     fn indexed_chunk_storage_limit_exceeded() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) Bytes32[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
@@ -1717,7 +1717,7 @@ mod tests {
     fn indexed_chunk_storage_store_max_limit() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) Bytes32[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
