@@ -514,7 +514,7 @@ async fn deploy_contracts(
 ) -> Result<ContractAddresses, DeployerError> {
     info!("Deploying OnChainProposer");
 
-    let salt = opts.create2_salt.unwrap_or_else(|| H256::random());
+    let salt = opts.create2_salt.unwrap_or_else(H256::random);
     debug!("Salt used: {salt:#x}");
 
     let bytecode = if opts.deploy_based_contracts {

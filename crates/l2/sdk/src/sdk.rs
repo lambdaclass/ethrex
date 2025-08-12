@@ -547,7 +547,7 @@ pub async fn call_contract(
         .build_eip1559_transaction(to, from, calldata, Default::default())
         .await?;
 
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer).await?;
+    let tx_hash = send_eip1559_transaction(client, &tx, signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)
