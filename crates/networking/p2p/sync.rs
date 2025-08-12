@@ -273,7 +273,7 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, block_sync_state.clone()).await?;
+            self.snap_sync(store, &mut block_sync_state).await?;
 
             // Next sync will be full-sync
             block_sync_state = block_sync_state.into_fullsync().await?;
@@ -741,7 +741,7 @@ impl Syncer {
     async fn snap_sync(
         &mut self,
         store: Store,
-        mut block_sync_state: BlockSyncState,
+        block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
@@ -754,10 +754,10 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
-        // while current_unix_time() > staleness_timestamp {
-        //     (pivot_header, staleness_timestamp) =
-        //         update_pivot(pivot_header.number, &self.peers, &mut block_sync_state).await;
-        // }
+        while current_unix_time() > staleness_timestamp {
+            (pivot_header, staleness_timestamp) =
+                update_pivot(pivot_header.number, &self.peers, block_sync_state).await;
+        }
 
         let pivot_number = pivot_header.number;
         let pivot_hash = pivot_header.hash();
@@ -1063,7 +1063,7 @@ async fn update_pivot(
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
-                .request_block_headers(block_number, pivot.hash())
+                .request_block_headers(block_number + 1, pivot.hash())
                 .await
                 .expect("failed to fetch headers");
             sync_state
