@@ -61,8 +61,8 @@ jobs:
           touch cmd/.env
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
+          ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=./fixtures/keys/private_keys_l1.txt \
+          ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work

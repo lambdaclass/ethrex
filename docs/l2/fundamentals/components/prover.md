@@ -121,14 +121,14 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
       // Used to handle TCP communication with other servers from any network interface.
       ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
-      // Set to true to randomize the salt.
-      ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+      // Salt to use with CREATE2 deterministic deployer. Defaults to random.
+      ETHREX_DEPLOYER_DETERMINISTIC_SALT=true
       // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+      ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true
       // Check the if the contract is present on your preferred network.
-      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER_ADDRESS=<address>
       // It can be deployed. Check the if the contract is present on your preferred network.
-      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER_ADDRESS=<address>
       // Set to any L1 endpoint.
       ETHREX_ETH_RPC_URL=<url>
       ```
@@ -168,7 +168,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
-   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER_ADDRESS=<address>` env. variable.
    if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration

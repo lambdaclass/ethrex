@@ -148,6 +148,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
+	docker compose down ethrex_l2
 	pkill -x ethrex || exit 0
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
