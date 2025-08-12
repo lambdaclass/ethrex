@@ -504,7 +504,7 @@ fn zip_requeue_node_responses_score_peer(
                 node_request: node_request.clone(),
                 node: Node::decode_raw(&node_bytes).inspect_err(|err| {
                     debug!(
-                        "We have found the error: {err}, while porcessing the node {node_bytes}"
+                        "We have found the error: {err}, while porcessing the node {node_bytes:?}"
                     );
                 })?,
             })
