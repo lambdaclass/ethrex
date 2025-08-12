@@ -60,7 +60,7 @@ pub struct ProofCoordinatorConfig {
     pub proof_send_interval_ms: u64,
     pub signer: Signer,
     pub validium: bool,
-    pub tdx_private_key: SecretKey,
+    pub tdx_private_key: Option<SecretKey>,
 }
 
 #[derive(Clone, Debug)]
