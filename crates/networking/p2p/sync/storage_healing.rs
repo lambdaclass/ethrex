@@ -390,7 +390,7 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        let at = download_queue.len().saturating_sub(1);
+        let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         requests.insert(
