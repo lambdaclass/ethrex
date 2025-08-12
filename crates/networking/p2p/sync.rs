@@ -778,7 +778,7 @@ impl Syncer {
 
         let storage_tries_to_download = get_number_of_storage_tries_to_download().await;
         *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-        let downloaded_storage_tries_count = 0;
+        let mut downloaded_storage_tries_count = 0;
 
         METRICS
             .storage_tries_download_start_time
@@ -820,7 +820,7 @@ impl Syncer {
                     state_root,
                     account_storage_roots.clone(),
                     chunk_index,
-                    downloaded_storage_tries_count,
+                    &mut downloaded_storage_tries_count,
                 )
                 .await;
             dbg!(&downloaded_account_storages);

@@ -1433,7 +1433,7 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
-        mut downloaded_count: u64,
+        downloaded_count: &mut u64,
     ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1536,7 +1536,7 @@ impl PeerHandler {
                 *METRICS.storages_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
                 *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
+                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
             }
 
             if let Ok(result) = task_receiver.try_recv() {
@@ -1644,10 +1644,10 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
-                downloaded_count += account_storages.len() as u64;
+                *downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
                 if !hash_start.is_zero() {
-                    downloaded_count -= 1;
+                    *downloaded_count -= 1;
                 }
 
                 let n_storages = account_storages.len();
@@ -1937,7 +1937,7 @@ impl PeerHandler {
         *METRICS.storages_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
+        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
         METRICS
             .storage_tries_download_end_time
