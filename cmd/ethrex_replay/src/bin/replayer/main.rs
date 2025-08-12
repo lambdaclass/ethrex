@@ -99,40 +99,50 @@ async fn main() {
         );
     }
 
-    let replayers = [
-        (
-            opts.hoodi_rpc_url.clone(),
-            Network::PublicNetwork(PublicNetwork::Hoodi),
-        ),
-        (
-            opts.sepolia_rpc_url.clone(),
-            Network::PublicNetwork(PublicNetwork::Sepolia),
-        ),
-        (
-            opts.mainnet_rpc_url.clone(),
-            Network::PublicNetwork(PublicNetwork::Mainnet),
-        ),
-    ];
-
-    let replayers_mode = if opts.execute {
-        ReplayerMode::Execute
-    } else {
-        ReplayerMode::Prove
-    };
-
     let mut replayers_handles = Vec::new();
 
-    for (rpc_url, network) in replayers.into_iter() {
-        let slack_webhook_url = opts.slack_webhook_url.clone();
+    if opts.execute {
+        for (rpc_url, network) in [
+            (
+                opts.hoodi_rpc_url.clone(),
+                Network::PublicNetwork(PublicNetwork::Hoodi),
+            ),
+            (
+                opts.sepolia_rpc_url.clone(),
+                Network::PublicNetwork(PublicNetwork::Sepolia),
+            ),
+            (
+                opts.mainnet_rpc_url.clone(),
+                Network::PublicNetwork(PublicNetwork::Mainnet),
+            ),
+        ] {
+            let slack_webhook_url = opts.slack_webhook_url.clone();
 
-        let replayers_mode = replayers_mode.clone();
+            let handle =
+                tokio::spawn(
+                    async move { replay_execution(network, rpc_url, slack_webhook_url).await },
+                );
+
+            replayers_handles.push(handle);
+        }
+    } else {
+        let slack_webhook_url = opts.slack_webhook_url.clone();
+        let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
+        let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
+        let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
 
         let handle = tokio::spawn(async move {
-            replay(rpc_url, network, slack_webhook_url, replayers_mode).await
+            replay_proving(
+                hoodi_rpc_url,
+                sepolia_rpc_url,
+                mainnet_rpc_url,
+                slack_webhook_url,
+            )
+            .await
         });
 
         replayers_handles.push(handle);
-    }
+    };
 
     // TODO: These tasks are spawned outside the above loop to be able to handled
     // in the tokio::select!. We should find a way to spawn them inside the loop
@@ -187,86 +197,152 @@ fn init_tracing() {
     .expect("setting default subscriber failed");
 }
 
-async fn replay(
-    rpc_url: Url,
+async fn replay_execution(
     network: Network,
+    rpc_url: Url,
     slack_webhook_url: Option<Url>,
-    replayer_mode: ReplayerMode,
 ) -> Result<(), EthClientError> {
-    tracing::info!("Starting replayer for network: {network} with RPC URL: {rpc_url}");
+    tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
     let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
-    let mut latest_block = eth_client.get_block_number().await?.as_usize();
+    loop {
+        let elapsed = replay_latest_block(
+            ReplayerMode::Execute,
+            network.clone(),
+            rpc_url.clone(),
+            &eth_client,
+            slack_webhook_url.clone(),
+        )
+        .await?;
+
+        // Wait at most 12 seconds for executing the next block.
+        // This will only wait if the run took less than 12 seconds.
+        tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
+    }
+}
+
+async fn replay_proving(
+    hoodi_rpc_url: Url,
+    sepolia_rpc_url: Url,
+    mainnet_rpc_url: Url,
+    slack_webhook_url: Option<Url>,
+) -> Result<(), EthClientError> {
+    let hoodi_eth_client = EthClient::new(hoodi_rpc_url.as_str()).unwrap();
+    let sepolia_eth_client = EthClient::new(sepolia_rpc_url.as_str()).unwrap();
+    let mainnet_eth_client = EthClient::new(mainnet_rpc_url.as_str()).unwrap();
 
     loop {
-        let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(latest_block as u64))
-            .await?;
-
         let start = SystemTime::now();
 
-        let run_result = match &replayer_mode {
-            ReplayerMode::Execute => {
-                SubcommandExecute::Block {
-                    block: Some(latest_block),
-                    rpc_url: rpc_url.clone(),
-                    network: network.clone(),
-                    bench: false,
-                }
-                .run()
-                .await
-            }
-            ReplayerMode::Prove => {
-                SubcommandProve::Block {
-                    block: Some(latest_block),
-                    rpc_url: rpc_url.clone(),
-                    network: network.clone(),
-                    bench: false,
-                }
-                .run()
-                .await
-            }
-        };
+        replay_latest_block(
+            ReplayerMode::Prove,
+            Network::PublicNetwork(PublicNetwork::Hoodi),
+            hoodi_rpc_url.clone(),
+            &hoodi_eth_client,
+            slack_webhook_url.clone(),
+        )
+        .await?;
+
+        replay_latest_block(
+            ReplayerMode::Prove,
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+            sepolia_rpc_url.clone(),
+            &sepolia_eth_client,
+            slack_webhook_url.clone(),
+        )
+        .await?;
+
+        replay_latest_block(
+            ReplayerMode::Prove,
+            Network::PublicNetwork(PublicNetwork::Mainnet),
+            mainnet_rpc_url.clone(),
+            &mainnet_eth_client,
+            slack_webhook_url.clone(),
+        )
+        .await?;
 
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
         });
 
-        let block_run_report = BlockRunReport::new_for(
-            block,
-            network.clone(),
-            run_result,
-            replayer_mode.clone(),
-            elapsed,
-        );
-
-        if block_run_report.run_result.is_err() {
-            tracing::error!("{block_run_report}");
-        } else {
-            tracing::info!("{block_run_report}");
-        }
-
-        if block_run_report.run_result.is_err() {
-            try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to post to Slack webhook: {e}");
-                });
-        }
-
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
         tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
+    }
+}
 
-        latest_block = eth_client
-            .get_block_number()
+async fn replay_latest_block(
+    replayer_mode: ReplayerMode,
+    network: Network,
+    rpc_url: Url,
+    eth_client: &EthClient,
+    slack_webhook_url: Option<Url>,
+) -> Result<Duration, EthClientError> {
+    let latest_block = eth_client
+        .get_block_number()
+        .await
+        .unwrap_or_else(|e| {
+            panic!("Failed to get latest block number from {rpc_url}: {e}");
+        })
+        .as_usize();
+
+    let block = eth_client
+        .get_raw_block(BlockIdentifier::Number(latest_block as u64))
+        .await?;
+
+    let start = SystemTime::now();
+
+    let run_result = match replayer_mode {
+        ReplayerMode::Execute => {
+            SubcommandExecute::Block {
+                block: Some(latest_block),
+                rpc_url: rpc_url.clone(),
+                network: network.clone(),
+                bench: false,
+            }
+            .run()
+            .await
+        }
+        ReplayerMode::Prove => {
+            SubcommandProve::Block {
+                block: Some(latest_block),
+                rpc_url: rpc_url.clone(),
+                network: network.clone(),
+                bench: false,
+            }
+            .run()
+            .await
+        }
+    };
+
+    let elapsed = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    let block_run_report = BlockRunReport::new_for(
+        block,
+        network.clone(),
+        run_result,
+        ReplayerMode::Prove,
+        elapsed,
+    );
+
+    if block_run_report.run_result.is_err() {
+        tracing::error!("{block_run_report}");
+    } else {
+        tracing::info!("{block_run_report}");
+    }
+
+    if block_run_report.run_result.is_err() {
+        try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
             .await
             .unwrap_or_else(|e| {
-                panic!("Failed to get latest block number from {rpc_url}: {e}");
-            })
-            .as_usize();
+                tracing::error!("Failed to post to Slack webhook: {e}");
+            });
     }
+
+    Ok(elapsed)
 }
 
 async fn revalidate_rpc(rpc_url: Url) -> Result<(), EthClientError> {
