@@ -11,9 +11,7 @@ use ethrex_l2_rpc::{
     signer::{LocalSigner, Signer},
 };
 use ethrex_rpc::clients::eth::L1MessageProof;
-use ethrex_rpc::clients::eth::{
-    EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
-};
+use ethrex_rpc::clients::eth::{EthClient, Overrides, WrappedTransaction, errors::EthClientError};
 use ethrex_rpc::types::receipt::RpcReceipt;
 
 use keccak_hash::keccak;
@@ -302,7 +300,7 @@ pub async fn deposit_erc20(
 
     let deposit_data = encode_calldata(DEPOSIT_ERC20_SIGNATURE, &calldata_values)?;
 
-    let deposit_tx = eth_client
+    let mut deposit_tx = eth_client
         .build_eip1559_transaction(
             bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
             from,
@@ -313,6 +311,7 @@ pub async fn deposit_erc20(
             },
         )
         .await?;
+    deposit_tx.gas_limit *= 2; // tx reverts in some cases otherwise
 
     send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await
 }
@@ -388,7 +387,18 @@ pub async fn deploy_contract(
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
-    let init_code = [&bytecode, constructor_args].concat();
+    deploy_contract_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
+}
+
+/// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
+pub async fn deploy_contract_from_bytecode(
+    constructor_args: &[u8],
+    bytecode: &[u8],
+    deployer: &Signer,
+    salt: &[u8],
+    eth_client: &EthClient,
+) -> Result<(H256, Address), DeployError> {
+    let init_code = [bytecode, constructor_args].concat();
     let (deploy_tx_hash, contract_address) =
         create2_deploy(salt, &init_code, deployer, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
@@ -432,6 +442,27 @@ pub async fn deploy_with_proxy(
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
         deploy_contract(&[], contract_path, deployer, salt, eth_client).await?;
+
+    let (proxy_tx_hash, proxy_address) =
+        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
+}
+
+/// Same as `deploy_with_proxy`, but takes the contract bytecode directly instead of a path.
+pub async fn deploy_with_proxy_from_bytecode(
+    deployer: &Signer,
+    eth_client: &EthClient,
+    bytecode: &[u8],
+    salt: &[u8],
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) =
+        deploy_contract_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) =
         deploy_proxy(deployer, eth_client, implementation_address, salt).await?;

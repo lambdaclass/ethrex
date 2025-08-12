@@ -645,12 +645,15 @@ impl FullBlockSyncState {
             }
             return Err(err.into());
         }
-        // Mark chain as canonical & last block as latest
+
         self.store
-            .mark_chain_as_canonical(&numbers_and_hashes)
-            .await?;
-        self.store
-            .update_latest_block_number(last_block_number)
+            .forkchoice_update(
+                Some(numbers_and_hashes),
+                last_block_number,
+                last_block_hash,
+                None,
+                None,
+            )
             .await?;
 
         let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
@@ -1003,8 +1006,15 @@ impl Syncer {
             .map(|(i, hash)| (pivot_number - i as u64, hash))
             .collect::<Vec<_>>();
 
-        store.mark_chain_as_canonical(&numbers_and_hashes).await?;
-        store.update_latest_block_number(pivot_number).await?;
+        store
+            .forkchoice_update(
+                Some(numbers_and_hashes),
+                pivot_number,
+                pivot_hash,
+                None,
+                None,
+            )
+            .await?;
         Ok(())
     }
 }

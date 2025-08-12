@@ -11,7 +11,6 @@ members = [
   "crates/common/trie",
   "crates/common/crypto",
   "crates/l2/",
-  "crates/l2/contracts",
   "crates/l2/common",
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
@@ -25,6 +24,7 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
+  "crates/vm/levm/runner",
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",
@@ -38,6 +38,11 @@ default-members = ["cmd/ethrex"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 
 [profile.release-with-debug]
 inherits = "release"
@@ -98,14 +103,15 @@ clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
 rustc-hex = "2.1.0"
-url = "2.5.4"
+url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.1.5"
-spawned-rt = "0.1.5"
+spawned-concurrency = "0.2.2"
+spawned-rt = "0.2.2"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+rayon = "1.10.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

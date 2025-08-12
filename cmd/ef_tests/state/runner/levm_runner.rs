@@ -187,7 +187,7 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    Ok(VM::new(
+    VM::new(
         Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
@@ -214,29 +214,30 @@ pub fn prepare_vm_for_tx<'a>(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
-    ))
+    )
+    .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account(*address).map_err(|e| {
+        let account_info = world_state.get_account_info(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
-                "Failed to get account info when ensuring pre state: {e}",
+                "Failed to read account {address:#x} from world state: {e}",
             )))
         })?;
         ensure_pre_state_condition(
-            account.info.nonce == pre_value.nonce,
+            account_info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.nonce, account.info.nonce
+                pre_value.nonce, account_info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.info.balance == pre_value.balance,
+            account_info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.balance, account.info.balance
+                pre_value.balance, account_info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
@@ -251,11 +252,11 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            account.info.code_hash == keccak(pre_value.code.as_ref()),
+            account_info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {address:#x}: expected {}, got {}",
                 keccak(pre_value.code.as_ref()),
-                account.info.code_hash
+                account_info.code_hash
             ),
         )?;
     }

@@ -8,6 +8,7 @@ use crate::{
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
+        l2::l2_connection::P2PBasedContext,
         message::Message,
     },
     types::{Node, NodeRecord},
@@ -42,6 +43,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    pub based_context: Option<P2PBasedContext>,
 }
 
 impl P2PContext {
@@ -55,6 +57,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -71,6 +74,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            based_context,
         }
     }
 }
@@ -89,11 +93,7 @@ pub fn peer_table() -> Kademlia {
     Kademlia::new()
 }
 
-pub async fn start_network(
-    context: P2PContext,
-    bootnodes: Vec<Node>,
-    fork_id: &ForkId,
-) -> Result<(), NetworkError> {
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.local_node.udp_addr())
             .await
@@ -103,7 +103,6 @@ pub async fn start_network(
     DiscoveryServer::spawn(
         context.local_node.clone(),
         context.signer,
-        fork_id,
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
@@ -116,7 +115,6 @@ pub async fn start_network(
     DiscoverySideCar::spawn(
         context.local_node.clone(),
         context.signer,
-        fork_id,
         udp_socket,
         context.table.clone(),
     )
