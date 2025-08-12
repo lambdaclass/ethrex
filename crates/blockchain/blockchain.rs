@@ -362,6 +362,7 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
+        perf_logger::add_time_till_drop("blockchain_store_block");
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -381,6 +382,7 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        perf_logger::add_time_till_drop("blockchain_add_block");
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
@@ -416,6 +418,25 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
+            );
+
+            perf_logger::add_log("throughput", perf_logger::Value::Float(throughput));
+            perf_logger::add_log("interval", perf_logger::Value::Float(interval));
+            perf_logger::add_log(
+                "transactions_len",
+                perf_logger::Value::Int(block.body.transactions.len()),
+            );
+            perf_logger::add_log(
+                "exec_percentage",
+                perf_logger::Value::Float(percentage(since, executed, interval)),
+            );
+            perf_logger::add_log(
+                "merkle_percentage",
+                perf_logger::Value::Float(percentage(executed, merkleized, interval)),
+            );
+            perf_logger::add_log(
+                "store_percentage",
+                perf_logger::Value::Float(percentage(merkleized, stored, interval)),
             );
 
             let base_log = format!(
@@ -603,6 +624,7 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+         perf_logger::add_time_till_drop("mempool_add_blob_transaction_to_pool");
         // Validate blobs bundle
 
         let fork = self.current_fork().await?;
@@ -633,6 +655,7 @@ impl Blockchain {
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
+         perf_logger::add_time_till_drop("mempool_add_transaction_to_pool");
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);

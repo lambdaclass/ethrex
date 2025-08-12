@@ -270,6 +270,7 @@ impl PooledTransactions {
 
     /// Saves every incoming pooled transaction to the mempool.
     pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+          perf_logger::add_time_till_drop("p2p_PooledTransactions");
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if let Err(e) = blockchain

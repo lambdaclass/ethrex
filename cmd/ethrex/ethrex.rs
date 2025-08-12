@@ -39,6 +39,8 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
+    perf_logger::init_process_logs_thread();
+
     let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -46,9 +48,11 @@ async fn main() -> eyre::Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            perf_logger::close_logging();
         }
         _ = signal_terminate.recv() => {
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            perf_logger::close_logging();
         }
     }
 

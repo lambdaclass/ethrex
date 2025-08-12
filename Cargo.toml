@@ -4,6 +4,7 @@ members = [
   "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_replay",
+  "crates/perf-logger",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
@@ -29,7 +30,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
-  "tooling/archive_sync",
+  "tooling/archive_sync", "crates/perf-logger",
 ]
 resolver = "2"
 
@@ -50,6 +51,7 @@ debug = 2
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
+perf-logger = { path = "./crates/perf-logger" }
 ethrex-common = { path = "./crates/common" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }

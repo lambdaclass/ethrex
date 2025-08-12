@@ -2384,7 +2384,7 @@ dependencies = [
  "crossbeam-channel 0.4.4",
  "crossbeam-deque 0.7.4",
  "crossbeam-epoch 0.8.2",
- "crossbeam-queue",
+ "crossbeam-queue 0.2.3",
  "crossbeam-utils 0.7.2",
 ]
 
@@ -2461,6 +2461,15 @@ dependencies = [
  "cfg-if 0.1.10",
  "crossbeam-utils 0.7.2",
  "maybe-uninit",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
+dependencies = [
+ "crossbeam-utils 0.8.21",
 ]
 
 [[package]]
@@ -3864,6 +3873,7 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "local-ip-address",
+ "perf-logger",
  "rand 0.8.5",
  "redb",
  "reqwest 0.12.20",
@@ -3893,6 +3903,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
+ "perf-logger",
  "secp256k1",
  "serde_json",
  "sha3",
@@ -4127,6 +4138,7 @@ dependencies = [
  "hmac",
  "keccak-hash",
  "lazy_static",
+ "perf-logger",
  "rand 0.8.5",
  "secp256k1",
  "serde",
@@ -4237,6 +4249,7 @@ dependencies = [
  "hex-literal",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
+ "perf-logger",
  "rand 0.8.5",
  "reqwest 0.12.20",
  "secp256k1",
@@ -7897,6 +7910,13 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+
+[[package]]
+name = "perf-logger"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-queue 0.3.12",
+]
 
 [[package]]
 name = "pest"
