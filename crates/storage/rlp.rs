@@ -2,12 +2,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-use ethrex_common::{
-    H256,
-    types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
-    },
-};
+use ethrex_common::types::{AccountState, Block, BlockBody, BlockHeader, payload::PayloadBundle};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Nibbles;
 #[cfg(feature = "libmdbx")]
