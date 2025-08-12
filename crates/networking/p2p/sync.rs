@@ -908,6 +908,7 @@ impl Syncer {
                 // We need to fix this issue in request_storage_ranges and remove this filter.
                 account_storages_snapshot
                     .into_par_iter()
+                    .filter(|(_account_hash, storage)| !storage.is_empty())
                     .for_each_with(sender, |sender, (account_hash, key_value_pairs)| {
                         let account_storage_root = match maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").entry(account_hash) {
                             Entry::Occupied(occupied_entry) => *occupied_entry.get(),
