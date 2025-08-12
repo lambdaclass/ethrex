@@ -1433,6 +1433,7 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
+        mut downloaded_count: u64,
     ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1467,7 +1468,6 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
 
-        let mut downloaded_count = 0_u64;
         let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
 
         struct TaskResult {
@@ -1487,14 +1487,6 @@ impl PeerHandler {
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
-
-        info!("Starting to download storage ranges from peers");
-        *METRICS.storage_tries_to_download.lock().await = account_storage_roots.len() as u64;
-        METRICS
-            .storage_tries_download_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();

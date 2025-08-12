@@ -773,6 +773,19 @@ impl Syncer {
 
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
             .expect("Failed to get account_state_snapshots directory");
+
+        info!("Starting to download storage ranges from peers");
+
+        let storage_tries_to_download = get_number_of_storage_tries_to_download().await;
+        *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
+        let downloaded_storage_tries_count = 0;
+
+        METRICS
+            .storage_tries_download_start_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
+
         for entry in std::fs::read_dir(&account_state_snapshots_dir)
             .expect("Failed to read account_state_snapshots dir")
         {
@@ -803,8 +816,15 @@ impl Syncer {
 
             chunk_index = self
                 .peers
-                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+                .request_storage_ranges(
+                    state_root,
+                    account_storage_roots.clone(),
+                    chunk_index,
+                    downloaded_storage_tries_count,
+                )
                 .await;
+            dbg!(&downloaded_account_storages);
+            dbg!(&downloaded_storage_tries_count);
         }
 
         info!("Starting to compute the state root...");
@@ -1008,6 +1028,40 @@ impl Syncer {
         store.update_latest_block_number(pivot_number).await?;
         Ok(())
     }
+}
+
+async fn get_number_of_storage_tries_to_download() -> u64 {
+    let account_state_snapshots_dir = get_account_state_snapshots_dir().unwrap();
+    let mut number_of_accounts_with_non_empty_storage = 0_u64;
+    for entry in std::fs::read_dir(&account_state_snapshots_dir)
+        .expect("Failed to read account_state_snapshots dir")
+    {
+        let entry = entry.expect("Failed to read dir entry");
+
+        let snapshot_path = entry.path();
+
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+            });
+
+        let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
+            account_states_snapshot.iter().cloned().unzip();
+
+        let account_storage_roots: Vec<(H256, H256)> = account_hashes
+            .iter()
+            .zip(account_states.iter())
+            .filter_map(|(hash, state)| {
+                (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
+            })
+            .collect();
+
+        number_of_accounts_with_non_empty_storage += account_storage_roots.len() as u64;
+    }
+    number_of_accounts_with_non_empty_storage
 }
 
 async fn update_pivot(
