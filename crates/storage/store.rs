@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -603,8 +603,11 @@ impl Store {
                 return Ok(());
             }
             Some(_) => {
-                return Err(StoreError::Custom("The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks or configs, clear the database (e.g., run `ethrex removedb`) and try again.".to_string()))
-            },
+                error!(
+                    "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, clear the database (e.g., run `ethrex removedb`) and try again."
+                );
+                return Err(StoreError::IncompatibleChainConfig());
+            }
             None => {
                 self.engine
                     .add_block_header(genesis_hash, genesis_block.header.clone())
@@ -1440,12 +1443,7 @@ mod tests {
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
         let result = add_initial_state_handle.await.unwrap();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Tried to run genesis twice with different blocks"),
-        );
+        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig())));
     }
 
     fn remove_test_dbs(path: &str) {
