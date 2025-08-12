@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755030260414,
+  "lastUpdate": 1755031045540,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8665,6 +8665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160305417856,
             "range": "± 181820073",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "78d57f4b9a523dfc861b2c8c8352bc59b76522eb",
+          "message": "feat(l1,l2): show default datadir when running `--help`. (#4024)\n\n**Motivation**\nWhen running `ethrex --help`, I want to see the default datadir that is\ngoing to be used.\n\n**Description**\nThis is part of https://github.com/lambdaclass/ethrex/pull/3770 but with\na smaller scope (no migration to PathBuf) to keep the changes small.\n\nCloses #issue_number",
+          "timestamp": "2025-08-12T19:00:15Z",
+          "tree_id": "9b2e2f261e344faa41c2d0c52f714b1d1767fb4b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/78d57f4b9a523dfc861b2c8c8352bc59b76522eb"
+        },
+        "date": 1755031031819,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 158397968946,
+            "range": "± 207523237",
             "unit": "ns/iter"
           }
         ]
