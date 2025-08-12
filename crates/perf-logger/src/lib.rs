@@ -87,7 +87,7 @@ fn process_logs_thread() {
                     return;
                 }
                 file.flush().ok();
-                sleep(Duration::from_millis(500))
+                sleep(Duration::from_millis(100))
             }
         }
     }
