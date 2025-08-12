@@ -2,13 +2,13 @@
 
 This architecture was inspired by [MatterLabs' ZKsync pubdata architecture](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md).
 
-To provide data availability for our network, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
+To provide data availability for our blockchain, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
 
 The data needed is:
 
 - The nonce and balance of every `EOA`.
 - The nonce, balance, and storage of every contract account. Note that storage here is a mapping `(U256 → U256)`, so there are a lot of values inside it.
-- The bytecode of every contract deployed on the network.
+- The bytecode of every contract deployed on the chain.
 - All withdrawal Logs.
 
 After executing a batch of L2 blocks, the EVM will return the following data:

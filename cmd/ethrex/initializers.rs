@@ -73,7 +73,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     store
@@ -83,7 +83,17 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     store
 }
 
-/// Opens a Pre-exsisting Store or creates a new one
+/// Initializes a pre-existing Store
+pub async fn load_store(data_dir: &str) -> Store {
+    let store = open_store(data_dir);
+    store
+        .load_initial_state()
+        .await
+        .expect("Failed to load store");
+    store
+}
+
+/// Opens a pre-existing Store or creates a new one
 pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
     if path.ends_with("memory") {
