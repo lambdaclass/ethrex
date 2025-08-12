@@ -7,7 +7,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
-    sync::state_healing::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+    sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     utils::current_unix_time,
 };
 use std::cell::OnceCell;
@@ -390,13 +390,14 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        let at = download_queue.len().saturating_sub(2);
+        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
+        let (paths, inflight_requests_data) = create_node_requests(download_chunk);
         requests.insert(
             req_id,
             InflightRequest {
-                requests: download_chunk.clone().into(),
+                requests: inflight_requests_data,
                 peer_id: peer.0,
                 sent_time: Instant::now(),
             },
@@ -407,53 +408,49 @@ async fn ask_peers_for_nodes(
             .1
             .connection
             .cast(CastMessage::BackendRequest(
-                Message::GetTrieNodes(create_get_trie_nodes_request(
-                    req_id,
-                    state_root,
-                    download_chunk,
-                )),
+                Message::GetTrieNodes(GetTrieNodes {
+                    id: req_id,
+                    root_hash: state_root,
+                    paths,
+                    bytes: MAX_RESPONSE_BYTES,
+                }),
                 RLPxReceiver::StorageHealer(self_handler.clone()),
             ))
             .await;
     }
 }
 
-fn create_get_trie_nodes_request(
-    req_id: u64,
-    state_root: H256,
-    download_chunk: VecDeque<NodeRequest>,
-) -> GetTrieNodes {
-    GetTrieNodes {
-        id: req_id,
-        root_hash: state_root,
-        paths: create_node_requests(download_chunk),
-        bytes: MAX_RESPONSE_BYTES,
-    }
-}
-
-fn create_node_requests(node_requests: VecDeque<NodeRequest>) -> Vec<Vec<Bytes>> {
-    let mut mapped_requests: HashMap<Nibbles, Vec<Nibbles>> = HashMap::new();
+fn create_node_requests(
+    node_requests: VecDeque<NodeRequest>,
+) -> (Vec<Vec<Bytes>>, Vec<NodeRequest>) {
+    let mut mapped_requests: HashMap<Nibbles, Vec<NodeRequest>> = HashMap::new();
 
     for request in node_requests {
         mapped_requests
             .entry(request.acc_path.clone())
             .or_default()
-            .push(request.storage_path);
+            .push(request);
     }
 
-    mapped_requests
+    let mut inflight_request: Vec<NodeRequest> = Vec::new();
+
+    let result: Vec<Vec<Bytes>> = mapped_requests
         .into_iter()
-        .map(|(acc_path, storage_paths)| {
-            [
+        .map(|(acc_path, request_vec)| {
+            let response = [
                 vec![Bytes::from(acc_path.to_bytes())],
-                storage_paths
-                    .into_iter()
-                    .map(|path| Bytes::from(path.encode_compact()))
+                request_vec
+                    .iter()
+                    .map(|node_req| Bytes::from(node_req.storage_path.encode_compact()))
                     .collect(),
             ]
-            .concat()
+            .concat();
+            inflight_request.extend(request_vec);
+            response
         })
-        .collect()
+        .collect();
+
+    (result, inflight_request)
 }
 
 fn zip_requeue_node_responses_score_peer(

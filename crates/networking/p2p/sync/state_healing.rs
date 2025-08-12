@@ -34,7 +34,7 @@ const MIN_FULL_BLOCKS: usize = 64;
 /// Max size of bach to start a bytecode fetch request in queues
 const BYTECODE_BATCH_SIZE: usize = 70;
 /// Max size of a bach to start a storage fetch request in queues
-const STORAGE_BATCH_SIZE: usize = 300;
+pub const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a node fetch request in queues
 pub const NODE_BATCH_SIZE: usize = 500;
 /// Maximum amount of concurrent paralell fetches for a queue
