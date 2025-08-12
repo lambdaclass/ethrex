@@ -109,6 +109,21 @@ where
                         BlockExpectedException::IncorrectBlockFormat,
                     )
                 }
+                "BlockException.STATE_ROOT_MISMATCH" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::StateRootMismatch,
+                ),
+                "BlockException.RECEIPTS_ROOT_MISMATCH" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::ReceiptsRootMismatch,
+                ),
+                "BlockException.EXCEEDED_MAX_BLOB_GAS_PER_BLOCK" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::ExceededMaxBlobGasPerBlock,
+                ),
+                "BlockException.EXCEEDED_MAX_BLOB_NUMBER_PER_BLOCK" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::ExceededMaxBlobNumberPerBlock,
+                ),
+                "BlockException.GAS_USED_MISMATCH" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::GasUsedMismatch,
+                ),
                 "BlockException.INVALID_REQUESTS" => BlockChainExpectedException::BlockException(
                     BlockExpectedException::InvalidRequest,
                 ),

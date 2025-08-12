@@ -171,6 +171,21 @@ fn exception_is_expected(
                 BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
                 ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
             ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::StateRootMismatch),
+                ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::ReceiptsRootMismatch),
+                ChainError::InvalidBlock(InvalidBlockError::ReceiptsRootMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::ExceededMaxBlobGasPerBlock),
+                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobGasPerBlock)
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::ExceededMaxBlobNumberPerBlock),
+                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobNumberPerBlock)
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::GasUsedMismatch),
+                ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch(_, _))
+            ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::SystemContractEmpty
                 ),

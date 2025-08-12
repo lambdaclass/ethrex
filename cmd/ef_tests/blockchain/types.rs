@@ -503,5 +503,9 @@ pub enum BlockExpectedException {
     InvalidRequest,
     SystemContractEmpty,
     SystemContractCallFailed,
-    Other, //TODO: Implement exceptions
+    StateRootMismatch,
+    ReceiptsRootMismatch,
+    ExceededMaxBlobGasPerBlock,
+    ExceededMaxBlobNumberPerBlock,
+    GasUsedMismatch,
 }
