@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755007007251,
+  "lastUpdate": 1755008153617,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8605,6 +8605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161142790308,
             "range": "± 150546747",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5acad245d6893db13cc2e28c53ba064f33a7e51c",
+          "message": "fix(l2): use SP1 embedded allocator (#3760)\n\n**Motivation**\n\nSP1 by default uses a \"[bump\nallocator](https://docs.succinct.xyz/docs/sp1/generating-proofs/advanced#embedded-allocator)\"\nwhich never deallocs zkvm memory. If we try to prove a batch with ~1500\nempty blocks, SP1 panics with an OOM error.\n\nBy enabling the `embedded-alloc` allocator the proof is generated\ncorrectly for this big batch. This is being tested further.\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-08-12T13:25:18Z",
+          "tree_id": "160ed6b7a22878cca1b2dd5c3805e872b2f08f0a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5acad245d6893db13cc2e28c53ba064f33a7e51c"
+        },
+        "date": 1755008138713,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162103424583,
+            "range": "± 387995006",
             "unit": "ns/iter"
           }
         ]
