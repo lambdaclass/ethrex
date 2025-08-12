@@ -823,6 +823,15 @@ impl Syncer {
             dbg!(&downloaded_account_storages);
         }
         info!("All account storages downloaded successfully");
+        info!(
+            "Finished downloading account ranges, total storage slots: {}",
+            *METRICS.downloaded_storage_slots.lock().await
+        );
+        METRICS
+            .storage_tries_download_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
         info!("Starting to compute the state root...");
 
         let account_store_start = Instant::now();

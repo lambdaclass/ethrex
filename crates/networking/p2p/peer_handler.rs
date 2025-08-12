@@ -1907,7 +1907,6 @@ impl PeerHandler {
                 .map(|a| a.0)
                 .collect::<Vec<_>>();
             let current_account_storages = std::mem::take(&mut all_account_storages);
-            all_account_storages = vec![vec![]; account_storage_roots.len()];
 
             let snapshot = current_account_hashes
                 .into_iter()
@@ -1938,14 +1937,6 @@ impl PeerHandler {
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
-        METRICS
-            .storage_tries_download_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
-        info!("Finished downloading account ranges, total storage slots: {total_slots}");
 
         chunk_index + 1
     }
