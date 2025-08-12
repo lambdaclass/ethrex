@@ -478,6 +478,10 @@ fn zip_requeue_node_responses_score_peer(
     if nodes_size == 0 {
         *failed_downloads += 1;
         peer.score -= 1;
+        info!(
+            "The node returned empty in the request {:?}",
+            request.requests
+        );
         download_queue.extend(request.requests);
         return None;
     }
