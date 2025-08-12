@@ -9,10 +9,10 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
-use crate::networks::Network;
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -40,10 +40,7 @@ pub enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -61,10 +58,7 @@ pub enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -80,10 +74,7 @@ pub enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -99,10 +90,7 @@ pub enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -126,7 +114,7 @@ impl SubcommandExecute {
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -147,7 +135,7 @@ impl SubcommandExecute {
                 let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -198,7 +186,7 @@ impl SubcommandExecute {
                 let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache, network).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -218,10 +206,7 @@ pub enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -239,10 +224,7 @@ pub enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -258,10 +240,7 @@ pub enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -285,7 +264,7 @@ impl SubcommandProve {
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -306,7 +285,7 @@ impl SubcommandProve {
                 let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -322,7 +301,7 @@ impl SubcommandProve {
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(BACKEND, cache, network).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -354,10 +333,7 @@ pub enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-            long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
-            help_heading = "Node options",
-            env = "NETWORK",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]

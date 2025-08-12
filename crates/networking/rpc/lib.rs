@@ -1,6 +1,6 @@
 mod admin;
 mod authentication;
-mod debug;
+pub mod debug;
 mod engine;
 mod eth;
 mod mempool;

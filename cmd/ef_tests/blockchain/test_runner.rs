@@ -409,9 +409,7 @@ async fn re_run_stateless(
     let mut witness = blockchain.generate_witness_for_blocks(&blocks).await;
     // Set a default witness if execution should fail as db will not have the required data to generate the witness
     if test_should_fail && witness.is_err() {
-        witness = Ok(ExecutionWitnessResult {
-            ..Default::default()
-        })
+        witness = Ok(ExecutionWitnessResult::default())
     } else if !test_should_fail && witness.is_err() {
         return Err("Failed to create witness for a test that should not fail".into());
     }
@@ -420,7 +418,6 @@ async fn re_run_stateless(
 
     let program_input = ProgramInput {
         blocks,
-        chain_config: witness.chain_config,
         db: witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()

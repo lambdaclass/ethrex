@@ -1,7 +1,7 @@
 use std::{fmt::Display, time::Duration};
 
 use ethrex_common::types::Block;
-use ethrex_replay::networks::{Network, PublicNetwork};
+use ethrex_config::networks::{Network, PublicNetwork};
 
 use crate::{
     ReplayerMode,

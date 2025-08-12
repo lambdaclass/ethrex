@@ -56,80 +56,76 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
     }
 }
 
-impl TryFrom<RpcExecutionWitness> for ExecutionWitnessResult {
-    type Error = ExecutionWitnessError;
+// TODO: Ideally this would be a try_from but crate dependencies complicate this matter
+pub fn execution_witness_from_rpc_chain_config(
+    rpc_witness: RpcExecutionWitness,
+    chain_config: ChainConfig,
+) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
+    let codes = rpc_witness
+        .codes
+        .iter()
+        .map(|code| (keccak_hash::keccak(code), code.clone()))
+        .collect::<HashMap<_, _>>();
 
-    fn try_from(value: RpcExecutionWitness) -> Result<Self, Self::Error> {
-        let codes = value
-            .codes
-            .iter()
-            .map(|code| (keccak_hash::keccak(code), code.clone()))
-            .collect::<HashMap<_, _>>();
+    let block_headers = rpc_witness
+        .headers
+        .iter()
+        .map(Bytes::as_ref)
+        .map(BlockHeader::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("Failed to decode block headers from RpcExecutionWitness")
+        .iter()
+        .map(|header| (header.number, header.clone()))
+        .collect::<HashMap<_, _>>();
 
-        let block_headers = value
-            .headers
-            .iter()
-            .map(Bytes::as_ref)
-            .map(BlockHeader::decode)
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Failed to decode block headers from RpcExecutionWitness")
-            .iter()
-            .map(|header| (header.number, header.clone()))
-            .collect::<HashMap<_, _>>();
+    let parent_block_number = block_headers
+        .keys()
+        .max()
+        .expect("No block headers found in the RpcExecutionWitness");
 
-        let parent_block_number = block_headers
-            .keys()
-            .max()
-            .expect("No block headers found in the RpcExecutionWitness");
-
-        let parent_header = block_headers
+    let parent_header = block_headers
             .get(parent_block_number)
             .cloned()
             .unwrap_or_else(|| panic!("No parent block header found for block {parent_block_number} in the RpcExecutionWitness"));
 
-        let state_trie =
-            block_execution_witness::rebuild_trie(parent_header.state_root, &value.state)?;
+    let state_trie =
+        block_execution_witness::rebuild_trie(parent_header.state_root, &rpc_witness.state)?;
 
-        // Keys can either be account addresses or storage slots. They have different sizes,
-        // so we filter them by size. The from_slice method panics if the input has the wrong size.
-        let addresses: Vec<Address> = value
-            .keys
+    // Keys can either be account addresses or storage slots. They have different sizes,
+    // so we filter them by size. The from_slice method panics if the input has the wrong size.
+    let addresses: Vec<Address> = rpc_witness
+        .keys
+        .iter()
+        .filter(|k| k.len() == Address::len_bytes())
+        .map(|k| Address::from_slice(k))
+        .collect();
+
+    let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
+        addresses
             .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
-            .collect();
+            .filter_map(|addr| {
+                Some((
+                    *addr,
+                    block_execution_witness::rebuild_storage_trie(
+                        addr,
+                        &state_trie,
+                        &rpc_witness.state,
+                    )?,
+                ))
+            })
+            .collect::<Vec<(Address, Trie)>>(),
+    );
 
-        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-            addresses
-                .iter()
-                .filter_map(|addr| {
-                    Some((
-                        *addr,
-                        block_execution_witness::rebuild_storage_trie(
-                            addr,
-                            &state_trie,
-                            &value.state,
-                        )?,
-                    ))
-                })
-                .collect::<Vec<(Address, Trie)>>(),
-        );
-
-        Ok(Self {
-            // FIXME: Figure out if we want the following 2 to be empty.
-            state_trie_nodes: value.state,
-            keys: value.keys,
-            codes,
-            state_trie: Some(state_trie),
-            storage_tries: Some(storage_tries),
-            block_headers,
-            // FIXME: Should this be default?
-            chain_config: ChainConfig::default(),
-            // FIXME: Should this be default? We could probably avoid having storage_trie_nodes if we have `keys``.
-            storage_trie_nodes: Some(HashMap::default()),
-            parent_block_header: parent_header,
-        })
-    }
+    Ok(ExecutionWitnessResult {
+        state_trie_nodes: rpc_witness.state,
+        keys: rpc_witness.keys,
+        codes,
+        state_trie: Some(state_trie),
+        storage_tries: Some(storage_tries),
+        block_headers,
+        chain_config,
+        parent_block_header: parent_header,
+    })
 }
 
 pub struct ExecutionWitnessRequest {

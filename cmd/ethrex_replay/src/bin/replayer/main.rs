@@ -4,10 +4,8 @@ use std::{
 };
 
 use clap::Parser;
-use ethrex_replay::{
-    cli::{SubcommandExecute, SubcommandProve},
-    networks::{Network, PublicNetwork},
-};
+use ethrex_config::networks::{Network, PublicNetwork};
+use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 use tokio::task::{JoinError, JoinHandle};
