@@ -7,7 +7,7 @@ use crate::{
         options::{Options, ProverClientOptions},
     },
     networks::Network,
-    utils::{default_datadir, parse_private_key, init_datadir},
+    utils::{default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{

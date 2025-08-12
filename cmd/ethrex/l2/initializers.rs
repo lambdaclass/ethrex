@@ -32,7 +32,7 @@ use crate::initializers::{
 };
 use crate::l2::L2Options;
 use crate::utils::{
-    NodeConfigFile, get_client_version, read_jwtsecret_file, init_datadir, store_node_config_file,
+    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 
 #[allow(clippy::too_many_arguments)]
