@@ -2,8 +2,8 @@ use crate::{
     cli::Options,
     networks::Network,
     utils::{
-        get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
-        set_datadir,
+        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -379,7 +379,7 @@ pub async fn init_l1(
     Arc<Mutex<KademliaTable>>,
     Arc<Mutex<NodeRecord>>,
 )> {
-    let data_dir = set_datadir(&opts.datadir);
+    let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
 
