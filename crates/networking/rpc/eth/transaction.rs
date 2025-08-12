@@ -78,7 +78,7 @@ pub struct AccessListResult {
 
 impl RpcHandler for CallRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_CallRequest");
+        let _guard = perf_logger::add_time_till_drop("rpc_CallRequest");
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -197,7 +197,8 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_GetTransactionByBlockHashAndIndexRequest");
+        let _guard =
+            perf_logger::add_time_till_drop("rpc_GetTransactionByBlockHashAndIndexRequest");
         debug!(
             "Requested transaction at index: {} of block with hash: {:#x}",
             self.transaction_index, self.block,
@@ -240,7 +241,7 @@ impl RpcHandler for GetTransactionByHashRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_GetTransactionByHashRequest");
+        let _guard = perf_logger::add_time_till_drop("rpc_GetTransactionByHashRequest");
         let storage = &context.storage;
         debug!(
             "Requested transaction with hash: {:#x}",
@@ -288,7 +289,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_GetTransactionReceiptRequest");
+        let _guard = perf_logger::add_time_till_drop("rpc_GetTransactionReceiptRequest");
         let storage = &context.storage;
         debug!(
             "Requested receipt for transaction {:#x}",
@@ -339,7 +340,7 @@ impl RpcHandler for CreateAccessListRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_CreateAccessList");
+        let _guard = perf_logger::add_time_till_drop("rpc_CreateAccessList");
         let block = self.block.clone().unwrap_or_default();
         debug!("Requested access list creation for tx on block: {}", block);
         let block_number = match block.resolve_block_number(&context.storage).await? {
@@ -439,7 +440,7 @@ impl RpcHandler for EstimateGasRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_EstimateGasRequest");
+        let _guard = perf_logger::add_time_till_drop("rpc_EstimateGasRequest");
         let storage = &context.storage;
         let blockchain = &context.blockchain;
         let block = self.block.clone().unwrap_or_default();
@@ -610,7 +611,7 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        perf_logger::add_time_till_drop("rpc_SendRawTransactionRequest");
+        let _guard = perf_logger::add_time_till_drop("rpc_SendRawTransactionRequest");
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain

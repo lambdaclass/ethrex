@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
@@ -178,7 +176,7 @@ async fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
 
-    perf_logger::add_time_till_drop("handle_forkchoice");
+    let _guard = perf_logger::add_time_till_drop("handle_forkchoice");
 
     if let Some(latest_valid_hash) = context
         .storage
@@ -221,7 +219,7 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
-    perf_logger::add_time_till_drop("apply_forkchoice");
+    let _guard = perf_logger::add_time_till_drop("apply_forkchoice");
     match apply_fork_choice(
         &context.storage,
         fork_choice_state.head_block_hash,

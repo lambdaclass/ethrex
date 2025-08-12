@@ -20,7 +20,11 @@ static LOGS: SegQueue<(u64, Cow<'static, str>, Value)> = SegQueue::new();
 static START: OnceLock<Instant> = OnceLock::new();
 
 pub fn add_log(label: impl Into<Cow<'static, str>>, value: Value) {
-    LOGS.push((START.get().unwrap().elapsed().as_secs(), label.into(), value));
+    LOGS.push((
+        START.get().unwrap().elapsed().as_secs(),
+        label.into(),
+        value,
+    ));
 }
 
 pub struct DropLog {
@@ -35,6 +39,7 @@ impl Drop for DropLog {
 }
 
 // starts time when called, stops when dropped, useful when multiple paths that can go out of scope
+#[must_use]
 pub fn add_time_till_drop(label: impl Into<Cow<'static, str>>) -> DropLog {
     DropLog {
         label: label.into(),
@@ -59,7 +64,7 @@ fn process_logs_thread() {
                     elapsed_since_start,
                     label,
                     match value {
-                        Value::Duration(duration) => duration.as_nanos().to_string(),
+                        Value::Duration(duration) => duration.as_millis().to_string(),
                         Value::Float(value) => format!("{value:.3}"),
                         Value::Int(value) => value.to_string(),
                     }

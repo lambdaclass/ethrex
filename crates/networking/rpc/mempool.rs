@@ -25,7 +25,7 @@ struct MempoolStatus {
 
 /// Handling of rpc endpoint `mempool_content`
 pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
-      perf_logger::add_time_till_drop("mempool_content");
+    let _guard = perf_logger::add_time_till_drop("mempool_content");
     let transactions = context.blockchain.mempool.content()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
