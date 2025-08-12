@@ -24,7 +24,7 @@ jobs:
           key: binary-${{ github.event.pull_request[matrix.branch].sha }}
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         with:
           ref: ${{ github.event.pull_request[matrix.branch].sha }}
@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.head_ref }}
           lfs: true
