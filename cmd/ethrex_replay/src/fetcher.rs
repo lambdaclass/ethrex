@@ -6,11 +6,12 @@ use ethrex_rpc::{
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
+use ethrex_vm::prover_db::WitnessProof;
 use eyre::WrapErr;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::{
-    cache::{Cache, L2Fields, Proof, load_cache, write_cache},
+    cache::{Cache, L2Fields, load_cache, write_cache},
     networks::Network,
     rpc::db::RpcDB,
 };
@@ -90,7 +91,7 @@ pub async fn get_blockdata(
             let db = rpc_db
                 .to_exec_db(&block)
                 .wrap_err("failed to build execution db")?;
-            return Ok(Cache::new(vec![block], Proof::DB(db)));
+            return Ok(Cache::new(vec![block], WitnessProof::DB(db)));
         }
     };
 
@@ -109,7 +110,7 @@ pub async fn get_blockdata(
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], Proof::Witness(witness));
+    let cache = Cache::new(vec![block], WitnessProof::Witness(witness));
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -194,7 +195,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, Proof::Witness(witness));
+    let cache = Cache::new(blocks, WitnessProof::Witness(witness));
 
     Ok(cache)
 }

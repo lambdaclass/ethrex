@@ -1,7 +1,5 @@
-use ethrex_common::{
-    H256, U256,
-    types::{Block, block_execution_witness::ExecutionWitnessResult},
-};
+use ethrex_common::{H256, U256, types::Block};
+use ethrex_vm::{ProverDB, prover_db::WitnessProof};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
@@ -15,7 +13,7 @@ pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
     /// database containing all the data necessary to execute
-    pub db: ExecutionWitnessResult,
+    pub db: WitnessProof,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -39,7 +37,7 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            db: Default::default(),
+            db: WitnessProof::DB(ProverDB::default()),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],

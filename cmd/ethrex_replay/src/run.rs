@@ -1,4 +1,4 @@
-use crate::cache::{Cache, Proof};
+use crate::cache::Cache;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -6,7 +6,9 @@ use ethrex_common::{
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{
-    DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM, prover_db,
+    DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper,
+    backends::levm::LEVM,
+    prover_db::{self, WitnessProof},
 };
 use eyre::Ok;
 use std::sync::Arc;
@@ -36,7 +38,7 @@ pub async fn run_tx(
     let mut remaining_gas = block.header.gas_limit;
     let prover_db = cache.proof;
     match prover_db {
-        Proof::Witness(mut witness) => {
+        WitnessProof::Witness(mut witness) => {
             witness.rebuild_tries(&block.header)?;
             let mut wrapped_db = ExecutionWitnessWrapper::new(witness);
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
@@ -64,7 +66,7 @@ pub async fn run_tx(
                 }
             }
         }
-        Proof::DB(mut wrapped_db) => {
+        WitnessProof::DB(mut wrapped_db) => {
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
             let changes = {
