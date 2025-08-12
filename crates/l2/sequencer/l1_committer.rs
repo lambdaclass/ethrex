@@ -296,9 +296,6 @@ impl L1Committer {
                     .ok_or(CommitterError::InternalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
-                metrics!(
-                    batch_gas_used += receipt.cumulative_gas_used;
-                );
                 txs.push(tx.clone());
                 receipts.push(receipt);
             }
@@ -308,8 +305,10 @@ impl L1Committer {
                     .len()
                     .try_into()
                     .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                batch_gas_used += block_to_commit_header.gas_used;
             );
+
             // Get block messages and privileged transactions
             let messages = get_block_l1_messages(&receipts);
             let privileged_transactions = get_block_privileged_transactions(&txs);
