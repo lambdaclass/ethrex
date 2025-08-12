@@ -449,6 +449,34 @@ impl LevmDatabase for RpcDB {
         ))
     }
 
+    fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError> {
+        let cache = self.cache.lock().unwrap();
+        let account = if let Some(account) = cache.get(&address).cloned() {
+            account
+        } else {
+            drop(cache);
+            self.fetch_accounts_blocking(&[(address, vec![])], false)
+                .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
+                .get(&address)
+                .unwrap()
+                .clone()
+        };
+        if let Account::Existing {
+            account_state,
+            code,
+            ..
+        } = account
+        {
+            Ok(AccountInfo {
+                code_hash: account_state.code_hash,
+                balance: account_state.balance,
+                nonce: account_state.nonce,
+            })
+        } else {
+            Ok(AccountInfo::default())
+        }
+    }
+
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         // look into the cache
         {
@@ -490,32 +518,6 @@ impl LevmDatabase for RpcDB {
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
         Ok(self.chain_config)
-    }
-
-    fn get_account_info(
-        &self,
-        address: Address,
-    ) -> Result<AccountInfo, ethrex_levm::errors::DatabaseError> {
-        let cache = self.cache.lock().unwrap();
-        let account = if let Some(account) = cache.get(&address).cloned() {
-            account
-        } else {
-            drop(cache);
-            self.fetch_accounts_blocking(&[(address, vec![])], false)
-                .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
-                .get(&address)
-                .unwrap()
-                .clone()
-        };
-        if let Account::Existing { account_state, .. } = account {
-            Ok(ethrex_common::types::AccountInfo {
-                code_hash: account_state.code_hash,
-                balance: account_state.balance,
-                nonce: account_state.nonce,
-            })
-        } else {
-            Ok(ethrex_common::types::AccountInfo::default())
-        }
     }
 }
 
