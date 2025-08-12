@@ -19,6 +19,7 @@ use ethrex_p2p::{
 use ethrex_p2p::{network::P2PContext, peer_handler::MAX_RESPONSE_BYTES};
 use ethrex_p2p::{rlpx::snap::TrieNodes, types::Node};
 use ethrex_storage::{EngineType, Store, error::StoreError};
+use ethrex_trie::Nibbles;
 use ethrex_vm::EvmEngine;
 use spawned_concurrency::error::GenServerError;
 use std::sync::Arc;
@@ -92,7 +93,7 @@ pub enum ConsoleError {
 
 #[tokio::main]
 async fn main() -> Result<(), ConsoleError> {
-    init_tracing(Level::TRACE);
+    init_tracing(Level::DEBUG);
 
     let p2p_context = get_p2p_context().await?;
     let other_node = Node::new(
@@ -109,18 +110,26 @@ async fn main() -> Result<(), ConsoleError> {
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
+    let sai_account = H256::from_str(SAI_TEST_TOKEN)?.0;
+    let account_path = sai_account.to_vec();
+
+    let gtn = GetTrieNodes {
+        id: 0,
+        root_hash: H256::from_str(
+            "a9cfa5bc8b546e8bccb850328ddb674f6a514d9f259ad94df833f3a0430f7b42",
+        )?,
+        paths: vec![vec![
+            Bytes::from(account_path),
+            Bytes::from(Nibbles::default().encode_compact()),
+        ]],
+        bytes: MAX_RESPONSE_BYTES,
+    };
+
+    info!("Sending the gtn {gtn:?}");
+
     rlpx_connection
         .cast(CastMessage::BackendRequest(
-            Message::GetTrieNodes(GetTrieNodes {
-                id: 0,
-                root_hash: H256::from_str(
-                    "e96127ffd0b72f6c248b6f6c47e57c7978bf3b837b6cf54644e1a50ed07b2397",
-                )?,
-                paths: vec![vec![Bytes::from(
-                    H256::from_str(SAI_TEST_TOKEN)?.0.to_vec(),
-                )]],
-                bytes: MAX_RESPONSE_BYTES,
-            }),
+            Message::GetTrieNodes(gtn),
             RLPxReceiver::Channel(sender),
         ))
         .await?;

@@ -4396,6 +4396,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "rustc-hex",
  "spawned-concurrency",
