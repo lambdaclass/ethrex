@@ -769,7 +769,6 @@ impl Syncer {
         let empty = *EMPTY_TRIE_HASH;
 
         let mut chunk_index = 0;
-        let mut downloaded_account_storages = 0;
 
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
             .expect("Failed to get account_state_snapshots directory");
@@ -778,7 +777,7 @@ impl Syncer {
 
         let storage_tries_to_download = get_number_of_storage_tries_to_download().await;
         *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-        let mut downloaded_storage_tries_count = 0;
+        let mut downloaded_account_storages = 0;
 
         METRICS
             .storage_tries_download_start_time
@@ -812,21 +811,18 @@ impl Syncer {
                 })
                 .collect();
 
-            downloaded_account_storages += account_storage_roots.len();
-
             chunk_index = self
                 .peers
                 .request_storage_ranges(
                     state_root,
                     account_storage_roots.clone(),
                     chunk_index,
-                    &mut downloaded_storage_tries_count,
+                    &mut downloaded_account_storages,
                 )
                 .await;
             dbg!(&downloaded_account_storages);
-            dbg!(&downloaded_storage_tries_count);
         }
-
+        info!("All account storages downloaded successfully");
         info!("Starting to compute the state root...");
 
         let account_store_start = Instant::now();

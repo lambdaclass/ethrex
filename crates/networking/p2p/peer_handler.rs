@@ -1726,7 +1726,6 @@ impl PeerHandler {
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= task_count {
-                    info!("All account storages downloaded successfully");
                     break;
                 }
                 continue;
