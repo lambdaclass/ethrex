@@ -4199,7 +4199,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-config",
  "ethrex-levm",
- "ethrex-p2p",
  "ethrex-prover",
  "ethrex-rpc",
  "ethrex-vm",
