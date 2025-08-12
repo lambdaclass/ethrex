@@ -748,7 +748,6 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
         block_value,
         blobs_bundle,
         requests,
-        completed: true,
     };
 
     Ok(new_payload)
