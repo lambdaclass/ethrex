@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754983757283,
+  "lastUpdate": 1754984688814,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19761,6 +19761,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0014005582371458551,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9a771ea8f3b895153a5f122caab87a1e7e6f7967",
+          "message": "feat(l1): add `--input_dir` and `--output_dir` options to archive sync (#3962)\n\n**Motivation**\nAllow writing dump state to files while archive syncing and using them\nfor archive syncing without the need of an active archive node .\nThis PR adds the following flags:\n* `--ipc_path`: replaces the previously required `archive_node_ipc`\nrequired unnamed arg\n* `--output_dir`: outputs the state data received during the sync to the\ngiven directory\n* `--input_dir`: allows fetching state data from a previous archive sync\nexecution instead of an archive node\n* `--no_sync`: skips state rebuild, only usable with `--output_dir` to\nspeed up state data writing when syncing the current node is not needed\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Adds new CLI flags `--ipc_path`, `--input_dir`, `--output_dir`,\n`--no_sync`\n* Abstracts archive sync main behaviour into structs to accommodate new\nfeatures:\n* DumpReader: Allows reading state data from either an ipc connection or\na directory\n* DumpProcessor: Processes state data by either using it to rebuild the\nstate and/or writing it to a file\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-08-11T22:18:28Z",
+          "tree_id": "d2f1dc95e5f8e2a9903a6f710cad03a2b2910b22",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9a771ea8f3b895153a5f122caab87a1e7e6f7967"
+        },
+        "date": 1754984688089,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0064169807692307694,
             "unit": "Mgas/s"
           }
         ]
