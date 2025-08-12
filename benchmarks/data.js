@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754981371936,
+  "lastUpdate": 1754982301731,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -19703,6 +19703,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0064169807692307694,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e4d97165c314e096aafc553f727210bde631d7af",
+          "message": "refactor(levm): move `get_state_transitions` logic to `GeneralizedDatabase` (#4003)\n\n**Motivation**\nMove `get_state_transitions` implementation logic from `vm` crate to\n`levm` crate in order to improve its api for levm users\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `GeneralizedDatabase` method `get_state_transitions`\n* Use above method in `LEVM:: get_state_transitions` (vm/backend)\n* Re-export `AccountUpdate` from levm crate\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3951",
+          "timestamp": "2025-08-11T22:00:44Z",
+          "tree_id": "65baac1ae124b3fd0010dbb07ce1d7cad56d0bb6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e4d97165c314e096aafc553f727210bde631d7af"
+        },
+        "date": 1754982301175,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006542803921568628,
             "unit": "Mgas/s"
           }
         ]
