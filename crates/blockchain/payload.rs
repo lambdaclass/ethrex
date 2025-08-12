@@ -300,13 +300,10 @@ impl Blockchain {
             tokio::task::spawn(async move { self_clone.build_payload(payload).await });
         let mut payloads = self.payloads.lock().await;
         if payloads.len() == MAX_PAYLOADS {
-            payloads.insert(0, (payload_id, payload_build_task));
-        } else {
-            self.payloads
-                .lock()
-                .await
-                .push((payload_id, payload_build_task));
+            // Remove oldest unclaimed payload
+            payloads.remove(0);
         }
+        payloads.push((payload_id, payload_build_task));
     }
 
     /// Completes the payload building process, return the block value
