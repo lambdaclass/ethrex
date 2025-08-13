@@ -206,7 +206,7 @@ async fn replay_execution(
     let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
     loop {
-        let elapsed = replay_latest_block(
+        let block_run_report = replay_latest_block(
             ReplayerMode::Execute,
             network.clone(),
             rpc_url.clone(),
@@ -214,6 +214,22 @@ async fn replay_execution(
             slack_webhook_url.clone(),
         )
         .await?;
+
+        let elapsed = block_run_report.time_taken;
+
+        if block_run_report.run_result.is_err() {
+            tracing::error!("{block_run_report}");
+        } else {
+            tracing::info!("{block_run_report}");
+        }
+
+        if block_run_report.run_result.is_err() {
+            try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to post to Slack webhook: {e}");
+                });
+        }
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -282,12 +298,48 @@ async fn replay_client_diversity(
             handles.push(handle);
         }
 
-        let (_geth_result, _reth_result, _nethermind_result) =
-            join!(handles.remove(0), handles.remove(1), handles.remove(2));
+        let (geth_result, reth_result, nethermind_result) =
+            join!(handles.remove(0), handles.remove(0), handles.remove(0));
 
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
         });
+
+        {
+            let geth_report = geth_result.unwrap_or_else(|e| {
+                panic!("Failed to replay block on Geth RPC: {e}");
+            })?;
+
+            let reth_report = reth_result.unwrap_or_else(|e| {
+                panic!("Failed to replay block on Reth RPC: {e}");
+            })?;
+
+            let nethermind_report = nethermind_result.unwrap_or_else(|e| {
+                panic!("Failed to replay block on Nethermind RPC: {e}");
+            })?;
+
+            let client_reports = vec![
+                ("geth", geth_report),
+                ("reth", reth_report),
+                ("nethermind", nethermind_report),
+            ];
+
+            for (client, report) in client_reports {
+                if report.run_result.is_err() {
+                    tracing::error!("[{client}] {report}");
+                } else {
+                    tracing::info!("[{client}] {report}");
+                }
+
+                if report.run_result.is_err() {
+                    try_send_failed_run_report_to_slack(report, slack_webhook_url.clone())
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Failed to post to Slack webhook: {e}");
+                        });
+                }
+            }
+        }
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -351,7 +403,7 @@ async fn replay_latest_block(
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
-) -> Result<Duration, EthClientError> {
+) -> Result<BlockRunReport, EthClientError> {
     let latest_block = eth_client
         .get_block_number()
         .await
@@ -378,7 +430,7 @@ async fn replay_block(
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
-) -> Result<Duration, EthClientError> {
+) -> Result<BlockRunReport, EthClientError> {
     let block = eth_client
         .get_raw_block(BlockIdentifier::Number(block_to_replay as u64))
         .await?;
@@ -415,21 +467,7 @@ async fn replay_block(
     let block_run_report =
         BlockRunReport::new_for(block, network.clone(), run_result, replayer_mode, elapsed);
 
-    if block_run_report.run_result.is_err() {
-        tracing::error!("{block_run_report}");
-    } else {
-        tracing::info!("{block_run_report}");
-    }
-
-    if block_run_report.run_result.is_err() {
-        try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to post to Slack webhook: {e}");
-            });
-    }
-
-    Ok(elapsed)
+    Ok(block_run_report)
 }
 
 async fn revalidate_rpc(rpc_url: Url) -> Result<(), EthClientError> {
