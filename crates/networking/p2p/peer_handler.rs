@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    io::ErrorKind,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -12,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::{random, seq::SliceRandom};
+use rand::{Error, random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -33,7 +34,7 @@ use crate::{
     },
     snap::encodable_to_proof,
     utils::{
-        get_account_state_snapshot_file, get_account_state_snapshots_dir,
+        dump_accounts_to_file, get_account_state_snapshot_file, get_account_state_snapshots_dir,
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
     },
 };
@@ -850,14 +851,7 @@ impl PeerHandler {
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = std::fs::write(path.clone(), account_state_chunk.clone())
-                        .inspect_err(|err| {
-                            error!("Failed to write accounts to path {path}. Error: {err}")
-                        })
-                        .map_err(|_| AccountDumpError {
-                            path,
-                            contents: account_state_chunk,
-                        });
+                    let result = dump_accounts_to_file(path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -924,17 +918,15 @@ impl PeerHandler {
             // TODO: consider tracking in-flight (dump) tasks
             if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
                 if let Err(dump_account_data) = dump_account_result {
+                    if dump_account_data.error == ErrorKind::StorageFull {
+                        panic!("Storage full"); // TODO: consider returning an error
+                    }
                     // If the dumping failed, retry it
                     let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                     tokio::task::spawn(async move {
-                        let AccountDumpError { path, contents } = dump_account_data;
+                        let AccountDumpError { path, contents, .. } = dump_account_data;
                         // Dump the account data
-                        // TODO: check the error type and handle it properly
-                        let result = std::fs::write(path.clone(), contents.clone())
-                            .inspect_err(|err| {
-                                error!("Failed to write accounts to path {path}. Error: {err}")
-                            })
-                            .map_err(|_| AccountDumpError { path, contents });
+                        let result = dump_accounts_to_file(path, contents);
                         // Send the result through the channel
                         dump_account_result_sender_cloned
                             .send(result)
@@ -2187,8 +2179,8 @@ fn format_duration(duration: Duration) -> String {
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
-
-struct AccountDumpError {
+pub struct AccountDumpError {
     pub path: String,
     pub contents: Vec<u8>,
+    pub error: ErrorKind,
 }

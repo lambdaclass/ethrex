@@ -7,6 +7,8 @@ use ethrex_common::{H256, H512};
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 
+use crate::peer_handler::AccountDumpError;
+
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
     keccak(public_key)
@@ -69,4 +71,16 @@ pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> S
 
 pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -> String {
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
+}
+
+pub fn dump_accounts_to_file(path: String, contents: Vec<u8>) -> Result<(), AccountDumpError> {
+    std::fs::write(&path, &contents)
+        .inspect_err(|err| {
+            tracing::error!("Failed to write accounts to path {}. Error: {}", &path, err)
+        })
+        .map_err(|err| AccountDumpError {
+            path,
+            contents,
+            error: err.kind(),
+        })
 }
