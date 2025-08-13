@@ -823,7 +823,7 @@ impl PeerHandler {
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
             .expect("Failed to get account_state_snapshots directory");
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1433,6 +1433,7 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         mut chunk_index: u64,
+        downloaded_count: &mut u64,
     ) -> u64 {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1467,7 +1468,6 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
 
-        let mut downloaded_count = 0_u64;
         let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
 
         struct TaskResult {
@@ -1488,14 +1488,6 @@ impl PeerHandler {
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
 
-        info!("Starting to download storage ranges from peers");
-        *METRICS.storage_tries_to_download.lock().await = account_storage_roots.len() as u64;
-        METRICS
-            .storage_tries_download_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
         let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
@@ -1504,9 +1496,7 @@ impl PeerHandler {
 
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
-            {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -1546,7 +1536,7 @@ impl PeerHandler {
                 *METRICS.storages_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
                 *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
+                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
             }
 
             if let Ok(result) = task_receiver.try_recv() {
@@ -1654,10 +1644,10 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
-                downloaded_count += account_storages.len() as u64;
+                *downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
                 if !hash_start.is_zero() {
-                    downloaded_count -= 1;
+                    *downloaded_count -= 1;
                 }
 
                 let n_storages = account_storages.len();
@@ -1736,7 +1726,6 @@ impl PeerHandler {
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= task_count {
-                    info!("All account storages downloaded successfully");
                     break;
                 }
                 continue;
@@ -1918,7 +1907,6 @@ impl PeerHandler {
                 .map(|a| a.0)
                 .collect::<Vec<_>>();
             let current_account_storages = std::mem::take(&mut all_account_storages);
-            all_account_storages = vec![vec![]; account_storage_roots.len()];
 
             let snapshot = current_account_hashes
                 .into_iter()
@@ -1947,16 +1935,8 @@ impl PeerHandler {
         *METRICS.storages_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
+        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
-        METRICS
-            .storage_tries_download_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
-        info!("Finished downloading account ranges, total storage slots: {total_slots}");
 
         chunk_index + 1
     }

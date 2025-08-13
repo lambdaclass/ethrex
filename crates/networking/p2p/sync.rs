@@ -772,10 +772,22 @@ impl Syncer {
         let empty = *EMPTY_TRIE_HASH;
 
         let mut chunk_index = 0;
-        let mut downloaded_account_storages = 0;
 
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
             .expect("Failed to get account_state_snapshots directory");
+
+        info!("Starting to download storage ranges from peers");
+
+        let storage_tries_to_download = get_number_of_storage_tries_to_download().await;
+        *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
+        let mut downloaded_account_storages = 0;
+
+        METRICS
+            .storage_tries_download_start_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
+
         for entry in std::fs::read_dir(&account_state_snapshots_dir)
             .expect("Failed to read account_state_snapshots dir")
         {
@@ -802,14 +814,27 @@ impl Syncer {
                 })
                 .collect();
 
-            downloaded_account_storages += account_storage_roots.len();
-
             chunk_index = self
                 .peers
-                .request_storage_ranges(state_root, account_storage_roots.clone(), chunk_index)
+                .request_storage_ranges(
+                    state_root,
+                    account_storage_roots.clone(),
+                    chunk_index,
+                    &mut downloaded_account_storages,
+                )
                 .await;
+            dbg!(&downloaded_account_storages);
         }
-
+        info!("All account storages downloaded successfully");
+        info!(
+            "Finished downloading account ranges, total storage slots: {}",
+            *METRICS.downloaded_storage_slots.lock().await
+        );
+        METRICS
+            .storage_tries_download_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
         info!("Starting to compute the state root...");
 
         let account_store_start = Instant::now();
@@ -1018,6 +1043,33 @@ impl Syncer {
             .await?;
         Ok(())
     }
+}
+
+async fn get_number_of_storage_tries_to_download() -> u64 {
+    let account_state_snapshots_dir = get_account_state_snapshots_dir().unwrap();
+    let mut number_of_accounts_with_non_empty_storage = 0;
+    for entry in std::fs::read_dir(&account_state_snapshots_dir)
+        .expect("Failed to read account_state_snapshots dir")
+    {
+        let entry = entry.expect("Failed to read dir entry");
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .unwrap_or_else(|_| panic!("Failed to read snapshot from {snapshot_path:?}"));
+
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents).unwrap_or_else(|_| {
+                panic!("Failed to RLP decode account_state_snapshot from {snapshot_path:?}")
+            });
+
+        // filter and the count accounts with non empty storage
+        let accounts_with_non_empty_storage = account_states_snapshot
+            .iter()
+            .filter(|(_account_hash, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
+            .count() as u64;
+
+        number_of_accounts_with_non_empty_storage += accounts_with_non_empty_storage;
+    }
+    number_of_accounts_with_non_empty_storage
 }
 
 async fn update_pivot(
