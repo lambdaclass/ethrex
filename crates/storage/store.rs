@@ -77,7 +77,8 @@ pub struct AccountUpdatesList {
 impl Store {
     #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+        let guard = perf_logger::add_time_till_drop("store_block_updates");
+        guard.wrap_return(self.engine.apply_updates(update_batch).await)
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -396,6 +397,7 @@ impl Store {
         mut state_trie: Trie,
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
+        let guard = perf_logger::add_time_till_drop("apply_account_updates_from_trie_batch");
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         for update in account_updates {
@@ -443,12 +445,12 @@ impl Store {
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
-        Ok(AccountUpdatesList {
+        guard.wrap_return(Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
-        })
+        }))
     }
 
     /// Performs the same actions as apply_account_updates_from_trie

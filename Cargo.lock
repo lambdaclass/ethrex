@@ -4315,6 +4315,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
+ "perf-logger",
  "redb",
  "serde",
  "serde_json",
