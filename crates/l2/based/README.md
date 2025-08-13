@@ -126,7 +126,7 @@ Running a based stack locally is essentially the same as running an ethrex stack
 ### 1. Deploying L1 Contracts
 
 > [!IMPORTANT]
-> You need to have an L1 running to deploy the contracts. Run `make init-local-l1` to do so (ensure Docker running).
+> You need to have an L1 running to deploy the contracts. Run `make init-l1-docker` to do so (ensure Docker running).
 
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
@@ -174,7 +174,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --committer.l1-private-key <SEQUENCER_PRIVATE_KEY> \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --network ../../fixtures/genesis/l2.json \
   --datadir ethrex_l2 \
   --proof-coordinator.addr 127.0.0.1 \

@@ -51,7 +51,6 @@ pub async fn start_l2(
     let shared_state = SequencerState::from(initial_status);
 
     let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.proof_coordinator.dev_mode,
         cfg.eth.rpc_url.clone(),
         cfg.l1_committer.on_chain_proposer_address,
     )
@@ -59,6 +58,15 @@ pub async fn start_l2(
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
         return Ok(());
     };
+
+    if needed_proof_types.contains(&ProverType::TDX)
+        && cfg.proof_coordinator.tdx_private_key.is_none()
+    {
+        error!(
+            "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
+        );
+        return Ok(());
+    }
 
     let _ = L1Watcher::spawn(
         store.clone(),

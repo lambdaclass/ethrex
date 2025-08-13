@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     clients::eth::errors::{
-        GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
+        CallError, GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
     },
     mempool::MempoolContent,
     types::{
@@ -10,7 +10,7 @@ use crate::{
         block_identifier::{BlockIdentifier, BlockTag},
         receipt::{RpcLog, RpcReceipt},
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
+    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use bytes::Bytes;
 use errors::{
@@ -19,7 +19,6 @@ use errors::{
     GetNonceError, GetRawBlockError, GetTransactionByHashError, GetTransactionReceiptError,
     SendRawTransactionError,
 };
-use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, Signature, U256,
     types::{
@@ -41,7 +40,6 @@ use serde_json::{Value, json};
 use std::{ops::Div, str::FromStr};
 
 pub mod errors;
-pub mod eth_sender;
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
@@ -60,6 +58,21 @@ pub struct EthClient {
     pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct Overrides {
+    pub from: Option<Address>,
+    pub to: Option<TxKind>,
+    pub value: Option<U256>,
+    pub nonce: Option<u64>,
+    pub chain_id: Option<u64>,
+    pub gas_limit: Option<u64>,
+    pub max_fee_per_gas: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
+    pub access_list: Vec<(Address, Vec<H256>)>,
+    pub gas_price_per_blob: Option<U256>,
+    pub block: Option<BlockIdentifier>,
 }
 
 #[derive(Debug, Clone)]
@@ -209,14 +222,24 @@ impl EthClient {
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
-            if maybe_response.is_ok() {
-                response = maybe_response;
+
+            if response.is_ok() {
+                continue;
             }
+
+            response = match &maybe_response {
+                Ok(RpcResponse::Success(_)) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+                }
+                Err(_) => maybe_response,
+            };
         }
+
         response
     }
 
@@ -239,34 +262,29 @@ impl EthClient {
     }
 
     pub async fn send_raw_transaction(&self, data: &[u8]) -> Result<H256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_sendRawTransaction".to_string(),
-            params: Some(vec![json!("0x".to_string() + &hex::encode(data))]),
-        };
+        let params = Some(vec![json!("0x".to_string() + &hex::encode(data))]);
+        let request = RpcRequest::new("eth_sendRawTransaction", params);
 
-        match self.send_request_to_all(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request_to_all(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(SendRawTransactionError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(SendRawTransactionError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_eip1559(&self, tx: &mut EIP1559Transaction, percentage: u64) {
         tx.max_fee_per_gas = (tx.max_fee_per_gas * (100 + percentage)) / 100;
-        tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
+        tx.max_priority_fee_per_gas = (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_eip4844(&self, wrapped_tx: &mut WrappedEIP4844Transaction, percentage: u64) {
         wrapped_tx.tx.max_fee_per_gas = (wrapped_tx.tx.max_fee_per_gas * (100 + percentage)) / 100;
-        wrapped_tx.tx.max_priority_fee_per_gas +=
+        wrapped_tx.tx.max_priority_fee_per_gas =
             (wrapped_tx.tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
         let factor = 1 + (percentage / 100) * 10;
         wrapped_tx.tx.max_fee_per_blob_gas = wrapped_tx
@@ -279,7 +297,7 @@ impl EthClient {
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
     pub fn bump_privileged_l2(&self, tx: &mut PrivilegedL2Transaction, percentage: u64) {
         tx.max_fee_per_gas = (tx.max_fee_per_gas * (100 + percentage)) / 100;
-        tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
+        tx.max_priority_fee_per_gas = (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
     }
 
     pub async fn send_privileged_l2_transaction(
@@ -347,15 +365,10 @@ impl EthClient {
             }
         }
 
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_estimateGas".to_string(),
-            params: Some(vec![data, json!("latest")]),
-        };
+        let request = RpcRequest::new("eth_estimateGas", Some(vec![data, json!("latest")]));
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => {
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => {
                 let res = serde_json::from_value::<String>(result.result)
                     .map_err(EstimateGasError::SerdeJSONError)?;
                 let res = res.get(2..).ok_or(EstimateGasError::Custom(
@@ -365,7 +378,7 @@ impl EthClient {
             }
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 let error_data = if let Some(error_data) = error_response.error.data {
                     if &error_data == "0x" {
                         "unknown error".to_owned()
@@ -418,45 +431,79 @@ impl EthClient {
                 ))
                 .into())
             }
-            Err(error) => Err(error),
         }
     }
 
-    pub async fn get_max_priority_fee(&self) -> Result<u64, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_maxPriorityFeePerGas".to_string(),
-            params: None,
+    pub async fn call(
+        &self,
+        to: Address,
+        calldata: Bytes,
+        overrides: Overrides,
+    ) -> Result<String, EthClientError> {
+        let tx = GenericTransaction {
+            to: TxKind::Call(to),
+            input: calldata,
+            value: overrides.value.unwrap_or_default(),
+            from: overrides.from.unwrap_or_default(),
+            gas: overrides.gas_limit,
+            gas_price: if let Some(gas_price) = overrides.max_fee_per_gas {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
+            ..Default::default()
         };
+        let params = Some(vec![
+            json!({
+                "to": match tx.to {
+                    TxKind::Call(addr) => format!("{addr:#x}"),
+                    TxKind::Create => format!("{:#x}", Address::zero()),
+                },
+                "input": format!("0x{:#x}", tx.input),
+                "value": format!("{:#x}", tx.value),
+                "from": format!("{:#x}", tx.from),
+            }),
+            overrides
+                .block
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::String("latest".to_string())),
+        ]);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        let request = RpcRequest::new("eth_call", params);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(CallError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(CallError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_max_priority_fee(&self) -> Result<U256, EthClientError> {
+        let request = RpcRequest::new("eth_maxPriorityFeePerGas", None);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetMaxPriorityFeeError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetMaxPriorityFeeError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn get_gas_price(&self) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_gasPrice".to_string(),
-            params: None,
-        };
+        let request = RpcRequest::new("eth_gasPrice", None);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetGasPriceError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetGasPriceError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -474,15 +521,11 @@ impl EthClient {
         address: Address,
         block: BlockIdentifier,
     ) -> Result<u64, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getTransactionCount".to_string(),
-            params: Some(vec![json!(format!("{address:#x}")), block.into()]),
-        };
+        let params = Some(vec![json!(format!("{address:#x}")), block.into()]);
+        let request = RpcRequest::new("eth_getTransactionCount", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => u64::from_str_radix(
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
                     .map_err(GetNonceError::SerdeJSONError)?
                     .get(2..)
@@ -493,67 +536,49 @@ impl EthClient {
             )
             .map_err(GetNonceError::ParseIntError)
             .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetNonceError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn get_block_number(&self) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_blockNumber".to_string(),
-            params: None,
-        };
+        let request = RpcRequest::new("eth_blockNumber", None);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBlockNumberError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBlockNumberError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<RpcBlock, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getBlockByHash".to_string(),
-            params: Some(vec![json!(block_hash), json!(true)]),
-        };
+        let params = Some(vec![json!(block_hash), json!(true)]);
+        let request = RpcRequest::new("eth_getBlockByHash", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBlockByHashError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBlockByHashError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn peer_count(&self) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "net_peerCount".to_string(),
-            params: Some(vec![]),
-        };
+        let request = RpcRequest::new("net_peerCount", Some(vec![]));
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetPeerCountError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetPeerCountError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -563,32 +588,21 @@ impl EthClient {
         &self,
         block: BlockIdentifier,
     ) -> Result<RpcBlock, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getBlockByNumber".to_string(),
-            // With false it just returns the hash of the transactions.
-            params: Some(vec![block.into(), json!(false)]),
-        };
+        let params = Some(vec![block.into(), json!(false)]); // With false it just returns the hash of the transactions.
+        let request = RpcRequest::new("eth_getBlockByNumber", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBlockByNumberError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBlockByNumberError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn get_raw_block(&self, block: BlockIdentifier) -> Result<Block, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "debug_getRawBlock".to_string(),
-            params: Some(vec![block.into()]),
-        };
+        let request = RpcRequest::new("debug_getRawBlock", Some(vec![block.into()]));
 
         let encoded_block: Result<String, _> = match self.send_request(request).await? {
             RpcResponse::Success(result) => {
@@ -614,28 +628,23 @@ impl EthClient {
         address: Address,
         topics: Vec<H256>,
     ) -> Result<Vec<RpcLog>, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getLogs".to_string(),
-            params: Some(vec![serde_json::json!(
-                {
-                    "fromBlock": format!("{:#x}", from_block),
-                    "toBlock": format!("{:#x}", to_block),
-                    "address": format!("{:#x}", address),
-                    "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
-                }
-            )]),
-        };
+        let params = Some(vec![serde_json::json!(
+            {
+                "fromBlock": format!("{:#x}", from_block),
+                "toBlock": format!("{:#x}", to_block),
+                "address": format!("{:#x}", address),
+                "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
+            }
+        )]);
+        let request = RpcRequest::new("eth_getLogs", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetLogsError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetLogsError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -643,21 +652,16 @@ impl EthClient {
         &self,
         tx_hash: H256,
     ) -> Result<Option<RpcReceipt>, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getTransactionReceipt".to_string(),
-            params: Some(vec![json!(format!("{:#x}", tx_hash))]),
-        };
+        let params = Some(vec![json!(format!("{:#x}", tx_hash))]);
+        let request = RpcRequest::new("eth_getTransactionReceipt", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetTransactionReceiptError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetTransactionReceiptError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -666,21 +670,16 @@ impl EthClient {
         address: Address,
         block: BlockIdentifier,
     ) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getBalance".to_string(),
-            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
-        };
+        let params = Some(vec![json!(format!("{:#x}", address)), block.into()]);
+        let request = RpcRequest::new("eth_getBalance", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBalanceError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -690,44 +689,33 @@ impl EthClient {
         slot: U256,
         block: BlockIdentifier,
     ) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getStorageAt".to_string(),
-            params: Some(vec![
-                json!(format!("{:#x}", address)),
-                json!(format!("{:#x}", slot)),
-                block.into(),
-            ]),
-        };
+        let params = Some(vec![
+            json!(format!("{:#x}", address)),
+            json!(format!("{:#x}", slot)),
+            block.into(),
+        ]);
+        let request = RpcRequest::new("eth_getStorageAt", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBalanceError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
     pub async fn get_chain_id(&self) -> Result<U256, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_chainId".to_string(),
-            params: None,
-        };
+        let request = RpcRequest::new("eth_chainId", None);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBalanceError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -736,15 +724,11 @@ impl EthClient {
         address: Address,
         block: BlockIdentifier,
     ) -> Result<Bytes, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getCode".to_string(),
-            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
-        };
+        let params = Some(vec![json!(format!("{:#x}", address)), block.into()]);
+        let request = RpcRequest::new("eth_getCode", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => hex::decode(
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => hex::decode(
                 &serde_json::from_value::<String>(result.result)
                     .map(|hex_str| {
                         hex_str
@@ -758,10 +742,9 @@ impl EthClient {
             .map(Into::into)
             .map_err(GetCodeError::NotHexError)
             .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetCodeError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -769,21 +752,16 @@ impl EthClient {
         &self,
         tx_hash: H256,
     ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getTransactionByHash".to_string(),
-            params: Some(vec![json!(format!("{tx_hash:#x}"))]),
-        };
+        let params = Some(vec![json!(format!("{tx_hash:#x}"))]);
+        let request = RpcRequest::new("eth_getTransactionByHash", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetTransactionByHashError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetTransactionByHashError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -1207,21 +1185,16 @@ impl EthClient {
         transaction_hash: H256,
     ) -> Result<Option<Vec<L1MessageProof>>, EthClientError> {
         use errors::GetMessageProofError;
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "ethrex_getMessageProof".to_string(),
-            params: Some(vec![json!(format!("{:#x}", transaction_hash))]),
-        };
+        let params = Some(vec![json!(format!("{:#x}", transaction_hash))]);
+        let request = RpcRequest::new("ethrex_getMessageProof", params);
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetMessageProofError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetMessageProofError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -1264,12 +1237,7 @@ impl EthClient {
             Some(vec![from.into()])
         };
 
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "debug_executionWitness".to_string(),
-            params,
-        };
+        let request = RpcRequest::new("debug_executionWitness", params);
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -1303,19 +1271,16 @@ impl EthClient {
         }
 
         if let Ok(priority_fee) = self.get_max_priority_fee().await {
-            return Ok(priority_fee);
+            if let Ok(priority_fee_u64) = priority_fee.try_into() {
+                return Ok(priority_fee_u64);
+            }
         }
 
         self.get_fee_from_override_or_get_gas_price(None).await
     }
 
     pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "txpool_content".to_string(),
-            params: None,
-        };
+        let request = RpcRequest::new("txpool_content", None);
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -1328,12 +1293,8 @@ impl EthClient {
     }
 
     pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "ethrex_getBatchByNumber".to_string(),
-            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
-        };
+        let params = Some(vec![json!(format!("{batch_number:#x}")), json!(true)]);
+        let request = RpcRequest::new("ethrex_getBatchByNumber", params);
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)

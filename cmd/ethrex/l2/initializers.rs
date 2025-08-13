@@ -32,7 +32,7 @@ use crate::initializers::{
 };
 use crate::l2::L2Options;
 use crate::utils::{
-    NodeConfigFile, get_client_version, read_jwtsecret_file, set_datadir, store_node_config_file,
+    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -131,7 +131,7 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-fn init_tracing(opts: &L2Options) {
+pub fn init_tracing(opts: &L2Options) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -151,9 +151,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         panic!("L2 Doesn't support REVM, use LEVM instead.");
     }
 
-    init_tracing(&opts);
-
-    let data_dir = set_datadir(&opts.node_opts.datadir);
+    let data_dir = init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
     let network = get_network(&opts.node_opts);

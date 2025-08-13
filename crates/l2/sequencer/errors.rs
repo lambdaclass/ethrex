@@ -116,6 +116,8 @@ pub enum ProofCoordinatorError {
     ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
+    #[error("Missing TDX private key")]
+    MissingTDXPrivateKey,
 }
 
 #[derive(Debug, thiserror::Error)]

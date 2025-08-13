@@ -62,42 +62,41 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    dev_mode: bool,
     rpc_urls: Vec<String>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
 
     let mut needed_proof_types = vec![];
-    if !dev_mode {
-        for prover_type in ProverType::all() {
-            let Some(getter) = prover_type.verifier_getter() else {
-                continue;
-            };
-            let calldata = keccak(getter)[..4].to_vec();
+    for prover_type in ProverType::all() {
+        let Some(getter) = prover_type.verifier_getter() else {
+            continue;
+        };
+        let calldata = keccak(getter)[..4].to_vec();
 
-            // response is a boolean 0x00..01 or 0x00..00
-            let response = eth_client
-                .call(
-                    on_chain_proposer_address,
-                    calldata.into(),
-                    Overrides::default(),
-                )
-                .await?;
+        // response is a boolean 0x00..01 or 0x00..00
+        let response = eth_client
+            .call(
+                on_chain_proposer_address,
+                calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
 
-            let required_proof_type = response
-                .chars()
-                .last()
-                .ok_or(EthClientError::InternalError("empty response".to_string()))?
-                == '1';
-            if required_proof_type {
-                info!("{prover_type} proof needed");
-                needed_proof_types.push(prover_type);
-            }
+        let required_proof_type = response
+            .chars()
+            .last()
+            .ok_or(EthClientError::InternalError("empty response".to_string()))?
+            == '1';
+        if required_proof_type {
+            info!("{prover_type} proof needed");
+            needed_proof_types.push(prover_type);
         }
-    } else {
+    }
+    if needed_proof_types.is_empty() {
         needed_proof_types.push(ProverType::Exec);
     }
+
     Ok(needed_proof_types)
 }
 

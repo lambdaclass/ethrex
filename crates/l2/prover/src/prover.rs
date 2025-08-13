@@ -1,4 +1,4 @@
-use crate::{config::ProverConfig, prove, to_batch_proof};
+use crate::{backends::Backend, config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use std::time::Duration;
@@ -8,6 +8,7 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
+use url::Url;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
@@ -22,7 +23,8 @@ struct ProverData {
 }
 
 struct Prover {
-    prover_server_endpoint: String,
+    backend: Backend,
+    proof_coordinator_endpoint: Url,
     proving_time_ms: u64,
     commit_hash: String,
 }
@@ -30,14 +32,15 @@ struct Prover {
 impl Prover {
     pub fn new(cfg: ProverConfig) -> Self {
         Self {
-            prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
+            backend: cfg.backend,
+            proof_coordinator_endpoint: cfg.proof_coordinator,
             proving_time_ms: cfg.proving_time_ms,
             commit_hash: get_commit_hash(),
         }
     }
 
     pub async fn start(&self) {
-        info!("Prover started on {}", self.prover_server_endpoint);
+        info!("Prover started on {}", self.proof_coordinator_endpoint);
         // Build the prover depending on the prover_type passed as argument.
         loop {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
@@ -55,7 +58,7 @@ impl Prover {
 
             // If we get the input
             // Generate the Proof
-            let Ok(batch_proof) = prove(prover_data.input, prover_data.format)
+            let Ok(batch_proof) = prove(self.backend, prover_data.input, prover_data.format)
                 .and_then(|output| to_batch_proof(output, prover_data.format))
                 .inspect_err(|e| error!("{}", e.to_string()))
             else {
@@ -74,7 +77,7 @@ impl Prover {
     async fn request_new_input(&self) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
         let request = ProofData::batch_request(self.commit_hash.clone());
-        let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
+        let response = connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
@@ -120,7 +123,7 @@ impl Prover {
         let submit = ProofData::proof_submit(batch_number, batch_proof);
 
         let ProofData::ProofSubmitACK { batch_number } =
-            connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
+            connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &submit)
                 .await
                 .map_err(|e| format!("Failed to get SubmitAck: {e}"))?
         else {
@@ -133,11 +136,11 @@ impl Prover {
 }
 
 async fn connect_to_prover_server_wr(
-    addr: &str,
+    endpoint: &Url,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    debug!("Connecting with {addr}");
-    let mut stream = TcpStream::connect(addr).await?;
+    debug!("Connecting with {endpoint}");
+    let mut stream = TcpStream::connect(&*endpoint.socket_addrs(|| None)?).await?;
     debug!("Connection established!");
 
     stream.write_all(&serde_json::to_vec(&write)?).await?;
