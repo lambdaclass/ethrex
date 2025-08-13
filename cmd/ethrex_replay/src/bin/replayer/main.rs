@@ -246,8 +246,9 @@ async fn replay_client_diversity(
     slack_webhook_url: Option<Url>,
     replayer_mode: ReplayerMode,
 ) -> Result<(), EthClientError> {
-    let reth_rpc_url = reth_rpc_url.clone();
-    let nethermind_rpc_url = nethermind_rpc_url.clone();
+    tracing::info!(
+        "Starting client diversity replayer with mode: {replayer_mode} with RPCs: \nGeth: {geth_rpc_url}\nReth: {reth_rpc_url}\nNethermind: {nethermind_rpc_url}"
+    );
 
     loop {
         let geth_client = EthClient::new(geth_rpc_url.as_str()).unwrap();
