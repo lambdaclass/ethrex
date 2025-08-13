@@ -131,8 +131,6 @@ pub enum SequencerOptionsError {
     NoCoinbaseAddress,
     #[error("No on-chain proposer address was provided")]
     NoOnChainProposerAddress,
-    #[error("No proof coordinator TDX private key was provided")]
-    NoProofCoorditanorTdxPrivateKey,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -199,8 +197,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key
-                    .ok_or(SequencerOptionsError::NoProofCoorditanorTdxPrivateKey)?,
+                    .proof_coordinator_tdx_private_key,
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -503,7 +500,6 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
-        required_unless_present = "dev"
     )]
     pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
@@ -568,12 +564,7 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            proof_coordinator_tdx_private_key: Some(
-                utils::parse_private_key(
-                    "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-                )
-                .unwrap(),
-            ),
+            proof_coordinator_tdx_private_key: None,
         }
     }
 }

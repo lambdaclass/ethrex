@@ -25,7 +25,7 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable.
+    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable. (#4023)
     // Ideally we implement serialization for these and stop needing the first 2 attributes.
     #[serde(
         serialize_with = "serde_utils::bytes::vec::serialize",
@@ -70,6 +70,8 @@ pub enum ExecutionWitnessError {
     Database(String),
     #[error("No block headers stored, should at least store parent header")]
     NoBlockHeaders,
+    #[error("Parent block header not found for block number {0}")]
+    MissingParentHeader(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
     #[error("Unreachable code reached: {0}")]
@@ -77,13 +79,8 @@ pub enum ExecutionWitnessError {
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(
-        &mut self,
-        first_header: &BlockHeader,
-    ) -> Result<(), ExecutionWitnessError> {
-        let parent_header = self.get_block_parent_header(first_header.number)?;
-
-        let state_trie = rebuild_trie(parent_header.state_root, &self.state_trie_nodes)?;
+    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+        let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
@@ -257,7 +254,7 @@ impl ExecutionWitnessResult {
     ) -> Result<&BlockHeader, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number.saturating_sub(1))
-            .ok_or(ExecutionWitnessError::NoBlockHeaders)
+            .ok_or(ExecutionWitnessError::MissingParentHeader(block_number))
     }
 
     pub fn get_account_info(

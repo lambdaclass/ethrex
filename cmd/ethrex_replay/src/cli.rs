@@ -9,10 +9,10 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
-use crate::networks::Network;
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
@@ -41,7 +41,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -59,7 +59,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -75,7 +75,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -91,7 +91,7 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -207,7 +207,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -225,7 +225,7 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -241,7 +241,7 @@ enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]
@@ -334,7 +334,7 @@ enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            help = "Name of the network. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
             default_value_t = Network::mainnet(),
         )]

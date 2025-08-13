@@ -630,6 +630,22 @@ impl Store {
         Ok(())
     }
 
+    pub async fn load_initial_state(&self) -> Result<(), StoreError> {
+        info!("Loading initial state from DB");
+        let Some(number) = self.engine.get_latest_block_number().await? else {
+            return Err(StoreError::MissingLatestBlockNumber);
+        };
+        let latest_block_header = self
+            .engine
+            .get_block_header(number)?
+            .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+        *self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)? = latest_block_header;
+        Ok(())
+    }
+
     pub async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,

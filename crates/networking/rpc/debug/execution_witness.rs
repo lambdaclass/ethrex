@@ -117,7 +117,6 @@ pub fn execution_witness_from_rpc_chain_config(
     );
 
     Ok(ExecutionWitnessResult {
-        // FIXME: Figure out if we want the following 2 to be empty.
         state_trie_nodes: rpc_witness.state,
         keys: rpc_witness.keys,
         codes,

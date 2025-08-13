@@ -28,7 +28,6 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
-use std::collections::BTreeMap;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -166,105 +165,7 @@ impl LEVM {
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.current_accounts_state.iter() {
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                db.initial_accounts_state
-                    .get(address)
-                    .ok_or(EvmError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))?;
-
-            // Edge case: Account was destroyed and created again afterwards with CREATE2.
-            if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
-                // Push to account updates the removal of the account and then push the new state of the account.
-                // This is for clearing the account's storage when it was selfdestructed in the first place.
-                account_updates.push(AccountUpdate::removed(*address));
-                let new_account_update = AccountUpdate {
-                    address: *address,
-                    removed: false,
-                    info: Some(new_state_account.info.clone()),
-                    code: Some(
-                        db.codes
-                            .get(&new_state_account.info.code_hash)
-                            .ok_or(EvmError::Custom(format!(
-                                "Failed to get code for account {address}"
-                            )))?
-                            .clone(),
-                    ),
-                    added_storage: new_state_account.storage.clone(),
-                };
-                account_updates.push(new_account_update);
-                continue;
-            }
-
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
-            // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.info.balance != new_state_account.info.balance {
-                acc_info_updated = true;
-            }
-
-            if initial_state_account.info.nonce != new_state_account.info.nonce {
-                acc_info_updated = true;
-            }
-
-            let code =
-                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                    acc_info_updated = true;
-                    // code should be in `codes`
-                    Some(db.codes.get(&new_state_account.info.code_hash).ok_or(
-                        EvmError::Custom(format!("Failed to get code for account {address}")),
-                    )?)
-                } else {
-                    None
-                };
-
-            // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = BTreeMap::new();
-
-            for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
-
-                if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
-                    storage_updated = true;
-                }
-            }
-
-            let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
-            } else {
-                None
-            };
-
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
-            let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
-
-            if !removed && !acc_info_updated && !storage_updated {
-                // Account hasn't been updated
-                continue;
-            }
-
-            let account_update = AccountUpdate {
-                address: *address,
-                removed,
-                info,
-                code: code.cloned(),
-                added_storage,
-            };
-
-            account_updates.push(account_update);
-        }
-        db.initial_accounts_state.clear();
-        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
-        db.current_accounts_state.clear();
-        db.codes.clear();
-        Ok(account_updates)
+        Ok(db.get_state_transitions()?)
     }
 
     pub fn process_withdrawals(
