@@ -818,7 +818,6 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
         // TODO: handle this error
@@ -884,12 +883,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    *self.peer_scores.lock().await.entry(peer_id).or_default() -= 1;
                     continue;
                 }
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                *self.peer_scores.lock().await.entry(peer_id).or_default() += 1;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -1063,7 +1060,6 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -1089,15 +1085,13 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    *self.peer_scores.lock().await.entry(peer_id).or_default() -= 1;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                *self.peer_scores.lock().await.entry(peer_id).or_default() += 1;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1142,8 +1136,20 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = self
+                    .peer_scores
+                    .lock()
+                    .await
+                    .get(&peer_id)
+                    .unwrap_or(&0)
+                    .clone();
+                let max_peer_id_score = self
+                    .peer_scores
+                    .lock()
+                    .await
+                    .get(&free_peer_id)
+                    .unwrap_or(&0)
+                    .clone();
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
@@ -1368,8 +1374,6 @@ impl PeerHandler {
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
-        let mut scores = self.peer_scores.lock().await;
-
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
@@ -1506,8 +1510,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    *self.peer_scores.lock().await.entry(peer_id).or_default() -= 1;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1517,10 +1520,13 @@ impl PeerHandler {
                     }
                 }
 
+                let mut scores = self.peer_scores.lock().await;
                 let peer_score = scores.entry(peer_id).or_default();
                 if *peer_score < 10 {
                     *peer_score += 1;
                 }
+                // release guard prematurely to avoid deadlocks
+                drop(scores);
 
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
@@ -1583,8 +1589,13 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = *self.peer_scores.lock().await.get(&peer_id).unwrap_or(&0);
+                let max_peer_id_score = *self
+                    .peer_scores
+                    .lock()
+                    .await
+                    .get(&free_peer_id)
+                    .unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
