@@ -12,7 +12,6 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use futures::stream::select_all;
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
@@ -1130,14 +1129,11 @@ impl PeerHandler {
                 std::fs::create_dir_all(&account_state_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
             }
-            tokio::task::spawn(async move {
-                let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-                std::fs::write(path, account_state_chunk).unwrap_or_else(|_| {
-                    panic!("Failed to write account_state_snapshot chunk {chunk_file}")
-                });
-            })
-            .await
-            .unwrap();
+
+            let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
+            std::fs::write(path, account_state_chunk).unwrap_or_else(|_| {
+                panic!("Failed to write account_state_snapshot chunk {chunk_file}")
+            });
         }
 
         *METRICS.accounts_downloads_tasks_queued.lock().await =
@@ -1924,17 +1920,13 @@ impl PeerHandler {
                     .expect("Failed to create accounts_state_snapshot dir");
             }
             let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
-            tokio::task::spawn(async move {
-                let path = get_account_storages_snapshot_file(
-                    account_storages_snapshots_dir_cloned,
-                    chunk_index,
-                );
-                std::fs::write(path, snapshot).unwrap_or_else(|_| {
-                    panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
-                });
-            })
-            .await
-            .expect("");
+            let path = get_account_storages_snapshot_file(
+                account_storages_snapshots_dir_cloned,
+                chunk_index,
+            );
+            std::fs::write(path, snapshot).unwrap_or_else(|_| {
+                panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
+            });
         }
 
         *METRICS.storages_downloads_tasks_queued.lock().await =
