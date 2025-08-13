@@ -1156,7 +1156,7 @@ async fn update_pivot(
                 .ok_or(SyncError::NoBlockHeaders)?;
             sync_state.process_incoming_headers(block_headers).await?;
         } else {
-            panic!("Called update_pivot outside snapsync mode");
+            return Err(SyncError::NotInSnapSync);
         }
         return Ok((pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12)));
     }
@@ -1204,12 +1204,12 @@ enum SyncError {
     AccountStoragesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("Failed to send data through the channel")]
-    Sender,
     #[error("We aren't finding get_peer_channel_with_retry")]
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("Called update_pivot outside snapsync mode")]
+    NotInSnapSync,
 }
 
 impl<T> From<SendError<T>> for SyncError {

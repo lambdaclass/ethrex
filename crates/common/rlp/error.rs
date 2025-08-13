@@ -19,6 +19,8 @@ pub enum RLPDecodeError {
     IncompatibleProtocol,
     #[error("{0}")]
     Custom(String),
+    #[error("Only protocol version 5 is supported")]
+    UnsupportedVersion,
 }
 
 // TODO: improve errors
