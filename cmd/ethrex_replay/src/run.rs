@@ -18,7 +18,8 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
 
 pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
-    ethrex_prover_lib::prove(backend, input, Default::default()).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    ethrex_prover_lib::prove(backend, input, Default::default())
+        .map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 

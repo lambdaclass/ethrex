@@ -6,6 +6,7 @@ use crate::monitor::EthrexMonitor;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
