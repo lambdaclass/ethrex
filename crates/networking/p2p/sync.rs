@@ -1014,10 +1014,6 @@ impl Syncer {
                 if !healing_done {
                     continue;
                 }
-                // TODO: 💀💀💀 either remove or change to a debug flag
-                validate_state_root(store.clone(), pivot_header.state_root).await;
-
-                // validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     self.peers.clone(),
@@ -1027,6 +1023,8 @@ impl Syncer {
                 )
                 .await;
             }
+            // TODO: 💀💀💀 either remove or change to a debug flag
+            validate_state_root(store.clone(), pivot_header.state_root).await;
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
@@ -1162,6 +1160,7 @@ impl<T> From<SendError<T>> for SyncError {
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_state_root");
     let computed_state_root = tokio::task::spawn_blocking(move || {
         Trie::compute_hash_from_unsorted_iter(
             store
@@ -1185,6 +1184,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 }
 
 pub async fn validate_storage_root(store: Store, state_root: H256) {
+    info!("Starting validate_storage_root");
     for (hashed_address, account_state) in store
         .clone()
         .iter_accounts(state_root)

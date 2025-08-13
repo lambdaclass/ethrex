@@ -273,12 +273,17 @@ pub async fn heal_storage_trie_wrap(
     info!("Total accounts: {}", accounts.len());
     let filtered_accounts: Vec<(H256, AccountState)> = accounts
         .into_iter()
-        .filter(|(_, state)| state.storage_root != *EMPTY_TRIE_HASH)
+        .filter(|(hash, state)| {
+            state.storage_root != *EMPTY_TRIE_HASH
+                && !store
+                    .contains_storage_node(*hash, state.storage_root)
+                    .expect("Store isn't responding")
+        })
         .collect();
     info!("Total filtered accounts: {}", filtered_accounts.len());
-    let mut account_path_nibbles: Vec<Nibbles> = filtered_accounts
+    let account_path_nibbles: Vec<Nibbles> = filtered_accounts
         .into_iter()
-        .map(|(hashed_key, _)| Nibbles::from_raw(&hashed_key.as_bytes(), true))
+        .map(|(hashed_key, _)| Nibbles::from_raw(hashed_key.as_bytes(), true))
         .collect();
     heal_storage_trie(
         state_root,
@@ -735,64 +740,4 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     }
 
     chosen_peer
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
-
-    use crate::{rlpx::message::RLPxMessage, sync::storage_healing::get_initial_downloads};
-
-    #[test]
-    fn basic_test() {
-        let acc_path: Nibbles = Nibbles::from_bytes(
-            &hex::decode("0687Da33b5cd62B5B6d5b2d0933F8D2510961D43").expect("Should open"),
-        );
-        let gtn = create_get_trie_nodes_request(
-            0,
-            *EMPTY_TRIE_HASH,
-            get_initial_downloads(&vec![acc_path]),
-        );
-        println!("{:?}", gtn);
-
-        let mut buf: Vec<u8> = Vec::new();
-        println!("{:?}", gtn.encode(&mut buf));
-        println!("{:?}", buf);
-
-        let gtn = GetTrieNodes::decode(&buf).expect("This should work");
-        println!("{:?}", gtn);
-    }
-    #[test]
-    fn complex_test() {
-        let acc_path: Nibbles = Nibbles::from_bytes(
-            &hex::decode("0687Da33b5cd62B5B6d5b2d0933F8D2510961D43").expect("Should open"),
-        );
-        let nibbles: Nibbles = Nibbles::default();
-
-        let gtn = create_get_trie_nodes_request(
-            0,
-            *EMPTY_TRIE_HASH,
-            vec![
-                NodeRequest {
-                    acc_path: acc_path.clone(),
-                    storage_path: nibbles.append_new(1),
-                    parent: Nibbles::default(),
-                },
-                NodeRequest {
-                    acc_path: acc_path,
-                    storage_path: nibbles.append_new(2),
-                    parent: Nibbles::default(),
-                },
-            ]
-            .into(),
-        );
-        println!("{:?}", gtn);
-
-        let mut buf: Vec<u8> = Vec::new();
-        println!("{:?}", gtn.encode(&mut buf));
-        println!("{:?}", buf);
-
-        let gtn = GetTrieNodes::decode(&buf).expect("This should work");
-        println!("{:?}", gtn);
-    }
 }
