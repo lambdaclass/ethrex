@@ -12,7 +12,7 @@ use std::{cmp::min, time::Instant};
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::Store;
+use ethrex_storage::{Store, UpdateBatch};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
@@ -139,15 +139,19 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            store
+                .store_block_updates(UpdateBatch {
+                    // FIXME: wouldn't this be the same as asking the trie for the changes like we do in block production?
+                    account_updates: nodes
+                        .into_iter()
+                        .filter_map(|node| match node.compute_hash() {
+                            hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                            NodeHash::Inline(_) => None,
+                        })
+                        .collect(),
+                    ..Default::default()
+                })
+                .await?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {

@@ -43,12 +43,4 @@ impl TrieDB for TrieLogger {
         }
         Ok(result)
     }
-
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        self.inner_db.put(key, value)
-    }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        self.inner_db.put_batch(key_values)
-    }
 }
