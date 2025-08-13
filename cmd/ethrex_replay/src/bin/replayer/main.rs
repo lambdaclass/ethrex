@@ -4,6 +4,7 @@ use std::{
 };
 
 use clap::Parser;
+use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
@@ -12,6 +13,7 @@ use tokio::{
     join,
     task::{JoinError, JoinHandle},
 };
+use tracing::warn;
 
 use crate::block_execution_report::BlockRunReport;
 
@@ -213,9 +215,8 @@ async fn replay_execution(
             client.clone(),
             rpc_url.clone(),
             &eth_client,
-            slack_webhook_url.clone(),
         )
-        .await?;
+        .await;
 
         let elapsed = block_run_report.time_taken;
 
@@ -282,8 +283,6 @@ async fn replay_client_diversity(
 
             let rpc_url_clone = rpc_url.clone();
 
-            let slack_webhook_url_clone = slack_webhook_url.clone();
-
             let replayer_mode = replayer_mode.clone();
 
             let handle = tokio::spawn(async move {
@@ -294,7 +293,6 @@ async fn replay_client_diversity(
                     client_name.to_string(),
                     rpc_url_clone,
                     &eth_client,
-                    slack_webhook_url_clone,
                 )
                 .await
             });
@@ -312,23 +310,21 @@ async fn replay_client_diversity(
         {
             let geth_report = geth_result.unwrap_or_else(|e| {
                 panic!("Failed to replay block on Geth RPC: {e}");
-            })?;
+            });
 
             let reth_report = reth_result.unwrap_or_else(|e| {
                 panic!("Failed to replay block on Reth RPC: {e}");
-            })?;
+            });
 
             let nethermind_report = nethermind_result.unwrap_or_else(|e| {
                 panic!("Failed to replay block on Nethermind RPC: {e}");
-            })?;
+            });
 
-            let client_reports = vec![
+            for (client, report) in [
                 ("geth", geth_report),
                 ("reth", reth_report),
                 ("nethermind", nethermind_report),
-            ];
-
-            for (client, report) in client_reports {
+            ] {
                 if report.run_result.is_err() {
                     tracing::error!("[{client}] {report}");
                 } else {
@@ -346,8 +342,10 @@ async fn replay_client_diversity(
         }
 
         // Wait at most 12 seconds for executing the next block.
-        // This will only wait if the run took less than 12 seconds.
-        tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
+        // This will only wait if the run took less than 13 seconds.
+        // Block time is 12s, but wait an extra second to ensure the next block
+        // is different available.
+        tokio::time::sleep(Duration::from_secs(13).saturating_sub(elapsed)).await;
     }
 }
 
@@ -356,7 +354,6 @@ async fn replay_proving(
     hoodi_rpc_url: Url,
     sepolia_rpc_url: Url,
     mainnet_rpc_url: Url,
-    slack_webhook_url: Option<Url>,
 ) -> Result<(), EthClientError> {
     let hoodi_eth_client = EthClient::new(hoodi_rpc_url.as_str()).unwrap();
     let sepolia_eth_client = EthClient::new(sepolia_rpc_url.as_str()).unwrap();
@@ -365,39 +362,56 @@ async fn replay_proving(
     loop {
         let start = SystemTime::now();
 
-        replay_latest_block(
+        let hoodi_block_run_report = replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Hoodi),
             client.clone(),
             hoodi_rpc_url.clone(),
             &hoodi_eth_client,
-            slack_webhook_url.clone(),
         )
-        .await?;
+        .await;
 
-        replay_latest_block(
+        let sepolia_block_run_report = replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Sepolia),
             client.clone(),
             sepolia_rpc_url.clone(),
             &sepolia_eth_client,
-            slack_webhook_url.clone(),
         )
-        .await?;
+        .await;
 
-        replay_latest_block(
+        let mainnet_run_report = replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Mainnet),
             client.clone(),
             mainnet_rpc_url.clone(),
             &mainnet_eth_client,
-            slack_webhook_url.clone(),
         )
-        .await?;
+        .await;
 
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
         });
+
+        for report in [
+            hoodi_block_run_report,
+            sepolia_block_run_report,
+            mainnet_run_report,
+        ] {
+            if report.run_result.is_err() {
+                tracing::error!("{report}");
+            } else {
+                tracing::info!("{report}");
+            }
+
+            if report.run_result.is_err() {
+                try_send_failed_run_report_to_slack(report, None)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Failed to post to Slack webhook: {e}");
+                    });
+            }
+        }
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -411,8 +425,7 @@ async fn replay_latest_block(
     client: String,
     rpc_url: Url,
     eth_client: &EthClient,
-    slack_webhook_url: Option<Url>,
-) -> Result<BlockRunReport, EthClientError> {
+) -> BlockRunReport {
     let latest_block = eth_client
         .get_block_number()
         .await
@@ -428,7 +441,6 @@ async fn replay_latest_block(
         client,
         rpc_url,
         eth_client,
-        slack_webhook_url,
     )
     .await
 }
@@ -440,11 +452,25 @@ async fn replay_block(
     client: String,
     rpc_url: Url,
     eth_client: &EthClient,
-    slack_webhook_url: Option<Url>,
-) -> Result<BlockRunReport, EthClientError> {
-    let block = eth_client
+) -> BlockRunReport {
+    let block = match eth_client
         .get_raw_block(BlockIdentifier::Number(block_to_replay as u64))
-        .await?;
+        .await
+    {
+        Ok(block) => block,
+        Err(e) => {
+            return BlockRunReport::new_for(
+                client,
+                Block::default(),
+                network.clone(),
+                Err(eyre::eyre!(
+                    "Failed to fetch raw block {block_to_replay} from {rpc_url}: {e}"
+                )),
+                replayer_mode,
+                Duration::ZERO,
+            );
+        }
+    };
 
     let start = SystemTime::now();
 
@@ -475,16 +501,14 @@ async fn replay_block(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    let block_run_report = BlockRunReport::new_for(
+    BlockRunReport::new_for(
         client,
         block,
         network.clone(),
         run_result,
         replayer_mode,
         elapsed,
-    );
-
-    Ok(block_run_report)
+    )
 }
 
 async fn revalidate_rpc(rpc_url: Url) -> Result<(), EthClientError> {
