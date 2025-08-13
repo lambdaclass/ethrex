@@ -1400,7 +1400,7 @@ impl redb::Key for SnapStateIndex {
 }
 
 pub fn init_db(path: impl AsRef<Path>) -> Result<Database, StoreError> {
-    let db = Database::create(path)?;
+    let db = Database::create(format!("{}/redb.db", path.as_ref().display()))?;
 
     let table_creation_txn = db.begin_write().map_err(Box::new)?;
     table_creation_txn.open_table(STATE_TRIE_NODES_TABLE)?;
