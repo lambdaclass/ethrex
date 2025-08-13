@@ -177,7 +177,6 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
@@ -347,10 +346,6 @@ impl Trie {
         impl TrieDB for NullTrieDB {
             fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
-            }
-
-            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
-                Ok(())
             }
         }
 

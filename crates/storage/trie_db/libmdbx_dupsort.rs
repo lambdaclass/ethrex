@@ -42,23 +42,11 @@ where
         txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
             .map_err(TrieError::DbError)
     }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
-            txn.upsert::<T>(
-                (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
-                value,
-            )
-            .map_err(TrieError::DbError)?;
-        }
-        txn.commit().map_err(TrieError::DbError)
-    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::trie_db::test_utils::libmdbx::new_db;
+    use crate::trie_db::test_utils::libmdbx::{new_db, put_node};
 
     use super::*;
     use libmdbx::{dupsort, table};
@@ -71,21 +59,30 @@ mod test {
     #[test]
     fn simple_addition() {
         let inner_db = new_db::<Nodes>();
-        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
+        put_node::<Nodes>(
+            &inner_db,
+            ([5; 32], node_hash_to_fixed_size(key)),
+            "value".into(),
+        );
+        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
         assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
         assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
     #[test]
     fn different_keys() {
         let inner_db = new_db::<Nodes>();
+        let key = NodeHash::from_encoded_raw(b"hello");
+        for (seek_key, value) in [([5; 32], "hello!"), ([7; 32], "go away!")] {
+            put_node::<Nodes>(
+                &inner_db,
+                (seek_key, node_hash_to_fixed_size(key)),
+                value.into(),
+            );
+        }
         let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
         let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
-        let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "hello!".into()).unwrap();
-        db_b.put(key, "go away!".into()).unwrap();
         assert_eq!(db_a.get(key).unwrap(), Some("hello!".into()));
         assert_eq!(db_b.get(key).unwrap(), Some("go away!".into()));
     }

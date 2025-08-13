@@ -30,4 +30,11 @@ pub mod libmdbx {
         let tables = [table_info!(T)].into_iter().collect();
         Arc::new(Database::open(path, &tables).expect("Failed to open DB"))
     }
+
+    #[track_caller]
+    pub fn put_node<T: Table>(db: &Database, hash: T::Key, node: T::Value) {
+        let tx = db.begin_readwrite().expect("Begin tx failed");
+        tx.upsert::<T>(hash, node).expect("Write failed");
+        tx.commit().expect("Commit failed");
+    }
 }

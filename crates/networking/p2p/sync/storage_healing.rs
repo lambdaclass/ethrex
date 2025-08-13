@@ -14,7 +14,7 @@ use std::{
 };
 
 use ethrex_common::H256;
-use ethrex_storage::Store;
+use ethrex_storage::{Store, UpdateBatch};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -131,15 +131,22 @@ async fn heal_storage_batch(
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            store
+                .store_block_updates(UpdateBatch {
+                    // FIXME: wouldn't this be the same as asking the trie for the changes like we do in block production?
+                    storage_updates: vec![(
+                        *acc_path,
+                        nodes
+                            .iter()
+                            .filter_map(|node| match node.compute_hash() {
+                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                                NodeHash::Inline(_) => None,
+                            })
+                            .collect(),
+                    )],
+                    ..Default::default()
+                })
+                .await?;
             if nodes.is_empty() {
                 break;
             }
