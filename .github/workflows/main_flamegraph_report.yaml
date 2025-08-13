@@ -22,7 +22,7 @@ jobs:
         name: ["levm", "revm"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -57,7 +57,7 @@ jobs:
 
       - name: Checkout gimli addr2line
         if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: gimli-rs/addr2line
           path: "addr2line"
@@ -163,7 +163,7 @@ jobs:
       time: ${{steps.generate-flamegraph-ethrex.outputs.time}}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -200,7 +200,7 @@ jobs:
 
       - name: Checkout gimli addr2line
         if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: gimli-rs/addr2line
           path: "addr2line"
@@ -264,7 +264,7 @@ jobs:
       time: ${{steps.generate-flamegraph-reth.outputs.time}}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@master
@@ -273,7 +273,7 @@ jobs:
 
       # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: paradigmxyz/reth
           path: "reth"
@@ -315,7 +315,7 @@ jobs:
 
       - name: Checkout gimli addr2line
         if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: gimli-rs/addr2line
           path: "addr2line"
@@ -379,7 +379,7 @@ jobs:
     needs: [generate-flamegraph-evm, flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: gh-pages
 
