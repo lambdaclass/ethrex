@@ -19,6 +19,7 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
+use tracing::debug;
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -127,10 +128,10 @@ impl RpcDB {
 
             if index.len() == 1 {
                 let address = chunk.first().unwrap().0;
-                println!("fetched account {address}");
+                debug!("fetched account {address}");
             } else {
                 counter += chunk.len();
-                println!("fetched {} accounts of {}", counter, index.len());
+                debug!("fetched {} accounts of {}", counter, index.len());
             }
         }
 
