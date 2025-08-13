@@ -209,6 +209,7 @@ impl PeerHandler {
         &self,
         start: u64,
         sync_head: H256,
+        update_metrics: bool,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
 
@@ -250,11 +251,13 @@ impl PeerHandler {
 
         info!("Sync head block number retrieved");
 
-        *METRICS.time_to_retrieve_sync_head_block.lock().await =
-            Some(sync_head_number_retrieval_elapsed);
-        *METRICS.sync_head_block.lock().await = sync_head_number;
-        *METRICS.headers_to_download.lock().await = sync_head_number + 1;
-        *METRICS.sync_head_hash.lock().await = sync_head;
+        if update_metrics {
+            *METRICS.time_to_retrieve_sync_head_block.lock().await =
+                Some(sync_head_number_retrieval_elapsed);
+            *METRICS.sync_head_block.lock().await = sync_head_number;
+            *METRICS.headers_to_download.lock().await = sync_head_number + 1;
+            *METRICS.sync_head_hash.lock().await = sync_head;
+        }
 
         let block_count = sync_head_number + 1 - start;
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
@@ -294,14 +297,16 @@ impl PeerHandler {
 
         info!("Starting to download block headers from peers");
 
-        *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+        if update_metrics {
+            *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+        }
 
         let mut last_metrics_update = SystemTime::now();
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            if new_last_metrics_update >= Duration::from_secs(1) && update_metrics {
                 *METRICS.header_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
 
@@ -328,7 +333,7 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
-                if new_last_metrics_update >= Duration::from_secs(1) {
+                if new_last_metrics_update >= Duration::from_secs(1) && update_metrics {
                     *METRICS.downloaded_headers.lock().await = downloaded_count;
                 }
 
@@ -388,7 +393,7 @@ impl PeerHandler {
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            if new_last_metrics_update >= Duration::from_secs(1) && update_metrics {
                 *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
             }
 
@@ -484,10 +489,13 @@ impl PeerHandler {
             }
         }
 
-        *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
-        *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_headers.lock().await = downloaded_count;
+        if update_metrics {
+            *METRICS.header_downloads_tasks_queued.lock().await =
+                tasks_queue_not_started.len() as u64;
+            *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
+            *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+            *METRICS.downloaded_headers.lock().await = downloaded_count;
+        }
 
         let elapsed = start_time.elapsed().expect("Failed to get elapsed time");
 

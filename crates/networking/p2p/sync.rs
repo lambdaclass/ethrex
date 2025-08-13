@@ -165,7 +165,7 @@ impl Syncer {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
-
+        let update_metrics = true;
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(
@@ -176,7 +176,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .request_block_headers(current_head_number, sync_head, update_metrics)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -318,10 +318,10 @@ impl Syncer {
             );
 
             debug!("Requesting Block Headers from {current_head}");
-
+            let update_metrics = false;
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .request_block_headers(current_head_number, sync_head, update_metrics)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -1062,8 +1062,9 @@ async fn update_pivot(
         });
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
+            let update_metrics = false;
             let block_headers = peers
-                .request_block_headers(block_number + 1, pivot.hash())
+                .request_block_headers(block_number + 1, pivot.hash(), update_metrics)
                 .await
                 .expect("failed to fetch headers");
             sync_state
