@@ -2139,27 +2139,15 @@ impl PeerHandler {
             .await
             .map_err(|e| format!("Failed to send message to peer. Error: {e}"))
             .inspect_err(|err| error!(err))
-            .expect("############### Error peer_channel connection");
-        let response = tokio::time::timeout(Duration::from_secs(5), async move {
-            let response = receiver.recv().await;
-            if response.is_none() {
-                error!("############### Error Message");
-            };
-            response.unwrap()
-        })
-        .await;
+            .ok()?;
 
-        match response {
-            Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
-                if id == request_id && !block_headers.is_empty() {
-                    return Some(block_headers.last().expect("############### Error").clone());
-                }
-            }
-            Ok(_other_msgs) => {
-                info!("Received unexpected message from peer");
-            }
-            Err(_err) => {
-                info!("Timeout while waiting for sync head from peer");
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
+                .await
+                .ok()??;
+        if let RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) = response {
+            if id == request_id {
+                return block_headers.last().cloned();
             }
         }
 
