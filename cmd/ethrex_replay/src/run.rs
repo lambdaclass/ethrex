@@ -39,7 +39,7 @@ pub async fn run_tx(
     let prover_db = cache.proof;
     match prover_db {
         WitnessProof::Witness(mut witness) => {
-            witness.rebuild_tries(&block.header)?;
+            witness.rebuild_tries()?;
             let mut wrapped_db = ExecutionWitnessWrapper::new(witness);
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 

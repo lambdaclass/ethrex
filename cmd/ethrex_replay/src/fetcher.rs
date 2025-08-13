@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
+use ethrex_config::networks::Network;
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::execution_witness_from_rpc_chain_config,
@@ -12,7 +13,6 @@ use tracing::{info, warn};
 
 use crate::{
     cache::{Cache, L2Fields, load_cache, write_cache},
-    networks::Network,
     rpc::db::RpcDB,
 };
 
