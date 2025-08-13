@@ -30,7 +30,7 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
-use payload::PayloadBuildResult;
+use payload::PayloadOrTask;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -58,11 +58,6 @@ pub enum BlockchainType {
     L2,
 }
 
-pub type PayloadBuildTasks = Vec<(
-    u64,
-    tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
-)>;
-
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
@@ -73,7 +68,9 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
     pub r#type: BlockchainType,
-    pub payloads: Arc<TokioMutex<PayloadBuildTasks>>,
+    /// Mapping from a payload id to either a complete payload or a payload build task
+    /// We need to keep completed payloads around in case consensus requests them twice
+    pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +99,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
-            payloads: Arc::new(TokioMutex::new(PayloadBuildTasks::new())),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
         }
     }
 
@@ -113,7 +110,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
-            payloads: Arc::new(TokioMutex::new(PayloadBuildTasks::new())),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
         }
     }
 

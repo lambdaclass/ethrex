@@ -41,6 +41,29 @@ use crate::{
 use thiserror::Error;
 use tracing::{debug, error};
 
+type PayloadBuildTask = tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>;
+
+#[derive(Debug)]
+pub enum PayloadOrTask {
+    Payload(PayloadBuildResult),
+    Task(PayloadBuildTask),
+}
+
+impl PayloadOrTask {
+    pub async fn into_payload(&mut self) -> Result<PayloadBuildResult, ChainError> {
+        match self {
+            PayloadOrTask::Payload(payload) => Ok(payload.clone()),
+            PayloadOrTask::Task(task) => {
+                let payload_result = task
+                    .await
+                    .map_err(|_| ChainError::Custom("Failed to join task".to_string()))??;
+                *self = PayloadOrTask::Payload(payload_result.clone());
+                Ok(payload_result)
+            }
+        }
+    }
+}
+
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
     pub timestamp: u64,
@@ -245,7 +268,7 @@ impl PayloadBuildContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PayloadBuildResult {
     pub blobs_bundle: BlobsBundle,
     pub block_value: U256,
@@ -281,15 +304,11 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 impl Blockchain {
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
         let mut payloads = self.payloads.lock().await;
-        let idx = payloads
-            .iter()
-            .position(|(id, _)| id == &payload_id)
+        let (_, payload_or_task) = payloads
+            .iter_mut()
+            .find(|(id, _)| id == &payload_id)
             .ok_or(ChainError::UnknownPayload)?;
-        payloads
-            .remove(idx)
-            .1
-            .await
-            .map_err(|_| ChainError::Custom("Failed to join task".to_string()))?
+        payload_or_task.into_payload().await
     }
 
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
@@ -301,7 +320,7 @@ impl Blockchain {
             // Remove oldest unclaimed payload
             payloads.remove(0);
         }
-        payloads.push((payload_id, payload_build_task));
+        payloads.push((payload_id, PayloadOrTask::Task(payload_build_task)));
     }
 
     /// Completes the payload building process, return the block value
