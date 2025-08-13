@@ -257,29 +257,32 @@ pub async fn heal_storage_trie(
         )
         .await;
 
-        if let Ok(trie_nodes) = task_receiver.try_recv() {
-            if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
-                &mut state.requests,
-                &mut state.scored_peers,
-                &mut state.download_queue,
-                trie_nodes,
-                &mut state.succesful_downloads,
-                &mut state.failed_downloads,
-            ) {
-                let _ = process_node_responses(
-                    &mut nodes_from_peer,
-                    &mut state.download_queue,
-                    state.store.clone(),
-                    state
-                        .membatch
-                        .get_mut()
-                        .expect("We launched the storage healer without a membatch"),
-                    &mut state.leafs_healed,
-                    &mut state.roots_healed,
-                    &mut state.maximum_length_seen,
-                ); // TODO: if we have a stor error we should stop
-            };
-        }
+        let Ok(trie_nodes) = task_receiver.try_recv() else {
+            continue;
+        };
+        let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
+            &mut state.requests,
+            &mut state.scored_peers,
+            &mut state.download_queue,
+            trie_nodes,
+            &mut state.succesful_downloads,
+            &mut state.failed_downloads,
+        ) else {
+            continue;
+        };
+
+        let _ = process_node_responses(
+            &mut nodes_from_peer,
+            &mut state.download_queue,
+            state.store.clone(),
+            state
+                .membatch
+                .get_mut()
+                .expect("We launched the storage healer without a membatch"),
+            &mut state.leafs_healed,
+            &mut state.roots_healed,
+            &mut state.maximum_length_seen,
+        ); // TODO: if we have a stor error we should stop
     }
 }
 
