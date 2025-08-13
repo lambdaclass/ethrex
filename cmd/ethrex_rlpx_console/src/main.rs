@@ -90,7 +90,7 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 }
 
 const SAI_TEST_TOKEN: &'static str =
-    "fc828ea7a505851a004ddb57d4d51ca083ce92766ec867a54ffef9f29811910b";
+    "fff2bef58e73f6f4be26bef5ede84778aa946b1e2253e1943d4acdf1d7c384e7";
 
 const UNISWAP_TEST_TOKEN: &'static str =
     "22002fe30a172d0a479f6add89c63b29dce29b6071b3c7e486b0fb4bc431f885";

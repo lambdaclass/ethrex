@@ -408,7 +408,7 @@ async fn ask_peers_for_nodes(
             paths,
             bytes: MAX_RESPONSE_BYTES,
         };
-        debug!("We are sending the following nodes {:?}", gtn);
+        // debug!("We are sending the following nodes {:?}", gtn);
         // If the genserver is dead we handle it by just clearing the request in clear_inflight_requests
         // and re enqueing it later. Not the most graceful solution, but it works.
         let _ = peer
@@ -477,17 +477,8 @@ fn zip_requeue_node_responses_score_peer(
     if nodes_size == 0 {
         *failed_downloads += 1;
         peer.score -= 1;
-        debug!(
-            "The node returned empty in the request {:?}",
-            request.requests
-        );
         download_queue.extend(request.requests);
         return None;
-    } else {
-        debug!(
-            "The node returned {nodes_size} nodes in the request {:?}",
-            request.requests
-        );
     }
 
     if request.requests.len() < nodes_size {
@@ -630,7 +621,7 @@ pub fn determine_missing_children(
                     &node_response.node_request.acc_path,
                     &node_response
                         .node_request
-                        .parent
+                        .storage_path
                         .concat(node.prefix.clone()),
                     &node.child.compute_hash(),
                     membatch,
