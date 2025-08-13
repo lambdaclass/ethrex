@@ -212,6 +212,8 @@ impl PeerHandler {
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
 
+        let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
+
         let mut ret = Vec::<BlockHeader>::new();
 
         let peers_table = self
@@ -278,6 +280,7 @@ impl PeerHandler {
         }
 
         let mut downloaded_count = 0_u64;
+        let mut metrics_downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
@@ -327,9 +330,11 @@ impl PeerHandler {
                 }
 
                 downloaded_count += headers.len() as u64;
+                metrics_downloaded_count += headers.len() as u64;
 
                 if new_last_metrics_update >= Duration::from_secs(1) {
-                    *METRICS.downloaded_headers.lock().await = downloaded_count;
+                    *METRICS.downloaded_headers.lock().await += metrics_downloaded_count;
+                    metrics_downloaded_count = 0;
                 }
 
                 let batch_show = downloaded_count / 10_000;
@@ -487,7 +492,7 @@ impl PeerHandler {
         *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
         *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_headers.lock().await = downloaded_count;
+        *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
 
         let elapsed = start_time.elapsed().expect("Failed to get elapsed time");
 
