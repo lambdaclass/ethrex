@@ -26,7 +26,7 @@ use std::{
 use tracing::{debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_IN_FLIGHT_REQUESTS: usize = 5;
+const MAX_IN_FLIGHT_REQUESTS: usize = 77;
 const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
