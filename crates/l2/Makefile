@@ -81,8 +81,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth.rpc-url ${L1_RPC_URL} \
 	--deployer.private-key ${L1_PRIVATE_KEY} \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
 	--l2.dev-genesis
 
@@ -93,8 +93,8 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--eth.rpc-url ${L1_RPC_URL} \
 	--deployer.private-key ${L1_PRIVATE_KEY} \
 	--sp1.deploy-verifier \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
 	--l2.dev-genesis
 
