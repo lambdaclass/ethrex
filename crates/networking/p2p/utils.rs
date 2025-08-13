@@ -73,12 +73,12 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
 }
 
-pub fn dump_accounts_to_file(path: String, contents: Vec<u8>) -> Result<(), AccountDumpError> {
+pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(&path, &contents)
         .inspect_err(|err| {
             tracing::error!("Failed to write accounts to path {}. Error: {}", &path, err)
         })
-        .map_err(|err| AccountDumpError {
+        .map_err(|err| DumpError {
             path,
             contents,
             error: err.kind(),

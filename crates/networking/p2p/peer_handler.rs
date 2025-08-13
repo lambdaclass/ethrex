@@ -34,7 +34,7 @@ use crate::{
     },
     snap::encodable_to_proof,
     utils::{
-        dump_accounts_to_file, get_account_state_snapshot_file, get_account_state_snapshots_dir,
+        dump_to_file, get_account_state_snapshot_file, get_account_state_snapshots_dir,
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
     },
 };
@@ -810,7 +810,7 @@ impl PeerHandler {
 
         // channel to send the result of dumping accounts
         let (dump_account_result_sender, mut dump_account_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), AccountDumpError>>(1000);
+            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
@@ -851,7 +851,7 @@ impl PeerHandler {
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_accounts_to_file(path, account_state_chunk);
+                    let result = dump_to_file(path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -924,9 +924,9 @@ impl PeerHandler {
                     // If the dumping failed, retry it
                     let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                     tokio::task::spawn(async move {
-                        let AccountDumpError { path, contents, .. } = dump_account_data;
+                        let DumpError { path, contents, .. } = dump_account_data;
                         // Dump the account data
-                        let result = dump_accounts_to_file(path, contents);
+                        let result = dump_to_file(path, contents);
                         // Send the result through the channel
                         dump_account_result_sender_cloned
                             .send(result)
@@ -1490,6 +1490,10 @@ impl PeerHandler {
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
 
+        // channel to send the result of dumping storages
+        let (dump_storage_result_sender, mut dump_storage_result_receiver) =
+            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
+
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
@@ -1522,17 +1526,22 @@ impl PeerHandler {
                         .expect("Failed to create accounts_state_snapshot dir");
                 }
                 let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
+                let dump_account_result_sender_cloned = dump_storage_result_sender.clone();
                 tokio::task::spawn(async move {
                     let path = get_account_storages_snapshot_file(
                         account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    std::fs::write(path, snapshot).unwrap_or_else(|_| {
-                        panic!("Failed to write account_storages_snapshot chunk {chunk_index}")
-                    });
-                })
-                .await
-                .expect("");
+                    let result = dump_to_file(path, snapshot);
+                    dump_account_result_sender_cloned
+                        .send(result)
+                        .await
+                        .inspect_err(|err| {
+                            error!(
+                                "Failed to send storage dump result through channel. Error: {err}"
+                            )
+                        })
+                });
 
                 chunk_index += 1;
             }
@@ -1682,6 +1691,31 @@ impl PeerHandler {
                     for (i, storage) in account_storages.into_iter().enumerate() {
                         all_account_storages[start_index + i] = storage;
                     }
+                }
+            }
+
+            // Check if any write storage task finished
+            if let Ok(dump_storage_result) = dump_storage_result_receiver.try_recv() {
+                if let Err(dump_storage_data) = dump_storage_result {
+                    if dump_storage_data.error == ErrorKind::StorageFull {
+                        panic!("Storage full"); // TODO: consider returning an error
+                    }
+                    // If the dumping failed, retry it
+                    let dump_storage_result_sender_cloned = dump_storage_result_sender.clone();
+                    tokio::task::spawn(async move {
+                        let DumpError { path, contents, .. } = dump_storage_data;
+                        // Write the storage data
+                        let result = dump_to_file(path, contents);
+                        // Send the result through the channel
+                        dump_storage_result_sender_cloned
+                            .send(result)
+                            .await
+                            .inspect_err(|err| {
+                                error!(
+                                    "Failed to send storage dump result through channel. Error: {err}"
+                                )
+                        })
+                    });
                 }
             }
 
@@ -2179,7 +2213,7 @@ fn format_duration(duration: Duration) -> String {
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
-pub struct AccountDumpError {
+pub struct DumpError {
     pub path: String,
     pub contents: Vec<u8>,
     pub error: ErrorKind,
