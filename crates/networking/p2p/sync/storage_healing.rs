@@ -308,7 +308,7 @@ pub async fn heal_storage_trie(
         "Started Storage Healing with {} accounts",
         account_paths.len()
     );
-    let mut handle = StorageHealer::start(StorageHealer {
+    let mut handle = StorageHealer::start_blocking(StorageHealer {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
         store,
