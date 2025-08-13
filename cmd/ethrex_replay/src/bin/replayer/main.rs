@@ -318,13 +318,8 @@ async fn replay_latest_block(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    let block_run_report = BlockRunReport::new_for(
-        block,
-        network.clone(),
-        run_result,
-        ReplayerMode::Prove,
-        elapsed,
-    );
+    let block_run_report =
+        BlockRunReport::new_for(block, network.clone(), run_result, replayer_mode, elapsed);
 
     if block_run_report.run_result.is_err() {
         tracing::error!("{block_run_report}");
