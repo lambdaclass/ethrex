@@ -362,7 +362,10 @@ impl L1Committer {
             };
 
             let Ok((bundle, latest_blob_size)) = result else {
-                warn!(
+                if block_to_commit_number == first_block_of_batch {
+                    return Err(CommitterError::InternalError("Not enough blob space for a single block batch".to_string()));
+                }
+               warn!(
                     "Batch size limit reached. Any remaining blocks will be processed in the next batch."
                 );
                 // Break loop. Use the previous generated blobs_bundle.
