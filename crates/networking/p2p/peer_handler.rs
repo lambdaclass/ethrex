@@ -866,7 +866,9 @@ impl PeerHandler {
                 chunk_file += 1;
             }
 
-            let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
+            let new_last_metrics_update = last_metrics_update
+                .elapsed()
+                .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.accounts_downloads_tasks_queued.lock().await =
@@ -1208,7 +1210,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
+            let new_last_metrics_update = last_metrics_update
+                .elapsed()
+                .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.bytecode_downloads_tasks_queued.lock().await =
@@ -1536,7 +1540,9 @@ impl PeerHandler {
                 chunk_index += 1;
             }
 
-            let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
+            let new_last_metrics_update = last_metrics_update
+                .elapsed()
+                .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.storages_downloads_tasks_queued.lock().await =
@@ -1599,7 +1605,8 @@ impl PeerHandler {
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
                         let missing_storage_range = U256::MAX - start_hash_u256;
 
-                        let slot_count = account_storages.last().map(|v| v.len()).unwrap().max(1);
+                        let slot_count =
+                            account_storages.last().map(|v| v.len()).unwrap_or(0).max(1);
                         let storage_density = start_hash_u256 / slot_count;
 
                         let slots_per_chunk = U256::from(10000);
@@ -1847,7 +1854,10 @@ impl PeerHandler {
                     let hashed_keys: Vec<_> =
                         next_account_slots.iter().map(|slot| slot.hash).collect();
 
-                    let storage_root = storage_roots.next().unwrap();
+                    // TODO: check if this is right
+                    let Some(storage_root) = storage_roots.next() else {
+                        break;
+                    };
 
                     // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
                     if i == last_slot_index && !proof.is_empty() {
