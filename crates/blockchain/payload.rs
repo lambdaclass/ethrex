@@ -483,7 +483,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                    // self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
                     metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
