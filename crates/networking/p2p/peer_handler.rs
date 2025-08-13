@@ -99,7 +99,10 @@ async fn ask_peer_head_number(
     {
         Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
             if id == request_id && !block_headers.is_empty() {
-                let sync_head_number = block_headers.last().unwrap().number;
+                let sync_head_number = block_headers
+                    .last()
+                    .expect("Failed to get last block header")
+                    .number;
                 trace!(
                     "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
                 );
@@ -170,8 +173,7 @@ impl PeerHandler {
             .peer_table
             .get_peer_channels(capabilities)
             .await
-            .first()
-            .unwrap()
+            .first()?
             .clone();
 
         let mut max_peer_id_score = i64::MIN;
@@ -529,17 +531,8 @@ impl PeerHandler {
             }
         }
 
-        // 4) assign the tasks to the peers
-        //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-        //     4.2) mark the peer as busy
-        //     4.3) wait for the response and handle it
-
-        // 5) loop until all the chunks are received (retry to get the chunks that failed)
-
         ret.sort_by(|x, y| x.number.cmp(&y.number));
-        // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
-        // std::process::exit(0);
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
@@ -1918,7 +1911,6 @@ impl PeerHandler {
                 .zip(current_account_storages)
                 .collect::<Vec<_>>()
                 .encode_to_vec();
-
             if !std::fs::exists(&account_storages_snapshots_dir).expect("Failed") {
                 std::fs::create_dir_all(&account_storages_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
