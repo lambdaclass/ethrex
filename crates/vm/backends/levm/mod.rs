@@ -55,7 +55,7 @@ impl LEVM {
 
             println!(
                 "tx: {}, gas used: {}, cumulative gas: {}, result {:?}",
-                tx.compute_hash().to_string(),
+                hex::encode(tx.compute_hash()),
                 report.gas_used,
                 cumulative_gas_used,
                 &report.result
