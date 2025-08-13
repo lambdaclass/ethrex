@@ -26,7 +26,7 @@ use std::{
 use tracing::{debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_IN_FLIGHT_REQUESTS: usize = 777;
+const MAX_IN_FLIGHT_REQUESTS: usize = 5;
 const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
@@ -390,7 +390,7 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(2);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);
@@ -402,18 +402,20 @@ async fn ask_peers_for_nodes(
                 sent_time: Instant::now(),
             },
         );
+        let gtn = GetTrieNodes {
+            id: req_id,
+            root_hash: state_root,
+            paths,
+            bytes: MAX_RESPONSE_BYTES,
+        };
+        debug!("We are sending the following nodes {:?}", gtn);
         // If the genserver is dead we handle it by just clearing the request in clear_inflight_requests
         // and re enqueing it later. Not the most graceful solution, but it works.
         let _ = peer
             .1
             .connection
             .cast(CastMessage::BackendRequest(
-                Message::GetTrieNodes(GetTrieNodes {
-                    id: req_id,
-                    root_hash: state_root,
-                    paths,
-                    bytes: MAX_RESPONSE_BYTES,
-                }),
+                Message::GetTrieNodes(gtn),
                 RLPxReceiver::StorageHealer(self_handler.clone()),
             ))
             .await;
@@ -495,15 +497,11 @@ fn zip_requeue_node_responses_score_peer(
     if let Ok(nodes) = request
         .requests
         .iter()
-        .zip(trie_nodes.nodes)
+        .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
             Ok(NodeResponse {
                 node_request: node_request.clone(),
-                node: Node::decode_raw(&node_bytes).inspect_err(|err| {
-                    debug!(
-                        "We have found the error: {err}, while porcessing the node {node_bytes:?}"
-                    );
-                })?,
+                node: Node::decode_raw(&node_bytes)?,
             })
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
@@ -517,6 +515,10 @@ fn zip_requeue_node_responses_score_peer(
         }
         Some(nodes)
     } else {
+        debug!(
+            "The peer responded with these nodes with an error {:?}",
+            trie_nodes.nodes
+        );
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
