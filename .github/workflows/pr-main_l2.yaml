@@ -152,12 +152,12 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch ../../.env
+          touch .env
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=./fixtures/keys/private_keys_l1.txt \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
+          docker compose up ethrex_l1 contract_deployer
 
       - name: Start Sequencer
         run: |
@@ -211,13 +211,13 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch ../../.env
+          touch .env
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=./fixtures/keys/private_keys_l1.txt \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          docker compose up ethrex_l1 contract_deployer
 
       - name: Install rex
         run: |
@@ -293,12 +293,12 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch ../../.env
+          touch .env
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=./fixtures/keys/private_keys_l1.txt \
           COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          docker compose up ethrex_l1 contract_deployer
 
       - name: Run tests
         run: |
