@@ -56,6 +56,7 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Block hash read", skip_all)]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
@@ -102,6 +103,7 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Account code read", skip_all)]
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
