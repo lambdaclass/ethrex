@@ -5,7 +5,6 @@ mod bench;
 mod cache;
 mod cli;
 mod fetcher;
-mod networks;
 mod plot_composition;
 mod rpc;
 mod run;

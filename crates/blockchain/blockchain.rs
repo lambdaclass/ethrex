@@ -185,7 +185,6 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
         let mut codes = HashMap::new();
 
@@ -303,10 +302,6 @@ impl Blockchain {
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 keys.push(address.0.to_vec());
-                encoded_storage_tries
-                    .entry(address)
-                    .or_default()
-                    .extend_from_slice(&witness);
             }
             trie = updated_trie;
         }
@@ -353,8 +348,7 @@ impl Blockchain {
         Ok(ExecutionWitnessResult {
             keys: keys.into_iter().map(Bytes::from).collect(),
             codes,
-            // for initializing these rebuild_tries function must be called
-            //TODO: See if we should call it here so that we don't have an inconsistent struct.
+            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct.
             state_trie: None,
             storage_tries: None,
             block_headers,

@@ -3897,6 +3897,7 @@ dependencies = [
  "directories",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
@@ -3981,6 +3982,17 @@ dependencies = [
  "tinyvec",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ethrex-config"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-p2p",
+ "hex",
+ "keccak-hash",
+ "serde_json",
 ]
 
 [[package]]
@@ -4240,6 +4252,7 @@ dependencies = [
  "charming",
  "clap 4.5.40",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-l2",
  "ethrex-levm",
  "ethrex-p2p",

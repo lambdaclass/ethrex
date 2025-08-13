@@ -111,17 +111,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blob_proof,
     } = input;
 
-    let first_header = &blocks
-        .first()
-        .ok_or(StatelessExecutionError::EmptyBatchError)?
-        .header;
-
     let chain_id = match db {
         WitnessProof::DB(ref prover_db) => prover_db.chain_config.chain_id,
         WitnessProof::Witness(ref execution_witness_result) => {
             execution_witness_result.chain_config.chain_id
         }
     };
+
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
         return stateless_validation_l2(
@@ -131,11 +127,10 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             blob_commitment,
             blob_proof,
             chain_id,
-            first_header,
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id, first_header)
+    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
@@ -143,7 +138,6 @@ pub fn stateless_validation_l1(
     db: WitnessProof,
     elasticity_multiplier: u64,
     chain_id: u64,
-    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -152,13 +146,10 @@ pub fn stateless_validation_l1(
         non_privileged_count,
         ..
     } = match db {
-        WitnessProof::Witness(db) => {
-            execute_stateless(blocks, db, elasticity_multiplier, first_header)?
-        }
-        WitnessProof::DB(db) => {
-            execute_stateless_prover_db(blocks, db, elasticity_multiplier, first_header)?
-        }
+        WitnessProof::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        WitnessProof::DB(db) => execute_stateless_prover_db(blocks, db, elasticity_multiplier)?,
     };
+
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -182,7 +173,6 @@ pub fn stateless_validation_l2(
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
-    first_header: &BlockHeader,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let initial_db = match db {
         WitnessProof::Witness(ref db) => WitnessProof::Witness(ExecutionWitnessResult {
@@ -207,12 +197,8 @@ pub fn stateless_validation_l2(
         last_block_hash,
         non_privileged_count,
     } = match db {
-        WitnessProof::Witness(db) => {
-            execute_stateless(blocks, db, elasticity_multiplier, first_header)?
-        }
-        WitnessProof::DB(db) => {
-            execute_stateless_prover_db(blocks, db, elasticity_multiplier, first_header)?
-        }
+        WitnessProof::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        WitnessProof::DB(db) => execute_stateless_prover_db(blocks, db, elasticity_multiplier)?,
     };
 
     let (l1messages, privileged_transactions) =
@@ -231,7 +217,7 @@ pub fn stateless_validation_l2(
         match initial_db {
             WitnessProof::Witness(mut initial_db) => {
                 initial_db
-                    .rebuild_tries(first_header)
+                    .rebuild_tries()
                     .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
                 let wrapped_db = ExecutionWitnessWrapper::new(initial_db);
                 let state_diff = prepare_state_diff(
@@ -284,9 +270,8 @@ fn execute_stateless(
     blocks: &[Block],
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
-    first_header: &BlockHeader,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries(first_header)
+    db.rebuild_tries()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
@@ -414,7 +399,6 @@ fn execute_stateless_prover_db(
     blocks: &[Block],
     mut prover_db: ProverDB,
     elasticity_multiplier: u64,
-    _first_header: &BlockHeader,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let chain_config = prover_db.get_chain_config();
     if let Ok(Some(invalid_block_header)) = prover_db.get_first_invalid_block_hash() {
