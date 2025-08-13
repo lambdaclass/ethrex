@@ -253,7 +253,7 @@ pub async fn heal_storage_trie(
             &state.peer_handler,
             state.state_root,
             &mut state.scored_peers,
-            task_sender.clone(),
+            &task_sender,
         )
         .await;
 
@@ -314,7 +314,7 @@ async fn ask_peers_for_nodes(
     peers: &PeerHandler,
     state_root: H256,
     scored_peers: &mut HashMap<H256, PeerScore>,
-    task_sender: Sender<TrieNodes>,
+    task_sender: &Sender<TrieNodes>,
 ) {
     while (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some(mut peer) =
