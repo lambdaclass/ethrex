@@ -819,6 +819,7 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
+        let mut scores = self.peer_scores.lock().await;
 
         // TODO: handle this error
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
@@ -883,10 +884,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    *self.peer_scores.lock().await.entry(peer_id).or_default() -= 1;
+                    *scores.entry(peer_id).or_default() -= 1;
                     continue;
                 }
-                *self.peer_scores.lock().await.entry(peer_id).or_default() += 1;
+                *scores.entry(peer_id).or_default() += 1;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -936,20 +937,10 @@ impl PeerHandler {
                 continue;
             };
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-                .await;
-
-            for (peer_id, _peer_channels) in &peer_channels {
-                if downloaders.contains_key(peer_id) {
-                    continue;
-                }
-                downloaders.insert(*peer_id, true);
-                debug!("{peer_id} added as downloader");
-            }
-
-            let Some(mut downloader) = self.get_available_downloader(&mut downloaders).await else {
+            let Some(mut downloader) = self
+                .get_available_downloader(&mut scores, &mut downloaders)
+                .await
+            else {
                 debug!("No available downloader found, retrying");
                 continue;
             };
@@ -2068,8 +2059,22 @@ impl PeerHandler {
     // Returns None if no peer is available
     async fn get_available_downloader(
         &self,
+        scores: &mut HashMap<H256, i64>,
         downloaders: &mut BTreeMap<H256, bool>,
     ) -> Option<GenServerHandle<Downloader>> {
+        let peer_channels = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
+        for (peer_id, _peer_channels) in &peer_channels {
+            if downloaders.contains_key(peer_id) {
+                continue;
+            }
+            downloaders.insert(*peer_id, true);
+            debug!("{peer_id} added as downloader");
+        }
+
         // TODO: check if downloaders can be instantiated here instead of reciving it as a parameter
         let free_downloaders = downloaders
             .clone()
@@ -2088,10 +2093,9 @@ impl PeerHandler {
         }
 
         let (mut free_peer_id, _) = free_downloaders[0];
-        let peer_scores = self.peer_scores.lock().await; // WARNING: lock elsewhere may cause deadlock!!
         for (peer_id, _) in free_downloaders.iter() {
-            let peer_id_score = peer_scores.get(&peer_id).unwrap_or(&0);
-            let max_peer_id_score = peer_scores.get(&free_peer_id).unwrap_or(&0);
+            let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+            let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
             if peer_id_score >= max_peer_id_score {
                 free_peer_id = *peer_id;
             }
