@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::TrieError;
+use ethrex_trie::{NodeHash, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::path::PathBuf;
 use std::{
@@ -786,8 +786,8 @@ impl Syncer {
 
         let mut chunk_index = 0;
 
-        let account_state_snapshots_dir = get_account_state_snapshots_dir()
-            .expect("Failed to get account_state_snapshots directory");
+        let account_state_snapshots_dir =
+            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
 
         info!("Starting to download storage ranges from peers");
 
@@ -802,9 +802,11 @@ impl Syncer {
             .replace(SystemTime::now());
 
         for entry in std::fs::read_dir(&account_state_snapshots_dir)
-            .expect("Failed to read account_state_snapshots dir")
+            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
         {
-            let entry = entry.expect("Failed to read dir entry");
+            let entry = entry.map_err(|_| {
+                SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+            })?;
 
             let snapshot_path = entry.path();
 
@@ -855,9 +857,11 @@ impl Syncer {
         let mut bytecode_hashes = Vec::new();
 
         for entry in std::fs::read_dir(&account_state_snapshots_dir)
-            .expect("Failed to read account_state_snapshots dir")
+            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
         {
-            let entry = entry.expect("Failed to read dir entry");
+            let entry = entry.map_err(|_| {
+                SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+            })?;
 
             let snapshot_path = entry.path();
 
@@ -886,8 +890,7 @@ impl Syncer {
                     bytecode_hashes.dedup();
                     Ok((current_state_root, bytecode_hashes))
                 })
-                .await
-                .expect("")?;
+                .await??;
 
             computed_state_root = current_state_root;
             bytecode_hashes.extend(&current_bytecode_hashes);
@@ -915,11 +918,13 @@ impl Syncer {
             Arc::new(Mutex::new(HashMap::new()));
 
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .expect("Failed to get account_storages_snapshots directory");
+            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
         for entry in std::fs::read_dir(&account_storages_snapshots_dir)
-            .expect("Failed to read account_storages_snapshots dir")
+            .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
         {
-            let entry = entry.expect("Failed to read dir entry");
+            let entry = entry.map_err(|_| {
+                SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
+            })?;
 
             let snapshot_path = entry.path();
 
@@ -936,30 +941,23 @@ impl Syncer {
             let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                 let store: Store = store_clone;
 
-                let (sender, receiver) = std::sync::mpsc::channel();
-
                 // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
                 // We need to fix this issue in request_storage_ranges and remove this filter.
                 account_storages_snapshot
                     .into_par_iter()
                     .filter(|(_account_hash, storage)| !storage.is_empty())
-                    .for_each_with(sender, |sender, (account_hash, key_value_pairs)| {
+                    .map(|(account_hash, key_value_pairs)| {
                         compute_storage_roots(
                             maybe_big_account_storage_state_roots_clone.clone(),
                             store.clone(),
                             account_hash,
                             key_value_pairs,
                             pivot_hash,
-                            sender,
                         )
-                        .expect("Failed to compute storage roots");
-                        // todo send error through sender
-                    });
-
-                receiver.iter().collect::<Vec<_>>()
+                    })
+                    .collect::<Result<Vec<_>, SyncError>>()
             })
-            .await
-            .expect("");
+            .await??;
 
             store
                 .write_storage_trie_nodes_batch(storage_trie_node_changes)
@@ -976,10 +974,11 @@ impl Syncer {
                 .ok_or(SyncError::AccountState(pivot_hash, *account_hash))?;
 
             if *computed_storage_root != account_state.storage_root {
-                error!(
-                    "Got different state roots for account hash: {account_hash:?}, expected: {:?}, computed: {computed_storage_root:?}",
-                    account_state.storage_root
-                );
+                return Err(SyncError::DifferentStateRoots(
+                    account_hash.clone(),
+                    account_state.storage_root,
+                    *computed_storage_root,
+                ));
             }
         }
 
@@ -1043,9 +1042,11 @@ async fn get_number_of_storage_tries_to_download() -> Result<u64, SyncError> {
         get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
     let mut number_of_accounts_with_non_empty_storage = 0;
     for entry in std::fs::read_dir(&account_state_snapshots_dir)
-        .expect("Failed to read account_state_snapshots dir")
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
     {
-        let entry = entry.expect("Failed to read dir entry");
+        let entry = entry.map_err(|_| {
+            SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+        })?;
         let snapshot_path = entry.path();
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
@@ -1071,11 +1072,10 @@ fn compute_storage_roots(
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
-    sender: &mut std::sync::mpsc::Sender<(H256, Vec<(ethrex_trie::NodeHash, Vec<u8>)>)>,
-) -> Result<(), SyncError> {
+) -> Result<(H256, Vec<(NodeHash, Vec<u8>)>), SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots_clone
         .lock()
-        .expect("Failed to acquire lock")
+        .map_err(|_| SyncError::MaybeBigAccount)?
         .entry(account_hash)
     {
         Entry::Occupied(occupied_entry) => *occupied_entry.get(),
@@ -1096,7 +1096,7 @@ fn compute_storage_roots(
 
     maybe_big_account_storage_state_roots_clone
         .lock()
-        .expect("Failed to acquire lock")
+        .map_err(|_| SyncError::MaybeBigAccount)?
         .insert(account_hash, computed_state_root);
 
     let account_state = store
@@ -1106,10 +1106,7 @@ fn compute_storage_roots(
         METRICS.storage_tries_state_roots_computed.inc();
     }
 
-    sender
-        .send((account_hash, changes))
-        .expect("Failed to send changes");
-    Ok(())
+    Ok((account_hash, changes))
 }
 
 async fn update_pivot(
@@ -1126,8 +1123,7 @@ async fn update_pivot(
         let (peer_id, mut peer_channel) = peers
             .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
             .await
-            .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
-            .expect("Error");
+            .ok_or(SyncError::NoPeers)?;
 
         let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
         info!(
@@ -1157,7 +1153,7 @@ async fn update_pivot(
             let block_headers = peers
                 .request_block_headers(block_number + 1, pivot.hash())
                 .await
-                .expect("failed to fetch headers");
+                .ok_or(SyncError::NoBlockHeaders)?;
             sync_state.process_incoming_headers(block_headers).await?;
         } else {
             panic!("Called update_pivot outside snapsync mode");
@@ -1204,6 +1200,16 @@ enum SyncError {
     BytecodesNotFound,
     #[error("Failed to get account state snapshots directory")]
     AccountStateSnapshotsDirNotFound,
+    #[error("Failed to get account storages snapshots directory")]
+    AccountStoragesSnapshotsDirNotFound,
+    #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
+    DifferentStateRoots(H256, H256, H256),
+    #[error("Failed to send data through the channel")]
+    Sender,
+    #[error("We aren't finding get_peer_channel_with_retry")]
+    NoPeers,
+    #[error("Failed to get block headers")]
+    NoBlockHeaders,
 }
 
 impl<T> From<SendError<T>> for SyncError {
