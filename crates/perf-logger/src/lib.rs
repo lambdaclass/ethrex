@@ -1,7 +1,9 @@
+use chrono::Utc;
 use crossbeam_queue::SegQueue;
 use std::io::Write;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
+use std::time::SystemTime;
 use std::{
     borrow::Cow,
     thread::sleep,
@@ -67,7 +69,7 @@ fn process_logs_thread() {
             Some((elapsed_since_start, label, value)) => {
                 writeln!(
                     file,
-                    "{} | {} | {} | {}",
+                    "{} | {} | {} | {} | {}",
                     elapsed_since_start,
                     label,
                     match value {
@@ -80,7 +82,8 @@ fn process_logs_thread() {
                         Value::Count(_) => "Count",
                         Value::Percentage(_) => "Percentage",
                         Value::Gigagas(_) => "Ggas/s",
-                    }
+                    },
+                    Utc::now().format("%d.%m.%y - %H:%M:%S")
                 )
                 .ok();
             }

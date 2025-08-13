@@ -4,4 +4,5 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chrono = "0.4.41"
 crossbeam-queue = "0.3.12"
