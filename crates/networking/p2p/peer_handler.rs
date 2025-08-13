@@ -845,12 +845,13 @@ impl PeerHandler {
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result =
-                        std::fs::write(path.clone(), account_state_chunk.clone()).map_err(|_| {
-                            AccountDumpError {
-                                path,
-                                contents: account_state_chunk,
-                            }
+                    let result = std::fs::write(path.clone(), account_state_chunk.clone())
+                        .inspect_err(|err| {
+                            error!("Failed to write accounts to path {path}. Error: {err}")
+                        })
+                        .map_err(|_| AccountDumpError {
+                            path,
+                            contents: account_state_chunk,
                         });
                     dump_account_result_sender_cloned
                         .send(result)
@@ -923,6 +924,9 @@ impl PeerHandler {
                         // Dump the account data
                         // TODO: check the error type and handle it properly
                         let result = std::fs::write(path.clone(), contents.clone())
+                            .inspect_err(|err| {
+                                error!("Failed to write accounts to path {path}. Error: {err}")
+                            })
                             .map_err(|_| AccountDumpError { path, contents });
                         // Send the result through the channel
                         dump_account_result_sender_cloned
