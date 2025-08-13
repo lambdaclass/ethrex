@@ -770,11 +770,16 @@ impl Syncer {
         debug!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
-
+        let mut pivot_is_stale = true;
         let mut bytecode_hashes = Vec::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
-                .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+                .request_account_range(
+                    state_root,
+                    H256::zero(),
+                    H256::repeat_byte(0xff),
+                    staleness_timestamp,
+                )
                 .await;
 
             let empty = *EMPTY_TRIE_HASH;
@@ -829,11 +834,15 @@ impl Syncer {
                         account_storage_roots.clone(),
                         chunk_index,
                         &mut downloaded_account_storages,
+                        staleness_timestamp,
                     )
                     .await;
                 dbg!(&downloaded_account_storages);
             }
             info!("All account storages downloaded successfully");
+
+            pivot_is_stale = current_unix_time() > staleness_timestamp;
+
             info!(
                 "Finished downloading account ranges, total storage slots: {}",
                 *METRICS.downloaded_storage_slots.lock().await
@@ -1007,7 +1016,9 @@ impl Syncer {
             let storages_store_time =
                 Instant::now().saturating_duration_since(storages_store_start);
             info!("Finished storing storage tries in: {storages_store_time:?}");
-        } else {
+        }
+
+        if pivot_is_stale {
             info!("Starting Fast Sync");
             let membatch = OnceCell::new();
             membatch.get_or_init(HashMap::new);
