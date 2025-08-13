@@ -100,7 +100,7 @@ async fn ask_peer_head_number(
             if id == request_id && !block_headers.is_empty() {
                 let sync_head_number = block_headers
                     .last()
-                    .expect("Failed to get last block header")
+                    .expect("Failed to get last block header") // we just checked block_headers is not empty
                     .number;
                 trace!(
                     "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
@@ -303,7 +303,9 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
 
         loop {
-            let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
+            let new_last_metrics_update = last_metrics_update
+                .elapsed()
+                .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.header_downloads_tasks_queued.lock().await =
@@ -761,7 +763,13 @@ impl PeerHandler {
     ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_account_range(&self, state_root: H256, start: H256, limit: H256) {
+    pub async fn request_account_range(
+        &self,
+        state_root: H256,
+        start: H256,
+        limit: H256,
+        account_state_snapshots_dir: String,
+    ) {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -818,9 +826,6 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
-        // TODO: handle this error
-        let account_state_snapshots_dir = get_account_state_snapshots_dir()
-            .expect("Failed to get account_state_snapshots directory");
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -1442,6 +1447,7 @@ impl PeerHandler {
         &self,
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
+        account_storages_snapshots_dir: String,
         mut chunk_index: u64,
         downloaded_count: &mut u64,
     ) -> u64 {
@@ -1504,7 +1510,6 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
                 let current_account_hashes = account_storage_roots
