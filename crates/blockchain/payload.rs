@@ -45,19 +45,19 @@ type PayloadBuildTask = tokio::task::JoinHandle<Result<PayloadBuildResult, Chain
 
 #[derive(Debug)]
 pub enum PayloadOrTask {
-    Payload(PayloadBuildResult),
+    Payload(Box<PayloadBuildResult>),
     Task(PayloadBuildTask),
 }
 
 impl PayloadOrTask {
     pub async fn into_payload(&mut self) -> Result<PayloadBuildResult, ChainError> {
         match self {
-            PayloadOrTask::Payload(payload) => Ok(payload.clone()),
+            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
             PayloadOrTask::Task(task) => {
                 let payload_result = task
                     .await
                     .map_err(|_| ChainError::Custom("Failed to join task".to_string()))??;
-                *self = PayloadOrTask::Payload(payload_result.clone());
+                *self = PayloadOrTask::Payload(Box::new(payload_result.clone()));
                 Ok(payload_result)
             }
         }
