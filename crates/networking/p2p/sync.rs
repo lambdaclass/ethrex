@@ -957,7 +957,10 @@ impl Syncer {
 
                         maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
 
-                        METRICS.storage_tries_state_roots_computed.inc();
+                        let account_state = store.get_account_state_by_acc_hash(pivot_hash, account_hash).unwrap().unwrap();
+                        if computed_state_root == account_state.storage_root {
+                            METRICS.storage_tries_state_roots_computed.inc();
+                        }
 
                         sender.send((account_hash, changes)).expect("Failed to send changes");
                     });
