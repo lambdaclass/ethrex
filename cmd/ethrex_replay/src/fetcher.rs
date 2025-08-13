@@ -91,7 +91,35 @@ pub async fn get_blockdata(
             let db = rpc_db
                 .to_exec_db(&block)
                 .wrap_err("failed to build execution db")?;
-            return Ok(Cache::new(vec![block], WitnessProof::DB(db)));
+            let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+                .elapsed()
+                .unwrap_or_else(|e| {
+                    panic!("SystemTime::elapsed failed: {e}");
+                });
+
+            info!(
+                "Got execution witness for block {requested_block_number} in {}",
+                format_duration(execution_witness_retrieval_duration)
+            );
+
+            info!("Caching block {requested_block_number}");
+
+            let block_cache_start_time = SystemTime::now();
+
+            let cache = Cache::new(vec![block], WitnessProof::DB(db));
+
+            write_cache(&cache, &file_name).expect("failed to write cache");
+
+            let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
+                panic!("SystemTime::elapsed failed: {e}");
+            });
+
+            info!(
+                "Cached block {requested_block_number} in {}",
+                format_duration(block_cache_duration)
+            );
+
+            return Ok(cache);
         }
     };
 
