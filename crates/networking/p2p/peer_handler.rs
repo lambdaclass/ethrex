@@ -952,31 +952,6 @@ impl PeerHandler {
                 debug!("{peer_id} added as downloader");
             }
 
-            // MOVE TO GET_FREE_DOWNLOADER
-            let free_downloaders = downloaders
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let (mut free_peer_id, _) = free_downloaders[0];
-
-            for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-                if peer_id_score >= max_peer_id_score {
-                    free_peer_id = *peer_id;
-                }
-            }
-
             let Some(mut downloader) = self.get_available_downloader(&mut downloaders).await else {
                 debug!("No available downloader found, retrying");
                 continue;
