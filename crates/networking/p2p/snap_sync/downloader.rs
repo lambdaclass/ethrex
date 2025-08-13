@@ -175,7 +175,8 @@ impl GenServer for Downloader {
                         .ok();
                 } else {
                     tracing::debug!("Failed to get account range");
-                    task_sender.send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                    task_sender
+                        .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
                         .await
                         .ok();
                 }

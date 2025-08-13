@@ -977,25 +977,6 @@ impl PeerHandler {
                 }
             }
 
-            // TODO - CHANGE LOGIC HERE, CREATE A DOWNLOADER SPAWNED ACTOR
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
-            else {
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                downloaders.remove(&free_peer_id);
-                continue;
-            };
-            downloaders
-                .entry(free_peer_id)
-                .and_modify(|downloader_is_free| {
-                    *downloader_is_free = false;
-                });
-            debug!("Downloader {free_peer_id} is now busy");
-
             let Some(mut downloader) = self.get_available_downloader(&mut downloaders).await else {
                 debug!("No available downloader found, retrying");
                 continue;
