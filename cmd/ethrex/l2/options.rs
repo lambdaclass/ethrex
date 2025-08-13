@@ -13,12 +13,17 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
+use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
+use tracing::Level;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -93,7 +98,7 @@ pub struct SequencerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_MONITOR",
-        help_heading = "Sequencer options"
+        help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
 }
@@ -126,8 +131,6 @@ pub enum SequencerOptionsError {
     NoCoinbaseAddress,
     #[error("No on-chain proposer address was provided")]
     NoOnChainProposerAddress,
-    #[error("No proof coordinator TDX private key was provided")]
-    NoProofCoorditanorTdxPrivateKey,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -191,12 +194,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
-                dev_mode: opts.proof_coordinator_opts.dev_mode,
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key
-                    .ok_or(SequencerOptionsError::NoProofCoorditanorTdxPrivateKey)?,
+                    .proof_coordinator_tdx_private_key,
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -499,7 +500,6 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
-        required_unless_present = "dev"
     )]
     pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
@@ -549,14 +549,6 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
-    #[arg(
-        long = "proof-coordinator.dev-mode",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
-        help_heading = "Proof coordinator options"
-    )]
-    pub dev_mode: bool,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -572,13 +564,7 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: true,
-            proof_coordinator_tdx_private_key: Some(
-                utils::parse_private_key(
-                    "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-                )
-                .unwrap(),
-            ),
+            proof_coordinator_tdx_private_key: None,
         }
     }
 }
@@ -735,6 +721,76 @@ impl Default for MonitorOptions {
         Self {
             tick_rate: 1000,
             batch_widget_height: None,
+        }
+    }
+}
+
+#[derive(Parser)]
+pub struct ProverClientOptions {
+    #[arg(
+        long = "backend",
+        env = "PROVER_CLIENT_BACKEND",
+        default_value = "exec",
+        help_heading = "Prover client options",
+        value_enum
+    )]
+    pub backend: Backend,
+    #[arg(
+        long = "proof-coordinator",
+        value_name = "URL",
+        env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
+        help_heading = "Prover client options",
+        help = "URL of the sequencer's proof coordinator"
+    )]
+    pub proof_coordinator_endpoint: Url,
+    #[arg(
+        long = "proving-time",
+        value_name = "PROVING_TIME",
+        env = "PROVER_CLIENT_PROVING_TIME",
+        help = "Time to wait before requesting new data to prove",
+        help_heading = "Prover client options",
+        default_value_t = 5000
+    )]
+    pub proving_time_ms: u64,
+    #[arg(
+        long = "log.level",
+        default_value_t = Level::INFO,
+        value_name = "LOG_LEVEL",
+        help = "The verbosity level used for logs.",
+        long_help = "Possible values: info, debug, trace, warn, error",
+        help_heading = "Prover client options"
+    )]
+    pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        value_name = "BOOLEAN",
+        env = "PROVER_CLIENT_ALIGNED",
+        help = "Activate aligned proving system",
+        help_heading = "Prover client options"
+    )]
+    pub aligned: bool,
+}
+
+impl From<ProverClientOptions> for ProverConfig {
+    fn from(config: ProverClientOptions) -> Self {
+        Self {
+            backend: config.backend,
+            proof_coordinator: config.proof_coordinator_endpoint,
+            proving_time_ms: config.proving_time_ms,
+            aligned_mode: config.aligned,
+        }
+    }
+}
+
+impl Default for ProverClientOptions {
+    fn default() -> Self {
+        Self {
+            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            proving_time_ms: 5000,
+            log_level: Level::INFO,
+            aligned: false,
+            backend: Backend::Exec,
         }
     }
 }
