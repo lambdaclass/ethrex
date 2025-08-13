@@ -1,6 +1,6 @@
 use std::{fmt, fs::OpenOptions, io::Write, path::PathBuf};
 
-use crate::runner_v2::{error::RunnerError, result_check::PostCheckResult, types::Test};
+use crate::modules::{error::RunnerError, result_check::PostCheckResult, types::Test};
 
 pub fn add_test_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
     let (test, failed_test_cases) = test_result;
@@ -12,7 +12,7 @@ pub fn add_test_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<
     Ok(())
 }
 pub fn write_passing_test_to_report(test: &Test) {
-    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let successful_report_path = PathBuf::from("./success_report.txt");
     let mut report = OpenOptions::new()
         .append(true)
         .create(true)
@@ -22,7 +22,7 @@ pub fn write_passing_test_to_report(test: &Test) {
     report.write_all(content.as_bytes()).unwrap()
 }
 pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostCheckResult>) {
-    let failing_report_path = PathBuf::from("./runner_v2/failure_report.txt");
+    let failing_report_path = PathBuf::from("./failure_report.txt");
     let mut report = OpenOptions::new()
         .append(true)
         .create(true)
