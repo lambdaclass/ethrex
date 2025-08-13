@@ -96,7 +96,7 @@ impl Store {
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
+                engine: Arc::new(RedBStore::new(_path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },

@@ -23,6 +23,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
+use std::path::Path;
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::UpdateBatch;
@@ -74,9 +75,9 @@ pub struct RedBStore {
 
 impl RefUnwindSafe for RedBStore {}
 impl RedBStore {
-    pub fn new() -> Result<Self, StoreError> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Arc::new(init_db()?),
+            db: Arc::new(init_db(path)?),
         })
     }
 
@@ -1398,8 +1399,8 @@ impl redb::Key for SnapStateIndex {
     }
 }
 
-pub fn init_db() -> Result<Database, StoreError> {
-    let db = Database::create("ethrex.redb")?;
+pub fn init_db(path: impl AsRef<Path>) -> Result<Database, StoreError> {
+    let db = Database::create(path)?;
 
     let table_creation_txn = db.begin_write().map_err(Box::new)?;
     table_creation_txn.open_table(STATE_TRIE_NODES_TABLE)?;
