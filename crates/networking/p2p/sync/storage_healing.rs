@@ -218,6 +218,18 @@ pub async fn heal_storage_trie(
     loop {
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
+            info!(
+                "We are storage healing. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                state.requests.len(),
+                state.download_queue.len(),
+                state.maximum_length_seen,
+                state.leafs_healed,
+                state.roots_healed,
+                state.succesful_downloads as f64
+                    / (state.succesful_downloads as f64 + state.failed_downloads as f64)
+            );
+            state.succesful_downloads = 0;
+            state.failed_downloads = 0;
         }
 
         if state.requests.is_empty() && state.download_queue.is_empty() {
@@ -226,6 +238,47 @@ pub async fn heal_storage_trie(
 
         if current_unix_time() > state.staleness_timestamp {
             return false;
+        }
+
+        clear_inflight_requests(
+            &mut state.requests,
+            &mut state.scored_peers,
+            &mut state.download_queue,
+            &mut state.failed_downloads,
+        )
+        .await;
+        ask_peers_for_nodes(
+            &mut state.download_queue,
+            &mut state.requests,
+            &state.peer_handler,
+            state.state_root,
+            &mut state.scored_peers,
+            task_sender.clone(),
+        )
+        .await;
+
+        if let Ok(trie_nodes) = task_receiver.try_recv() {
+            if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
+                &mut state.requests,
+                &mut state.scored_peers,
+                &mut state.download_queue,
+                trie_nodes,
+                &mut state.succesful_downloads,
+                &mut state.failed_downloads,
+            ) {
+                let _ = process_node_responses(
+                    &mut nodes_from_peer,
+                    &mut state.download_queue,
+                    state.store.clone(),
+                    state
+                        .membatch
+                        .get_mut()
+                        .expect("We launched the storage healer without a membatch"),
+                    &mut state.leafs_healed,
+                    &mut state.roots_healed,
+                    &mut state.maximum_length_seen,
+                ); // TODO: if we have a stor error we should stop
+            };
         }
     }
 }
