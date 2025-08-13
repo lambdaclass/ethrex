@@ -242,9 +242,22 @@ impl GenServer for RLPxConnection {
                         &reason,
                     )
                     .await;
+
+                    METRICS.record_new_rlpx_conn_failure(reason).await;
+
                     self.inner_state = InnerState::Established(established_state);
                     Ok(NoSuccess(self))
                 } else {
+                    METRICS
+                        .record_new_rlpx_conn_established(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                        )
+                        .await;
+
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))
