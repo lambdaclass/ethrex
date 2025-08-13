@@ -23,7 +23,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tracing::{debug, info, trace};
+use tracing::{debug, field::debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: usize = 77;
@@ -497,7 +497,9 @@ fn zip_requeue_node_responses_score_peer(
         .map(|(node_request, node_bytes)| {
             Ok(NodeResponse {
                 node_request: node_request.clone(),
-                node: Node::decode_raw(&node_bytes)?,
+                node: Node::decode_raw(&node_bytes).inspect_err(|err|{
+                    debug!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
+                })?,
             })
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
@@ -511,10 +513,6 @@ fn zip_requeue_node_responses_score_peer(
         }
         Some(nodes)
     } else {
-        debug!(
-            "The peer responded with these nodes with an error {:?}",
-            trie_nodes.nodes
-        );
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
