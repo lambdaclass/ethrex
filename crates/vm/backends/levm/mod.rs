@@ -53,6 +53,14 @@ impl LEVM {
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
+            println!(
+                "tx: {}, gas used: {}, cumulative gas: {}, result {:?}",
+                tx.compute_hash().to_string(),
+                report.gas_used,
+                cumulative_gas_used,
+                &report.result
+            );
+
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
