@@ -31,7 +31,7 @@ On some machines, this fixes the `ERROR axum::serve::listener: accept error: Too
 To run a load test, first run the node using a command like the following in the root folder:
 
 ```bash
-cargo run --bin ethrex --release --features dev -- --network fixtures/genesis/load-test.json --dev
+cargo run --bin ethrex --release -- --network fixtures/genesis/load-test.json --dev
 ```
 
 Genesis-l2-ci has many rich accounts and does not include the prague fork, which is important for dev mode until it's fixed.
@@ -73,7 +73,7 @@ Load tests are usually used to get performance metrics. We usually want to gener
 To produce a flamegraph, run the node in the following way.
 
 ```bash
-cargo flamegraph --root --bin ethrex --release --features dev -- --network fixtures/genesis/load-test.json --dev
+cargo flamegraph --root --bin ethrex --release -- --network fixtures/genesis/load-test.json --dev
 ```
 
 The "root" command is only needed for mac. It can be removed if running on linux.
@@ -81,7 +81,9 @@ The "root" command is only needed for mac. It can be removed if running on linux
 For a samply report, run the following:
 
 ```bash
-samply record cargo run --bin ethrex --release --features dev -- --network fixtures/genesis/load-test.json --dev
+cargo b --profile release-with-debug && \
+ ./target/release-with-debug/ethrex removedb --force && \
+ samply record -r 10000 ./target/release-with-debug/ethrex --network fixtures/genesis/load-test.json --dev
 ```
 
 ## Interacting with reth
