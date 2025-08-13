@@ -79,35 +79,24 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--l2.dev-genesis
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
 	--sp1.deploy-verifier \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--l2.dev-genesis
 
 # ==============================================================================
 # L2
