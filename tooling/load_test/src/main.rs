@@ -277,7 +277,7 @@ async fn wait_until_all_included(
             assert!(result.receipt.status);
             completed_tasks += 1;
             println!(
-                "{:2} of transactions were included from {encoded_src}",
+                "{:.2}% of transactions from {encoded_src} were executed",
                 (completed_tasks as f64 / tasks.len() as f64) * 100.0
             );
         }
