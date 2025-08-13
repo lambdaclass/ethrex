@@ -851,10 +851,11 @@ impl PeerHandler {
                                 contents: account_state_chunk,
                             }
                         });
-                    dump_account_result_sender_cloned.send(result).await;
-                })
-                .await
-                .unwrap();
+                    dump_account_result_sender_cloned
+                        .send(result)
+                        .await
+                        .expect("Failed to send dump account result through the channel");
+                });
 
                 chunk_file += 1;
             }
@@ -919,10 +920,11 @@ impl PeerHandler {
                         let result = std::fs::write(path.clone(), contents.clone())
                             .map_err(|_| AccountDumpError { path, contents });
                         // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;
-                    })
-                    .await
-                    .unwrap();
+                        dump_account_result_sender_cloned
+                            .send(result)
+                            .await
+                            .expect("Failed to send account dump result through channel");
+                    });
                 }
             }
 
@@ -1376,16 +1378,12 @@ impl PeerHandler {
                         return;
                     }
                     // Validate response by hashing bytecodes
-                    let validated_codes: Vec<Bytes> = tokio::task::spawn_blocking(move || {
-                        codes
-                            .into_iter()
-                            .zip(hashes_to_request)
-                            .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
-                            .map(|(b, _hash)| b)
-                            .collect()
-                    })
-                    .await
-                    .unwrap();
+                    let validated_codes: Vec<Bytes> = codes
+                        .into_iter()
+                        .zip(hashes_to_request)
+                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .map(|(b, _hash)| b)
+                        .collect();
                     let result = TaskResult {
                         start_index: chunk_start,
                         remaining_start: chunk_start + validated_codes.len(),
