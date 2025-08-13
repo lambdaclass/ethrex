@@ -13,7 +13,7 @@ use crate::{
     peer_handler::MAX_RESPONSE_BYTES,
     rlpx::{
         Message as RLPxMessage,
-        connection::server::CastMessage,
+        connection::server::{CallMessage, CastMessage, OutMessage},
         snap::{AccountRange, AccountRangeUnit, GetAccountRange},
     },
     snap::encodable_to_proof,
@@ -81,106 +81,194 @@ impl GenServer for Downloader {
                     limit_hash,
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = (&mut self.peer_channels.connection)
-                    .cast(CastMessage::BackendMessage(request))
+                match &mut self
+                    .peer_channels
+                    .connection
+                    .call(CallMessage::BackendMessage(request))
                     .await
                 {
-                    error!("Failed to send message to peer: {err:?}");
-                    task_sender
-                        .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                        .await
-                        .ok();
-
-                    // Downloader has done its job, stop it
-                    return CastResponse::Stop;
-                }
-                if let Some((accounts, proof)) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::AccountRange(AccountRange {
-                                    id,
-                                    accounts,
-                                    proof,
-                                })) if id == request_id => return Some((accounts, proof)),
-                                Some(_) => continue,
-                                None => return None,
-                            }
+                    Ok(Ok(OutMessage::BackendResponse(RLPxMessage::AccountRange(
+                        AccountRange {
+                            id: _,
+                            accounts,
+                            proof,
+                        },
+                    )))) => {
+                        if accounts.is_empty() {
+                            task_sender
+                                .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                                .await
+                                .ok();
+                            // Too spammy
+                            // tracing::error!("Received empty account range");
+                            // Downloader has done its job, stop it
+                            return CastResponse::Stop;
                         }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    if accounts.is_empty() {
+                        // Unzip & validate response
+                        let proof = encodable_to_proof(&proof);
+                        let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                            .clone()
+                            .into_iter()
+                            .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                            .unzip();
+                        let encoded_accounts = account_states
+                            .iter()
+                            .map(|acc| acc.encode_to_vec())
+                            .collect::<Vec<_>>();
+
+                        let Ok(should_continue) = verify_range(
+                            root_hash,
+                            &starting_hash,
+                            &account_hashes,
+                            &encoded_accounts,
+                            &proof,
+                        ) else {
+                            task_sender
+                                .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                                .await
+                                .ok();
+                            tracing::error!("Received invalid account range");
+                            // Downloader has done its job, stop it
+                            return CastResponse::Stop;
+                        };
+
+                        // If the range has more accounts to fetch, we send the new chunk
+                        let chunk_left = if should_continue {
+                            let last_hash = account_hashes
+                                .last()
+                                .expect("we already checked this isn't empty");
+                            let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                            let new_start = H256::from_uint(&new_start_u256);
+                            Some((new_start, limit_hash))
+                        } else {
+                            None
+                        };
+                        let accounts = accounts.clone();
+                        task_sender
+                            .send((
+                                accounts
+                                    .into_iter()
+                                    .filter(|unit| unit.hash <= limit_hash)
+                                    .collect(),
+                                self.peer_id,
+                                chunk_left,
+                            ))
+                            .await
+                            .ok();
+                    }
+                    _ => {
+                        error!("Failed to send message to peer");
                         task_sender
                             .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
                             .await
                             .ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
+
                         // Downloader has done its job, stop it
                         return CastResponse::Stop;
                     }
-                    // Unzip & validate response
-                    let proof = encodable_to_proof(&proof);
-                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                        .clone()
-                        .into_iter()
-                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                        .unzip();
-                    let encoded_accounts = account_states
-                        .iter()
-                        .map(|acc| acc.encode_to_vec())
-                        .collect::<Vec<_>>();
-
-                    let Ok(should_continue) = verify_range(
-                        root_hash,
-                        &starting_hash,
-                        &account_hashes,
-                        &encoded_accounts,
-                        &proof,
-                    ) else {
-                        task_sender
-                            .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                            .await
-                            .ok();
-                        tracing::error!("Received invalid account range");
-                        // Downloader has done its job, stop it
-                        return CastResponse::Stop;
-                    };
-
-                    // If the range has more accounts to fetch, we send the new chunk
-                    let chunk_left = if should_continue {
-                        let last_hash = account_hashes
-                            .last()
-                            .expect("we already checked this isn't empty");
-                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                        let new_start = H256::from_uint(&new_start_u256);
-                        Some((new_start, limit_hash))
-                    } else {
-                        None
-                    };
-                    task_sender
-                        .send((
-                            accounts
-                                .into_iter()
-                                .filter(|unit| unit.hash <= limit_hash)
-                                .collect(),
-                            self.peer_id,
-                            chunk_left,
-                        ))
-                        .await
-                        .ok();
-                } else {
-                    tracing::debug!("Failed to get account range");
-                    task_sender
-                        .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                        .await
-                        .ok();
                 }
-                // Downloader has done its job, stop it
+
+                // TODO: remove after call implementation
+                // let mut receiver = self.peer_channels.receiver.lock().await;
+                // if let Err(err) = (&mut self.peer_channels.connection)
+                //     .cast(CastMessage::BackendMessage(request))
+                //     .await
+                // {
+                //     error!("Failed to send message to peer: {err:?}");
+                //     task_sender
+                //         .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                //         .await
+                //         .ok();
+
+                //     // Downloader has done its job, stop it
+                //     return CastResponse::Stop;
+                // }
+                // if let Some((accounts, proof)) =
+                //     tokio::time::timeout(Duration::from_secs(2), async move {
+                //         loop {
+                //             match receiver.recv().await {
+                //                 Some(RLPxMessage::AccountRange(AccountRange {
+                //                     id,
+                //                     accounts,
+                //                     proof,
+                //                 })) if id == request_id => return Some((accounts, proof)),
+                //                 Some(_) => continue,
+                //                 None => return None,
+                //             }
+                //         }
+                //     })
+                //     .await
+                //     .ok()
+                //     .flatten()
+                // {
+                //     if accounts.is_empty() {
+                //         task_sender
+                //             .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                //             .await
+                //             .ok();
+                //         // Too spammy
+                //         // tracing::error!("Received empty account range");
+                //         // Downloader has done its job, stop it
+                //         return CastResponse::Stop;
+                //     }
+                //     // Unzip & validate response
+                //     let proof = encodable_to_proof(&proof);
+                //     let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                //         .clone()
+                //         .into_iter()
+                //         .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                //         .unzip();
+                //     let encoded_accounts = account_states
+                //         .iter()
+                //         .map(|acc| acc.encode_to_vec())
+                //         .collect::<Vec<_>>();
+
+                //     let Ok(should_continue) = verify_range(
+                //         root_hash,
+                //         &starting_hash,
+                //         &account_hashes,
+                //         &encoded_accounts,
+                //         &proof,
+                //     ) else {
+                //         task_sender
+                //             .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                //             .await
+                //             .ok();
+                //         tracing::error!("Received invalid account range");
+                //         // Downloader has done its job, stop it
+                //         return CastResponse::Stop;
+                //     };
+
+                //     // If the range has more accounts to fetch, we send the new chunk
+                //     let chunk_left = if should_continue {
+                //         let last_hash = account_hashes
+                //             .last()
+                //             .expect("we already checked this isn't empty");
+                //         let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                //         let new_start = H256::from_uint(&new_start_u256);
+                //         Some((new_start, limit_hash))
+                //     } else {
+                //         None
+                //     };
+                //     task_sender
+                //         .send((
+                //             accounts
+                //                 .into_iter()
+                //                 .filter(|unit| unit.hash <= limit_hash)
+                //                 .collect(),
+                //             self.peer_id,
+                //             chunk_left,
+                //         ))
+                //         .await
+                //         .ok();
+                // } else {
+                //     tracing::debug!("Failed to get account range");
+                //     task_sender
+                //         .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
+                //         .await
+                //         .ok();
+                // }
+                // // Downloader has done its job, stop it
                 return CastResponse::Stop;
             }
         }
