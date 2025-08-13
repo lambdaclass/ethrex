@@ -1019,14 +1019,15 @@ impl PeerHandler {
                 if let Some((accounts, proof)) =
                     tokio::time::timeout(Duration::from_secs(2), async move {
                         loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::AccountRange(AccountRange {
-                                    id,
-                                    accounts,
-                                    proof,
-                                })) if id == request_id => return Some((accounts, proof)),
-                                Some(_) => continue,
-                                None => return None,
+                            if let RLPxMessage::AccountRange(AccountRange {
+                                id,
+                                accounts,
+                                proof,
+                            }) = receiver.recv().await?
+                            {
+                                if id == request_id {
+                                    return Some((accounts, proof));
+                                }
                             }
                         }
                     })
@@ -1117,7 +1118,6 @@ impl PeerHandler {
                 std::fs::create_dir_all(&account_state_snapshots_dir)
                     .expect("Failed to create accounts_state_snapshot dir");
             }
-
             tokio::task::spawn(async move {
                 let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
                 std::fs::write(path, account_state_chunk).unwrap_or_else(|_| {
