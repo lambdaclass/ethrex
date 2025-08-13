@@ -47,10 +47,13 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
-      - name: Create placeholder SP1 ELF
+      - name: Create placeholder for SP1 and RISC0 VKs
         run: |
           mkdir -p crates/l2/prover/zkvm/interface/sp1/out
+          mkdir -p crates/l2/prover/zkvm/interface/risc0/out
           touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          touch crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk
 
       - name: Run cargo check
         run: cargo check --workspace
