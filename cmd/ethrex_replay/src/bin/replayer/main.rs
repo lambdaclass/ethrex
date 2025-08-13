@@ -198,6 +198,7 @@ fn init_tracing() {
 
 async fn replay_execution(
     network: Network,
+    client: String,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
 ) -> Result<(), EthClientError> {
@@ -209,6 +210,7 @@ async fn replay_execution(
         let block_run_report = replay_latest_block(
             ReplayerMode::Execute,
             network.clone(),
+            client.clone(),
             rpc_url.clone(),
             &eth_client,
             slack_webhook_url.clone(),
@@ -264,10 +266,10 @@ async fn replay_client_diversity(
 
         let mut handles = Vec::new();
 
-        for (eth_client, rpc_url) in [
-            (geth_client, &geth_rpc_url),
-            (reth_client, &reth_rpc_url),
-            (nethermind_client, &nethermind_rpc_url),
+        for (eth_client, rpc_url, client_name) in [
+            (geth_client, &geth_rpc_url, "geth"),
+            (reth_client, &reth_rpc_url, "reth"),
+            (nethermind_client, &nethermind_rpc_url, "nethermind"),
         ] {
             let chain_id = eth_client
                 .get_chain_id()
@@ -288,6 +290,7 @@ async fn replay_client_diversity(
                     latest_block,
                     replayer_mode,
                     Network::try_from_chain_id(chain_id),
+                    client_name.to_string(),
                     rpc_url_clone,
                     &eth_client,
                     slack_webhook_url_clone,
@@ -348,6 +351,7 @@ async fn replay_client_diversity(
 }
 
 async fn replay_proving(
+    client: String,
     hoodi_rpc_url: Url,
     sepolia_rpc_url: Url,
     mainnet_rpc_url: Url,
@@ -363,6 +367,7 @@ async fn replay_proving(
         replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Hoodi),
+            client.clone(),
             hoodi_rpc_url.clone(),
             &hoodi_eth_client,
             slack_webhook_url.clone(),
@@ -372,6 +377,7 @@ async fn replay_proving(
         replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Sepolia),
+            client.clone(),
             sepolia_rpc_url.clone(),
             &sepolia_eth_client,
             slack_webhook_url.clone(),
@@ -381,6 +387,7 @@ async fn replay_proving(
         replay_latest_block(
             ReplayerMode::Prove,
             Network::PublicNetwork(PublicNetwork::Mainnet),
+            client.clone(),
             mainnet_rpc_url.clone(),
             &mainnet_eth_client,
             slack_webhook_url.clone(),
@@ -400,6 +407,7 @@ async fn replay_proving(
 async fn replay_latest_block(
     replayer_mode: ReplayerMode,
     network: Network,
+    client: String,
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
@@ -416,6 +424,7 @@ async fn replay_latest_block(
         latest_block,
         replayer_mode,
         network,
+        client,
         rpc_url,
         eth_client,
         slack_webhook_url,
@@ -427,6 +436,7 @@ async fn replay_block(
     block_to_replay: usize,
     replayer_mode: ReplayerMode,
     network: Network,
+    client: String,
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
@@ -464,8 +474,14 @@ async fn replay_block(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    let block_run_report =
-        BlockRunReport::new_for(block, network.clone(), run_result, replayer_mode, elapsed);
+    let block_run_report = BlockRunReport::new_for(
+        client,
+        block,
+        network.clone(),
+        run_result,
+        replayer_mode,
+        elapsed,
+    );
 
     Ok(block_run_report)
 }

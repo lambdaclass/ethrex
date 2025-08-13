@@ -9,6 +9,7 @@ use crate::{
 };
 
 pub struct BlockRunReport {
+    pub client: String,
     pub network: Network,
     pub number: u64,
     pub gas: u64,
@@ -20,6 +21,7 @@ pub struct BlockRunReport {
 
 impl BlockRunReport {
     pub fn new_for(
+        client: String,
         block: Block,
         network: Network,
         run_result: Result<(), eyre::Report>,
@@ -27,6 +29,7 @@ impl BlockRunReport {
         time_taken: Duration,
     ) -> Self {
         Self {
+            client,
             network,
             number: block.header.number,
             gas: block.header.gas_used,
@@ -62,7 +65,8 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}",
+                            "*Client:* `{client}`\n*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}",
+                            client = self.client,
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -107,8 +111,9 @@ impl Display for BlockRunReport {
         if let Network::PublicNetwork(_) = self.network {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | {block_url}",
+                "[{network}] Client: {client} Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | {block_url}",
                 network = self.network,
+                client = self.client,
                 number = self.number,
                 gas = self.gas,
                 txs = self.txs,
@@ -160,6 +165,7 @@ mod tests {
     #[test]
     fn test_slack_message_failed_mainnet_execution() {
         let report = BlockRunReport::new_for(
+            "ethrex".to_string(),
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Mainnet),
             Err(eyre::Report::msg("Execution failed")),
@@ -212,6 +218,7 @@ mod tests {
     #[test]
     fn test_slack_message_failed_hoodi_execution() {
         let report = BlockRunReport::new_for(
+            "ethrex".to_string(),
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Hoodi),
             Err(eyre::Report::msg("Execution failed")),
@@ -264,6 +271,7 @@ mod tests {
     #[test]
     fn test_slack_message_failed_sepolia_execution() {
         let report = BlockRunReport::new_for(
+            "ethrex".to_string(),
             Block::default(),
             Network::PublicNetwork(PublicNetwork::Sepolia),
             Err(eyre::Report::msg("Execution failed")),
