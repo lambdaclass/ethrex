@@ -80,6 +80,15 @@ impl fmt::Display for Network {
 }
 
 impl Network {
+    pub fn try_from_chain_id(chain_id: u64) -> Self {
+        match chain_id {
+            0x1 => Network::PublicNetwork(PublicNetwork::Mainnet),
+            0xaa36a7 => Network::PublicNetwork(PublicNetwork::Sepolia),
+            0x88bb0 => Network::PublicNetwork(PublicNetwork::Hoodi),
+            _ => todo!("Add support for non public networks"),
+        }
+    }
+
     pub fn mainnet() -> Self {
         Network::PublicNetwork(PublicNetwork::Mainnet)
     }

@@ -8,7 +8,10 @@ use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::{
+    join,
+    task::{JoinError, JoinHandle},
+};
 
 use crate::block_execution_report::BlockRunReport;
 
@@ -24,27 +27,27 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub slack_webhook_url: Option<Url>,
-    #[arg(
-        long,
-        value_name = "URL",
-        env = "HOODI_RPC_URL",
-        help_heading = "Replayer options"
-    )]
-    pub hoodi_rpc_url: Url,
-    #[arg(
-        long,
-        value_name = "URL",
-        env = "SEPOLIA_RPC_URL",
-        help_heading = "Replayer options"
-    )]
-    pub sepolia_rpc_url: Url,
-    #[arg(
-        long,
-        value_name = "URL",
-        env = "MAINNET_RPC_URL",
-        help_heading = "Replayer options"
-    )]
-    pub mainnet_rpc_url: Url,
+    // #[arg(
+    //     long,
+    //     value_name = "URL",
+    //     env = "HOODI_RPC_URL",
+    //     help_heading = "Replayer options"
+    // )]
+    // pub hoodi_rpc_url: Url,
+    // #[arg(
+    //     long,
+    //     value_name = "URL",
+    //     env = "SEPOLIA_RPC_URL",
+    //     help_heading = "Replayer options"
+    // )]
+    // pub sepolia_rpc_url: Url,
+    // #[arg(
+    //     long,
+    //     value_name = "URL",
+    //     env = "MAINNET_RPC_URL",
+    //     help_heading = "Replayer options"
+    // )]
+    // pub mainnet_rpc_url: Url,
     #[arg(
         long,
         default_value_t = false,
@@ -63,6 +66,27 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub prove: bool,
+    #[arg(
+        long,
+        value_name = "URL",
+        env = "GETH_RPC_URL",
+        help_heading = "Replayer options"
+    )]
+    pub geth_rpc_url: Url,
+    #[arg(
+        long,
+        value_name = "URL",
+        env = "RETH_RPC_URL",
+        help_heading = "Replayer options"
+    )]
+    pub reth_rpc_url: Url,
+    #[arg(
+        long,
+        value_name = "URL",
+        env = "NETHERMIND_RPC_URL",
+        help_heading = "Replayer options"
+    )]
+    pub nethermind_rpc_url: Url,
 }
 
 #[derive(Debug, Clone)]
@@ -97,79 +121,56 @@ async fn main() {
         );
     }
 
-    let mut replayers_handles = Vec::new();
-
-    if opts.execute {
-        for (rpc_url, network) in [
-            (
-                opts.hoodi_rpc_url.clone(),
-                Network::PublicNetwork(PublicNetwork::Hoodi),
-            ),
-            (
-                opts.sepolia_rpc_url.clone(),
-                Network::PublicNetwork(PublicNetwork::Sepolia),
-            ),
-            (
-                opts.mainnet_rpc_url.clone(),
-                Network::PublicNetwork(PublicNetwork::Mainnet),
-            ),
-        ] {
-            let slack_webhook_url = opts.slack_webhook_url.clone();
-
-            let handle =
-                tokio::spawn(
-                    async move { replay_execution(network, rpc_url, slack_webhook_url).await },
-                );
-
-            replayers_handles.push(handle);
-        }
-    } else {
+    let main_handle = if opts.execute {
         let slack_webhook_url = opts.slack_webhook_url.clone();
-        let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
-        let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
-        let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
 
-        let handle = tokio::spawn(async move {
-            replay_proving(
-                hoodi_rpc_url,
-                sepolia_rpc_url,
-                mainnet_rpc_url,
+        let geth_rpc_url = opts.geth_rpc_url.clone();
+
+        let reth_rpc_url = opts.reth_rpc_url.clone();
+
+        let nethermind_rpc_url = opts.nethermind_rpc_url.clone();
+
+        tokio::spawn(async {
+            replay_client_diversity(
+                geth_rpc_url,
+                reth_rpc_url,
+                nethermind_rpc_url,
                 slack_webhook_url,
+                ReplayerMode::Execute,
             )
             .await
-        });
-
-        replayers_handles.push(handle);
+        })
+    } else {
+        todo!("Proving mode is not implemented yet for client diversity replayer");
     };
 
     // TODO: These tasks are spawned outside the above loop to be able to handled
     // in the tokio::select!. We should find a way to spawn them inside the loop
     // and still be able to handle them in the tokio::select!.
-    let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
-    let hoodi_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(hoodi_rpc_url).await });
-    let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
-    let sepolia_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(sepolia_rpc_url).await });
-    let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
-    let mainnet_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(mainnet_rpc_url).await });
+    let geth_rpc_url = opts.geth_rpc_url.clone();
+    let geth_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(geth_rpc_url).await });
+    let reth_rpc_url = opts.reth_rpc_url.clone();
+    let reth_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(reth_rpc_url).await });
+    let nethermind_rpc_url = opts.nethermind_rpc_url.clone();
+    let nethermind_rpc_revalidation_handle =
+        tokio::spawn(async { revalidate_rpc(nethermind_rpc_url).await });
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Received Ctrl+C, shutting down...");
-            shutdown(replayers_handles);
+            shutdown(vec![main_handle]);
         }
-        res = hoodi_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
-            shutdown(replayers_handles);
+        res = geth_rpc_revalidation_handle => {
+            handle_rpc_revalidation_handle_result(res, opts.geth_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
+            shutdown(vec![main_handle]);
         }
-        res = sepolia_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.sepolia_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
-            shutdown(replayers_handles);
+        res = reth_rpc_revalidation_handle => {
+            handle_rpc_revalidation_handle_result(res, opts.reth_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
+            shutdown(vec![main_handle]);
         }
-        res = mainnet_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.mainnet_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
-            shutdown(replayers_handles);
+        res = nethermind_rpc_revalidation_handle => {
+            handle_rpc_revalidation_handle_result(res, opts.nethermind_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
+            shutdown(vec![main_handle]);
         }
     }
 }
@@ -213,6 +214,80 @@ async fn replay_execution(
             slack_webhook_url.clone(),
         )
         .await?;
+
+        // Wait at most 12 seconds for executing the next block.
+        // This will only wait if the run took less than 12 seconds.
+        tokio::time::sleep(Duration::from_secs(12).saturating_sub(elapsed)).await;
+    }
+}
+
+async fn replay_client_diversity(
+    geth_rpc_url: Url,
+    reth_rpc_url: Url,
+    nethermind_rpc_url: Url,
+    slack_webhook_url: Option<Url>,
+    replayer_mode: ReplayerMode,
+) -> Result<(), EthClientError> {
+    let reth_rpc_url = reth_rpc_url.clone();
+    let nethermind_rpc_url = nethermind_rpc_url.clone();
+
+    loop {
+        let geth_client = EthClient::new(geth_rpc_url.as_str()).unwrap();
+        let reth_client = EthClient::new(reth_rpc_url.as_str()).unwrap();
+        let nethermind_client = EthClient::new(nethermind_rpc_url.as_str()).unwrap();
+
+        let latest_block = geth_client
+            .get_block_number()
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to get latest block number from Geth RPC: {e}");
+            })
+            .as_usize();
+
+        let start = SystemTime::now();
+
+        let mut handles = Vec::new();
+
+        for (eth_client, rpc_url) in [
+            (geth_client, &geth_rpc_url),
+            (reth_client, &reth_rpc_url),
+            (nethermind_client, &nethermind_rpc_url),
+        ] {
+            let chain_id = eth_client
+                .get_chain_id()
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Failed to get chain ID from {rpc_url}: {e}");
+                })
+                .as_u64();
+
+            let rpc_url_clone = rpc_url.clone();
+
+            let slack_webhook_url_clone = slack_webhook_url.clone();
+
+            let replayer_mode = replayer_mode.clone();
+
+            let handle = tokio::spawn(async move {
+                replay_block(
+                    latest_block,
+                    replayer_mode,
+                    Network::try_from_chain_id(chain_id),
+                    rpc_url_clone,
+                    &eth_client,
+                    slack_webhook_url_clone,
+                )
+                .await
+            });
+
+            handles.push(handle);
+        }
+
+        let (_geth_result, _reth_result, _nethermind_result) =
+            join!(handles.remove(0), handles.remove(1), handles.remove(2));
+
+        let elapsed = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -285,8 +360,27 @@ async fn replay_latest_block(
         })
         .as_usize();
 
+    replay_block(
+        latest_block,
+        replayer_mode,
+        network,
+        rpc_url,
+        eth_client,
+        slack_webhook_url,
+    )
+    .await
+}
+
+async fn replay_block(
+    block_to_replay: usize,
+    replayer_mode: ReplayerMode,
+    network: Network,
+    rpc_url: Url,
+    eth_client: &EthClient,
+    slack_webhook_url: Option<Url>,
+) -> Result<Duration, EthClientError> {
     let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(latest_block as u64))
+        .get_raw_block(BlockIdentifier::Number(block_to_replay as u64))
         .await?;
 
     let start = SystemTime::now();
@@ -294,7 +388,7 @@ async fn replay_latest_block(
     let run_result = match replayer_mode {
         ReplayerMode::Execute => {
             SubcommandExecute::Block {
-                block: Some(latest_block),
+                block: Some(block_to_replay),
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
@@ -304,7 +398,7 @@ async fn replay_latest_block(
         }
         ReplayerMode::Prove => {
             SubcommandProve::Block {
-                block: Some(latest_block),
+                block: Some(block_to_replay),
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
