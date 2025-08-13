@@ -52,7 +52,7 @@ impl L2ConnState {
     pub(crate) fn is_supported(&self) -> bool {
         match self {
             Self::Unsupported => false,
-            _ => true,
+            Self::Disconnected(_) | Self::Connected(_) => true,
         }
     }
 
