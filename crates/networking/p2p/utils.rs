@@ -7,7 +7,7 @@ use ethrex_common::{H256, H512};
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 
-use crate::peer_handler::AccountDumpError;
+use crate::peer_handler::DumpError;
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
