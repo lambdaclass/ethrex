@@ -145,7 +145,9 @@ impl RLPxMessage for HelloMessage {
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
-        assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
+        if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
+            return Err(RLPDecodeError::IncompatibleProtocol);
+        }
 
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
