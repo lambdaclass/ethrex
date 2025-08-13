@@ -58,6 +58,9 @@ prof_*.json
 prof.json
 profile.json.gz
 
+# used by metrics targets
+tooling/sync/*.pid
+
 # mdbook artifacts
 book/
 # mdbook-mermaid artifacts
