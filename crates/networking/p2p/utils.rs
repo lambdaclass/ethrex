@@ -4,8 +4,16 @@ use std::{
 };
 
 use ethrex_common::{H256, H512};
+use ethrex_rlp::error::RLPDecodeError;
+use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::error::GenServerError;
+
+use crate::{
+    kademlia::PeerChannels,
+    rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
+};
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
@@ -69,4 +77,52 @@ pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> S
 
 pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -> String {
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
+}
+
+/// TODO: make it more generic
+pub async fn send_message_and_wait_for_response(
+    peer_channel: &mut PeerChannels,
+    message: Message,
+    request_id: u64,
+) -> Result<Vec<Node>, SendMessageError> {
+    let mut receiver = peer_channel.receiver.lock().await;
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(message))
+        .await
+        .map_err(SendMessageError::GenServerError)?;
+    let nodes = tokio::time::timeout(Duration::from_secs(7), async move {
+        loop {
+            let Some(resp) = receiver.recv().await else {
+                return None;
+            };
+            if let Message::TrieNodes(TrieNodes { id, nodes }) = resp {
+                if id == request_id {
+                    return Some(nodes);
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| SendMessageError::PeerTimeout)?
+    .ok_or_else(|| SendMessageError::PeerDisconnected)?;
+
+    nodes
+        .iter()
+        .map(|node| Node::decode_raw(node))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SendMessageError::RLPDecodeError)
+}
+
+// TODO: find a better name for this type
+#[derive(thiserror::Error, Debug)]
+pub enum SendMessageError {
+    #[error("Peer timed out")]
+    PeerTimeout,
+    #[error("GenServerError")]
+    GenServerError(GenServerError),
+    #[error("Peer disconnected")]
+    PeerDisconnected,
+    #[error("RLP decode error")]
+    RLPDecodeError(RLPDecodeError),
 }
