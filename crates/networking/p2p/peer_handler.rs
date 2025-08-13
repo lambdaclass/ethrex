@@ -450,7 +450,7 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             // run download_chunk_from_peer in a different Tokio task
-            let _download_result = tokio::spawn(async move {
+            tokio::spawn(async move {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
@@ -478,7 +478,9 @@ impl PeerHandler {
                     chunk_limit,
                 ))
                 .await
-                .unwrap();
+                .inspect_err(|err| {
+                    error!("Failed to send headers result through channel. Error: {err}")
+                })
             });
 
             // 4) assign the tasks to the peers
@@ -854,7 +856,11 @@ impl PeerHandler {
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
-                        .expect("Failed to send dump account result through the channel");
+                        .inspect_err(|err| {
+                            error!(
+                                "Failed to send account dump result through channel. Error: {err}"
+                            )
+                        })
                 });
 
                 chunk_file += 1;
@@ -923,7 +929,11 @@ impl PeerHandler {
                         dump_account_result_sender_cloned
                             .send(result)
                             .await
-                            .expect("Failed to send account dump result through channel");
+                            .inspect_err(|err| {
+                                error!(
+                                    "Failed to send account dump result through channel. Error: {err}"
+                                )
+                        })
                     });
                 }
             }
