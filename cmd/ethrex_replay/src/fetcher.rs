@@ -88,7 +88,6 @@ pub async fn get_blockdata(
             )
             .await
             .wrap_err("failed to create rpc db")?;
-            dbg!("PASS HERE");
             let db = rpc_db
                 .to_exec_db(&block)
                 .wrap_err("failed to build execution db")?;

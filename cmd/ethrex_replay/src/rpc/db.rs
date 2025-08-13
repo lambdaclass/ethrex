@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
-use ethrex_common::types::ChainConfig;
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::{ChainConfig, code_hash};
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountInfo, AccountState, Block, TxKind},
@@ -34,6 +35,7 @@ pub struct RpcDB {
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub child_cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
+    pub codes: Arc<Mutex<HashMap<H256, Bytes>>>,
     pub chain_config: ChainConfig,
 }
 
@@ -45,6 +47,7 @@ impl RpcDB {
             cache: Arc::new(Mutex::new(HashMap::new())),
             child_cache: Arc::new(Mutex::new(HashMap::new())),
             block_hashes: Arc::new(Mutex::new(HashMap::new())),
+            codes: Arc::new(Mutex::new(HashMap::new())),
             chain_config,
         }
     }
@@ -205,6 +208,17 @@ impl RpcDB {
                     };
                 } else {
                     cache.insert(*address, account.clone());
+                }
+            }
+        }
+        {
+            let mut codes = self.codes.lock().unwrap();
+            for account in fetched.values() {
+                if let Account::Existing {
+                    code: Some(code), ..
+                } = account
+                {
+                    codes.insert(code_hash(code), code.clone());
                 }
             }
         }
@@ -442,11 +456,14 @@ impl RpcDB {
 }
 
 impl LevmDatabase for RpcDB {
-    fn get_account_code(&self, _code_hash: H256) -> Result<Bytes, DatabaseError> {
-        Err(DatabaseError::Custom(
-            "get_account_code is not supported for RpcDB: code is stored in account info"
-                .to_string(),
-        ))
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, DatabaseError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        let codes = self.codes.lock().unwrap();
+        codes.get(&code_hash).cloned().ok_or_else(|| {
+            DatabaseError::Custom("Code not found on already fetched accounts".to_string())
+        })
     }
 
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError> {
@@ -467,6 +484,10 @@ impl LevmDatabase for RpcDB {
             ..
         } = account
         {
+            if let Some(code) = code {
+                let mut codes = self.codes.lock().unwrap();
+                codes.insert(code_hash(&code), code.clone());
+            }
             Ok(AccountInfo {
                 code_hash: account_state.code_hash,
                 balance: account_state.balance,
