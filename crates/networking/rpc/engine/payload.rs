@@ -621,7 +621,6 @@ fn get_block_from_payload(
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
-    let guard = perf_logger::add_time_till_drop("validate_block_hash");
     let block_hash = payload.block_hash;
     let actual_block_hash = block.hash();
     if block_hash != actual_block_hash {
@@ -629,7 +628,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
             "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
         )));
     }
-    guard.wrap_return(Ok(()))
+    Ok(())
 }
 
 async fn try_execute_payload(

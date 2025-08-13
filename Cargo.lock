@@ -3929,6 +3929,7 @@ dependencies = [
  "kzg-rs",
  "lazy_static",
  "once_cell",
+ "perf-logger",
  "rayon",
  "secp256k1",
  "serde",

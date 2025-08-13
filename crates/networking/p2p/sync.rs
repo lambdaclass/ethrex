@@ -340,6 +340,7 @@ impl Syncer {
         sync_head_found: bool,
         cancel_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let guard = perf_logger::add_time_till_drop("p2p_sync_add_blocks");
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
             let mut last_valid_hash = H256::default();
@@ -355,9 +356,9 @@ impl Syncer {
                 })?;
                 last_valid_hash = block.hash();
             }
-            Ok(())
+            guard.wrap_return(Ok(()))
         } else {
-            blockchain.add_blocks_in_batch(blocks, cancel_token).await
+            guard.wrap_return(blockchain.add_blocks_in_batch(blocks, cancel_token).await)
         }
     }
 }

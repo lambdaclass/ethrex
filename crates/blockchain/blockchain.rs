@@ -422,23 +422,22 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
 
-            perf_logger::add_log("throughput", perf_logger::Value::Float(throughput));
-            perf_logger::add_log("interval", perf_logger::Value::Float(interval));
+            perf_logger::add_log("throughput", perf_logger::Value::Gigagas(throughput));
             perf_logger::add_log(
                 "transactions_len",
-                perf_logger::Value::Int(block.body.transactions.len()),
+                perf_logger::Value::Count(block.body.transactions.len()),
             );
             perf_logger::add_log(
                 "exec_percentage",
-                perf_logger::Value::Float(percentage(since, executed, interval)),
+                perf_logger::Value::Percentage(percentage(since, executed, interval)),
             );
             perf_logger::add_log(
                 "merkle_percentage",
-                perf_logger::Value::Float(percentage(executed, merkleized, interval)),
+                perf_logger::Value::Percentage(percentage(executed, merkleized, interval)),
             );
             perf_logger::add_log(
                 "store_percentage",
-                perf_logger::Value::Float(percentage(merkleized, stored, interval)),
+                perf_logger::Value::Percentage(percentage(merkleized, stored, interval)),
             );
 
             let base_log = format!(

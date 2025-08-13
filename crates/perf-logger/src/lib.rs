@@ -10,9 +10,10 @@ use std::{
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Duration(Duration),
-    Float(f64),
-    Int(usize),
+    TimeSpent(Duration),
+    Count(usize),
+    Percentage(f64),
+    Gigagas(f64),
 }
 
 // time elapsed since start, label, duration
@@ -40,7 +41,7 @@ impl DropLog {
 
 impl Drop for DropLog {
     fn drop(&mut self) {
-        add_log(self.label.clone(), Value::Duration(self.start.elapsed()))
+        add_log(self.label.clone(), Value::TimeSpent(self.start.elapsed()))
     }
 }
 
@@ -66,13 +67,19 @@ fn process_logs_thread() {
             Some((elapsed_since_start, label, value)) => {
                 writeln!(
                     file,
-                    "{} | {} | {}",
+                    "{} | {} | {} | {}",
                     elapsed_since_start,
                     label,
                     match value {
-                        Value::Duration(duration) => duration.as_millis().to_string(),
-                        Value::Float(value) => format!("{value:.3}"),
-                        Value::Int(value) => value.to_string(),
+                        Value::TimeSpent(duration) => duration.as_millis().to_string(),
+                        Value::Percentage(value) | Value::Gigagas(value) => format!("{value:.3}"),
+                        Value::Count(value) => value.to_string(),
+                    },
+                    match value {
+                        Value::TimeSpent(_) => "Time spent in ms",
+                        Value::Count(_) => "Count",
+                        Value::Percentage(_) => "Percentage",
+                        Value::Gigagas(_) => "Ggas/s",
                     }
                 )
                 .ok();

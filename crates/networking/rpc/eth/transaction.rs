@@ -197,8 +197,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let guard =
-            perf_logger::add_time_till_drop("rpc_GetTransactionByBlockHashAndIndexRequest");
+        let guard = perf_logger::add_time_till_drop("rpc_GetTransactionByBlockHashAndIndexRequest");
         debug!(
             "Requested transaction at index: {} of block with hash: {:#x}",
             self.transaction_index, self.block,
@@ -221,7 +220,9 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             self.block,
             Some(self.transaction_index),
         )?;
-       guard.wrap_return( serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string())))
+        guard.wrap_return(
+            serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -269,7 +270,9 @@ impl RpcHandler for GetTransactionByHashRequest {
             block_hash,
             Some(index as usize),
         )?;
-     guard.wrap_return(   serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string())))
+        guard.wrap_return(
+            serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -310,8 +313,10 @@ impl RpcHandler for GetTransactionReceiptRequest {
             block::get_all_block_rpc_receipts(block_number, block.header, block.body, storage)
                 .await?;
 
-      guard.wrap_return(  serde_json::to_value(receipts.get(index as usize))
-            .map_err(|error| RpcErr::Internal(error.to_string())))
+        guard.wrap_return(
+            serde_json::to_value(receipts.get(index as usize))
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -373,7 +378,9 @@ impl RpcHandler for CreateAccessListRequest {
             gas_used,
         };
 
-       guard.wrap_return( serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string())))
+        guard.wrap_return(
+            serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -553,8 +560,10 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        guard.wrap_return(serde_json::to_value(format!("{highest_gas_limit:#x}"))
-            .map_err(|error| RpcErr::Internal(error.to_string())))
+        guard.wrap_return(
+            serde_json::to_value(format!("{highest_gas_limit:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 

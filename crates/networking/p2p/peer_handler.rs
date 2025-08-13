@@ -277,6 +277,7 @@ impl PeerHandler {
         &self,
         block_headers: &[BlockHeader],
     ) -> Option<Vec<BlockBody>> {
+        let guard = perf_logger::add_time_till_drop("p2p_request_and_validate_block_bodies");
         let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -300,10 +301,10 @@ impl PeerHandler {
             }
             // Retry on validation failure
             if validation_success {
-                return Some(res);
+                return guard.wrap_return(Some(res));
             }
         }
-        None
+        guard.wrap_return(None)
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
