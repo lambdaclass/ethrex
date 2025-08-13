@@ -284,9 +284,7 @@ impl Blockchain {
         let idx = payloads
             .iter()
             .position(|(id, _)| id == &payload_id)
-            .ok_or(ChainError::Custom(format!(
-                "Payload {payload_id} not found"
-            )))?;
+            .ok_or(ChainError::UnknownPayload)?;
         payloads
             .remove(idx)
             .1
