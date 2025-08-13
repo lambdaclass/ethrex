@@ -33,7 +33,6 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::instrument;
 
 pub struct Store {
     db: Arc<Database>,
