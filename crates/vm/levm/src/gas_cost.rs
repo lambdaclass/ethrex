@@ -871,6 +871,8 @@ pub fn modexp(
 }
 
 fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {
+    // In this context the data_size is derived from calldata.len() and this will never be greater than 32 bits
+    // Otherwise it would have reverted before reaching this code.
     let data_size: u64 = data_size
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
