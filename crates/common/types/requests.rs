@@ -143,7 +143,8 @@ impl Deposit {
         //
         // -> Total len: 576 bytes
 
-        const OFFSET_LEN: usize = 32;
+        const WORD: usize = 32;
+        const U32_TAIL: usize = WORD - 4;
 
         const PUB_KEY_OFFSET: u32 = 160;
         const WITHDRAWAL_CREDENTIALS_OFFSET: u32 = 256;
@@ -158,8 +159,6 @@ impl Deposit {
             SIGNATURE_OFFSET,
             INDEX_OFFSET,
         ];
-
-        const SIZE_LEN: usize = 32;
 
         const PUB_KEY_SIZE: u32 = 48;
         const WITHDRAWAL_CREDENTIALS_SIZE: u32 = 32;
@@ -180,10 +179,10 @@ impl Deposit {
         for (i, (expected_offset, expected_size)) in
             OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
         {
-            let offset = fixed_bytes::<OFFSET_LEN>(data, i * OFFSET_LEN)?;
-            let size = fixed_bytes::<SIZE_LEN>(data, expected_offset as usize)?;
-            if offset[28..] != expected_offset.to_be_bytes()
-                || size[28..] != expected_size.to_be_bytes()
+            let offset = fixed_bytes::<WORD>(data, i * WORD)?;
+            let size = fixed_bytes::<WORD>(data, expected_offset as usize)?;
+            if offset[U32_TAIL..] != expected_offset.to_be_bytes()
+                || size[U32_TAIL..] != expected_size.to_be_bytes()
             {
                 return None;
             }
@@ -191,21 +190,21 @@ impl Deposit {
 
         // Extract Data
         let pub_key: Bytes48 =
-            fixed_bytes::<{ PUB_KEY_SIZE as usize }>(data, PUB_KEY_OFFSET as usize + SIZE_LEN)?;
+            fixed_bytes::<{ PUB_KEY_SIZE as usize }>(data, PUB_KEY_OFFSET as usize + WORD)?;
         let withdrawal_credentials: Bytes32 =
             fixed_bytes::<{ WITHDRAWAL_CREDENTIALS_SIZE as usize }>(
                 data,
-                WITHDRAWAL_CREDENTIALS_OFFSET as usize + SIZE_LEN,
+                WITHDRAWAL_CREDENTIALS_OFFSET as usize + WORD,
             )?;
         let amount: u64 = u64::from_le_bytes(fixed_bytes::<{ AMOUNT_SIZE as usize }>(
             data,
-            AMOUNT_OFFSET as usize + SIZE_LEN,
+            AMOUNT_OFFSET as usize + WORD,
         )?);
         let signature: Bytes96 =
-            fixed_bytes::<{ SIGNATURE_SIZE as usize }>(data, SIGNATURE_OFFSET as usize + SIZE_LEN)?;
+            fixed_bytes::<{ SIGNATURE_SIZE as usize }>(data, SIGNATURE_OFFSET as usize + WORD)?;
         let index: u64 = u64::from_le_bytes(fixed_bytes::<{ INDEX_SIZE as usize }>(
             data,
-            INDEX_OFFSET as usize + SIZE_LEN,
+            INDEX_OFFSET as usize + WORD,
         )?);
 
         Some(Deposit {
