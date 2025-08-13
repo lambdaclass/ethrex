@@ -1,5 +1,5 @@
 mod state_healing;
-//pub mod storage_healing;
+mod storage_healing;
 
 use crate::peer_handler::SNAP_LIMIT;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;

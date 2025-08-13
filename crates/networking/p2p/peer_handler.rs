@@ -1984,81 +1984,16 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
-        &self,
-        state_root: H256,
-        paths: BTreeMap<H256, Vec<Nibbles>>,
-    ) -> Option<Vec<Node>> {
+        peer_channel: &mut PeerChannels,
+        get_trie_nodes: GetTrieNodes,
+    ) -> Result<TrieNodes, RequestStateTrieNodesError> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-                id: request_id,
-                root_hash: state_root,
-                // {acc_path: [path, path, ...]} -> [[acc_path, path, path, ...]]
-                paths: paths
-                    .iter()
-                    .map(|(acc_path, paths)| {
-                        [
-                            vec![Bytes::from(acc_path.0.to_vec())],
-                            paths
-                                .iter()
-                                .map(|path| Bytes::from(path.encode_compact()))
-                                .collect(),
-                        ]
-                        .concat()
-                    })
-                    .collect(),
-                bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
+        let id = get_trie_nodes.id;
+        let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
             .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                self.record_snap_peer_success(peer_id, peer_ids).await;
-                return Some(nodes);
-            }
-        }
-        None
+            .map_err(RequestStateTrieNodesError::SendMessageError)
     }
 
     /// Returns the PeerData for each connected Peer

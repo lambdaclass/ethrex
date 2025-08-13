@@ -2,8 +2,6 @@ use crate::{
     kademlia::PeerChannels,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
     rlpx::{
-        connection::server::{CastMessage, RLPxReceiver},
-        message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
@@ -18,12 +16,12 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
-use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tracing::{debug, field::debug, info, trace};
+use tokio::sync::mpsc::Sender;
+use tracing::{debug, error, field::debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 30;
@@ -123,117 +121,6 @@ pub struct StorageHealer {
     failed_downloads: usize,
 }
 
-impl GenServer for StorageHealer {
-    type CallMsg = StorageHealerCallMsg;
-    type CastMsg = StorageHealerMsg;
-    type OutMsg = StorageHealerOutMsg;
-    type Error = ();
-
-    async fn handle_call(
-        self,
-        _message: StorageHealerCallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        // We only ask for IsFinished in the message, so we don't match it
-        let is_finished = self.requests.is_empty() && self.download_queue.is_empty();
-        let is_stale = current_unix_time() > self.staleness_timestamp;
-        // Finished means that we have succesfully healed according to our algorithm
-        // That means that we have commited the root_node of the tree
-        if is_finished || is_stale {
-            CallResponse::Stop(StorageHealerOutMsg::FinishedStale {
-                is_finished,
-                is_stale,
-            })
-        } else {
-            CallResponse::Reply(
-                self,
-                StorageHealerOutMsg::FinishedStale {
-                    is_finished,
-                    is_stale,
-                },
-            )
-        }
-    }
-
-    async fn handle_cast(
-        mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
-        match message {
-            StorageHealerMsg::CheckUp => {
-                info!(
-                    "We are storage healing. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
-                    self.requests.len(),
-                    self.download_queue.len(),
-                    self.maximum_length_seen,
-                    self.leafs_healed,
-                    self.roots_healed,
-                    self.succesful_downloads as f64
-                        / (self.succesful_downloads as f64 + self.failed_downloads as f64)
-                );
-                self.succesful_downloads = 0;
-                self.failed_downloads = 0;
-                clear_inflight_requests(
-                    &mut self.requests,
-                    &mut self.scored_peers,
-                    &mut self.download_queue,
-                    &mut self.failed_downloads,
-                )
-                .await;
-                ask_peers_for_nodes(
-                    &mut self.download_queue,
-                    &mut self.requests,
-                    &self.peer_handler,
-                    self.state_root,
-                    &mut self.scored_peers,
-                    handle.clone(),
-                )
-                .await;
-            }
-            StorageHealerMsg::TrieNodes(trie_nodes) => {
-                if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
-                    &mut self.requests,
-                    &mut self.scored_peers,
-                    &mut self.download_queue,
-                    trie_nodes,
-                    &mut self.succesful_downloads,
-                    &mut self.failed_downloads,
-                ) {
-                    let _ = process_node_responses(
-                        &mut nodes_from_peer,
-                        &mut self.download_queue,
-                        self.store.clone(),
-                        self.membatch
-                            .get_mut()
-                            .expect("We launched the storage healer without a membatch"),
-                        &mut self.leafs_healed,
-                        &mut self.roots_healed,
-                        &mut self.maximum_length_seen,
-                    ); // TODO: if we have a stor error we should stop
-                };
-                clear_inflight_requests(
-                    &mut self.requests,
-                    &mut self.scored_peers,
-                    &mut self.download_queue,
-                    &mut self.failed_downloads,
-                )
-                .await;
-                ask_peers_for_nodes(
-                    &mut self.download_queue,
-                    &mut self.requests,
-                    &self.peer_handler,
-                    self.state_root,
-                    &mut self.scored_peers,
-                    handle.clone(),
-                )
-                .await;
-            }
-        }
-        CastResponse::NoReply(self)
-    }
-}
-
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone, Default)]
 pub struct NodeRequest {
@@ -308,7 +195,7 @@ pub async fn heal_storage_trie(
         "Started Storage Healing with {} accounts",
         account_paths.len()
     );
-    let mut handle = StorageHealer::start_blocking(StorageHealer {
+    let mut state = StorageHealer {
         last_update: Instant::now(),
         download_queue: get_initial_downloads(&account_paths),
         store,
@@ -323,34 +210,24 @@ pub async fn heal_storage_trie(
         roots_healed: Default::default(),
         succesful_downloads: Default::default(),
         failed_downloads: Default::default(),
-    });
+    };
 
-    let mut is_finished = false;
-    let mut is_stale = false;
+    // channel to send the tasks to the peers
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TrieNodes>(1000);
 
-    while !is_finished && !is_stale {
-        handle.cast(StorageHealerMsg::CheckUp).await;
-        let outmsg = handle
-            .call(StorageHealerCallMsg::IsFinished)
-            .await
-            .expect("The genserver died prematurely");
-        match outmsg {
-            StorageHealerOutMsg::FinishedStale {
-                is_finished: heal_finished,
-                is_stale: heal_stale,
-            } => {
-                is_finished = heal_finished;
-                is_stale = heal_stale;
-            }
+    loop {
+        if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            state.last_update = Instant::now();
         }
-        tokio::time::sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
+
+        if state.requests.is_empty() && state.download_queue.is_empty() {
+            return true;
+        }
+
+        if current_unix_time() > state.staleness_timestamp {
+            return false;
+        }
     }
-    if is_finished {
-        info!("Storage healing finished succesfully.");
-    } else {
-        info!("Storage healing finished prematurely due to stalenss.");
-    }
-    is_finished
 }
 
 async fn clear_inflight_requests(
@@ -384,7 +261,7 @@ async fn ask_peers_for_nodes(
     peers: &PeerHandler,
     state_root: H256,
     scored_peers: &mut HashMap<H256, PeerScore>,
-    self_handler: GenServerHandle<StorageHealer>,
+    task_sender: Sender<TrieNodes>,
 ) {
     while (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some(mut peer) =
@@ -413,17 +290,21 @@ async fn ask_peers_for_nodes(
             paths,
             bytes: MAX_RESPONSE_BYTES,
         };
-        // debug!("We are sending the following nodes {:?}", gtn);
-        // If the genserver is dead we handle it by just clearing the request in clear_inflight_requests
-        // and re enqueing it later. Not the most graceful solution, but it works.
-        let _ = peer
-            .1
-            .connection
-            .cast(CastMessage::BackendRequest(
-                Message::GetTrieNodes(gtn),
-                RLPxReceiver::StorageHealer(self_handler.clone()),
-            ))
-            .await;
+
+        let tx = task_sender.clone();
+
+        tokio::spawn(async move {
+            // TODO: check errors to determine whether the current block is stale
+            let Ok(response) = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await
+            else {
+                return;
+            };
+
+            // TODO: add error handling
+            let _ = tx.send(response).await.inspect_err(|err| {
+                error!("Failed to send state trie nodes response. Error: {err}")
+            });
+        });
     }
 }
 

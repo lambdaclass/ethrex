@@ -9,6 +9,7 @@ use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
+use tokio::sync::mpsc;
 
 use crate::{
     kademlia::PeerChannels,
@@ -91,27 +92,55 @@ pub async fn send_message_and_wait_for_response(
         .cast(CastMessage::BackendMessage(message))
         .await
         .map_err(SendMessageError::GenServerError)?;
-    let nodes = tokio::time::timeout(Duration::from_secs(7), async move {
-        loop {
-            let Some(resp) = receiver.recv().await else {
-                return None;
-            };
-            if let Message::TrieNodes(TrieNodes { id, nodes }) = resp {
-                if id == request_id {
-                    return Some(nodes);
-                }
-            }
-        }
-    })
+    let nodes = tokio::time::timeout(
+        Duration::from_secs(7),
+        receive_trienodes(receiver, request_id),
+    )
     .await
     .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or_else(|| SendMessageError::PeerDisconnected)?;
+    .ok_or(SendMessageError::PeerDisconnected)?;
 
     nodes
+        .nodes
         .iter()
         .map(|node| Node::decode_raw(node))
         .collect::<Result<Vec<_>, _>>()
         .map_err(SendMessageError::RLPDecodeError)
+}
+
+/// TODO: make it more generic
+pub async fn send_trie_nodes_messages_and_wait_for_reply(
+    peer_channel: &mut PeerChannels,
+    message: Message,
+    request_id: u64,
+) -> Result<TrieNodes, SendMessageError> {
+    let mut receiver = peer_channel.receiver.lock().await;
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(message))
+        .await
+        .map_err(SendMessageError::GenServerError)?;
+    tokio::time::timeout(
+        Duration::from_secs(7),
+        receive_trienodes(receiver, request_id),
+    )
+    .await
+    .map_err(|_| SendMessageError::PeerTimeout)?
+    .ok_or(SendMessageError::PeerDisconnected)
+}
+
+async fn receive_trienodes(
+    mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
+    request_id: u64,
+) -> Option<TrieNodes> {
+    loop {
+        let resp = receiver.recv().await?;
+        if let Message::TrieNodes(trie_nodes) = resp {
+            if trie_nodes.id == request_id {
+                return Some(trie_nodes);
+            }
+        }
+    }
 }
 
 // TODO: find a better name for this type
