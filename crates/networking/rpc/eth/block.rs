@@ -170,6 +170,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_GetBlockReceiptsRequest");
         let storage = &context.storage;
         debug!("Requested receipts for block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
@@ -185,7 +186,9 @@ impl RpcHandler for GetBlockReceiptsRequest {
         };
         let receipts = get_all_block_rpc_receipts(block_number, header, body, storage).await?;
 
-        serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -236,6 +239,7 @@ impl RpcHandler for GetRawBlockRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_GetRawBlockRequest");
         debug!("Requested raw block: {}", self.block);
         let block_number = match self.block.resolve_block_number(&context.storage).await? {
             Some(block_number) => block_number,
@@ -249,8 +253,10 @@ impl RpcHandler for GetRawBlockRequest {
         };
         let block = Block::new(header, body).encode_to_vec();
 
-        serde_json::to_value(format!("0x{}", &hex::encode(block)))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(format!("0x{}", &hex::encode(block)))
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -269,6 +275,7 @@ impl RpcHandler for GetRawReceipts {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_GetRawReceipts");
         let storage = &context.storage;
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
@@ -285,7 +292,9 @@ impl RpcHandler for GetRawReceipts {
             .iter()
             .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
             .collect();
-        serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -358,6 +367,7 @@ impl RpcHandler for ExecutionWitness {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_ExecutionWitness");
         let from_block_number = self
             .from
             .resolve_block_number(&context.storage)
@@ -417,7 +427,10 @@ impl RpcHandler for ExecutionWitness {
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 
-        serde_json::to_value(execution_witness).map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(execution_witness)
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -427,6 +440,7 @@ pub async fn get_all_block_rpc_receipts(
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<RpcReceipt>, RpcErr> {
+    let guard = perf_logger::add_time_till_drop("get_all_block_rpc_receipts");
     let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
@@ -472,7 +486,7 @@ pub async fn get_all_block_rpc_receipts(
         current_log_index += receipt.logs.len() as u64;
         receipts.push(receipt);
     }
-    Ok(receipts)
+    guard.wrap_return(Ok(receipts))
 }
 
 pub async fn get_all_block_receipts(
@@ -481,6 +495,7 @@ pub async fn get_all_block_receipts(
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
+    let guard = perf_logger::add_time_till_drop("get_all_block_rpc_receipts");
     let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
@@ -494,5 +509,5 @@ pub async fn get_all_block_receipts(
         };
         receipts.push(receipt);
     }
-    Ok(receipts)
+    guard.wrap_return(Ok(receipts))
 }

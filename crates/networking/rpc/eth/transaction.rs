@@ -407,6 +407,7 @@ impl RpcHandler for GetRawTransaction {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_GetRawTransaction");
         let tx = context
             .storage
             .get_transaction_by_hash(self.transaction_hash)
@@ -417,8 +418,10 @@ impl RpcHandler for GetRawTransaction {
             _ => return Ok(Value::Null),
         };
 
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
@@ -620,6 +623,7 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let guard = perf_logger::add_time_till_drop("rpc_SendRawTransactionRequest");
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain
@@ -634,8 +638,10 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
-        serde_json::to_value(format!("{hash:#x}"))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        guard.wrap_return(
+            serde_json::to_value(format!("{hash:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string())),
+        )
     }
 }
 
