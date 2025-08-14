@@ -58,11 +58,7 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace -- -D warnings
-          NVCC_PREPEND_FLAGS='-arch=sm_70' \
-            cargo clippy --all-targets --all-features --workspace \
-              --exclude ethrex-replay --exclude ethrex-prover \
-              --exclude zkvm_interface --exclude ef_tests-blockchain \
-              --release -- -D warnings
+          make lint
 
       - name: Run cargo fmt
         run: |
