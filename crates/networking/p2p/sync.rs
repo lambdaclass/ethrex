@@ -1136,7 +1136,7 @@ async fn update_pivot(
 ) -> (BlockHeader, u64) {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
