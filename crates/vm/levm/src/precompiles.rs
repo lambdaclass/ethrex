@@ -36,7 +36,9 @@ use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
-use num_bigint::BigUint;
+use malachite::base::num::arithmetic::traits::ModPow as _;
+use malachite::base::num::basic::traits::Zero as _;
+use malachite::{Natural, base::num::conversion::traits::*};
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -378,18 +380,25 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
-    let base = BigUint::from_bytes_be(&b);
+    let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
-    let exponent = BigUint::from_bytes_be(&e);
+    let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
-    let modulus = BigUint::from_bytes_be(&m);
+    let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
+    let exp_first_32 = Natural::from_power_of_2_digits_desc(
+        8u64,
+        e.get(0..bytes_to_take).unwrap_or_default().iter().cloned(),
+    )
+    .ok_or(InternalError::TypeConversion)?;
 
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size)?;
 
@@ -397,7 +406,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
 
     let result = mod_exp(base, exponent, modulus);
 
-    let res_bytes = result.to_bytes_be();
+    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
     Ok(res_bytes.slice(..modulus_size))
@@ -424,16 +433,16 @@ fn get_slice_or_default(
     Ok(Default::default())
 }
 
-/// I allow this clippy alert because in the code modulus could never be
-///  zero because that case is covered in the if above that line
 #[allow(clippy::arithmetic_side_effects)]
-fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
-    if modulus == BigUint::ZERO {
-        BigUint::ZERO
-    } else if exponent == BigUint::ZERO {
-        BigUint::from(1_u8) % modulus
+#[inline(always)]
+fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
+    if modulus == Natural::ZERO {
+        Natural::ZERO
+    } else if exponent == Natural::ZERO {
+        Natural::from(1_u8) % modulus
     } else {
-        base.modpow(&exponent, &modulus)
+        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+        base_mod.mod_pow(&exponent, &modulus)
     }
 }
 
