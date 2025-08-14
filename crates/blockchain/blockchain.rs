@@ -668,6 +668,14 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
+    /// Remove all transactions in the executed block from the pool (if we have them)
+    pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
+        for tx in &block.body.transactions {
+            self.mempool.remove_transaction(&tx.compute_hash())?;
+        }
+        Ok(())
+    }
+
     /*
 
     SOME VALIDATIONS THAT WE COULD INCLUDE
