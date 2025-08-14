@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755199831801,
+  "lastUpdate": 1755201248230,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20261,6 +20261,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001446080173347779,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2e4bf6d5c3d5e845a49747447098e4db644aa935",
+          "message": "fix(l2): disable gpu in `make lint` target (#4048)\n\n**Motivation**\n\n`make lint` was failing with:\n\n```text\nwarning: risc0-sys@1.4.0: Compiler family detection failed due to error: ToolNotFound: failed to find tool \"nvcc\": No such file or directory (os error 2)\nerror: failed to run custom build command for `risc0-sys v1.4.0`\n\nCaused by:\n  process didn't exit successfully: `/Users/mega/execution/ethrex/target/release/build/risc0-sys-d088ac4aaf714579/build-script-build` (exit status: 1)\n  --- stdout\n...(a lot of lines)\n\n  --- stderr\n\n\n  error occurred in cc-rs: failed to find tool \"nvcc\": No such file or directory (os error 2)\n```\n\n**Description**\n\nThis PR removes the `--all-features` flag and replaces it with `-F` and\na list of all features minus the \"gpu\" one that caused the problem\n(`--all-features` is kept for L2 lint workflow). I got the list of\nfeatures with `cargo add -n ethrex`.",
+          "timestamp": "2025-08-14T17:14:50Z",
+          "tree_id": "ecb8d45f8fc2a5adc99f7cce6628e8b6df1927d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e4bf6d5c3d5e845a49747447098e4db644aa935"
+        },
+        "date": 1755201232332,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014413952483801297,
             "unit": "Mgas/s"
           }
         ]
