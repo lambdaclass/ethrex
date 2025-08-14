@@ -114,7 +114,10 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
     message: Message,
     request_id: u64,
 ) -> Result<TrieNodes, SendMessageError> {
-    let mut receiver = peer_channel.receiver.lock().await;
+    let mut receiver = peer_channel
+        .receiver
+        .try_lock()
+        .map_err(|_| SendMessageError::PeerBusy)?;
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
@@ -152,6 +155,8 @@ pub enum SendMessageError {
     GenServerError(GenServerError),
     #[error("Peer disconnected")]
     PeerDisconnected,
+    #[error("Peer Busy")]
+    PeerBusy,
     #[error("RLP decode error")]
     RLPDecodeError(RLPDecodeError),
 }
