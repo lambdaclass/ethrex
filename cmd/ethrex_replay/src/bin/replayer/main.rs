@@ -89,6 +89,8 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub nethermind_rpc_url: Url,
+    #[arg(long, required = false)]
+    cache: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -481,6 +483,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                cache: false, // TODO: Parametrize
             }
             .run()
             .await
@@ -491,6 +494,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                cache: false, // TODO: Parametrize
             }
             .run()
             .await
