@@ -42,6 +42,8 @@ pub struct Store {
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
+pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
@@ -1332,7 +1334,7 @@ impl Store {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: StorageTrieNodes,
     ) -> Result<(), StoreError> {
         self.engine
             .write_storage_trie_nodes_batch(storage_trie_nodes)

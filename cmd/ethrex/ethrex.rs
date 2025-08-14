@@ -4,8 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, store_node_config_file},
 };
-use ethrex_blockchain::BlockchainType;
-use ethrex_p2p::{kademlia::Kademlia, network::peer_table, types::NodeRecord};
+use ethrex_p2p::{kademlia::Kademlia, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]

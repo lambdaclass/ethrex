@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::types::ForkId;
 use keccak_hash::H256;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
