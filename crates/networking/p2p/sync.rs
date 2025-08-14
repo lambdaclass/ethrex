@@ -836,7 +836,8 @@ impl Syncer {
                     chunk_index,
                     &mut downloaded_account_storages,
                 )
-                .await;
+                .await
+                .map_err(SyncError::PeerHandler)?;
             dbg!(&downloaded_account_storages);
         }
         info!("All account storages downloaded successfully");
@@ -1000,6 +1001,7 @@ impl Syncer {
             .peers
             .request_bytecodes(&bytecode_hashes)
             .await
+            .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::BytecodesNotFound)?;
 
         store
@@ -1123,6 +1125,7 @@ async fn update_pivot(
         let (peer_id, mut peer_channel) = peers
             .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
             .await
+            .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
         let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
@@ -1132,6 +1135,7 @@ async fn update_pivot(
         let Some(pivot) = peers
             .get_block_header(&mut peer_channel, new_pivot_block_number)
             .await
+            .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
             scores.entry(peer_id).and_modify(|score| *score -= 1);
@@ -1210,6 +1214,8 @@ enum SyncError {
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("Peer handler error: {0}")]
+    PeerHandler(String),
 }
 
 impl<T> From<SendError<T>> for SyncError {
