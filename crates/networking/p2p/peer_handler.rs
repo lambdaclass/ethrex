@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::{Error, random, seq::SliceRandom};
+use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -34,8 +34,8 @@ use crate::{
     },
     snap::encodable_to_proof,
     utils::{
-        dump_to_file, get_account_state_snapshot_file, get_account_state_snapshots_dir,
-        get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
+        dump_to_file, get_account_state_snapshot_file,
+        get_account_storages_snapshot_file,
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -263,20 +263,20 @@ impl PeerHandler {
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
-        let chunk_limit = block_count / chunk_count as u64;
+        let chunk_limit = block_count / chunk_count;
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
-        for i in 0..(chunk_count as u64) {
+        for i in 0..chunk_count {
             tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
         }
 
         // Push the reminder
-        if block_count % chunk_count as u64 != 0 {
+        if block_count % chunk_count != 0 {
             tasks_queue_not_started.push_back((
-                chunk_count as u64 * chunk_limit + start,
-                block_count % chunk_count as u64,
+                chunk_count * chunk_limit + start,
+                block_count % chunk_count,
             ));
         }
 
@@ -917,28 +917,26 @@ impl PeerHandler {
 
             // Check if any dump account task finished
             // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
-                if let Err(dump_account_data) = dump_account_result {
-                    if dump_account_data.error == ErrorKind::StorageFull {
-                        return Err(PeerHandlerError::StorageFull);
-                    }
-                    // If the dumping failed, retry it
-                    let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                    tokio::task::spawn(async move {
-                        let DumpError { path, contents, .. } = dump_account_data;
-                        // Dump the account data
-                        let result = dump_to_file(path, contents);
-                        // Send the result through the channel
-                        dump_account_result_sender_cloned
-                            .send(result)
-                            .await
-                            .inspect_err(|err| {
-                                error!(
-                                    "Failed to send account dump result through channel. Error: {err}"
-                                )
-                        })
-                    });
+            if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
+                if dump_account_data.error == ErrorKind::StorageFull {
+                    return Err(PeerHandlerError::StorageFull);
                 }
+                // If the dumping failed, retry it
+                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                tokio::task::spawn(async move {
+                    let DumpError { path, contents, .. } = dump_account_data;
+                    // Dump the account data
+                    let result = dump_to_file(path, contents);
+                    // Send the result through the channel
+                    dump_account_result_sender_cloned
+                        .send(result)
+                        .await
+                        .inspect_err(|err| {
+                            error!(
+                                "Failed to send account dump result through channel. Error: {err}"
+                            )
+                    })
+                });
             }
 
             let peer_channels = self
@@ -971,7 +969,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1006,7 +1004,6 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let state_root = state_root.clone();
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
                 debug!(
@@ -1021,7 +1018,7 @@ impl PeerHandler {
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = (free_downloader_channels_clone.connection)
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1296,7 +1293,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1368,7 +1365,7 @@ impl PeerHandler {
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = (free_downloader_channels_clone.connection)
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1653,7 +1650,7 @@ impl PeerHandler {
                             let task = Task {
                                 start_index: remaining_start,
                                 end_index: remaining_start + 1,
-                                start_hash: start_hash,
+                                start_hash,
                                 end_hash: Some(end_hash),
                             };
                             tasks_queue_not_started.push_back(task);
@@ -1712,28 +1709,26 @@ impl PeerHandler {
             }
 
             // Check if any write storage task finished
-            if let Ok(dump_storage_result) = dump_storage_result_receiver.try_recv() {
-                if let Err(dump_storage_data) = dump_storage_result {
-                    if dump_storage_data.error == ErrorKind::StorageFull {
-                        return Err(PeerHandlerError::StorageFull);
-                    }
-                    // If the dumping failed, retry it
-                    let dump_storage_result_sender_cloned = dump_storage_result_sender.clone();
-                    tokio::task::spawn(async move {
-                        let DumpError { path, contents, .. } = dump_storage_data;
-                        // Write the storage data
-                        let result = dump_to_file(path, contents);
-                        // Send the result through the channel
-                        dump_storage_result_sender_cloned
-                            .send(result)
-                            .await
-                            .inspect_err(|err| {
-                                error!(
-                                    "Failed to send storage dump result through channel. Error: {err}"
-                                )
-                        })
-                    });
+            if let Ok(Err(dump_storage_data)) = dump_storage_result_receiver.try_recv() {
+                if dump_storage_data.error == ErrorKind::StorageFull {
+                    return Err(PeerHandlerError::StorageFull);
                 }
+                // If the dumping failed, retry it
+                let dump_storage_result_sender_cloned = dump_storage_result_sender.clone();
+                tokio::task::spawn(async move {
+                    let DumpError { path, contents, .. } = dump_storage_data;
+                    // Write the storage data
+                    let result = dump_to_file(path, contents);
+                    // Send the result through the channel
+                    dump_storage_result_sender_cloned
+                        .send(result)
+                        .await
+                        .inspect_err(|err| {
+                            error!(
+                                "Failed to send storage dump result through channel. Error: {err}"
+                            )
+                    })
+                });
             }
 
             let peer_channels = self
@@ -1766,7 +1761,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1841,7 +1836,7 @@ impl PeerHandler {
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = (free_downloader_channels_clone.connection)
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {

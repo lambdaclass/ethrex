@@ -174,7 +174,7 @@ impl Syncer {
             debug!("Sync Log 1: In snap sync");
             debug!(
                 "Sync Log 2: State block hashes len {}",
-                block_sync_state.into_snap_block_hashes().len()
+                block_sync_state.to_snap_block_hashes().len()
             );
             debug!("Requesting Block Headers from {current_head}");
 
@@ -530,7 +530,7 @@ impl BlockSyncState {
 
     /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
     /// If it is a FullSync state, returns an empty vector
-    pub fn into_snap_block_hashes(&self) -> Vec<BlockHash> {
+    pub fn to_snap_block_hashes(&self) -> Vec<BlockHash> {
         match self {
             BlockSyncState::Full(_) => vec![],
             BlockSyncState::Snap(state) => state.block_hashes.clone(),
@@ -760,7 +760,7 @@ impl Syncer {
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
-        let all_block_hashes = block_sync_state.into_snap_block_hashes();
+        let all_block_hashes = block_sync_state.to_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
@@ -923,7 +923,7 @@ impl Syncer {
             .replace(SystemTime::now());
 
         *METRICS.storage_tries_state_roots_to_compute.lock().await =
-            downloaded_account_storages as u64;
+            downloaded_account_storages;
 
         let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -986,7 +986,7 @@ impl Syncer {
 
             if *computed_storage_root != account_state.storage_root {
                 return Err(SyncError::DifferentStateRoots(
-                    account_hash.clone(),
+                    *account_hash,
                     account_state.storage_root,
                     *computed_storage_root,
                 ));
@@ -1027,7 +1027,7 @@ impl Syncer {
 
         store.add_block(block).await?;
 
-        let all_block_hashes = block_sync_state.into_snap_block_hashes();
+        let all_block_hashes = block_sync_state.to_snap_block_hashes();
 
         let numbers_and_hashes = all_block_hashes
             .into_iter()
@@ -1078,13 +1078,15 @@ async fn get_number_of_storage_tries_to_download() -> Result<u64, SyncError> {
     Ok(number_of_accounts_with_non_empty_storage)
 }
 
+type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots_clone: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
-) -> Result<(H256, Vec<(NodeHash, Vec<u8>)>), SyncError> {
+) -> Result<StorageRoots, SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots_clone
         .lock()
         .map_err(|_| SyncError::MaybeBigAccount)?

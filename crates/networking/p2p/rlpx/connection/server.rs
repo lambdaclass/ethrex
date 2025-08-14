@@ -124,7 +124,7 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Kademlia,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
-    pub(crate) inbound: bool,
+    pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
 }
 

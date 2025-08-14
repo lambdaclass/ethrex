@@ -159,7 +159,7 @@ impl RangeProof<'_> {
             NodeHash::Hashed(hash) => self.node_refs.get(&hash).copied(),
             NodeHash::Inline(_) => Some(hash.as_ref()),
         };
-        Ok(encoded_node.map(|x| Node::decode_raw(x)).transpose()?)
+        Ok(encoded_node.map(Node::decode_raw).transpose()?)
     }
 }
 
@@ -248,10 +248,8 @@ fn process_proof_nodes(
             Node::Leaf(node) => node.value,
         };
 
-        if !value.is_empty() {
-            if current_path == bounds.0 {
-                left_value = value.clone();
-            }
+        if !value.is_empty() && current_path == bounds.0 {
+            left_value = value.clone();
         }
     }
 
@@ -315,7 +313,7 @@ fn visit_child_node(
                     partial_path.extend(&node.partial);
                 }
                 if right_bound.compare_prefix(&partial_path).is_lt() {
-                    external_refs.push((partial_path.clone(), hash.clone()));
+                    external_refs.push((partial_path.clone(), hash));
                 }
 
                 stack.push_back((partial_path, node));

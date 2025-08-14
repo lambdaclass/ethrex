@@ -116,7 +116,7 @@ impl GenServer for RLPxInitiator {
     type Error = RLPxInitiatorError;
 
     async fn handle_cast(
-        mut self,
+        self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
     ) -> CastResponse<Self> {
