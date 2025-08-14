@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-14
+
+- Changes modexp library from the default big int to [rug](https://crates.io/crates/rug).
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
