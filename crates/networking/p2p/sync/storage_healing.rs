@@ -261,7 +261,7 @@ pub async fn heal_storage_trie(
                     &mut state.requests,
                     &mut state.scored_peers,
                     &mut state.download_queue,
-                    trie_nodes,
+                    trie_nodes.clone(),
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 ) else {
