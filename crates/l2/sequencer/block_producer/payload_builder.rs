@@ -159,7 +159,7 @@ pub async fn fill_transactions(
         if context.remaining_gas < head_tx.tx.gas_limit() {
             debug!(
                 "Skipping transaction: {}, no gas left",
-                head_tx.tx.compute_hash()
+                head_tx.tx.hash()
             );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
@@ -167,7 +167,7 @@ pub async fn fill_transactions(
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-        let tx_hash = head_tx.tx.compute_hash();
+        let tx_hash = head_tx.tx.hash();
 
         // Check whether the tx is replay-protected
         if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -232,7 +232,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // We only add the messages and privileged transaction length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
@@ -269,7 +269,7 @@ fn fetch_mempool_transactions(
 ) -> Result<TransactionQueue, BlockProducerError> {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
-        let tx_hash = blob_tx.compute_hash();
+        let tx_hash = blob_tx.hash();
         blockchain.remove_transaction_from_pool(&tx_hash)?;
         blob_txs.pop();
     }
