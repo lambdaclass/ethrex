@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": 2,
   "links": [],
   "panels": [
     {
@@ -475,6 +475,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_verification_gas": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -638,6 +655,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_proving_time": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -790,6 +824,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_gas_used": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              },
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -935,6 +986,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_commitment_gas": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              },
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -1023,13 +1091,13 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_gas_used"
+                "options": "batch_gas_used (last)"
               }
             },
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_proving_time"
+                "options": "batch_proving_time (last)"
               }
             }
           }
@@ -1073,7 +1141,15 @@
         },
         {
           "id": "convertFieldType",
-          "options": {}
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
         },
         {
           "id": "sortBy",
@@ -1084,6 +1160,29 @@
                 "field": "batch_number"
               }
             ]
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_gas_used": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              },
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_proving_time": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
           }
         }
       ],
@@ -1254,6 +1353,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_tx_count": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -1401,6 +1517,23 @@
               }
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_commitment_blob_gas": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              },
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -1490,13 +1623,13 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_tx_count"
+                "options": "batch_tx_count (last)"
               }
             },
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_proving_time"
+                "options": "batch_proving_time (last)"
               }
             }
           }
@@ -1540,7 +1673,15 @@
         },
         {
           "id": "convertFieldType",
-          "options": {}
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "number",
+                "targetField": "batch_number"
+              }
+            ],
+            "fields": {}
+          }
         },
         {
           "id": "sortBy",
@@ -1551,6 +1692,29 @@
                 "field": "batch_number"
               }
             ]
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_proving_time": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              },
+              "batch_tx_count": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
           }
         }
       ],
@@ -1720,6 +1884,23 @@
                 "field": "batch_number"
               }
             ]
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "batch_number": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "batch_size": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
           }
         }
       ],
@@ -2456,6 +2637,6 @@
   "timepicker": {},
   "timezone": "browser",
   "title": "Ethrex L2 - Overview",
-  "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091",
-  "version": 1
+  "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091a",
+  "version": 3
 }
