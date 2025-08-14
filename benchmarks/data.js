@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755209356724,
+  "lastUpdate": 1755210554170,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20379,6 +20379,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006542803921568628,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37f25170badef29a2a47a86992e2717ee0b3def4",
+          "message": "perf(levm): use malachite for modexp (#4045)\n\nUse malachite library to improve the performance of the modexp\nprecompile. There are speedups up to 7-8x observed in the new\nbenchmarks.\n\n---------\n\nCo-authored-by: Tomás Arjovsky <tomas.arjovsky@lambdaclass.com>",
+          "timestamp": "2025-08-14T17:40:22Z",
+          "tree_id": "b4e6884f84debf2dcab25b0046b9c8c55744eca8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/37f25170badef29a2a47a86992e2717ee0b3def4"
+        },
+        "date": 1755210538762,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014398403451995685,
             "unit": "Mgas/s"
           }
         ]
