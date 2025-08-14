@@ -31,6 +31,7 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use tracing::info;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -625,6 +626,13 @@ impl StoreEngine for Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        for i in 0..BlockNumber::MAX {
+            if let Some(Ok(hash)) = self.read::<CanonicalBlockHashes>(i)
+            .await
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))? {
+                info!("Block to hash: {i} -> {hash}");
+            }
+        };
         self.read::<CanonicalBlockHashes>(number)
             .await
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
