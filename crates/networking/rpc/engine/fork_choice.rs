@@ -387,7 +387,9 @@ async fn build_payload(
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload).await?;
-
+    context
+        .blockchain
+        .initiate_payload_build(payload, payload_id)
+        .await;
     Ok(payload_id)
 }
