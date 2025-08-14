@@ -379,15 +379,12 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
-    //let base = BigUint::from_bytes_be(&b);
     let base = Integer::from_digits(&b, rug::integer::Order::MsfBe);
 
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
-    //let exponent = BigUint::from_bytes_be(&e);
     let exponent = Integer::from_digits(&e, rug::integer::Order::MsfBe);
 
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
-    //let modulus = BigUint::from_bytes_be(&m);
     let modulus = Integer::from_digits(&m, rug::integer::Order::MsfBe);
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
