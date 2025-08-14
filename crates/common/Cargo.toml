@@ -26,7 +26,6 @@ once_cell = "1.20.2"
 crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
-lazy_static.workspace = true
 rayon.workspace = true
 url.workspace = true
 

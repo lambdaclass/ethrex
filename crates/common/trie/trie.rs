@@ -28,17 +28,15 @@ pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
+// Hash value for an empty trie, equal to keccak(RLP_NULL)
+pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256::from_slice(
         Keccak256::new()
             .chain_update([RLP_NULL])
             .finalize()
             .as_slice(),
-    );
-}
+));
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
