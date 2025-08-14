@@ -12,7 +12,7 @@ use std::cell::OnceCell;
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
@@ -637,7 +637,7 @@ fn commit_node(
     )?;
     let trie_db = trie.db();
     trie_db
-        .put(node.node.compute_hash(), node.node.encode_raw())
+        .put(node.node.compute_hash(), node.node.encode_to_vec())
         .map_err(StoreError::Trie)?; // we can have an error if 2 trees have the same nodes
 
     // Special case, we have just commited the root, we stop
