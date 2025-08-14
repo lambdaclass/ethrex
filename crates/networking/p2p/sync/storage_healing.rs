@@ -217,7 +217,7 @@ pub async fn heal_storage_trie(
         tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
 
     loop {
-        yield_now();
+        yield_now().await;
 
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
