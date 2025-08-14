@@ -287,33 +287,22 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                 ); // TODO: if we have a stor error we should stop
             }
-            Err(_) => todo!(),
+            Err(RequestStorageTrieNodes::SendMessageError(id, _)) => {
+                let inflight_request = state.requests.get(&id).expect("request disappeared");
+                state.failed_downloads += 1;
+                state
+                    .download_queue
+                    .extend(inflight_request.requests.clone());
+                state
+                    .scored_peers
+                    .entry(inflight_request.peer_id)
+                    .and_modify(|entry| {
+                        entry.in_flight = false;
+                        entry.score -= 1;
+                    });
+            }
         }
     }
-}
-
-async fn clear_inflight_requests(
-    requests: &mut HashMap<u64, InflightRequest>,
-    scored_peers: &mut HashMap<H256, PeerScore>,
-    download_queue: &mut VecDeque<NodeRequest>,
-    failed_downloads: &mut usize,
-) {
-    // Inneficiant use extract_if when available for people (rust 1.88)
-    requests.retain(|_, inflight_request: &mut InflightRequest| {
-        if inflight_request.sent_time.elapsed() > INFLIGHT_TIMEOUT {
-            *failed_downloads += 1;
-            download_queue.extend(inflight_request.requests.clone());
-            scored_peers
-                .entry(inflight_request.peer_id)
-                .and_modify(|entry| {
-                    entry.in_flight = false;
-                    entry.score -= 1;
-                });
-            false
-        } else {
-            true
-        }
-    });
 }
 
 /// it grabs N peers to ask for data
