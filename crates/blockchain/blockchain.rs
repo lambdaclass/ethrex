@@ -948,8 +948,13 @@ pub fn validate_block(
     elasticity_multiplier: u64,
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header, elasticity_multiplier)
-        .map_err(InvalidBlockError::from)?;
+    match validate_block_header(&block.header, parent_header, elasticity_multiplier) {
+        Ok(_) => {},
+        Err(e) => {
+            warn!("Failed to validate block: {block:?}");
+            return Err(ChainError::InvalidBlock(InvalidBlockError::from(e)))
+        },
+    };
 
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
