@@ -1236,7 +1236,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         info!("Succesfully validated tree, {state_root} found");
     } else {
         error!(
-            "We have failed the validation of the tree {state_root} expected but {computed_state_root} found"
+            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
         );
     }
     tree_validated
@@ -1267,7 +1267,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
             //info!("Succesfully validated tree, {computed_storage_root} found");
         } else {
             error!(
-                "We have failed the validation of the tree {} expected but {computed_storage_root} found",
+                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
                 account_state.storage_root
             );
         }
