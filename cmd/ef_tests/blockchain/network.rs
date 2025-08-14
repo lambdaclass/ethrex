@@ -1,11 +1,9 @@
 use ethrex_common::{H160, types::ChainConfig};
-use lazy_static::lazy_static;
 use serde::Deserialize;
-use std::str::FromStr;
+use std::{str::FromStr, sync::LazyLock};
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
-lazy_static! {
-    pub static ref MERGE_CONFIG: ChainConfig = ChainConfig {
+pub static MERGE_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         chain_id: 1_u64,
         homestead_block: Some(0),
         dao_fork_block: Some(0),
@@ -25,35 +23,40 @@ lazy_static! {
         merge_netsplit_block: Some(0),
         terminal_total_difficulty: Some(0),
         ..Default::default()
-    };
-    pub static ref MERGE_TO_SHANGHAI_AT_15K_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static MERGE_TO_SHANGHAI_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         shanghai_time: Some(0x3a98),
         ..*MERGE_CONFIG
-    };
-    pub static ref SHANGHAI_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static SHANGHAI_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         shanghai_time: Some(0),
         ..*MERGE_CONFIG
-    };
-    pub static ref SHANGHAI_TO_CANCUN_AT_15K_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static SHANGHAI_TO_CANCUN_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         cancun_time: Some(0x3a98),
         ..*SHANGHAI_CONFIG
-    };
-    pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static CANCUN_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         cancun_time: Some(0),
         ..*SHANGHAI_CONFIG
-    };
-    pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static CANCUN_TO_PRAGUE_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         prague_time: Some(0x3a98),
         // Mainnet address
         deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
             .unwrap(),
         ..*CANCUN_CONFIG
-    };
-    pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {
+});
+
+pub static PRAGUE_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         prague_time: Some(0),
         ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
-    };
-}
+});
 
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Network {

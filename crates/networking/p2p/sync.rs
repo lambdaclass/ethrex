@@ -55,26 +55,23 @@ const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
 #[cfg(feature = "sync-test")]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
-}
-#[cfg(not(feature = "sync-test"))]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
+static EXECUTE_BATCH_SIZE: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT));
 
-lazy_static::lazy_static! {
-    // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
-    // Starting hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
+#[cfg(not(feature = "sync-test"))]
+static EXECUTE_BATCH_SIZE: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| EXECUTE_BATCH_SIZE_DEFAULT);
+
+// Size of each state trie segment
+static STATE_TRIE_SEGMENT_SIZE: std::sync::LazyLock<U256> = std::sync::LazyLock::new(|| HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS);
+
+// Starting hash of each state trie segment
+static STATE_TRIE_SEGMENTS_START: std::sync::LazyLock<[H256; STATE_TRIE_SEGMENTS]> = std::sync::LazyLock::new(|| {
         array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
-    };
-    // Ending hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
+});
+
+// Ending hash of each state trie segment
+static STATE_TRIE_SEGMENTS_END: std::sync::LazyLock<[H256; STATE_TRIE_SEGMENTS]> = std::sync::LazyLock::new(|| {
         array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
-    };
-}
+});
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
