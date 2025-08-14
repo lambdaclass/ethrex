@@ -2,6 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -15,7 +16,10 @@ use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
-use crate::constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH};
+use crate::{
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    rkyv_utils,
+};
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -86,7 +90,9 @@ impl TryFrom<&Path> for Genesis {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
     pub target: u64,
@@ -95,7 +101,9 @@ pub struct ForkBlobSchedule {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobSchedule {
     #[serde(default = "default_cancun_schedule")]
@@ -131,7 +139,18 @@ fn default_prague_schedule() -> ForkBlobSchedule {
 
 /// Blockchain settings defined per block
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    Default,
+    PartialEq,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainConfig {
     /// Current chain identifier
@@ -175,6 +194,7 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
 }
