@@ -436,6 +436,7 @@ fn mod_exp(base: Integer, exponent: Integer, modulus: Integer) -> Integer {
     } else if exponent == Integer::ZERO {
         Integer::from(1_u8) % modulus
     } else {
+        #[expect(clippy::unwrap_used, reason = "Exponent and modulus are always positive integers")]
         base.pow_mod(&exponent, &modulus).unwrap()
     }
 }
