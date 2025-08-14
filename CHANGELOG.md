@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-14
+
+- Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
