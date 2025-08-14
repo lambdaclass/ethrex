@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info};
+use ::tracing::{debug, info, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -118,9 +118,15 @@ impl Blockchain {
         };
 
         let chain_config = self.storage.get_chain_config()?;
-
+        info!("Executing block with number: {}", block.header.number);
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        match validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER) {
+            Ok(_) => {},
+            Err(e) => {
+                warn!("Failed to validate block: {block:?}");
+                return Err(e)
+            },
+        }
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
