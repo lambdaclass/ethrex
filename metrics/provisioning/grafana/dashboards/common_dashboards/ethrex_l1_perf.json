@@ -944,7 +944,7 @@
         {
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "(\n  sum by (function_name) (\n    function_duration_seconds_sum{function_name!=\"Block execution\"}\n  )\n)\nor\nlabel_replace(\n  sum(function_duration_seconds_sum{function_name=\"Block execution\"})\n  - sum(function_duration_seconds_sum{function_name=~\"Storage read|Account read|Account Read|Account code Account code read|Block Block hash read\"}),\n  \"function_name\",\"Block execution (excl DB reads)\",\"__name__\",\".*\"\n)",
+          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
           "fullMetaSearch": false,
           "includeNullMetadata": false,
           "legendFormat": "__auto",
