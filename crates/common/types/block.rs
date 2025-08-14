@@ -21,6 +21,7 @@ use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use std::cmp::{Ordering, max};
 
@@ -565,6 +566,7 @@ pub fn validate_block_header(
     }
 
     if !header.difficulty.is_zero() {
+        warn!("Failed to validate block header: {header:?}");
         return Err(InvalidBlockHeaderError::DifficultyNotZero);
     }
 
