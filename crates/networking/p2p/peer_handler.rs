@@ -2206,8 +2206,7 @@ impl PeerHandler {
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
         let response = tokio::time::timeout(Duration::from_secs(5), async move {
-            let response = receiver.recv().await;
-            response
+            receiver.recv().await
         })
         .await;
 
