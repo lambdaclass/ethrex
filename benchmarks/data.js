@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755185741915,
+  "lastUpdate": 1755190156494,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20055,6 +20055,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0014064615384615385,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4491ebbc11615b48204beec41d4753bd058b06b9",
+          "message": "feat(l1): add more block execution breakdown metrics. (#4043)\n\n**Motivation**\nTo know how much time it takes to read accounts/storage.\n\n**Description**\n- Added instrumentation for account and storage reads\n- Also fixed the store DB job not working properly because of it\nhappening in another thread.\n- Added pie chart to the L1 Performance dashboard and removed the other\none.",
+          "timestamp": "2025-08-14T13:57:31Z",
+          "tree_id": "c026ebe95c44440d3b018a1abf8894df05e0ffc1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4491ebbc11615b48204beec41d4753bd058b06b9"
+        },
+        "date": 1755190143070,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013717697841726618,
             "unit": "Mgas/s"
           }
         ]
