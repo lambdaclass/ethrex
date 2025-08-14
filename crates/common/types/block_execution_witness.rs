@@ -506,6 +506,8 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
     let mut initial_node = None;
 
+    dbg!("ADFVASDFVASDFV");
+
     for node in state.iter() {
         // If the node is empty we skip it
         if node == &vec![128_u8] {
@@ -520,12 +522,15 @@ pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, Execut
             break;
         }
     }
+    dbg!("SYNIOLYNIOYIUOLYUKMHJKNG");
 
-    Trie::from_nodes(
+    let a = Trie::from_nodes(
         initial_node.map(|b| b.to_vec()).as_ref(),
         &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
     )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")));
+    dbg!("::::::::::::::::::::::::::::::::::::::::::");
+    a
 }
 
 // This function is an option because we expect it to fail sometimes, and we just want to filter it
