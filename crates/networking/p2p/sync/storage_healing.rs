@@ -231,12 +231,6 @@ pub async fn heal_storage_trie(
             );
             state.succesful_downloads = 0;
             state.failed_downloads = 0;
-            if state.download_queue.is_empty() {
-                debug!(
-                    "We have nothing in the download queue, debugging what are the inflight requests to see what's stopping the storage {:?}",
-                    state.requests
-                );
-            }
         }
 
         if state.requests.is_empty() && state.download_queue.is_empty() {
@@ -290,6 +284,9 @@ pub async fn heal_storage_trie(
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
                 let inflight_request = state.requests.get(&id).expect("request disappeared");
                 state.failed_downloads += 1;
+                if state.download_queue.is_empty() {
+                    debug!("In request {id} found error {err:?}");
+                }
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
@@ -300,9 +297,6 @@ pub async fn heal_storage_trie(
                         entry.in_flight = false;
                         entry.score -= 1;
                     });
-                if state.download_queue.is_empty() {
-                    debug!("In request {id} found error {err:?}");
-                }
             }
         }
     }
