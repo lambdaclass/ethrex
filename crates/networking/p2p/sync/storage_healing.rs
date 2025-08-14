@@ -481,11 +481,17 @@ fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone(), membatch)?;
+            determine_missing_children(&node_response, store.clone(), membatch).inspect_err(
+                |err| {
+                    error!("{err} in determine missing children while searching {node_response:?}")
+                },
+            )?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch, roots_healed)?;
+            commit_node(&node_response, store.clone(), membatch, roots_healed).inspect_err(
+                |err| error!("{err} in commit node while committing {node_response:?}"),
+            )?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
