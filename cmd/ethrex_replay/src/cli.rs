@@ -7,6 +7,7 @@ use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
+use tracing::warn;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
@@ -47,6 +48,8 @@ pub enum SubcommandExecute {
         network: Network,
         #[arg(long, required = false)]
         bench: bool,
+        #[arg(long, required = false)]
+        cache: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -81,6 +84,8 @@ pub enum SubcommandExecute {
         network: Network,
         #[arg(long, required = false)]
         l2: bool,
+        #[arg(long, required = false)]
+        cache: bool,
     },
     #[command(about = "Execute an L2 batch.")]
     Batch {
@@ -108,10 +113,14 @@ impl SubcommandExecute {
                 rpc_url,
                 network,
                 bench,
+                cache,
             } => {
+                if !cache {
+                    warn!("Cache is not enabled. This may lead to longer execution times.");
+                }
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network.clone(), block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block, cache).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -145,6 +154,7 @@ impl SubcommandExecute {
                 rpc_url,
                 network,
                 l2,
+                cache,
             } => {
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
@@ -159,6 +169,7 @@ impl SubcommandExecute {
                     eth_client,
                     network,
                     BlockIdentifier::Number(block_number.as_u64()),
+                    cache,
                 )
                 .await?;
 
@@ -213,6 +224,8 @@ pub enum SubcommandProve {
         network: Network,
         #[arg(long, required = false)]
         bench: bool,
+        #[arg(long, required = false)]
+        cache: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -258,10 +271,11 @@ impl SubcommandProve {
                 rpc_url,
                 network,
                 bench,
+                cache,
             } => {
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network.clone(), block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block, cache).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;

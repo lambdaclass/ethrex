@@ -20,6 +20,7 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    cache_data: bool,
 ) -> eyre::Result<Cache> {
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
@@ -38,9 +39,13 @@ pub async fn get_blockdata(
 
     let file_name = format!("cache_{network}_{requested_block_number}.json");
 
-    if let Ok(cache) = load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
-        info!("Getting block {requested_block_number} data from cache");
-        return Ok(cache);
+    if cache_data {
+        if let Ok(cache) =
+            load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
+        {
+            info!("Getting block {requested_block_number} data from cache");
+            return Ok(cache);
+        }
     }
 
     info!("Validating RPC chain ID");
@@ -134,22 +139,24 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    info!("Caching block {requested_block_number}");
-
-    let block_cache_start_time = SystemTime::now();
-
     let cache = Cache::new(vec![block], WitnessProof::Witness(witness));
 
-    write_cache(&cache, &file_name).expect("failed to write cache");
+    if cache_data {
+        let block_cache_start_time = SystemTime::now();
 
-    let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
+        info!("Caching block {requested_block_number}");
 
-    info!(
-        "Cached block {requested_block_number} in {}",
-        format_duration(block_cache_duration)
-    );
+        write_cache(&cache, &file_name).expect("failed to write cache");
+
+        let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        info!(
+            "Cached block {requested_block_number} in {}",
+            format_duration(block_cache_duration)
+        );
+    }
 
     Ok(cache)
 }
