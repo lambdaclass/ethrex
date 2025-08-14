@@ -20,7 +20,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::Sender;
+use tokio::{sync::mpsc::Sender, task::yield_now};
 use tracing::{debug, error, field::debug, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
@@ -217,6 +217,8 @@ pub async fn heal_storage_trie(
         tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
 
     loop {
+        yield_now();
+
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
