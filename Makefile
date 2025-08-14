@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain --release -- -D warnings
+	cargo clippy --all-targets -F debug,redb,risc0,rollup_storage_libmdbx,rollup_storage_redb,sp1,sync-test --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain --release -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
