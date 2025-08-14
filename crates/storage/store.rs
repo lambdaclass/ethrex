@@ -604,7 +604,7 @@ impl Store {
             }
             Some(_) => {
                 error!(
-                    "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, clear the database (e.g., run `ethrex removedb`) and try again."
+                    "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, choose another datadir or clear the database (e.g., run `ethrex removedb`) and try again."
                 );
                 return Err(StoreError::IncompatibleChainConfig);
             }
