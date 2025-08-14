@@ -8,6 +8,7 @@ use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
+use futures::future::select_all;
 use reqwest::Url;
 use tokio::{
     join,
@@ -21,6 +22,7 @@ mod block_execution_report;
 mod slack;
 
 #[derive(Parser)]
+// #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
 pub struct Options {
     #[arg(
         long,
@@ -33,23 +35,26 @@ pub struct Options {
     //     long,
     //     value_name = "URL",
     //     env = "HOODI_RPC_URL",
-    //     help_heading = "Replayer options"
+    //     help_heading = "Replayer options",
+    //     group = "rpc_urls"
     // )]
-    // pub hoodi_rpc_url: Url,
+    // pub hoodi_rpc_url: Option<Url>,
     // #[arg(
     //     long,
     //     value_name = "URL",
     //     env = "SEPOLIA_RPC_URL",
-    //     help_heading = "Replayer options"
+    //     help_heading = "Replayer options",
+    //     group = "rpc_urls"
     // )]
-    // pub sepolia_rpc_url: Url,
+    // pub sepolia_rpc_url: Option<Url>,
     // #[arg(
     //     long,
     //     value_name = "URL",
     //     env = "MAINNET_RPC_URL",
-    //     help_heading = "Replayer options"
+    //     help_heading = "Replayer options",
+    //     group = "rpc_urls"
     // )]
-    // pub mainnet_rpc_url: Url,
+    // pub mainnet_rpc_url: Option<Url>,
     #[arg(
         long,
         default_value_t = false,
@@ -369,10 +374,6 @@ async fn replay_proving(
     mainnet_rpc_url: Url,
     cache: bool,
 ) -> Result<(), EthClientError> {
-    let hoodi_eth_client = EthClient::new(hoodi_rpc_url.as_str()).unwrap();
-    let sepolia_eth_client = EthClient::new(sepolia_rpc_url.as_str()).unwrap();
-    let mainnet_eth_client = EthClient::new(mainnet_rpc_url.as_str()).unwrap();
-
     loop {
         let start = SystemTime::now();
 
