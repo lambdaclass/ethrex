@@ -230,9 +230,9 @@ pub async fn heal_storage_trie(
             );
             state.succesful_downloads = 0;
             state.failed_downloads = 0;
-            if state.requests.len() < 2 {
+            if state.download_queue.is_empty() {
                 debug!(
-                    "We have few task remaining, debugging to see what's stopping the storage {:?}",
+                    "We have nothing in the download queue, debugging what are the inflight requests to see what's stopping the storage {:?}",
                     state.requests
                 );
             }
