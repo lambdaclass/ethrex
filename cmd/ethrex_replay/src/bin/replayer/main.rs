@@ -7,6 +7,7 @@ use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
+use futures::future::select_all;
 use reqwest::Url;
 use tokio::task::{JoinError, JoinHandle};
 
@@ -16,6 +17,7 @@ mod block_execution_report;
 mod slack;
 
 #[derive(Parser)]
+#[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
 pub struct Options {
     #[arg(
         long,
@@ -28,23 +30,26 @@ pub struct Options {
         long,
         value_name = "URL",
         env = "HOODI_RPC_URL",
-        help_heading = "Replayer options"
+        help_heading = "Replayer options",
+        group = "rpc_urls"
     )]
-    pub hoodi_rpc_url: Url,
+    pub hoodi_rpc_url: Option<Url>,
     #[arg(
         long,
         value_name = "URL",
         env = "SEPOLIA_RPC_URL",
-        help_heading = "Replayer options"
+        help_heading = "Replayer options",
+        group = "rpc_urls"
     )]
-    pub sepolia_rpc_url: Url,
+    pub sepolia_rpc_url: Option<Url>,
     #[arg(
         long,
         value_name = "URL",
         env = "MAINNET_RPC_URL",
-        help_heading = "Replayer options"
+        help_heading = "Replayer options",
+        group = "rpc_urls"
     )]
-    pub mainnet_rpc_url: Url,
+    pub mainnet_rpc_url: Option<Url>,
     #[arg(
         long,
         default_value_t = false,
@@ -116,12 +121,13 @@ async fn main() {
         ] {
             let slack_webhook_url = opts.slack_webhook_url.clone();
 
-            let handle =
-                tokio::spawn(
-                    async move { replay_execution(network, rpc_url, slack_webhook_url).await },
-                );
+            if let Some(rpc_url) = rpc_url {
+                let handle = tokio::spawn(async move {
+                    replay_execution(network, rpc_url, slack_webhook_url).await
+                });
 
-            replayers_handles.push(handle);
+                replayers_handles.push(handle);
+            }
         }
     } else {
         let slack_webhook_url = opts.slack_webhook_url.clone();
@@ -131,9 +137,17 @@ async fn main() {
 
         let handle = tokio::spawn(async move {
             replay_proving(
-                hoodi_rpc_url,
-                sepolia_rpc_url,
-                mainnet_rpc_url,
+                [
+                    (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
+                    (
+                        sepolia_rpc_url,
+                        Network::PublicNetwork(PublicNetwork::Sepolia),
+                    ),
+                    (
+                        mainnet_rpc_url,
+                        Network::PublicNetwork(PublicNetwork::Mainnet),
+                    ),
+                ],
                 slack_webhook_url,
             )
             .await
@@ -145,30 +159,30 @@ async fn main() {
     // TODO: These tasks are spawned outside the above loop to be able to handled
     // in the tokio::select!. We should find a way to spawn them inside the loop
     // and still be able to handle them in the tokio::select!.
-    let hoodi_rpc_url = opts.hoodi_rpc_url.clone();
-    let hoodi_rpc_revalidation_handle = tokio::spawn(async { revalidate_rpc(hoodi_rpc_url).await });
-    let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
-    let sepolia_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(sepolia_rpc_url).await });
-    let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
-    let mainnet_rpc_revalidation_handle =
-        tokio::spawn(async { revalidate_rpc(mainnet_rpc_url).await });
+    let mut revalidation_handles = Vec::new();
+    if let Some(hoodi_rpc_url) = opts.hoodi_rpc_url.clone() {
+        let handle = tokio::spawn(async move { revalidate_rpc(hoodi_rpc_url).await });
+        revalidation_handles.push(handle);
+    }
+    if let Some(sepolia_rpc_url) = opts.sepolia_rpc_url.clone() {
+        let handle = tokio::spawn(async move { revalidate_rpc(sepolia_rpc_url).await });
+        revalidation_handles.push(handle);
+    }
+    if let Some(mainnet_rpc_url) = opts.mainnet_rpc_url.clone() {
+        let handle = tokio::spawn(async move { revalidate_rpc(mainnet_rpc_url).await });
+        revalidation_handles.push(handle);
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Received Ctrl+C, shutting down...");
             shutdown(replayers_handles);
         }
-        res = hoodi_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
-            shutdown(replayers_handles);
-        }
-        res = sepolia_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.sepolia_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
-            shutdown(replayers_handles);
-        }
-        res = mainnet_rpc_revalidation_handle => {
-            handle_rpc_revalidation_handle_result(res, opts.mainnet_rpc_url.clone(), opts.slack_webhook_url.clone()).await;
+        res = async {
+            let (result, _index, _remaining_handles) = select_all(revalidation_handles).await;
+            result
+        } => {
+            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.unwrap(), opts.slack_webhook_url.clone()).await; // TODO: change hoodi rpc to generic
             shutdown(replayers_handles);
         }
     }
@@ -221,45 +235,28 @@ async fn replay_execution(
 }
 
 async fn replay_proving(
-    hoodi_rpc_url: Url,
-    sepolia_rpc_url: Url,
-    mainnet_rpc_url: Url,
+    rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
 ) -> Result<(), EthClientError> {
-    let hoodi_eth_client = EthClient::new(hoodi_rpc_url.as_str()).unwrap();
-    let sepolia_eth_client = EthClient::new(sepolia_rpc_url.as_str()).unwrap();
-    let mainnet_eth_client = EthClient::new(mainnet_rpc_url.as_str()).unwrap();
-
     loop {
         let start = SystemTime::now();
+        for (rpc_url, network) in &rpc_urls {
+            let rpc_url = if let Some(url) = rpc_url {
+                url.clone()
+            } else {
+                continue;
+            };
+            let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
-        replay_latest_block(
-            ReplayerMode::Prove,
-            Network::PublicNetwork(PublicNetwork::Hoodi),
-            hoodi_rpc_url.clone(),
-            &hoodi_eth_client,
-            slack_webhook_url.clone(),
-        )
-        .await?;
-
-        replay_latest_block(
-            ReplayerMode::Prove,
-            Network::PublicNetwork(PublicNetwork::Sepolia),
-            sepolia_rpc_url.clone(),
-            &sepolia_eth_client,
-            slack_webhook_url.clone(),
-        )
-        .await?;
-
-        replay_latest_block(
-            ReplayerMode::Prove,
-            Network::PublicNetwork(PublicNetwork::Mainnet),
-            mainnet_rpc_url.clone(),
-            &mainnet_eth_client,
-            slack_webhook_url.clone(),
-        )
-        .await?;
-
+            replay_latest_block(
+                ReplayerMode::Prove,
+                network.clone(),
+                rpc_url.clone(),
+                &eth_client,
+                slack_webhook_url.clone(),
+            )
+            .await?;
+        }
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
         });

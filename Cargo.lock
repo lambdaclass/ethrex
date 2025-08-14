@@ -4203,6 +4203,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-vm",
  "eyre",
+ "futures",
  "hex",
  "reqwest 0.12.20",
  "serde",
