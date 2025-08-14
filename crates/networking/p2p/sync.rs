@@ -1,4 +1,4 @@
-use crate::peer_handler::SNAP_LIMIT;
+use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
@@ -280,7 +280,7 @@ impl Syncer {
             self.snap_sync(store, &mut block_sync_state).await?;
 
             // Next sync will be full-sync
-            block_sync_state = block_sync_state.into_fullsync().await?;
+            block_sync_state.into_fullsync().await?;
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -789,7 +789,7 @@ impl Syncer {
                 H256::repeat_byte(0xff),
                 account_state_snapshots_dir,
             )
-            .await;
+            .await?;
 
         let empty = *EMPTY_TRIE_HASH;
 
@@ -1225,7 +1225,7 @@ enum SyncError {
     #[error("Called update_pivot outside snapsync mode")]
     NotInSnapSync,
     #[error("Peer handler error: {0}")]
-    PeerHandler(String),
+    PeerHandler(#[from] PeerHandlerError),
 }
 
 impl<T> From<SendError<T>> for SyncError {
