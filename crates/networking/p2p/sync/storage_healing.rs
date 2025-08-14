@@ -534,15 +534,26 @@ pub fn determine_missing_children(
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
-    let trie = store.open_storage_trie(
-        H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-        *EMPTY_TRIE_HASH,
-    )?;
+    let trie = store
+        .open_storage_trie(
+            H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
+            *EMPTY_TRIE_HASH,
+        )
+        .inspect_err(|_| {
+            error!("Malformed data when opening the storage trie in determine missing children")
+        })?;
     let trie_state = trie.db();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                if child.is_valid()
+                    && child
+                        .get_node(trie_state)
+                        .inspect_err(|_| {
+                            error!("Malformed data when doing get child of a branch node")
+                        })?
+                        .is_none()
+                {
                     count += 1;
 
                     paths.extend(determine_membatch_missing_children(
@@ -562,7 +573,15 @@ pub fn determine_missing_children(
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+            if node.child.is_valid()
+                && node
+                    .child
+                    .get_node(trie_state)
+                    .inspect_err(|_| {
+                        error!("Malformed data when doing get child of an extension node")
+                    })?
+                    .is_none()
+            {
                 count += 1;
                 paths.extend(determine_membatch_missing_children(
                     NodeRequest {
