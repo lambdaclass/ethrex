@@ -285,6 +285,8 @@ async fn replay_latest_block(
         })
         .as_usize();
 
+    tracing::info!("Replaying block {latest_block} on {network}");
+
     let block = eth_client
         .get_raw_block(BlockIdentifier::Number(latest_block as u64))
         .await?;
