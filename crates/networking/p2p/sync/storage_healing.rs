@@ -265,10 +265,15 @@ pub async fn heal_storage_trie(
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 ) else {
+                    if state.download_queue.len() < 350 {
+                        info!(
+                            "We received none from zip_requeue_node_responses_score_peer while low download value {trie_nodes:?}"
+                        )
+                    }
                     continue;
                 };
 
-                let _ = process_node_responses(
+                process_node_responses(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
                     state.store.clone(),
@@ -279,12 +284,13 @@ pub async fn heal_storage_trie(
                     &mut state.leafs_healed,
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
-                ); // TODO: if we have a stor error we should stop
+                )
+                .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
                 let inflight_request = state.requests.get(&id).expect("request disappeared");
                 state.failed_downloads += 1;
-                if state.download_queue.is_empty() {
+                if state.download_queue.len() < 350 {
                     info!("In request {id} found error {err:?}");
                 }
                 state
@@ -397,7 +403,10 @@ fn zip_requeue_node_responses_score_peer(
         "We are processing the nodes, we received {} nodes from our peer",
         trie_nodes.nodes.len()
     );
-    let request = requests.remove(&trie_nodes.id)?;
+    let Some(request) = requests.remove(&trie_nodes.id) else {
+        info!("We received a response where we had a missing requests {trie_nodes:?}");
+        return None;
+    };
     let peer = scored_peers
         .get_mut(&request.peer_id)
         .expect("Each time we request we should add to scored_peeers");
@@ -405,6 +414,9 @@ fn zip_requeue_node_responses_score_peer(
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
+        if download_queue.len() < 350 {
+            info!("We are receiving empty responses at the end of the download queue {request:?}");
+        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
@@ -438,6 +450,9 @@ fn zip_requeue_node_responses_score_peer(
         }
         Some(nodes)
     } else {
+        if download_queue.len() < 350 {
+            info!("This should get logged already {request:?}");
+        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
