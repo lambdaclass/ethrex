@@ -222,6 +222,19 @@ impl<'a> VM<'a> {
                     "PC: {}. Opcode {:?}. Gas remaining pre-exec: {}",
                     self.current_call_frame.pc, opcode_enum, self.current_call_frame.gas_remaining
                 );
+
+                println!(
+                    "Stack: {:?}",
+                    &self.current_call_frame.stack.values[self.current_call_frame.stack.offset..]
+                        .iter()
+                        .rev()
+                        .map(|value| format!("0x{:x}", value))
+                        .collect::<Vec<_>>()
+                );
+                let final_memory: Vec<u8> = self.current_call_frame.memory.buffer.borrow()
+                    [0..self.current_call_frame.memory.len]
+                    .to_vec();
+                println!("Memory: 0x{}", hex::encode(final_memory));
             }
 
             // Call the opcode, using the opcode function lookup table.
