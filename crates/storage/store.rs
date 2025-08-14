@@ -588,7 +588,8 @@ impl Store {
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
-
+        let latest_block_number = self.engine.get_latest_block_number().await?;
+        info!("Loading latest block number: {latest_block_number:?}");
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
                 .latest_block_header
