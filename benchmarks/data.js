@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755196591397,
+  "lastUpdate": 1755199831801,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20232,6 +20232,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0066736600000000005,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58a6347caa2730e4785bd45c8e3f27201debf5d8",
+          "message": "chore(l1): improve log message when trying to run incompatible configs (#4022)\n\n**Motivation**\nCurrent error message was confusing.",
+          "timestamp": "2025-08-14T16:13:13Z",
+          "tree_id": "4295b5beea8b44ac2666649772943f08161a8203",
+          "url": "https://github.com/lambdaclass/ethrex/commit/58a6347caa2730e4785bd45c8e3f27201debf5d8"
+        },
+        "date": 1755199815336,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001446080173347779,
             "unit": "Mgas/s"
           }
         ]
