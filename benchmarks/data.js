@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755195373633,
+  "lastUpdate": 1755196591397,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8785,6 +8785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161664688242,
             "range": "± 195353704",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37f25170badef29a2a47a86992e2717ee0b3def4",
+          "message": "perf(levm): use malachite for modexp (#4045)\n\nUse malachite library to improve the performance of the modexp\nprecompile. There are speedups up to 7-8x observed in the new\nbenchmarks.\n\n---------\n\nCo-authored-by: Tomás Arjovsky <tomas.arjovsky@lambdaclass.com>",
+          "timestamp": "2025-08-14T17:40:22Z",
+          "tree_id": "b4e6884f84debf2dcab25b0046b9c8c55744eca8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/37f25170badef29a2a47a86992e2717ee0b3def4"
+        },
+        "date": 1755196575613,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162250831980,
+            "range": "± 325840171",
             "unit": "ns/iter"
           }
         ]
