@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755201248230,
+  "lastUpdate": 1755201417092,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8815,6 +8815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162250831980,
             "range": "± 325840171",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a71da2164627496e57de09fbd84295ce03864515",
+          "message": "feat(l1): add a new manual docker publish for performance tag (#4053)\n\n**Motivation**\n\nHave a manually triggered docker publish of our latest changes in\nperformance.\n\n**Description**\n\nThis PR adds a workflow which copy our current docker publish but\ninstead of be triggered by push to main it can be just triggered\nmanually.",
+          "timestamp": "2025-08-14T19:05:39Z",
+          "tree_id": "753e2b5d32498e057988d20d7bdf8cd44767d7f5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a71da2164627496e57de09fbd84295ce03864515"
+        },
+        "date": 1755201401232,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165382508205,
+            "range": "± 2632390424",
             "unit": "ns/iter"
           }
         ]
