@@ -827,7 +827,7 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1516,7 +1516,7 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -2207,15 +2207,22 @@ impl PeerHandler {
 
         let response = tokio::time::timeout(Duration::from_secs(5), async move {
             let response = receiver.recv().await;
-            if response.is_none() {
-                return Err(PeerHandlerError::NoResponseFromPeer);
-            };
-            response.ok_or(PeerHandlerError::NoResponseFromPeer)
+            response
         })
         .await;
 
+        // TODO: we need to check, this seems a scenario where the peer channel does teardown
+        // after we sent the backend message
+        let Some(Ok(response)) = response
+            .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
+            .transpose()
+        else {
+            warn!("The RLPxConnection closed the backend channel");
+            return Ok(None);
+        };
+
         match response {
-            Ok(Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
                 if id == request_id && !block_headers.is_empty() {
                     return Ok(Some(
                         block_headers
@@ -2225,14 +2232,8 @@ impl PeerHandler {
                     ));
                 }
             }
-            Ok(Ok(_other_msgs)) => {
+            _other_msgs => {
                 info!("Received unexpected message from peer");
-            }
-            Ok(Err(err)) => {
-                info!("Error receiving block header from peer: {err}");
-            }
-            Err(_err) => {
-                info!("Timeout while waiting for sync head from peer");
             }
         }
 
@@ -2285,8 +2286,8 @@ pub enum PeerHandlerError {
     UnexpectedResponseFromPeer(H256),
     #[error("Failed to receive message from peer {0}")]
     ReceiveMessageFromPeer(H256),
-    #[error("Timeout while waiting for message from peer {0}")]
-    ReceiveMessageFromPeerTimeout(H256),
+    #[error("Timeout while waiting for message from peer")]
+    ReceiveMessageFromPeerTimeout,
     #[error("No peers available")]
     NoPeers,
     #[error("Received invalid headers")]
