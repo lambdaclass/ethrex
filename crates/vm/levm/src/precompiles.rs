@@ -8,6 +8,7 @@ use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
 };
+use rug::Integer;
 use ethrex_crypto::blake2f::blake2b_f;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
@@ -378,14 +379,16 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
-    let base = BigUint::from_bytes_be(&b);
+    //let base = BigUint::from_bytes_be(&b);
+    let base = Integer::from_digits(&b, rug::integer::Order::MsfBe);
 
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
-    let exponent = BigUint::from_bytes_be(&e);
+    //let exponent = BigUint::from_bytes_be(&e);
+    let exponent = Integer::from_digits(&e, rug::integer::Order::MsfBe);
 
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
-    let modulus = BigUint::from_bytes_be(&m);
-
+    //let modulus = BigUint::from_bytes_be(&m);
+    let modulus = Integer::from_digits(&m, rug::integer::Order::MsfBe);
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
@@ -397,7 +400,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
 
     let result = mod_exp(base, exponent, modulus);
 
-    let res_bytes = result.to_bytes_be();
+    let res_bytes = result.to_digits(rug::integer::Order::MsfBe);
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
     Ok(res_bytes.slice(..modulus_size))
@@ -427,13 +430,13 @@ fn get_slice_or_default(
 /// I allow this clippy alert because in the code modulus could never be
 ///  zero because that case is covered in the if above that line
 #[allow(clippy::arithmetic_side_effects)]
-fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
-    if modulus == BigUint::ZERO {
-        BigUint::ZERO
-    } else if exponent == BigUint::ZERO {
-        BigUint::from(1_u8) % modulus
+fn mod_exp(base: Integer, exponent: Integer, modulus: Integer) -> Integer {
+    if modulus == Integer::ZERO {
+        Integer::ZERO
+    } else if exponent == Integer::ZERO {
+        Integer::from(1_u8) % modulus
     } else {
-        base.modpow(&exponent, &modulus)
+        base.pow_mod(&exponent, &modulus).unwrap()
     }
 }
 
