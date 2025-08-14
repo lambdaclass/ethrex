@@ -10,7 +10,7 @@ use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
