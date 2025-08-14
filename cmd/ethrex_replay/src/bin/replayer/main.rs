@@ -90,7 +90,7 @@ pub struct Options {
     )]
     pub nethermind_rpc_url: Url,
     #[arg(long, required = false)]
-    cache: bool,
+    no_cache: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +125,12 @@ async fn main() {
         );
     }
 
+    if opts.no_cache {
+        tracing::warn!(
+            "Cache is disabled. Non-cached block data won't be cached and cached block data won't be used."
+        );
+    }
+
     let main_handle = if opts.execute {
         let slack_webhook_url = opts.slack_webhook_url.clone();
 
@@ -134,13 +140,14 @@ async fn main() {
 
         let nethermind_rpc_url = opts.nethermind_rpc_url.clone();
 
-        tokio::spawn(async {
+        tokio::spawn(async move {
             replay_client_diversity(
                 geth_rpc_url,
                 reth_rpc_url,
                 nethermind_rpc_url,
                 slack_webhook_url,
                 ReplayerMode::Execute,
+                !opts.no_cache,
             )
             .await
         })
@@ -205,6 +212,7 @@ async fn replay_execution(
     client: String,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
+    cache: bool,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
@@ -217,6 +225,7 @@ async fn replay_execution(
             client.clone(),
             rpc_url.clone(),
             &eth_client,
+            cache,
         )
         .await;
 
@@ -248,6 +257,7 @@ async fn replay_client_diversity(
     nethermind_rpc_url: Url,
     slack_webhook_url: Option<Url>,
     replayer_mode: ReplayerMode,
+    cache: bool,
 ) -> Result<(), EthClientError> {
     tracing::info!(
         "Starting client diversity replayer with mode: {replayer_mode} with RPCs: \nGeth: {geth_rpc_url}\nReth: {reth_rpc_url}\nNethermind: {nethermind_rpc_url}"
@@ -295,6 +305,7 @@ async fn replay_client_diversity(
                     client_name.to_string(),
                     rpc_url_clone,
                     &eth_client,
+                    cache,
                 )
                 .await
             });
@@ -356,6 +367,7 @@ async fn replay_proving(
     hoodi_rpc_url: Url,
     sepolia_rpc_url: Url,
     mainnet_rpc_url: Url,
+    cache: bool,
 ) -> Result<(), EthClientError> {
     let hoodi_eth_client = EthClient::new(hoodi_rpc_url.as_str()).unwrap();
     let sepolia_eth_client = EthClient::new(sepolia_rpc_url.as_str()).unwrap();
@@ -370,6 +382,7 @@ async fn replay_proving(
             client.clone(),
             hoodi_rpc_url.clone(),
             &hoodi_eth_client,
+            cache,
         )
         .await;
 
@@ -379,6 +392,7 @@ async fn replay_proving(
             client.clone(),
             sepolia_rpc_url.clone(),
             &sepolia_eth_client,
+            cache,
         )
         .await;
 
@@ -388,6 +402,7 @@ async fn replay_proving(
             client.clone(),
             mainnet_rpc_url.clone(),
             &mainnet_eth_client,
+            cache,
         )
         .await;
 
@@ -427,6 +442,7 @@ async fn replay_latest_block(
     client: String,
     rpc_url: Url,
     eth_client: &EthClient,
+    cache: bool,
 ) -> BlockRunReport {
     let latest_block = eth_client
         .get_block_number()
@@ -443,6 +459,7 @@ async fn replay_latest_block(
         client,
         rpc_url,
         eth_client,
+        cache,
     )
     .await
 }
@@ -454,6 +471,7 @@ async fn replay_block(
     client: String,
     rpc_url: Url,
     eth_client: &EthClient,
+    cache: bool,
 ) -> BlockRunReport {
     let block = match eth_client
         .get_raw_block(BlockIdentifier::Number(block_to_replay as u64))
@@ -483,7 +501,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
-                cache: false, // TODO: Parametrize
+                no_cache: cache,
             }
             .run()
             .await
@@ -494,7 +512,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
-                cache: false, // TODO: Parametrize
+                no_cache: cache,
             }
             .run()
             .await

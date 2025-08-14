@@ -49,7 +49,7 @@ pub enum SubcommandExecute {
         #[arg(long, required = false)]
         bench: bool,
         #[arg(long, required = false)]
-        cache: bool,
+        no_cache: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -85,7 +85,7 @@ pub enum SubcommandExecute {
         #[arg(long, required = false)]
         l2: bool,
         #[arg(long, required = false)]
-        cache: bool,
+        no_cache: bool,
     },
     #[command(about = "Execute an L2 batch.")]
     Batch {
@@ -113,14 +113,14 @@ impl SubcommandExecute {
                 rpc_url,
                 network,
                 bench,
-                cache,
+                no_cache,
             } => {
-                if !cache {
+                if no_cache {
                     warn!("Cache is not enabled. This may lead to longer execution times.");
                 }
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network.clone(), block, cache).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block, !no_cache).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -154,7 +154,7 @@ impl SubcommandExecute {
                 rpc_url,
                 network,
                 l2,
-                cache,
+                no_cache: cache,
             } => {
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
@@ -225,7 +225,7 @@ pub enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
         #[arg(long, required = false)]
-        cache: bool,
+        no_cache: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -271,11 +271,14 @@ impl SubcommandProve {
                 rpc_url,
                 network,
                 bench,
-                cache,
+                no_cache,
             } => {
+                if no_cache {
+                    warn!("Cache is not enabled. This may lead to longer execution times.");
+                }
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, network.clone(), block, cache).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block, !no_cache).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;
