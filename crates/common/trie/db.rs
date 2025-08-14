@@ -1,10 +1,11 @@
 use crate::{NodeHash, error::TrieError};
+use std::fmt::Debug;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-pub trait TrieDB: Send + Sync {
+pub trait TrieDB: Send + Sync + Debug {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
@@ -12,6 +13,7 @@ pub trait TrieDB: Send + Sync {
     }
 }
 
+#[derive(Debug)]
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
     inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,

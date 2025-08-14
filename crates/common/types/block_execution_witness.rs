@@ -2,27 +2,27 @@ use std::fmt;
 use std::{collections::HashMap, str::FromStr};
 
 use crate::{
-    H160,
     constants::EMPTY_KECCACK_HASH,
     serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
+    H160,
 };
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
+use ethrex_trie::{Node, Trie, EMPTY_TRIE_HASH};
 use keccak_hash::H256;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
+use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 use sha3::{Digest, Keccak256};
 
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable. (#4023)
