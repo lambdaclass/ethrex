@@ -558,6 +558,17 @@ impl StoreEngine for Store {
         .await
     }
 
+    async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.write::<ChainData>(
+            ChainDataIndex::LatestBlockNumber,
+            block_number.encode_to_vec(),
+        )
+        .await
+    }
+
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::PendingBlockNumber)

@@ -94,6 +94,13 @@ impl Store {
         Ok(store)
     }
 
+    pub async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_latest_block_number(block_number).await
+    }
+
     pub async fn new_from_genesis(
         store_path: &str,
         engine_type: EngineType,

@@ -83,6 +83,13 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn update_latest_block_number(
+        &self,
+        _block_number: BlockNumber,
+    ) -> Result<(), StoreError> { 
+     todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {

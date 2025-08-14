@@ -76,6 +76,8 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
+    info!("Restoring latest block number to 7991973");
+    store.update_latest_block_number(7991973).await.unwrap();
     store
         .add_initial_state(genesis)
         .await
