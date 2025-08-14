@@ -38,7 +38,6 @@ use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
 use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
-use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::conversion::traits::*};
 use secp256k1::{
     Message,

@@ -8,7 +8,6 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork};
-use malachite::base::num::logic::traits::BitIterable;
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
