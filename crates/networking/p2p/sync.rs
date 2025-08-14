@@ -777,9 +777,18 @@ impl Syncer {
         debug!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
-
+        // TODO: handle these errors
+        let account_state_snapshots_dir = get_account_state_snapshots_dir()
+            .expect("Failed to get account state snapshots directory");
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
+            .expect("Failed to get account storages snapshots directory");
         self.peers
-            .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+            .request_account_range(
+                state_root,
+                H256::zero(),
+                H256::repeat_byte(0xff),
+                account_state_snapshots_dir,
+            )
             .await;
 
         let empty = *EMPTY_TRIE_HASH;
@@ -833,6 +842,7 @@ impl Syncer {
                 .request_storage_ranges(
                     state_root,
                     account_storage_roots.clone(),
+                    account_storages_snapshots_dir.clone(),
                     chunk_index,
                     &mut downloaded_account_storages,
                 )
