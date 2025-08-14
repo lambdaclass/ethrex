@@ -1,9 +1,8 @@
-use chrono::Utc;
+use chrono::{DateTime, Local};
 use crossbeam_queue::SegQueue;
 use std::io::Write;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
-use std::time::SystemTime;
 use std::{
     borrow::Cow,
     thread::sleep,
@@ -19,7 +18,7 @@ pub enum Value {
 }
 
 // time elapsed since start, label, duration
-static LOGS: SegQueue<(u64, Cow<'static, str>, Value)> = SegQueue::new();
+static LOGS: SegQueue<(u64, Cow<'static, str>, Value, DateTime<Local>)> = SegQueue::new();
 static START: OnceLock<Instant> = OnceLock::new();
 
 pub fn add_log(label: impl Into<Cow<'static, str>>, value: Value) {
@@ -27,6 +26,7 @@ pub fn add_log(label: impl Into<Cow<'static, str>>, value: Value) {
         START.get().unwrap().elapsed().as_secs(),
         label.into(),
         value,
+        Local::now(),
     ));
 }
 
@@ -66,7 +66,7 @@ fn process_logs_thread() {
         let next_log = LOGS.pop();
 
         match next_log {
-            Some((elapsed_since_start, label, value)) => {
+            Some((elapsed_since_start, label, value, timestamp)) => {
                 writeln!(
                     file,
                     "{} | {} | {} | {} | {}",
@@ -83,7 +83,7 @@ fn process_logs_thread() {
                         Value::Percentage(_) => "Percentage",
                         Value::Gigagas(_) => "Ggas/s",
                     },
-                    Utc::now().format("%d.%m.%y - %H:%M:%S")
+                    timestamp.format("%d.%m.%y - %H:%M:%S")
                 )
                 .ok();
             }
