@@ -1,6 +1,6 @@
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
@@ -26,9 +26,11 @@ pub enum Error {
     Risc0SerdeError(#[from] Risc0SerdeError),
     #[error("zkvm dynamic error: {0}")]
     ZkvmDyn(#[from] anyhow::Error),
+    #[error("bincode error: {0}")]
+    Bincode(#[from] Box<bincode::ErrorKind>),
 }
 
-pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+pub fn execute(input: ProgramInput) -> Result<(), Error> {
     let env = ExecutorEnv::builder()
         .write(&JSONProgramInput(input))?
         .build()?;
@@ -43,10 +45,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn prove(
-    input: ProgramInput,
-    _aligned_mode: bool,
-) -> Result<Receipt, Box<dyn std::error::Error>> {
+pub fn prove(input: ProgramInput, format: ProofFormat) -> Result<Receipt, Error> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -56,8 +55,11 @@ pub fn prove(
 
     let prover = default_prover();
 
-    // contains the receipt along with statistics about execution of the guest
-    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &ProverOpts::groth16())?;
+    let prover_opts = match format {
+        ProofFormat::Compressed => ProverOpts::succinct(),
+        ProofFormat::Groth16 => ProverOpts::groth16(),
+    };
+    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
 
     info!("Successfully generated execution receipt.");
     Ok(prove_info.receipt)
@@ -68,13 +70,17 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(
-    proof: Receipt,
-    _aligned_mode: bool,
-) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    to_calldata(proof)
-        .map(BatchProof::ProofCalldata)
-        .map_err(Into::into)
+pub fn to_batch_proof(receipt: Receipt, format: ProofFormat) -> Result<BatchProof, Error> {
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::RISC0,
+            proof: bincode::serialize(&receipt.inner)?,
+            public_values: receipt.journal.bytes,
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(to_calldata(receipt)?),
+    };
+
+    Ok(batch_proof)
 }
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
