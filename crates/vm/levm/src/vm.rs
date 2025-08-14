@@ -231,8 +231,15 @@ impl<'a> VM<'a> {
                         .map(|value| format!("0x{:x}", value))
                         .collect::<Vec<_>>()
                 );
-                let final_memory: Vec<u8> = self.current_call_frame.memory.buffer.borrow()
-                    [0..self.current_call_frame.memory.len]
+                println!(
+                    "Current Memory Base: {}",
+                    self.current_call_frame.memory.current_base
+                );
+                let final_memory: Vec<u8> = self.current_call_frame.memory.buffer.borrow()[self
+                    .current_call_frame
+                    .memory
+                    .current_base
+                    ..self.current_call_frame.memory.len]
                     .to_vec();
                 println!("Memory: 0x{}", hex::encode(final_memory));
             }
