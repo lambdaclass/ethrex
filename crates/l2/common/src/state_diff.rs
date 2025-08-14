@@ -12,20 +12,18 @@ use ethrex_trie::{Trie, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
 use serde::{Deserialize, Serialize};
 
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
 
-lazy_static! {
-    /// The serialized length of a default l1message log
-    pub static ref L1MESSAGE_LOG_LEN: usize = L1Message::default().encode().len();
+/// The serialized length of a default l1message log
+pub static L1MESSAGE_LOG_LEN: LazyLock<usize> = LazyLock::new(|| L1Message::default().encode().len());
 
-    /// The serialized length of a default privileged transaction log
-    pub static ref PRIVILEGED_TX_LOG_LEN: usize = PrivilegedTransactionLog::default().encode().len();
+/// The serialized length of a default privileged transaction log
+pub static PRIVILEGED_TX_LOG_LEN: LazyLock<usize> = LazyLock::new(|| PrivilegedTransactionLog::default().encode().len());
 
-    /// The serialized lenght of a default block header
-    pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
-}
+/// The serialized lenght of a default block header
+pub static BLOCK_HEADER_LEN: LazyLock<usize> = LazyLock::new(|| encode_block_header(&BlockHeader::default()).len());
 
 // State diff size for a simple transfer.
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.

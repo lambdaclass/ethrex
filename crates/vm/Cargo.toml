@@ -26,7 +26,6 @@ revm-primitives = { version = "15.2.0", features = [
 bytes.workspace = true
 thiserror.workspace = true
 hex.workspace = true
-lazy_static.workspace = true
 cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
