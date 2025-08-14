@@ -596,7 +596,10 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
         let latest_block_number = self.engine.get_latest_block_number().await?;
+        let latest_block_hash = self.engine.get_canonical_block_hash(latest_block_number.unwrap_or_default()).await?;
+        let latest_block_header = latest_block_hash.map(|hash| self.engine.get_block_header_by_hash(hash));
         info!("Loading latest block number: {latest_block_number:?}");
+        info!("latest block hash: {latest_block_hash:?}, latest_block_header: {latest_block_header:?}");
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
                 .latest_block_header
