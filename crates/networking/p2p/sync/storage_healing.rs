@@ -1,6 +1,6 @@
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler},
+    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -213,7 +213,8 @@ pub async fn heal_storage_trie(
     };
 
     // channel to send the tasks to the peers
-    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TrieNodes>(1000);
+    let (task_sender, mut task_receiver) =
+        tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
 
     loop {
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
@@ -246,13 +247,6 @@ pub async fn heal_storage_trie(
             return false;
         }
 
-        clear_inflight_requests(
-            &mut state.requests,
-            &mut state.scored_peers,
-            &mut state.download_queue,
-            &mut state.failed_downloads,
-        )
-        .await;
         ask_peers_for_nodes(
             &mut state.download_queue,
             &mut state.requests,
@@ -263,32 +257,38 @@ pub async fn heal_storage_trie(
         )
         .await;
 
-        let Ok(trie_nodes) = task_receiver.try_recv() else {
-            continue;
-        };
-        let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
-            &mut state.requests,
-            &mut state.scored_peers,
-            &mut state.download_queue,
-            trie_nodes,
-            &mut state.succesful_downloads,
-            &mut state.failed_downloads,
-        ) else {
+        let Ok(trie_nodes_result) = task_receiver.try_recv() else {
             continue;
         };
 
-        let _ = process_node_responses(
-            &mut nodes_from_peer,
-            &mut state.download_queue,
-            state.store.clone(),
-            state
-                .membatch
-                .get_mut()
-                .expect("We launched the storage healer without a membatch"),
-            &mut state.leafs_healed,
-            &mut state.roots_healed,
-            &mut state.maximum_length_seen,
-        ); // TODO: if we have a stor error we should stop
+        match trie_nodes_result {
+            Ok(trie_nodes) => {
+                let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
+                    &mut state.requests,
+                    &mut state.scored_peers,
+                    &mut state.download_queue,
+                    trie_nodes,
+                    &mut state.succesful_downloads,
+                    &mut state.failed_downloads,
+                ) else {
+                    continue;
+                };
+
+                let _ = process_node_responses(
+                    &mut nodes_from_peer,
+                    &mut state.download_queue,
+                    state.store.clone(),
+                    state
+                        .membatch
+                        .get_mut()
+                        .expect("We launched the storage healer without a membatch"),
+                    &mut state.leafs_healed,
+                    &mut state.roots_healed,
+                    &mut state.maximum_length_seen,
+                ); // TODO: if we have a stor error we should stop
+            }
+            Err(_) => todo!(),
+        }
     }
 }
 
@@ -323,7 +323,7 @@ async fn ask_peers_for_nodes(
     peers: &PeerHandler,
     state_root: H256,
     scored_peers: &mut HashMap<H256, PeerScore>,
-    task_sender: &Sender<TrieNodes>,
+    task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     while (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some(mut peer) =
@@ -357,11 +357,7 @@ async fn ask_peers_for_nodes(
 
         tokio::spawn(async move {
             // TODO: check errors to determine whether the current block is stale
-            let Ok(response) = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await
-            else {
-                return;
-            };
-
+            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
             // TODO: add error handling
             let _ = tx.send(response).await.inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")

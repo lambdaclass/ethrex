@@ -2003,14 +2003,14 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
-    ) -> Result<TrieNodes, RequestStateTrieNodesError> {
+    ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
         super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
             .await
-            .map_err(RequestStateTrieNodesError::SendMessageError)
+            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
 
     /// Returns the PeerData for each connected Peer
@@ -2118,4 +2118,10 @@ pub enum RequestStateTrieNodesError {
     SendMessageError(SendMessageError),
     #[error("Invalid data")]
     InvalidData,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RequestStorageTrieNodes {
+    #[error("Send message error")]
+    SendMessageError(u64, SendMessageError),
 }
