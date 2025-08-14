@@ -282,7 +282,11 @@ async fn replay_latest_block(
         })
         .as_usize();
 
-    tracing::info!("Replaying block {latest_block} on {network}");
+    if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
+        tracing::info!("Replaying block https://etherscan.io/block/{latest_block}");
+    } else {
+        tracing::info!("Replaying block https://{network}.etherscan.io/block/{latest_block}",);
+    }
 
     let block = eth_client
         .get_raw_block(BlockIdentifier::Number(latest_block as u64))
