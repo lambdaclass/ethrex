@@ -266,7 +266,7 @@ impl RpcDB {
         })
     }
 
-    pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
+    pub fn to_exec_db(&self, block: &Block) -> eyre::Result<ethrex_vm::ProverDB> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 
@@ -301,8 +301,8 @@ impl RpcDB {
             .collect();
 
         // fetch all of them, both before and after block execution
-        let initial_accounts = self.fetch_accounts_blocking(&index, false).unwrap();
-        let final_accounts = self.fetch_accounts_blocking(&index, true).unwrap();
+        let initial_accounts = self.fetch_accounts_blocking(&index, false)?;
+        let final_accounts = self.fetch_accounts_blocking(&index, true)?;
         // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
