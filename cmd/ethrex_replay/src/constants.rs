@@ -33,6 +33,7 @@ pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
         prague_time: Some(0),
         terminal_total_difficulty_passed: false,
         verkle_time: None,
+        osaka_time: None,
         blob_schedule: BlobSchedule::default(),
         // Mainnet address
         deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
