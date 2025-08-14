@@ -79,35 +79,24 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--l2.dev-genesis
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
 	--sp1.deploy-verifier \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--l2.dev-genesis
 
 # ==============================================================================
 # L2
@@ -147,6 +136,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
+	docker compose down ethrex_l2
 	pkill -x ethrex || exit 0
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
@@ -211,7 +201,7 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
@@ -225,7 +215,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
@@ -237,7 +227,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 
 # State reconstruction tests
 state-diff-test:
-	touch .env
+	touch ../../.env
 	cargo run --release --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \

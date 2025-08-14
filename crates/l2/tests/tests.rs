@@ -1762,11 +1762,11 @@ async fn get_rich_accounts_balance(
 }
 
 fn private_keys_file_path() -> PathBuf {
-    match std::env::var("ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH") {
+    match std::env::var("ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH") {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
             println!(
-                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_PRIVATE_KEYS_FILE_PATH}",
+                "ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_PRIVATE_KEYS_FILE_PATH}",
             );
             PathBuf::from(DEFAULT_PRIVATE_KEYS_FILE_PATH)
         }
