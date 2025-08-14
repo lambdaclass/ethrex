@@ -287,7 +287,7 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                 ); // TODO: if we have a stor error we should stop
             }
-            Err(RequestStorageTrieNodes::SendMessageError(id, _)) => {
+            Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
                 let inflight_request = state.requests.get(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 state
@@ -300,6 +300,9 @@ pub async fn heal_storage_trie(
                         entry.in_flight = false;
                         entry.score -= 1;
                     });
+                if state.download_queue.is_empty() {
+                    debug!("In request {id} found error {err:?}");
+                }
             }
         }
     }
