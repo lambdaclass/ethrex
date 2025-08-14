@@ -477,32 +477,16 @@ fn process_node_responses(
             node_response.node_request.storage_path.len(),
         );
 
-        let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone(), membatch)?;
+        download_queue.extend(determine_missing_children(&node_response, store.clone())?);
 
-        if missing_children_count == 0 {
-            // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch, roots_healed)?;
-        } else {
-            let key = (
-                node_response.node_request.acc_path.clone(),
-                node_response.node_request.storage_path.clone(),
-            );
-            membatch.insert(
-                key,
-                MembatchEntry {
-                    node_response: node_response.clone(),
-                    missing_children_count,
-                },
-            );
-            download_queue.extend(missing_children_nibbles.iter().map(|children_key| {
-                NodeRequest {
-                    acc_path: children_key.0.clone(),
-                    storage_path: children_key.1.clone(),
-                    parent: node_response.node_request.storage_path.clone(),
-                }
-            }));
-        }
+        let trie = store.open_storage_trie(
+            H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
+            *EMPTY_TRIE_HASH,
+        )?;
+        let _ = trie.db().put(
+            node_response.node.compute_hash(),
+            node_response.node.encode_raw(),
+        );
     }
 
     Ok(())
@@ -526,10 +510,8 @@ fn get_initial_downloads(account_paths: &[Nibbles]) -> VecDeque<NodeRequest> {
 pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
-    membatch: &Membatch,
-) -> Result<(Vec<MembatchKey>, usize), StoreError> {
-    let mut paths = Vec::new();
-    let mut count = 0;
+) -> Result<Vec<NodeRequest>, StoreError> {
+    let mut paths: Vec<NodeRequest> = Vec::new();
     let node = node_response.node.clone();
     let trie = store.open_storage_trie(
         H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
@@ -540,102 +522,52 @@ pub fn determine_missing_children(
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
                 if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    count += 1;
-                    paths.extend(determine_membatch_missing_children(
-                        &node_response.node_request.acc_path,
-                        &node_response
+                    paths.push(NodeRequest {
+                        acc_path: node_response.node_request.acc_path.clone(),
+                        storage_path: node_response
                             .node_request
                             .storage_path
                             .append_new(index as u8),
-                        &child.compute_hash(),
-                        membatch,
-                        store.clone(),
-                    )?);
+                        parent: node_response.node_request.storage_path.clone(),
+                    });
+                } else if let Some(node) = child.get_node(trie_state)? {
+                    let subnode = NodeResponse {
+                        node,
+                        node_request: NodeRequest {
+                            acc_path: node_response.node_request.acc_path.clone(),
+                            storage_path: node_response
+                                .node_request
+                                .storage_path
+                                .append_new(index as u8),
+                            parent: node_response.node_request.storage_path.clone(),
+                        },
+                    };
+                    paths.extend(determine_missing_children(&subnode, store.clone())?);
                 }
             }
         }
         Node::Extension(node) => {
+            let sub_node_request = NodeRequest {
+                acc_path: node_response.node_request.acc_path.clone(),
+                storage_path: node_response
+                    .node_request
+                    .storage_path
+                    .concat(node.prefix.clone()),
+                parent: node_response.node_request.storage_path.clone(),
+            };
             if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                count += 1;
-                paths.extend(determine_membatch_missing_children(
-                    &node_response.node_request.acc_path,
-                    &node_response
-                        .node_request
-                        .storage_path
-                        .concat(node.prefix.clone()),
-                    &node.child.compute_hash(),
-                    membatch,
-                    store.clone(),
-                )?);
+                paths.push(sub_node_request);
+            } else if let Some(subnode) = node.child.get_node(trie_state)? {
+                let subnode = NodeResponse {
+                    node: subnode,
+                    node_request: sub_node_request,
+                };
+                paths.extend(determine_missing_children(&subnode, store)?);
             }
         }
         _ => {}
     }
-    Ok((paths, count))
-}
-
-// This function searches for the nodes we have to download that are childs from the membatch
-fn determine_membatch_missing_children(
-    acc_path: &Nibbles,
-    nibbles: &Nibbles,
-    hash: &NodeHash,
-    membatch: &Membatch,
-    store: Store,
-) -> Result<Vec<MembatchKey>, StoreError> {
-    if let Some(membatch_entry) = membatch.get(&(acc_path.clone(), nibbles.clone())) {
-        if membatch_entry.node_response.node.compute_hash() == *hash {
-            determine_missing_children(&membatch_entry.node_response, store, membatch)
-                .map(|(paths, count)| paths)
-        } else {
-            Ok(vec![(acc_path.clone(), nibbles.clone())])
-        }
-    } else {
-        Ok(vec![(acc_path.clone(), nibbles.clone())])
-    }
-}
-
-fn commit_node(
-    node: &NodeResponse,
-    store: Store,
-    membatch: &mut Membatch,
-    roots_healed: &mut usize,
-) -> Result<(), StoreError> {
-    let trie = store.clone().open_state_trie(*EMPTY_TRIE_HASH)?;
-    let trie_db = trie.db();
-    trie_db
-        .put(node.node.compute_hash(), node.node.encode_raw())
-        .map_err(StoreError::Trie)?; // we can have an error if 2 trees have the same nodes
-
-    // Special case, we have just commited the root, we stop
-    if node.node_request.storage_path == node.node_request.parent {
-        trace!(
-            "We have the parent of an account, this means we are the root. Storage healing should end."
-        );
-        *roots_healed += 1;
-        return Ok(());
-    }
-
-    let parent_key: (Nibbles, Nibbles) = (
-        node.node_request.acc_path.clone(),
-        node.node_request.parent.clone(),
-    );
-
-    if !membatch.contains_key(&parent_key) {
-        return Ok(());
-    }
-
-    let mut parent_entry = membatch
-        .remove(&parent_key)
-        .expect("We are missing the parent from the membatch!");
-
-    parent_entry.missing_children_count -= 1;
-
-    if parent_entry.missing_children_count == 0 {
-        commit_node(&parent_entry.node_response, store, membatch, roots_healed)?;
-    } else {
-        membatch.insert(parent_key, parent_entry);
-    }
-    Ok(())
+    Ok(paths)
 }
 
 async fn get_peer_with_highest_score_and_mark_it_as_occupied(
