@@ -390,6 +390,15 @@ pub async fn init_l1(
     set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+    let latest_block_number = store.get_latest_block_number().await?;
+    let latest_canonical_block_hash = store
+        .get_latest_canonical_block_hash()
+        .await?
+        .unwrap_or_default();
+    let latest_canonical_block_number = store.get_block_number(latest_canonical_block_hash).await?;
+    info!(
+        "Starting blockchain: latest_block_number: {latest_block_number}, latest_canonical_block_hash: {latest_canonical_block_hash}, latest_canonical_block_number: {latest_canonical_block_number:?}"
+    );
 
     let signer = get_signer(&data_dir);
 

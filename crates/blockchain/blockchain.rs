@@ -121,11 +121,11 @@ impl Blockchain {
         info!("Executing block with number: {}", block.header.number);
         // Validate the block pre-execution
         match validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 warn!("Failed to validate block: {block:?}");
-                return Err(e)
-            },
+                return Err(e);
+            }
         }
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
@@ -949,11 +949,11 @@ pub fn validate_block(
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
     match validate_block_header(&block.header, parent_header, elasticity_multiplier) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
             warn!("Failed to validate block: {block:?}");
-            return Err(ChainError::InvalidBlock(InvalidBlockError::from(e)))
-        },
+            return Err(ChainError::InvalidBlock(InvalidBlockError::from(e)));
+        }
     };
 
     if chain_config.is_prague_activated(block.header.timestamp) {
