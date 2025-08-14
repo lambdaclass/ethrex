@@ -477,7 +477,9 @@ fn process_node_responses(
             node_response.node_request.storage_path.len(),
         );
 
-        download_queue.extend(determine_missing_children(&node_response, store.clone())?);
+        let child_requests = determine_missing_children(&node_response, store.clone())?;
+        debug!("For the node {node_response:?} we are asking the following {child_requests:?}");
+        download_queue.extend(child_requests);
 
         let trie = store.open_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
