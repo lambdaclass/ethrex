@@ -285,7 +285,7 @@ pub async fn heal_storage_trie(
                 let inflight_request = state.requests.get(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 if state.download_queue.is_empty() {
-                    debug!("In request {id} found error {err:?}");
+                    info!("In request {id} found error {err:?}");
                 }
                 state
                     .download_queue
@@ -423,7 +423,7 @@ fn zip_requeue_node_responses_score_peer(
             Ok(NodeResponse {
                 node_request: node_request.clone(),
                 node: Node::decode_raw(&node_bytes).inspect_err(|err|{
-                    debug!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
+                    info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
                 })?,
             })
         })
