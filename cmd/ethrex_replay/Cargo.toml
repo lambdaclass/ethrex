@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ethrex-config.workspace = true
 ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true

@@ -1,6 +1,5 @@
 use crate::{
     cli::Options,
-    networks::Network,
     utils::{
         get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
         read_node_config_file,
@@ -8,6 +7,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 
