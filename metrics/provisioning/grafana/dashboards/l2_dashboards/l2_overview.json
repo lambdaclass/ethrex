@@ -568,7 +568,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_proving_time"
+              "options": "batch_proving_time (last)"
             },
             "properties": [
               {
@@ -1060,7 +1060,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_gas_used"
+              "options": "batch_gas_used (last)"
             },
             "properties": [
               {
@@ -1592,7 +1592,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_tx_count"
+              "options": "batch_tx_count (last)"
             },
             "properties": [
               {
@@ -1689,7 +1689,7 @@
             "fields": {},
             "sort": [
               {
-                "field": "batch_number"
+                "field": "batch_tx_count"
               }
             ]
           }
@@ -2638,5 +2638,5 @@
   "timezone": "browser",
   "title": "Ethrex L2 - Overview",
   "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091a",
-  "version": 3
+  "version": 4
 }
