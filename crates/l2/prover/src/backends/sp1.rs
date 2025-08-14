@@ -54,6 +54,7 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
+    dbg!(&input);
     stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
