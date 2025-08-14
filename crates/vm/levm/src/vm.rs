@@ -232,14 +232,15 @@ impl<'a> VM<'a> {
                         .collect::<Vec<_>>()
                 );
                 println!(
-                    "Current Memory Base: {}",
-                    self.current_call_frame.memory.current_base
+                    "Memory Base: {}, Memory len: {}",
+                    self.current_call_frame.memory.current_base, self.current_call_frame.memory.len
                 );
                 let final_memory: Vec<u8> = self.current_call_frame.memory.buffer.borrow()[self
                     .current_call_frame
                     .memory
                     .current_base
-                    ..self.current_call_frame.memory.len]
+                    ..self.current_call_frame.memory.current_base
+                        + self.current_call_frame.memory.len]
                     .to_vec();
                 println!("Memory: 0x{}", hex::encode(final_memory));
             }

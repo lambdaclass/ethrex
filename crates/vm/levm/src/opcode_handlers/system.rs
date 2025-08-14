@@ -763,6 +763,8 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
             )?;
 
+            println!("{:?}", &ctx_result);
+
             let call_frame = &mut self.current_call_frame;
 
             // Return gas left from subcontext
@@ -776,6 +778,16 @@ impl<'a> VM<'a> {
                     )
                     .ok_or(InternalError::Overflow)?;
             }
+
+            let data = if ctx_result.output.len() >= ret_size {
+                ctx_result
+                    .output
+                    .get(..ret_size)
+                    .ok_or(ExceptionalHalt::OutOfBounds)?
+            } else {
+                &ctx_result.output
+            };
+            println!("Data to store after precompile: {:#?}", data);
 
             // Store return data of sub-context
             call_frame.memory.store_data(
