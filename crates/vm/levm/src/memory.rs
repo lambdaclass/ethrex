@@ -18,7 +18,7 @@ use ethrex_common::{
 pub struct Memory {
     pub buffer: Rc<RefCell<Vec<u8>>>,
     pub len: usize,
-    current_base: usize,
+    pub current_base: usize,
 }
 
 impl Memory {
