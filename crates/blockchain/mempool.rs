@@ -80,7 +80,7 @@ impl Mempool {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                    .remove(&tx.hash());
             }
 
             self.txs_by_sender_nonce
@@ -283,7 +283,7 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.compute_hash())? else {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
 
@@ -321,7 +321,7 @@ impl Mempool {
             return Err(MempoolError::NonceTooLow);
         }
 
-        Ok(Some(tx_in_pool.compute_hash()))
+        Ok(Some(tx_in_pool.hash()))
     }
 }
 

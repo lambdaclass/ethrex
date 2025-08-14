@@ -325,7 +325,7 @@ impl Store {
 
         for (index, transaction) in transactions.iter().enumerate() {
             locations.push((
-                transaction.compute_hash(),
+                transaction.hash(),
                 block_number,
                 block_hash,
                 index as Index,
