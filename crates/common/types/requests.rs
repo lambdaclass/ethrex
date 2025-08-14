@@ -174,7 +174,6 @@ impl Deposit {
             INDEX_SIZE,
         ];
 
-        // Compare two numbers with different byte count without padding
         // Validate Offsets & Sizes
         for (i, (expected_offset, expected_size)) in
             OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
