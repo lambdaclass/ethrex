@@ -1083,12 +1083,16 @@ impl PeerHandler {
 
                     // If the range has more accounts to fetch, we send the new chunk
                     let chunk_left = if should_continue {
-                        let last_hash = account_hashes.last().ok_or({
-                            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                                .await
-                                .ok();
-                            PeerHandlerError::AccountHashes
-                        })?;
+                        let last_hash = match account_hashes.last() {
+                            Some(last_hash) => last_hash,
+                            None => {
+                                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                                    .await
+                                    .ok();
+                                error!("Account hashes last failed, this shouldn't happen");
+                                return Err(PeerHandlerError::AccountHashes);
+                            }
+                        };
                         let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
                         let new_start = H256::from_uint(&new_start_u256);
                         Some((new_start, chunk_end))
@@ -1897,10 +1901,14 @@ impl PeerHandler {
                     let hashed_keys: Vec<_> =
                         next_account_slots.iter().map(|slot| slot.hash).collect();
 
-                    let storage_root = storage_roots.next().ok_or({
-                        tx.send(empty_task_result.clone()).await.ok();
-                        PeerHandlerError::NoStorageRoots
-                    })?;
+                    let storage_root = match storage_roots.next() {
+                        Some(root) => root,
+                        None => {
+                            tx.send(empty_task_result.clone()).await.ok();
+                            error!("No storage root for account {i}");
+                            return Err(PeerHandlerError::NoStorageRoots);
+                        }
+                    };
 
                     // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
                     if i == last_slot_index && !proof.is_empty() {
@@ -1936,17 +1944,22 @@ impl PeerHandler {
                     );
                 }
                 let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-                    let (last_hash, _) = account_storages
-                        .last()
-                        .ok_or({
+                    let last_account_storage = match account_storages.last() {
+                        Some(storage) => storage,
+                        None => {
                             tx.send(empty_task_result.clone()).await.ok();
-                            PeerHandlerError::NoAccountStorages
-                        })?
-                        .last()
-                        .ok_or({
+                            error!("No account storage found, this shouldn't happen");
+                            return Err(PeerHandlerError::NoAccountStorages);
+                        }
+                    };
+                    let (last_hash, _) = match last_account_storage.last() {
+                        Some(last_hash) => last_hash,
+                        None => {
                             tx.send(empty_task_result.clone()).await.ok();
-                            PeerHandlerError::NoAccountStorages
-                        })?;
+                            error!("No last hash found, this shouldn't happen");
+                            return Err(PeerHandlerError::NoAccountStorages);
+                        }
+                    };
                     let next_hash_u256 =
                         U256::from_big_endian(&last_hash.0).saturating_add(1.into());
                     let next_hash = H256::from_uint(&next_hash_u256);
