@@ -2,20 +2,20 @@ use std::fmt;
 use std::{collections::HashMap, str::FromStr};
 
 use crate::{
+    H160,
     constants::EMPTY_KECCACK_HASH,
     serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
-    H160,
 };
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{Node, Trie, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
-use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
 use sha3::{Digest, Keccak256};
 
 /// In-memory execution witness database for single batch execution data.
@@ -80,8 +80,9 @@ pub enum ExecutionWitnessError {
 
 impl ExecutionWitnessResult {
     pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+        dbg!("PIZZZAAAAAAAAAAA");
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
-
+        dbg!("ANANAAAAAAAAAAAA");
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
         let addresses: Vec<Address> = self
@@ -90,7 +91,7 @@ impl ExecutionWitnessResult {
             .filter(|k| k.len() == Address::len_bytes())
             .map(|k| Address::from_slice(k))
             .collect();
-
+        dbg!("TRAMPITAAAAAAAAAA");
         let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
             addresses
                 .iter()
@@ -102,7 +103,7 @@ impl ExecutionWitnessResult {
                 })
                 .collect::<Vec<(Address, Trie)>>(),
         );
-
+        dbg!("JAMONNNNNNNNNNNNNNNNNNNNNNNNNNNNN");
         self.state_trie = Some(state_trie);
         self.storage_tries = Some(storage_tries);
 
@@ -111,9 +112,12 @@ impl ExecutionWitnessResult {
 
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
+        dbg!("MANZANAAAA");
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
+        dbg!("PERAAAAAAAAAA");
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
+        dbg!("BANANAAAAA");
 
         if account_state.storage_root == *EMPTY_TRIE_HASH {
             return None;
