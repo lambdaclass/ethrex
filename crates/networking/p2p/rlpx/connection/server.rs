@@ -464,6 +464,7 @@ where
 }
 
 async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
+    let guard = perf_logger::add_time_till_drop("send_new_pooled_tx_hashes");
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
@@ -501,7 +502,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             }
         }
     }
-    Ok(())
+    guard.wrap_return(Ok(()))
 }
 
 async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
