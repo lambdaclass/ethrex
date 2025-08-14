@@ -69,7 +69,7 @@ use crate::{
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(2000);
+const TX_BROADCAST_INTERVAL: u64 = 500;
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
@@ -418,7 +418,7 @@ where
 
     // Periodic broadcast check repeated events.
     send_interval(
-        TX_BROADCAST_INTERVAL,
+        Duration::from_millis(random::<u64>() % TX_BROADCAST_INTERVAL + TX_BROADCAST_INTERVAL) ,
         handle.clone(),
         CastMessage::SendNewPooledTxHashes,
     );
