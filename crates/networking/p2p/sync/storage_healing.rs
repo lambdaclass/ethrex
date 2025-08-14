@@ -314,7 +314,7 @@ async fn ask_peers_for_nodes(
     scored_peers: &mut HashMap<H256, PeerScore>,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
-    while (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
+    if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some(mut peer) =
             get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
         else {
