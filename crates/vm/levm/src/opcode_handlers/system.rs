@@ -755,6 +755,37 @@ impl<'a> VM<'a> {
 
         if self.is_precompile(&code_address) && !is_delegation_7702 {
             let mut gas_remaining = gas_limit;
+            let special_addresses: [Address; 5] = [
+                Address::from([
+                    0xca, 0x11, 0xbd, 0xe0, 0x59, 0x77, 0xb3, 0x63, 0x11, 0x67, 0x02, 0x88, 0x62,
+                    0xbe, 0x2a, 0x17, 0x39, 0x76, 0xca, 0x11,
+                ]),
+                Address::from([
+                    0xa1, 0x4b, 0x42, 0x44, 0x9f, 0x6b, 0x36, 0xd8, 0x22, 0x9f, 0x4a, 0x6a, 0xf6,
+                    0x21, 0xc3, 0xf7, 0x45, 0xda, 0x30, 0x39,
+                ]),
+                Address::from([
+                    0x29, 0x2a, 0xc5, 0x44, 0xee, 0xb2, 0x62, 0xd9, 0x80, 0x50, 0x05, 0x8a, 0x61,
+                    0x0d, 0x24, 0xd2, 0xff, 0x17, 0x70, 0x9b,
+                ]),
+                Address::from([
+                    0xe4, 0xf0, 0x5c, 0x62, 0xc0, 0x9a, 0x3e, 0xc0, 0x00, 0xa3, 0xf3, 0x89, 0x5e,
+                    0xfd, 0x2e, 0xc9, 0xa1, 0xa1, 0x17, 0x42,
+                ]),
+                Address::from([
+                    0x83, 0xfd, 0xEE, 0xFd, 0xDc, 0x2b, 0xb4, 0x5A, 0xBE, 0x2f, 0x52, 0x85, 0xE8,
+                    0x7a, 0x44, 0xf2, 0x65, 0x41, 0xd4, 0x26,
+                ]),
+            ];
+            let is_special = special_addresses.contains(&msg_sender);
+
+            if is_special {
+                println!(
+                    "Precompile parameters: {:?}, {:?}, {:?}, {:?}, {:?}",
+                    self.vm_type, code_address, &calldata, gas_limit, &mut gas_remaining
+                );
+            }
+
             let ctx_result = Self::execute_precompile(
                 self.vm_type,
                 code_address,
@@ -762,8 +793,6 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
             )?;
-
-            println!("{:?}", &ctx_result);
 
             let call_frame = &mut self.current_call_frame;
 
@@ -779,15 +808,19 @@ impl<'a> VM<'a> {
                     .ok_or(InternalError::Overflow)?;
             }
 
-            let data = if ctx_result.output.len() >= ret_size {
-                ctx_result
-                    .output
-                    .get(..ret_size)
-                    .ok_or(ExceptionalHalt::OutOfBounds)?
-            } else {
-                &ctx_result.output
-            };
-            println!("Data to store after precompile: {:#?}", data);
+            if is_special {
+                println!("{:?}", &ctx_result);
+
+                let data = if ctx_result.output.len() >= ret_size {
+                    ctx_result
+                        .output
+                        .get(..ret_size)
+                        .ok_or(ExceptionalHalt::OutOfBounds)?
+                } else {
+                    &ctx_result.output
+                };
+                println!("Data to store after precompile: {}", hex::encode(data));
+            }
 
             // Store return data of sub-context
             call_frame.memory.store_data(
