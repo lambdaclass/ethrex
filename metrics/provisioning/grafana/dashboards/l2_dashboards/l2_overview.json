@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 2,
+  "id": 1,
   "links": [],
   "panels": [
     {
@@ -396,6 +396,18 @@
                 "value": 0
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "batch_verification_gas (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "sishort"
+              }
+            ]
           }
         ]
       },
@@ -486,7 +498,7 @@
               },
               "batch_verification_gas": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -568,7 +580,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_proving_time (last)"
+              "options": "batch_proving_time (lastNotNull)"
             },
             "properties": [
               {
@@ -666,7 +678,7 @@
               },
               "batch_proving_time": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -742,9 +754,14 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_gas_used"
+              "options": "batch_gas_used (lastNotNull)"
             },
-            "properties": []
+            "properties": [
+              {
+                "id": "unit",
+                "value": "sishort"
+              }
+            ]
           }
         ]
       },
@@ -831,7 +848,7 @@
             "fields": {
               "batch_gas_used": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               },
@@ -905,6 +922,18 @@
               {
                 "id": "decimals",
                 "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "batch_commitment_gas (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "sishort"
               }
             ]
           }
@@ -993,7 +1022,7 @@
             "fields": {
               "batch_commitment_gas": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               },
@@ -1060,12 +1089,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_gas_used (last)"
+              "options": "batch_gas_used (lastNotNull)"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "short"
+                "value": "sishort"
               }
             ]
           }
@@ -1091,13 +1120,13 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_gas_used (last)"
+                "options": "batch_gas_used (lastNotNull)"
               }
             },
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_proving_time (last)"
+                "options": "batch_proving_time (lastNotNull)"
               }
             }
           }
@@ -1168,7 +1197,7 @@
             "fields": {
               "batch_gas_used": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               },
@@ -1178,7 +1207,7 @@
               },
               "batch_proving_time": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -1254,7 +1283,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_size"
+              "options": "batch_tx_count (lastNotNull)"
             },
             "properties": [
               {
@@ -1364,7 +1393,7 @@
               },
               "batch_tx_count": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -1592,7 +1621,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_tx_count (last)"
+              "options": "batch_tx_count (lastNotNull)"
             },
             "properties": [
               {
@@ -1623,13 +1652,13 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_tx_count (last)"
+                "options": "batch_tx_count (lastNotNull)"
               }
             },
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "batch_proving_time (last)"
+                "options": "batch_proving_time (lastNotNull)"
               }
             }
           }
@@ -1704,13 +1733,13 @@
               },
               "batch_proving_time": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               },
               "batch_tx_count": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -1786,7 +1815,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "batch_size"
+              "options": "batch_size (lastNotNull)"
             },
             "properties": [
               {
@@ -1896,7 +1925,7 @@
               },
               "batch_size": {
                 "aggregations": [
-                  "last"
+                  "lastNotNull"
                 ],
                 "operation": "aggregate"
               }
@@ -2638,5 +2667,5 @@
   "timezone": "browser",
   "title": "Ethrex L2 - Overview",
   "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091a",
-  "version": 4
+  "version": 1
 }
