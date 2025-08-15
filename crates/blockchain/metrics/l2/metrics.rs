@@ -90,14 +90,16 @@ impl Metrics {
                     "Batch commitment gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
-            ).unwrap(),
+            )
+            .unwrap(),
             batch_commitment_blob_gas: IntGaugeVec::new(
                 Opts::new(
                     "batch_commitment_blob_gas",
                     "Batch commitment blob gas cost in L1, labeled by batch number",
                 ),
                 &["batch_number"],
-            ).unwrap(),
+            )
+            .unwrap(),
             batch_tx_count: IntGaugeVec::new(
                 Opts::new(
                     "batch_tx_count",
@@ -225,11 +227,7 @@ impl Metrics {
         Ok(())
     }
 
-    pub fn set_batch_tx_count(
-        &self,
-        batch_number: u64,
-        tx_count: i64,
-    ) -> Result<(), MetricsError> {
+    pub fn set_batch_tx_count(&self, batch_number: u64, tx_count: i64) -> Result<(), MetricsError> {
         let builder = self
             .batch_tx_count
             .get_metric_with_label_values(&[&batch_number.to_string()])
