@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755221202382,
+  "lastUpdate": 1755222241193,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20524,6 +20524,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013176031589338599,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e220fbe44abe2bb9743d9239b31f29d6bb39ce0d",
+          "message": "fix(l1): restore datadir path  (#4050)\n\n**Motivation**\nPR #4024 changed how we initialize the datadir. Instead of looking for\nthe database in a path relative to the home directory (ie:\n.local/share/datadir on linux) it now looks for it on the path relative\nto the current directory (ie: ethrex/datadir). This caused problems when\nupdating the ethrex commit on currently running ethrex nodes due to the\nDB mismatch.\nThis PR restores the previous behaviour, and has been confirmed to work\nas usual on the aforementioned ethrex nodes.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Restore where we look for the datadir (relative to home vs current\ndir)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed to continue #1676",
+          "timestamp": "2025-08-14T21:19:20Z",
+          "tree_id": "c4f260b1ff71c3c7f1beed9459ec48fcf49ba43b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e220fbe44abe2bb9743d9239b31f29d6bb39ce0d"
+        },
+        "date": 1755222240744,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006575034482758621,
             "unit": "Mgas/s"
           }
         ]
