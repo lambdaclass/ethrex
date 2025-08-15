@@ -1,0 +1,7 @@
+[build]
+rustflags = [
+    "-D",
+    "unexpected-cfgs",
+    '--check-cfg=cfg(target_os,values("zkvm"))',
+    '--check-cfg=cfg(target_vendor,values("succinct"))',
+]
