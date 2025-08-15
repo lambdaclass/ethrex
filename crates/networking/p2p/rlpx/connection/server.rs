@@ -478,6 +478,11 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .flatten()
             .collect();
         if !txs.is_empty() {
+            // If the peer is another ethrex node, don't send transaction hashes to it.
+            if state.client_version.contains("ethrex") {
+                return Ok(());
+            }
+
             //for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
             let tx_count = txs.len();
             let mut txs_to_send = Vec::with_capacity(tx_count);
