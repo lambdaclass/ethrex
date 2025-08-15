@@ -48,7 +48,14 @@ struct Cli {
     #[arg(long, short = 'k', help = "Path to the file containing private keys.")]
     pkeys: String,
 
-    #[arg(long, short='t', value_enum, default_value_t=TestType::Erc20, help="Type of test to run. Can be eth_transfers or erc20.")]
+    #[arg(
+        long,
+        short='t',
+        value_enum,
+        default_value_t=TestType::Erc20,
+        env = "TEST_TYPE",
+        help="Type of test to run. Can be eth_transfers or erc20."
+    )]
     test_type: TestType,
 
     #[arg(
