@@ -1,13 +1,6 @@
 use ethrex_common::types::{Transaction, TxKind};
 use std::collections::HashMap;
 
-use charming::{
-    Chart, ImageRenderer,
-    component::Legend,
-    element::{Tooltip, Trigger},
-    series::Pie,
-};
-
 use crate::cache::Cache;
 
 const TOP_N_DESTINATIONS: usize = 10;

@@ -5,7 +5,6 @@ mod bench;
 mod cache;
 mod cli;
 mod fetcher;
-mod plot_composition;
 mod run;
 
 #[tokio::main]

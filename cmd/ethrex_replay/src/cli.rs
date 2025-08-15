@@ -9,7 +9,7 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
-use crate::plot_composition::plot;
+// use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
 use ethrex_config::networks::Network;
@@ -361,7 +361,7 @@ pub async fn start() -> eyre::Result<()> {
             }
             let eth_client = EthClient::new(&rpc_url)?;
             let cache = get_rangedata(eth_client, network, start, end).await?;
-            plot(cache).await?;
+            // plot(cache).await?;
         }
     };
     Ok(())
