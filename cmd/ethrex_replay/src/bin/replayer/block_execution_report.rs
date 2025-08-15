@@ -44,10 +44,10 @@ impl BlockRunReport {
                     text: Box::new(SlackWebHookBlock::PlainText {
                         text: match (&self.run_result, &self.replayer_mode) {
                             (Ok(_), ReplayerMode::Execute) => {
-                                String::from("✅ Succeeded to Execute Block")
+                                String::from("✅ Successfully Executed Block")
                             }
                             (Ok(_), ReplayerMode::Prove) => {
-                                String::from("✅ Succeeded to Prove Block")
+                                String::from("✅ Successfully Proved Block")
                             }
                             (Err(_), ReplayerMode::Execute) => {
                                 String::from("⚠️ Failed to Execute Block")
