@@ -14,8 +14,7 @@ use hex::ToHex;
 use secp256k1::SecretKey;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
-use tokio::{task::JoinSet, time::sleep};
+use tokio::task::JoinSet;
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -55,10 +54,11 @@ struct Cli {
     #[arg(
         short = 'N',
         long,
-        default_value_t = 1000,
-        help = "Number of transactions to send for each account."
+        env = "TX_AMOUNT",
+        default_value_t = 2000,
+        help = "Number of transactions to send."
     )]
-    tx_amount: u64,
+    tx_amount: usize,
 
     // Amount of minutes to wait before exiting. If the value is 0, the program will wait indefinitely. If not present, the program will not wait for transactions to be included in blocks.
     #[arg(
@@ -68,6 +68,13 @@ struct Cli {
         help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
+    #[arg(
+        long,
+        default_value_t = true,
+        env = "WAIT_INCLUDED",
+        help = "Wait until all transactions were included"
+    )]
+    wait_included: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
@@ -200,37 +207,34 @@ impl TxBuilder {
 }
 
 async fn load_test(
-    tx_amount: u64,
+    tx_amount: usize,
     accounts: Vec<Signer>,
     client: EthClient,
     chain_id: u64,
     tx_builder: TxBuilder,
 ) -> eyre::Result<Vec<H256>> {
-    let mut tasks = FuturesUnordered::new();
-    let mut tx_hashes = Vec::with_capacity(tx_amount as usize * accounts.len());
-    for account in accounts {
-        let client = client.clone();
-        let tx_builder = tx_builder.clone();
-        tasks.push(async move {
-            let nonce = client
-                .get_nonce(account.address(), BlockIdentifier::Tag(BlockTag::Latest))
-                .await
-                .unwrap();
-            let src = account.address();
-            let encoded_src: String = src.encode_hex();
-            let mut tx_hashes = Vec::with_capacity(tx_amount as usize);
-
-            for i in 0..tx_amount {
+    let mut tx_hashes = Vec::with_capacity(tx_amount);
+    let tx_amount_per_account = tx_amount.div_ceil(accounts.len()).max(1);
+    for account in accounts.iter() {
+        let mut tasks = FuturesUnordered::new();
+        let nonce = client
+            .get_nonce(account.address(), BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .unwrap();
+        for i in 0..tx_amount_per_account.min(tx_amount - tx_hashes.len()) {
+            let tx_builder = tx_builder.clone();
+            let client = client.clone();
+            tasks.push(async move {
                 let (value, calldata, dst) = tx_builder.build_tx();
                 let tx = client
                     .build_eip1559_transaction(
                         dst,
-                        src,
+                        account.address(),
                         calldata.into(),
                         Overrides {
                             chain_id: Some(chain_id),
                             value,
-                            nonce: Some(nonce + i),
+                            nonce: Some(nonce + i as u64),
                             max_fee_per_gas: Some(u64::MAX),
                             max_priority_fee_per_gas: Some(10_u64),
                             gas_limit: Some(TX_GAS_COST * 100),
@@ -239,19 +243,17 @@ async fn load_test(
                     )
                     .await?;
                 let client = client.clone();
-                sleep(Duration::from_micros(800)).await;
-                let tx_hash = send_eip1559_transaction(&client, &tx, &account).await?;
-                tx_hashes.push(tx_hash);
-            }
-            println!("{tx_amount} transactions have been sent for {encoded_src}",);
-            Ok::<_, EthClientError>(tx_hashes)
-        });
+                let result = send_eip1559_transaction(&client, &tx, &account).await;
+                let tx_hash = result?;
+                Ok::<_, EthClientError>(tx_hash)
+            });
+        }
+        while let Some(result) = tasks.next().await {
+            tx_hashes.push(result?);
+        }
+        println!("Sent {}/{tx_amount} transactions", tx_hashes.len());
     }
 
-    while let Some(result) = tasks.next().await {
-        let account_tx_hashes = result?; // Propagate errors from tasks
-        tx_hashes.extend(account_tx_hashes);
-    }
     Ok(tx_hashes)
 }
 
@@ -358,10 +360,7 @@ async fn main() {
         }
     };
 
-    println!(
-        "Starting load test with {} transactions per account...",
-        cli.tx_amount
-    );
+    println!("Starting load test with {} transactions...", cli.tx_amount);
     let time_now = tokio::time::Instant::now();
 
     let tx_hashes = load_test(
@@ -375,10 +374,11 @@ async fn main() {
     .expect("Failed to load test");
 
     println!("Waiting for all transactions to be included in blocks...");
-    wait_until_all_included(client,  accounts, &tx_hashes)
-        .await
-        .unwrap();
-
+    if cli.wait_included {
+        wait_until_all_included(client, accounts, &tx_hashes)
+            .await
+            .unwrap();
+    }
     let elapsed_time = time_now.elapsed();
 
     println!(
