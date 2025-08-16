@@ -790,15 +790,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                     valid_txs.push(tx);
                 }
-                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
-                // subset and send only the hashes to everyone else.
-                // Consider sending to the sqrt of the number of peers like geth does.
                 if !valid_txs.is_empty() {
+                    // We no longer rebroadcast full Transactions; rely on NewPooledTransactionHashes + Get/PooledTransactions flow.
                     log_peer_debug(
                         &state.node,
-                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
+                        &format!(
+                            "Ingested {} transactions (no full tx rebroadcast; hashes will be advertised)",
+                            valid_txs.len()
+                        ),
                     );
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
         }
@@ -840,11 +840,42 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             );
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
+            const SOFT_LIMIT: usize = 256;
+            let unknown_hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            let request = GetPooledTransactions::new(random(), hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
+            // Get all hashes that have been requested but not yet received.
+            let already_requested_hashes: HashSet<H256> = state
+                .requested_pooled_txs
+                .values()
+                .flat_map(|hashes| hashes.transaction_hashes.iter())
+                .cloned()
+                .collect();
+
+            // Filter out the hashes that are already in flight.
+            let hashes_to_request: Vec<H256> = unknown_hashes
+                .into_iter()
+                .filter(|hash| !already_requested_hashes.contains(hash))
+                .collect();
+
+            if !hashes_to_request.is_empty() {
+                log_peer_debug(
+                    &state.node,
+                    &format!(
+                        "Requesting {} transaction hashes from peer",
+                        hashes_to_request.len()
+                    ),
+                );
+                for hashes_chunk in hashes_to_request.chunks(SOFT_LIMIT) {
+                    let request = GetPooledTransactions::new(random::<u64>(), hashes_chunk.to_vec());
+                    // Store the request so we can validate the response later.
+                    state
+                        .requested_pooled_txs
+                        .insert(request.id, new_pooled_transaction_hashes.clone());
+
+                    send(state, Message::GetPooledTransactions(request)).await?;
+                }
+            }
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
@@ -924,28 +955,11 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
-                let mut filtered = Vec::with_capacity(txs.transactions.len());
-                for tx in &txs.transactions {
-                    let tx_hash = tx.hash();
-                    if state.broadcasted_txs.contains(&tx_hash) {
-                        continue;
-                    }
-                    filtered.push(tx.clone());
-                    state.broadcasted_txs.insert(tx_hash);
-                }
-                if !filtered.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!(
-                            "Sending {} transactions to peer from broadcast",
-                            filtered.len()
-                        ),
-                    );
-                    let new_msg = Message::Transactions(Transactions {
-                        transactions: filtered,
-                    });
-                    send(state, new_msg).await?;
-                }
+                // Ignoring full transaction broadcasts; propagation handled via hash announcements.
+                log_peer_debug(
+                    &state.node,
+                    "Ignoring broadcasted full Transactions (using hash-based propagation)",
+                );
             }
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
