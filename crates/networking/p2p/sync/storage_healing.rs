@@ -20,7 +20,8 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, error::SendError};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
@@ -212,6 +213,14 @@ pub async fn heal_storage_trie(
         failed_downloads: Default::default(),
     };
 
+    // With this we track what's going on with the tasks in flight
+    // Only really relevant right now for debugging purposes.
+    // TODO: think if this is a better way to receiver the data
+    // Not in the state because it's not clonable
+    let mut requests_task_joinset: JoinSet<
+        Result<u64, SendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+    > = JoinSet::new();
+
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) =
         tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
@@ -255,12 +264,20 @@ pub async fn heal_storage_trie(
         ask_peers_for_nodes(
             &mut state.download_queue,
             &mut state.requests,
+            &mut requests_task_joinset,
             &state.peer_handler,
             state.state_root,
             &mut state.scored_peers,
             &task_sender,
         )
         .await;
+
+        let result = requests_task_joinset.join_next().await;
+        if let Some(res) = result {
+            if state.download_queue.len() < 350 {
+                info!("Tracking what happened to the tasks at the end {res:?}")
+            }
+        }
 
         let Ok(trie_nodes_result) = task_receiver.try_recv() else {
             continue;
@@ -323,6 +340,9 @@ pub async fn heal_storage_trie(
 async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
+    requests_task_joinset: &mut JoinSet<
+        Result<u64, SendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+    >,
     peers: &PeerHandler,
     state_root: H256,
     scored_peers: &mut HashMap<H256, PeerScore>,
@@ -358,13 +378,15 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
-        tokio::spawn(async move {
+        requests_task_joinset.spawn(async move {
+            let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
             let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
             // TODO: add error handling
-            let _ = tx.send(response).await.inspect_err(|err| {
+            tx.send(response).await.inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
-            });
+            })?;
+            Ok(req_id)
         });
     }
 }
