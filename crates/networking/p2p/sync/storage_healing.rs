@@ -243,12 +243,13 @@ pub async fn heal_storage_trie(
 
             if state.download_queue.len() < 350 {
                 info!(
-                    "Logging the inflight requests at the end {:?}",
+                    "Logging the inflight requests at the end {:?}, taskset len {}",
                     state
                         .requests
                         .iter()
                         .map(|(key, value)| { (key, value.peer_id, value.sent_time) })
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>(),
+                    requests_task_joinset.len()
                 );
             }
         }
