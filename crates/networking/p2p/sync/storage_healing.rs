@@ -20,8 +20,8 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc::Sender, task::yield_now};
-use tracing::{debug, error, field::debug, info, trace};
+use tokio::sync::mpsc::Sender;
+use tracing::{debug, error, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 30;
@@ -217,8 +217,6 @@ pub async fn heal_storage_trie(
         tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
 
     loop {
-        yield_now().await;
-
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
@@ -233,6 +231,17 @@ pub async fn heal_storage_trie(
             );
             state.succesful_downloads = 0;
             state.failed_downloads = 0;
+
+            if state.download_queue.len() < 350 {
+                info!(
+                    "Logging the inflight requests at the end {:?}",
+                    state
+                        .requests
+                        .iter()
+                        .map(|(key, value)| { (key, value.peer_id, value.sent_time) })
+                        .collect::<Vec<_>>()
+                );
+            }
         }
 
         if state.requests.is_empty() && state.download_queue.is_empty() {
