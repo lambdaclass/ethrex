@@ -412,6 +412,7 @@ where
     }
     init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
+    tracing::info!("ZZZZZZZZZZZZ Peer connection initialized: {}, client: {}", state.node.node_id(), state.client_version);
 
     // Send transactions transaction hashes from mempool at connection start
     send_new_pooled_tx_hashes(state).await?;
@@ -706,7 +707,7 @@ where
             if negotiated_eth_version == 0 {
                 return Err(RLPxError::NoMatchingCapabilities());
             }
-            debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
+            tracing::info!("Negotatied eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
