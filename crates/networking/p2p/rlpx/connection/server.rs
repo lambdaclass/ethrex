@@ -212,7 +212,7 @@ impl RLPxConnection {
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
-        tracing::info!(target: "p2p::connection", peer_enode = %node.enode_url(), peer_ip = %node.ip, tcp_port = node.tcp_port, udp_port = node.udp_port, direction = "outbound", "Spawn RLPx initiator connection");
+        tracing::info!(target: "p2p::connection", peer_enode = %node.enode_url(), peer_ip = %node.ip, node_version = ?node.version, tcp_port = node.tcp_port, udp_port = node.udp_port, direction = "outbound", "Spawn RLPx initiator connection");
         let inner_state = InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
@@ -234,7 +234,7 @@ impl GenServer for RLPxConnection {
     ) -> Result<InitResult<Self>, Self::Error> {
         match handshake::perform(self.inner_state).await {
             Ok((mut established_state, stream)) => {
-                tracing::info!(target: "p2p::connection", peer_enode = %established_state.node.enode_url(), peer_ip = %established_state.node.ip, tcp_port = established_state.node.tcp_port, udp_port = established_state.node.udp_port, inbound = established_state.inbound, "RLPx handshake succeeded");
+                tracing::info!(target: "p2p::connection", peer_enode = %established_state.node.enode_url(), peer_ip = %established_state.node.ip, node_version = ?established_state.node.version, tcp_port = established_state.node.tcp_port, udp_port = established_state.node.udp_port, inbound = established_state.inbound, "RLPx handshake succeeded");
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
 
                 if let Err(reason) =
@@ -414,7 +414,7 @@ where
     }
     init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
-    tracing::info!(target: "p2p::connection", peer_enode = %state.node.enode_url(), peer_ip = %state.node.ip, tcp_port = state.node.tcp_port, udp_port = state.node.udp_port, inbound = state.inbound, client_version = %state.client_version, negotiated_eth = ?state.negotiated_eth_capability, negotiated_snap = ?state.negotiated_snap_capability, "Peer connection initialized");
+    tracing::info!(target: "p2p::connection", peer_enode = %state.node.enode_url(), peer_ip = %state.node.ip, tcp_port = state.node.tcp_port, udp_port = state.node.udp_port, inbound = state.inbound, node_version = ?state.node.version, negotiated_eth = ?state.negotiated_eth_capability, negotiated_snap = ?state.negotiated_snap_capability, "Peer connection initialized");
 
     // Send transactions transaction hashes from mempool at connection start
     send_new_pooled_tx_hashes(state).await?;
@@ -457,7 +457,7 @@ where
     );
 
     if state.negotiated_eth_capability.is_some() {
-        tracing::info!("AAAAAAAA NEGOTIATED CAPABILITY {}", state.client_version);
+        tracing::info!("AAAAAAAA NEGOTIATED CAPABILITY {:?}", state.node.version);
         let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
         let message_builder =
             |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
@@ -709,7 +709,7 @@ where
             if negotiated_eth_version == 0 {
                 return Err(RLPxError::NoMatchingCapabilities());
             }
-            tracing::info!("Negotatied eth version: eth/{}", negotiated_eth_version);
+            tracing::info!("Negotatied eth version: eth/{}, for {:?}", negotiated_eth_version, hello_message.client_id);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
@@ -961,7 +961,7 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(_) => {
-                tracing::info!("BBBBBB handle_broadcast Broadcasting Transactions, WHY? {}", state.client_version);
+                tracing::info!("BBBBBB handle_broadcast Broadcasting Transactions, WHY? {:?}", state.node.version);
                 // Drop full transaction broadcasts (hash-based propagation only).
                 log_peer_debug(
                     &state.node,
@@ -992,7 +992,7 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         Message::Transactions(_) => {
-            tracing::info!("CCCCCCCC broadcast_message Broadcasting Transactions MESSAGE, WHY? {}", state.client_version);
+            tracing::info!("CCCCCCCC broadcast_message Broadcasting Transactions MESSAGE, WHY? {:?}", state.node.version);
             // Silently ignore attempts to broadcast full Transactions; spec-compliant hash flow in use.
             Ok(())
         }
