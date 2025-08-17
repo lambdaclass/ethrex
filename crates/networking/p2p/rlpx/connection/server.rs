@@ -454,6 +454,7 @@ where
     );
 
     if state.negotiated_eth_capability.is_some() {
+        tracing::info!("AAAAAAAA NEGOTIATED CAPABILITY {}", state.client_version);
         let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
         let message_builder =
             |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
@@ -957,7 +958,7 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(_) => {
-                tracing::info!("CCCCC Broadcasting Transactions, WHY?");
+                tracing::info!("BBBBBB handle_broadcast Broadcasting Transactions, WHY? {}", state.client_version);
                 // Drop full transaction broadcasts (hash-based propagation only).
                 log_peer_debug(
                     &state.node,
@@ -988,7 +989,7 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         Message::Transactions(_) => {
-            tracing::info!("DDDDDDDD Broadcasting Transactions MESSAGE, WHY?");
+            tracing::info!("CCCCCCCC broadcast_message Broadcasting Transactions MESSAGE, WHY? {}", state.client_version);
             // Silently ignore attempts to broadcast full Transactions; spec-compliant hash flow in use.
             Ok(())
         }
