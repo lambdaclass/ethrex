@@ -44,7 +44,7 @@ use crate::{
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+            transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
         l2::{
@@ -457,6 +457,7 @@ where
         let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
         let message_builder =
             |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
+        
         spawn_listener(handle.clone(), message_builder, stream);
     }
 
@@ -478,32 +479,31 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .flatten()
             .collect();
         if !txs.is_empty() {
-            // If the peer is another ethrex node, don't send transaction hashes to it.
-            if state.client_version.contains("ethrex") {
-                return Ok(());
+            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+                let mut txs_to_send = Vec::with_capacity(tx_chunk.len());
+                for tx in tx_chunk {
+                    txs_to_send.push(tx.transaction().clone());
+                    // Mark as sent so we don't re-announce to this peer.
+                    state.broadcasted_txs.insert(tx.hash());
+                }
+                send(
+                    state,
+                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                        txs_to_send,
+                        &state.blockchain,
+                    )?),
+                )
+                .await?;
+                log_peer_debug(
+                    &state.node,
+                    &format!(
+                        "Sent {} transaction hashes to peer (chunked, soft limit {})",
+                        tx_chunk.len(),
+                        NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT
+                    ),
+                );
             }
-
-            //for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = txs.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in txs {
-                txs_to_send.push(tx.transaction().clone());
-                state.broadcasted_txs.insert(tx.hash());
-            }
-            send(
-                state,
-                Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                    txs_to_send,
-                    &state.blockchain,
-                )?),
-            )
-            .await?;
-            log_peer_debug(
-                &state.node,
-                &format!("Sent {tx_count} transaction hashes to peer"),
-            );
         }
-        //}
     }
     Ok(())
 }
@@ -840,11 +840,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             );
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            const SOFT_LIMIT: usize = 256;
+            // Mark all received hashes so we don't echo them back later.
+            for h in &new_pooled_transaction_hashes.transaction_hashes {
+                state.broadcasted_txs.insert(*h);
+            }
+            const SOFT_LIMIT: usize = 256; // GetPooledTransactions soft limit
             let unknown_hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            // Get all hashes that have been requested but not yet received.
+            // Get hashes already requested but not yet received.
             let already_requested_hashes: HashSet<H256> = state
                 .requested_pooled_txs
                 .values()
@@ -852,7 +856,6 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .cloned()
                 .collect();
 
-            // Filter out the hashes that are already in flight.
             let hashes_to_request: Vec<H256> = unknown_hashes
                 .into_iter()
                 .filter(|hash| !already_requested_hashes.contains(hash))
@@ -868,11 +871,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 );
                 for hashes_chunk in hashes_to_request.chunks(SOFT_LIMIT) {
                     let request = GetPooledTransactions::new(random::<u64>(), hashes_chunk.to_vec());
-                    // Store the request so we can validate the response later.
+                    // Store original announcement for validation
                     state
                         .requested_pooled_txs
                         .insert(request.id, new_pooled_transaction_hashes.clone());
-
                     send(state, Message::GetPooledTransactions(request)).await?;
                 }
             }
@@ -954,8 +956,9 @@ async fn handle_broadcast(
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
-            Message::Transactions(txs) => {
-                // Ignoring full transaction broadcasts; propagation handled via hash announcements.
+            Message::Transactions(_) => {
+                tracing::info!("CCCCC Broadcasting Transactions, WHY?");
+                // Drop full transaction broadcasts (hash-based propagation only).
                 log_peer_debug(
                     &state.node,
                     "Ignoring broadcasted full Transactions (using hash-based propagation)",
@@ -984,14 +987,9 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
-        txs_msg @ Message::Transactions(_) => {
-            let txs = Arc::new(txs_msg);
-            let task_id = tokio::task::id();
-            let Ok(_) = state.connection_broadcast_send.send((task_id, txs)) else {
-                let error_message = "Could not broadcast received transactions";
-                log_peer_error(&state.node, error_message);
-                return Err(RLPxError::BroadcastError(error_message.to_owned()));
-            };
+        Message::Transactions(_) => {
+            tracing::info!("DDDDDDDD Broadcasting Transactions MESSAGE, WHY?");
+            // Silently ignore attempts to broadcast full Transactions; spec-compliant hash flow in use.
             Ok(())
         }
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
