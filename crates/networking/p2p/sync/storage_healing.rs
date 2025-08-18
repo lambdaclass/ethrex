@@ -20,7 +20,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::{Sender, error::SendError};
+use tokio::sync::mpsc::{Sender, error::TrySendError};
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace};
 
@@ -218,7 +218,7 @@ pub async fn heal_storage_trie(
     // TODO: think if this is a better way to receiver the data
     // Not in the state because it's not clonable
     let mut requests_task_joinset: JoinSet<
-        Result<u64, SendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -348,7 +348,7 @@ async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
     requests_task_joinset: &mut JoinSet<
-        Result<u64, SendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     >,
     peers: &PeerHandler,
     state_root: H256,
@@ -390,7 +390,7 @@ async fn ask_peers_for_nodes(
             // TODO: check errors to determine whether the current block is stale
             let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
             // TODO: add error handling
-            tx.send(response).await.inspect_err(|err| {
+            tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
             })?;
             Ok(req_id)
