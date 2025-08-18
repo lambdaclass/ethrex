@@ -87,7 +87,6 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
 ) -> Result<bool, SyncError> {
     // TODO:
-    // let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
     // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
@@ -277,8 +276,12 @@ async fn heal_state_trie(
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Nothing more to heal found");
-            break;
+            info!("Finished first download, checking the cache of previous downloads");
+            // let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
+            if paths.is_empty() {
+                info!("Nothing more to heal found");
+                break;
+            }
         }
 
         // Process the results of each batch
@@ -295,13 +298,13 @@ async fn heal_state_trie(
         }
 
         if is_stale && inflight_tasks == 0 {
+            info!("Caching {} paths for the next cycle", paths.len());
+            //store.set_state_heal_paths(paths.clone()).await?;
             break;
         }
     }
     info!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
-    info!("Caching {} paths for the next cycle", paths.len());
-    // store.set_state_heal_paths(paths.clone()).await?;
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;

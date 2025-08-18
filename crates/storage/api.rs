@@ -299,10 +299,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
 
     /// Sets the state trie paths in need of healing
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError>;
 
     /// Gets the state trie paths in need of healing
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
