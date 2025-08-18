@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755531430399,
+  "lastUpdate": 1755539071221,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8905,6 +8905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164799785808,
             "range": "± 852835239",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "104713523f3bbc32a9d56b54e925370e02c3cc61",
+          "message": "perf(l2): use rkyv instead of bincode for sp1 (#3831)\n\n**Motivation**\n\nafter #3765 running a samply shows bincode deserialization taking up\nmore than 45% of execution time in a large l2 batch\n\n**Description**\n\n- implement rkyv Archive trait for all of `ProgramInput` fields and its\ncontaining structs\n- for sp1 serialize `ProgramInput` as bytes, then use write_slice to\nwrite to sp1 stdin, then deserialize the bytes in sp1 main with\nfrom_bytes\n\n**Metrics**\n\ncommand:\n```\nSP1_PROVER=cuda cargo run --release --features \"sp1,l2,gpu\" -- prove batch --rpc-url <RPC-URL> --network 65536300 48\n```\n\nspecs:\n```\nCPU: 13th Gen Intel(R) Core(TM) i5-13500\nRAM: 64GB DDR4 3200MT/s\nGPU: NVIDIA RTX 4000 SFF Ada Generation\n```\n\n\n716 blocks 0tx/b\n\n- this pr: `Successfully executed SP1 program  in 83.47s`\n- main: `Successfully executed SP1 program  in 262.82s`\n\n\n716 blocks 1tx/b\n\n- this pr: `Successfully executed SP1 program  in 528.02s`\n- main: `Successfully executed SP1 program  in 784.57s`\n\n\n717 blocks 2tx/b\n\n- this pr: `Successfully executed SP1 program  in 1234.45s`\n- main: `Successfully executed SP1 program  in 1676.83s`",
+          "timestamp": "2025-08-18T16:47:41Z",
+          "tree_id": "5a836fd0e1a8af51a085f69bd6d5843cb5af3b5e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/104713523f3bbc32a9d56b54e925370e02c3cc61"
+        },
+        "date": 1755539054936,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163201389057,
+            "range": "± 322683311",
             "unit": "ns/iter"
           }
         ]
