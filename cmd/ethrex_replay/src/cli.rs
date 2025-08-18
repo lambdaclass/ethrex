@@ -51,7 +51,7 @@ enum SubcommandExecute {
     },
     #[command(about = "Execute a single block.")]
     Blocks {
-        #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
         blocks: Vec<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: Url,
@@ -255,7 +255,7 @@ enum SubcommandProve {
     },
     #[command(about = "Execute a single block.")]
     Blocks {
-        #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
         blocks: Vec<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: Url,
