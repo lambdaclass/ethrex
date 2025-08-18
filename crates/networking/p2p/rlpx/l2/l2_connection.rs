@@ -49,6 +49,13 @@ pub enum L2Cast {
 }
 
 impl L2ConnState {
+    pub(crate) fn is_supported(&self) -> bool {
+        match self {
+            Self::Unsupported => false,
+            Self::Disconnected(_) | Self::Connected(_) => true,
+        }
+    }
+
     pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
         match self {
             Self::Unsupported => Err(RLPxError::IncompatibleProtocol),

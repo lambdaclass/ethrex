@@ -642,7 +642,7 @@ where
         &SUPPORTED_SNAP_CAPABILITIES[..],
     ]
     .concat();
-    if let L2ConnState::Disconnected(_) = state.l2_state {
+    if state.l2_state.is_supported() {
         supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
@@ -689,7 +689,7 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
-                    "based" => {
+                    "based" if state.l2_state.is_supported() => {
                         state.l2_state.set_established()?;
                     }
                     _ => {}
