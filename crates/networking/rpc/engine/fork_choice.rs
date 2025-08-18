@@ -176,6 +176,8 @@ async fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
 
+    let guard_fork = perf_logger::add_time_till_drop("handle_forkchoice");
+
     if let Some(latest_valid_hash) = context
         .storage
         .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
@@ -217,7 +219,8 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
-    match apply_fork_choice(
+    let guard = perf_logger::add_time_till_drop("apply_forkchoice");
+    guard_fork.wrap_return(guard.wrap_return(match apply_fork_choice(
         &context.storage,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
@@ -301,7 +304,7 @@ async fn handle_forkchoice(
             };
             Ok((None, forkchoice_response))
         }
-    }
+    }))
 }
 
 fn validate_attributes_v1(

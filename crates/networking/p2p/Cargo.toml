@@ -27,6 +27,7 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 keccak-hash.workspace = true
 sha2.workspace = true
+perf-logger.workspace = true
 
 tokio-stream = "0.1.17"
 futures = "0.3.31"

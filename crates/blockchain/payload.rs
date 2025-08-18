@@ -372,6 +372,7 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        let guard = perf_logger::add_time_till_drop("mempool_fill_transactions");
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
@@ -456,7 +457,7 @@ impl Blockchain {
             // Save receipt for hash calculation
             context.receipts.push(receipt);
         }
-        Ok(())
+        guard.wrap_return(Ok(()))
     }
 
     /// Executes the transaction, updates gas-related context values & return the receipt

@@ -287,6 +287,8 @@ pub async fn map_authrpc_requests(
 }
 
 pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    let method = req.method.clone();
+    perf_logger::add_log(method, perf_logger::Value::Count(1));
     match req.method.as_str() {
         "eth_chainId" => ChainId::call(req, context).await,
         "eth_syncing" => Syncing::call(req, context).await,
