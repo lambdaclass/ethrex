@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755548697812,
+  "lastUpdate": 1755551519779,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8995,6 +8995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163080566680,
             "range": "± 398012153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "66d3e7dcec4d7628a6fe34762251fc5106e3a589",
+          "message": "chore(l1,l2): upgraded spawned to 0.3.0 (#4062)\n\nSpawned 0.3.0 has a major performance upgrade on certain GenServers.\n\nUpgrades spawned to the version 0.3.0 and updates the code accordingly",
+          "timestamp": "2025-08-18T20:20:17Z",
+          "tree_id": "2b97d7572f7a52b050247324c3f2c6d7cb1aee53",
+          "url": "https://github.com/lambdaclass/ethrex/commit/66d3e7dcec4d7628a6fe34762251fc5106e3a589"
+        },
+        "date": 1755551504139,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162043841607,
+            "range": "± 464138278",
             "unit": "ns/iter"
           }
         ]
