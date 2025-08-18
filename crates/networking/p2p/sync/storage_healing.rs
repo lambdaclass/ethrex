@@ -20,7 +20,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
 use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
@@ -123,6 +123,8 @@ pub struct StorageHealer {
     roots_healed: usize,
     succesful_downloads: usize,
     failed_downloads: usize,
+    empty_count: usize,
+    disconnected_count: usize,
 }
 
 /// This struct stores the metadata we need when we request a node
@@ -214,6 +216,8 @@ pub async fn heal_storage_trie(
         roots_healed: Default::default(),
         succesful_downloads: Default::default(),
         failed_downloads: Default::default(),
+        empty_count: Default::default(),
+        disconnected_count: Default::default(),
     };
 
     // With this we track what's going on with the tasks in flight
@@ -233,7 +237,7 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 state
                     .peer_handler
                     .peer_table
@@ -246,10 +250,14 @@ pub async fn heal_storage_trie(
                 state.leafs_healed,
                 state.roots_healed,
                 state.succesful_downloads as f64
-                    / (state.succesful_downloads as f64 + state.failed_downloads as f64)
+                    / (state.succesful_downloads as f64 + state.failed_downloads as f64),
+                state.empty_count,
+                state.disconnected_count,
             );
             state.succesful_downloads = 0;
             state.failed_downloads = 0;
+            state.empty_count = 0;
+            state.disconnected_count = 0;
 
             if state.download_queue.len() < 350 {
                 info!(
@@ -290,8 +298,16 @@ pub async fn heal_storage_trie(
             }
         }
 
-        let Ok(trie_nodes_result) = task_receiver.try_recv() else {
-            continue;
+        let trie_nodes_result = match task_receiver.try_recv() {
+            Ok(trie_nodes) => trie_nodes,
+            Err(TryRecvError::Empty) => {
+                state.empty_count += 1;
+                continue;
+            }
+            Err(TryRecvError::Disconnected) => {
+                state.disconnected_count += 1;
+                continue;
+            }
         };
 
         match trie_nodes_result {

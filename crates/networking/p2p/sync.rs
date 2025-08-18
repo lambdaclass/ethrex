@@ -765,7 +765,10 @@ impl Syncer {
                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await;
         }
 
-        debug!("Selected block {} as pivot for snap sync", pivot_header.number);
+        debug!(
+            "Selected block {} as pivot for snap sync",
+            pivot_header.number
+        );
 
         let state_root = pivot_header.state_root;
         let mut pivot_is_stale = true;
@@ -1054,11 +1057,11 @@ impl Syncer {
         }
 
         let mut bytecode_hashes: Vec<H256> = store
-                .iter_accounts(pivot_header.state_root)
-                .expect("we couldn't iterate over accounts")
-                .map(|(_, state)| state.code_hash)
-                .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
-                .collect();
+            .iter_accounts(pivot_header.state_root)
+            .expect("we couldn't iterate over accounts")
+            .map(|(_, state)| state.code_hash)
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
+            .collect();
         bytecode_hashes.sort();
         bytecode_hashes.dedup();
 
