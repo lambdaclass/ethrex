@@ -37,7 +37,6 @@ use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
-use num_bigint::BigUint;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -389,10 +388,8 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
-
+    let exp_first_32 = Integer::from_digits(e.get(0..bytes_to_take).unwrap_or_default(), rug::integer::Order::MsfBe);
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size)?;
-
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let result = mod_exp(base, exponent, modulus);
@@ -424,8 +421,6 @@ fn get_slice_or_default(
     Ok(Default::default())
 }
 
-/// I allow this clippy alert because in the code modulus could never be
-///  zero because that case is covered in the if above that line
 #[allow(clippy::arithmetic_side_effects)]
 fn mod_exp(base: Integer, exponent: Integer, modulus: Integer) -> Integer {
     if modulus == Integer::ZERO {

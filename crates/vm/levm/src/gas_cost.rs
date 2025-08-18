@@ -8,7 +8,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork};
-use num_bigint::BigUint;
+use rug::Integer;
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -817,7 +817,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent_first_32_bytes: &BigUint,
+    exponent_first_32_bytes: &Integer,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
@@ -840,11 +840,12 @@ pub fn modexp(
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGas)?;
 
     let calculate_iteration_count =
-        if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+        if exponent_size <= 32 && *exponent_first_32_bytes != Integer::ZERO {
             exponent_first_32_bytes
-                .bits()
+                .significant_bits()
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?
+                .into()
         } else if exponent_size > 32 {
             let extra_size = (exponent_size
                 .checked_sub(32)
@@ -852,7 +853,7 @@ pub fn modexp(
             .checked_mul(8)
             .ok_or(OutOfGas)?;
             extra_size
-                .checked_add(exponent_first_32_bytes.bits().max(1))
+                .checked_add(exponent_first_32_bytes.significant_bits().max(1).into())
                 .ok_or(OutOfGas)?
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?
