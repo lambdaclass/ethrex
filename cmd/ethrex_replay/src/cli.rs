@@ -327,6 +327,8 @@ enum SubcommandProve {
         network: Network,
         #[arg(long, required = false)]
         bench: bool,
+        #[arg(long, required = false)]
+        to_csv: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -388,13 +390,33 @@ impl SubcommandProve {
                 rpc_url,
                 network,
                 bench,
+                to_csv,
             } => {
                 blocks.sort();
 
-                for block in blocks {
-                    Box::pin(async {
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+
+                #[cfg(feature = "sp1")]
+                let replay_mode = ReplayerMode::ExecuteSP1;
+                #[cfg(feature = "risc0")]
+                let replay_mode = ReplayerMode::ExecuteSP1;
+                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+                let replay_mode = ReplayerMode::Execute;
+
+                let mut block_run_reports = Vec::new();
+
+                for (i, block_number) in blocks.iter().enumerate() {
+                    info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
+
+                    let block = eth_client
+                        .get_raw_block(BlockIdentifier::Number(*block_number as u64))
+                        .await?;
+
+                    let start = SystemTime::now();
+
+                    let res = Box::pin(async {
                         SubcommandProve::Block {
-                            block: Some(block),
+                            block: Some(*block_number),
                             rpc_url: rpc_url.as_str().to_string(),
                             network: network.clone(),
                             bench,
@@ -402,7 +424,38 @@ impl SubcommandProve {
                         .run()
                         .await
                     })
-                    .await?;
+                    .await;
+
+                    let elapsed = start.elapsed().unwrap_or_default();
+
+                    let block_run_report = BlockRunReport::new_for(
+                        block,
+                        network.clone(),
+                        res,
+                        replay_mode.clone(),
+                        elapsed,
+                    );
+
+                    if block_run_report.run_result.is_err() {
+                        error!("{block_run_report}");
+                    } else {
+                        info!("{block_run_report}");
+                    }
+
+                    block_run_reports.push(block_run_report);
+                }
+
+                if to_csv {
+                    let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+
+                    std::fs::write(
+                        file_name,
+                        block_run_reports
+                            .iter()
+                            .map(BlockRunReport::to_csv)
+                            .collect::<Vec<String>>()
+                            .join("\n"),
+                    )?;
                 }
             }
             SubcommandProve::BlockRange {
