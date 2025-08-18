@@ -4089,6 +4089,7 @@ dependencies = [
  "spinoff",
  "strum 0.27.2",
  "thiserror 2.0.12",
+ "tracing",
  "walkdir",
 ]
 
