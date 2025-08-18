@@ -1994,6 +1994,10 @@ impl PeerHandler {
 
         for (index, node) in nodes.iter().enumerate() {
             if node.compute_hash().finalize() != paths[index].hash {
+                error!(
+                    "A peer is sending wrong data for the state trie node {:?}",
+                    paths[index].path
+                );
                 return Err(RequestStateTrieNodesError::InvalidHash);
             }
         }
