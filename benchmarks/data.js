@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755222241193,
+  "lastUpdate": 1755530265519,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8875,6 +8875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159840167639,
             "range": "± 553076435",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e1da8bff3abbafd6dc202385bc56f72d3f9ddf78",
+          "message": "chore(levm): remove unused bigint dep from levm (#4060)\n\n**Motivation**\n\nWith the change from bigint to malachite for modexp, bigint is now an\nunused dependency.\n\nfixes #4057",
+          "timestamp": "2025-08-18T14:18:06Z",
+          "tree_id": "00953dde9885a6844f348a43fec8aea364c993c6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e1da8bff3abbafd6dc202385bc56f72d3f9ddf78"
+        },
+        "date": 1755530250614,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164799785808,
+            "range": "± 852835239",
             "unit": "ns/iter"
           }
         ]
