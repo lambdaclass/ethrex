@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info};
+use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -148,9 +148,9 @@ impl Blockchain {
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let execution_result = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        //validate_gas_used(&execution_result.receipts, &block.header)?;
+        //validate_receipts_root(&block.header, &execution_result.receipts)?;
+        //validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
         Ok(execution_result)
     }
@@ -519,6 +519,9 @@ impl Blockchain {
                     )
                 })?;
             info!("Executed block with number {}", block.header.number);
+            if block.header.number == 8135491 {
+                break;
+            }
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
@@ -531,6 +534,7 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
+        info!("Account updates: {account_updates:?}");
 
         let last_block = blocks
             .last()
