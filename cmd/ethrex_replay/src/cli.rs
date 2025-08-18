@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{io::Write, time::SystemTime};
 
 use clap::{Parser, Subcommand};
 use ethrex_common::{
@@ -162,8 +162,6 @@ impl SubcommandExecute {
                 #[cfg(not(any(feature = "risc0", feature = "sp1")))]
                 let replay_mode = ReplayerMode::Execute;
 
-                let mut block_run_reports = Vec::new();
-
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
 
@@ -201,20 +199,20 @@ impl SubcommandExecute {
                         info!("{block_run_report}");
                     }
 
-                    block_run_reports.push(block_run_report);
-                }
+                    if to_csv {
+                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
 
-                if to_csv {
-                    let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
 
-                    std::fs::write(
-                        file_name,
-                        block_run_reports
-                            .iter()
-                            .map(BlockRunReport::to_csv)
-                            .collect::<Vec<String>>()
-                            .join("\n"),
-                    )?;
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
                 }
             }
             SubcommandExecute::BlockRange {
@@ -403,8 +401,6 @@ impl SubcommandProve {
                 #[cfg(not(any(feature = "risc0", feature = "sp1")))]
                 let replay_mode = ReplayerMode::Execute;
 
-                let mut block_run_reports = Vec::new();
-
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
 
@@ -442,20 +438,20 @@ impl SubcommandProve {
                         info!("{block_run_report}");
                     }
 
-                    block_run_reports.push(block_run_report);
-                }
+                    if to_csv {
+                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
 
-                if to_csv {
-                    let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
 
-                    std::fs::write(
-                        file_name,
-                        block_run_reports
-                            .iter()
-                            .map(BlockRunReport::to_csv)
-                            .collect::<Vec<String>>()
-                            .join("\n"),
-                    )?;
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
                 }
             }
             SubcommandProve::BlockRange {
