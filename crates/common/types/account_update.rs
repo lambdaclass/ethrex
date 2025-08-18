@@ -15,6 +15,19 @@ pub struct AccountUpdate {
     // removed_storage_keys: Vec<H256>,
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountUpdateLite {
+    pub removed: bool,
+    pub info: Option<AccountInfo>,
+    pub added_storage: BTreeMap<H256, U256>,
+}
+
+impl From<AccountUpdate> for AccountUpdateLite {
+    fn from(value: AccountUpdate) -> Self {
+        AccountUpdateLite { removed: value.removed, info: value.info, added_storage: value.added_storage }
+    }
+}
+
 impl AccountUpdate {
     /// Creates new empty update for the given account
     pub fn new(address: Address) -> AccountUpdate {

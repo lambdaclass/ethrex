@@ -15,10 +15,7 @@ use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields, validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, AccountUpdateLite, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -549,16 +546,16 @@ impl Blockchain {
             EvmEngine::REVM => levm_filename,
         };
         info!("Writing account updates for block {last_block_num}");
-        let current_account_updates: BTreeMap<Address, AccountUpdate> = account_updates
+        let current_account_updates: BTreeMap<Address, AccountUpdateLite> = account_updates
             .iter()
-            .map(|au| (au.address, au.clone()))
+            .map(|au| (au.address, au.clone().into()))
             .collect();
         // Write current updates
         let current_file = File::create(current_file).unwrap();
         serde_json::to_writer(current_file, &current_account_updates).unwrap();
         if let Ok(prev_file) = File::open(prev_engine_file) {
             info!("Retrieving account updates from other engine");
-            let prev_account_updates: BTreeMap<Address, AccountUpdate> =
+            let prev_account_updates: BTreeMap<Address, AccountUpdateLite> =
                 serde_json::from_reader(prev_file).unwrap();
             if current_account_updates.len() < prev_account_updates.len() {
                 warn!(
