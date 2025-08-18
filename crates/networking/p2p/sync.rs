@@ -765,9 +765,7 @@ impl Syncer {
                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await;
         }
 
-        let pivot_number = pivot_header.number;
-        let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        debug!("Selected block {} as pivot for snap sync", pivot_header.number);
 
         let state_root = pivot_header.state_root;
         let mut pivot_is_stale = true;
@@ -940,6 +938,7 @@ impl Syncer {
                 let maybe_big_account_storage_state_roots_clone =
                     maybe_big_account_storage_state_roots.clone();
                 let store_clone = store.clone();
+                let pivot_header = pivot_header.clone();
                 let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                     let store: Store = store_clone;
 
@@ -973,7 +972,7 @@ impl Syncer {
 
                             maybe_big_account_storage_state_roots_clone.lock().expect("Failed to acquire lock").insert(account_hash, computed_state_root);
 
-                            let account_state = store.get_account_state_by_acc_hash(pivot_hash, account_hash).unwrap().unwrap();
+                            let account_state = store.get_account_state_by_acc_hash(pivot_header.hash(), account_hash).unwrap().unwrap();
                             if computed_state_root == account_state.storage_root {
                                 METRICS.storage_tries_state_roots_computed.inc();
                             }
@@ -995,7 +994,7 @@ impl Syncer {
                 maybe_big_account_storage_state_roots.lock().unwrap().iter()
             {
                 let account_state = store
-                    .get_account_state_by_acc_hash(pivot_hash, *account_hash)
+                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)
                     .unwrap()
                     .unwrap();
 
@@ -1055,7 +1054,7 @@ impl Syncer {
         }
 
         let mut bytecode_hashes: Vec<H256> = store
-                .iter_accounts(state_root)
+                .iter_accounts(pivot_header.state_root)
                 .expect("we couldn't iterate over accounts")
                 .map(|(_, state)| state.code_hash)
                 .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
@@ -1078,12 +1077,12 @@ impl Syncer {
             .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
             .await?;
 
-        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone())
+        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone())
             .await
             .unwrap();
 
         let block = store
-            .get_block_by_hash(pivot_hash)
+            .get_block_by_hash(pivot_header.hash())
             .await?
             .ok_or(SyncError::CorruptDB)?;
 
@@ -1095,14 +1094,14 @@ impl Syncer {
             .into_iter()
             .rev()
             .enumerate()
-            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
             .collect::<Vec<_>>();
 
         store
             .forkchoice_update(
                 Some(numbers_and_hashes),
-                pivot_number,
-                pivot_hash,
+                pivot_header.number,
+                pivot_header.hash(),
                 None,
                 None,
             )
