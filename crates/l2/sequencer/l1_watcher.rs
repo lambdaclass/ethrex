@@ -284,10 +284,10 @@ impl GenServer for L1Watcher {
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Watch => {
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
@@ -295,7 +295,7 @@ impl GenServer for L1Watcher {
                 }
                 let check_interval = random_duration(self.check_interval);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }

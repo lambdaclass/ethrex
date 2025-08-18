@@ -129,10 +129,10 @@ impl GenServer for EthrexMonitor {
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             // On event
             CastInMessage::Event(event) => {
@@ -159,7 +159,7 @@ impl GenServer for EthrexMonitor {
                 .widget
                 .draw(&mut *self.terminal.lock().await)
                 .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply(self)
+            CastResponse::NoReply
         } else {
             CastResponse::Stop
         }

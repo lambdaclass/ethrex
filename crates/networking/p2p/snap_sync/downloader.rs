@@ -58,10 +58,10 @@ impl GenServer for Downloader {
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             DownloaderRequest::AccountRange {
                 task_sender,
