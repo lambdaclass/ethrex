@@ -286,7 +286,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
 
         let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
@@ -313,7 +313,7 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
@@ -373,59 +373,70 @@ impl PeerHandler {
                 debug!("Downloader {peer_id} freed");
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-                .await;
+            // TODO: this is a get_free_peers
+            // let peer_channels = self
+            //     .peer_table
+            //     .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            //     .await;
 
-            for (peer_id, _peer_channels) in &peer_channels {
-                if downloaders.contains_key(peer_id) {
-                    // Peer is already in the downloaders list, skip it
-                    continue;
-                }
+            // for (peer_id, _peer_channels) in &peer_channels {
+            //     if downloaders.contains_key(peer_id) {
+            //         // Peer is already in the downloaders list, skip it
+            //         continue;
+            //     }
 
-                downloaders.insert(*peer_id, true);
+            //     downloaders.insert(*peer_id, true);
 
-                debug!("{peer_id} added as downloader");
-            }
+            //     debug!("{peer_id} added as downloader");
+            // }
 
-            let free_downloaders = downloaders
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
-                .collect::<Vec<_>>();
+            // let free_downloaders = downloaders
+            //     .clone()
+            //     .into_iter()
+            //     .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+            //     .collect::<Vec<_>>();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
-            }
+            // if new_last_metrics_update >= Duration::from_secs(1) {
+            //     *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
+            // }
 
-            if free_downloaders.is_empty() {
-                continue;
-            }
+            // if free_downloaders.is_empty() {
+            //     continue;
+            // }
 
-            let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
-                .map(|(peer_id, _)| *peer_id)
+            // let Some(free_peer_id) = free_downloaders
+            //     .get(random::<usize>() % free_downloaders.len())
+            //     .map(|(peer_id, _)| *peer_id)
+            // else {
+            //     debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
+            //     continue;
+            // };
+
+            // let Some(mut free_downloader_channels) =
+            //     peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+            //         peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+            //     })
+            // else {
+            //     // The free downloader is not a peer of us anymore.
+            //     debug!(
+            //         "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+            //     );
+            //     downloaders.remove(&free_peer_id);
+            //     continue;
+            // };
+            // TODO: this is a get_free_peers
+            let mut scores = self.peer_scores.lock().await;
+            let Some(downloader) = self
+                .get_available_downloader(&mut scores, &mut downloaders)
+                .await
             else {
-                debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
+                debug!("No available downloader found, retrying");
+                drop(scores);
                 continue;
             };
+            drop(scores);
 
-            let Some(mut free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
-            else {
-                // The free downloader is not a peer of us anymore.
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                downloaders.remove(&free_peer_id);
-                continue;
-            };
-            // TAG JM
-
-            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
+            let Some((start_block, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -440,47 +451,57 @@ impl PeerHandler {
                 continue;
             };
 
-            let tx = task_sender.clone();
+            downloader
+                .start()
+                .cast(DownloaderRequest::Headers {
+                    task_sender: task_sender.clone(),
+                    start_block,
+                    chunk_limit,
+                })
+                .await
+                .unwrap(); // TODO: handle unwrap
 
-            downloaders
-                .entry(free_peer_id)
-                .and_modify(|downloader_is_free| {
-                    *downloader_is_free = false; // mark the downloader as busy
-                });
+            // let tx = task_sender.clone();
 
-            debug!("Downloader {free_peer_id} is now busy");
+            // downloaders
+            //     .entry(free_peer_id)
+            //     .and_modify(|downloader_is_free| {
+            //         *downloader_is_free = false; // mark the downloader as busy
+            //     });
+
+            // debug!("Downloader {free_peer_id} is now busy");
 
             // run download_chunk_from_peer in a different Tokio task
-            let _download_result = tokio::spawn(async move {
-                trace!(
-                    "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
-                );
-                debug!(
-                    "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
-                );
+            // let _download_result = tokio::spawn(async move {
+            //     trace!(
+            //         "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+            //     );
+            //     debug!(
+            //         "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+            //     );
 
-                let headers = Self::download_chunk_from_peer(
-                    free_peer_id,
-                    &mut free_downloader_channels,
-                    startblock,
-                    chunk_limit,
-                )
-                .await
-                .inspect_err(|err| {
-                    trace!("Sync Log 6: {free_peer_id} failed to download chunk: {err}")
-                })
-                .unwrap_or_default();
+            //     let headers = Self::download_chunk_from_peer(
+            //         free_peer_id,
+            //         &mut free_downloader_channels,
+            //         startblock,
+            //         chunk_limit,
+            //     )
+            //     .await
+            //     .inspect_err(|err| {
+            //         trace!("Sync Log 6: {free_peer_id} failed to download chunk: {err}")
+            //     })
+            //     .unwrap_or_default();
 
-                tx.send((
-                    headers,
-                    free_peer_id,
-                    free_downloader_channels,
-                    startblock,
-                    chunk_limit,
-                ))
-                .await
-                .unwrap();
-            });
+            //     tx.send((
+            //         headers,
+            //         free_peer_id,
+            //         free_downloader_channels,
+            //         startblock,
+            //         chunk_limit,
+            //     ))
+            //     .await
+            //     .unwrap();
+            // });
 
             // 4) assign the tasks to the peers
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)

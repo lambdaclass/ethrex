@@ -1,19 +1,23 @@
 use std::time::Duration;
 
-use ethrex_common::{BigEndianHash, U256, types::AccountState};
+use ethrex_common::{
+    BigEndianHash, U256,
+    types::{AccountState, BlockHeader},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::verify_range;
 use keccak_hash::H256;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, InitResult};
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::MAX_RESPONSE_BYTES,
+    peer_handler::{BlockRequestOrder, MAX_RESPONSE_BYTES},
     rlpx::{
         Message as RLPxMessage,
         connection::server::{CallMessage, CastMessage, OutMessage},
+        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         snap::{AccountRange, AccountRangeUnit, GetAccountRange},
     },
     snap::encodable_to_proof,
@@ -36,6 +40,11 @@ impl Downloader {
 
 #[derive(Clone)]
 pub enum DownloaderRequest {
+    Headers {
+        task_sender: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
+        start_block: u64,
+        chunk_limit: u64,
+    },
     AccountRange {
         task_sender: Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
         root_hash: H256,
@@ -63,6 +72,64 @@ impl GenServer for Downloader {
         _handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
+            DownloaderRequest::Headers {
+                task_sender,
+                start_block,
+                chunk_limit,
+            } => {
+                debug!("Requesting block headers from peer {}", self.peer_id);
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(start_block),
+                    limit: chunk_limit,
+                    skip: 0,
+                    reverse: false,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+
+                // FIXME! modify the cast and wait for a `call` version
+                self.peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                    .map_err(|e| format!("Failed to send message to peer {}: {e}", self.peer_id))
+                    .unwrap(); // TODO: handle unwrap
+
+                let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                                if id == request_id =>
+                            {
+                                return Some(block_headers);
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None, // EOF
+                        }
+                    }
+                })
+                .await
+                .map_err(|_| "Failed to receive block headers")
+                .unwrap() // TODO: handle unwrap
+                .ok_or("Block no received".to_owned())
+                .unwrap(); // TODO: handle unwrap
+
+                if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                    task_sender
+                        .send((block_headers, self.peer_id, start_block, chunk_limit))
+                        .await
+                        .unwrap();
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer: {}",
+                        self.peer_id
+                    );
+                }
+
+                // Nothing to do after completion, stop actor
+                CastResponse::Stop
+            }
             DownloaderRequest::AccountRange {
                 task_sender,
                 root_hash,
@@ -273,4 +340,13 @@ impl GenServer for Downloader {
             }
         }
     }
+}
+
+/// Validates the block headers received from a peer by checking that the parent hash of each header
+/// matches the hash of the previous one, i.e. the headers are chained
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }
