@@ -7,7 +7,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 use ethrex_config::networks::Network;
@@ -39,7 +39,7 @@ pub async fn get_blockdata(
         return Ok(cache);
     }
 
-    info!("Validating RPC chain ID");
+    debug!("Validating RPC chain ID");
 
     let chain_id = eth_client.get_chain_id().await?;
 
@@ -49,7 +49,7 @@ pub async fn get_blockdata(
         ));
     }
 
-    info!("Getting execution witness from RPC for block {requested_block_number}");
+    debug!("Getting execution witness from RPC for block {requested_block_number}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
@@ -57,8 +57,8 @@ pub async fn get_blockdata(
         Ok(witness) => execution_witness_from_rpc_chain_config(witness, chain_config)
             .expect("Failed to convert witness"),
         Err(e) => {
-            error!("{e}");
-            todo!("Retry with eth_getProofs")
+            warn!("{e}");
+            return Err(eyre::eyre!("Unimplemented: Retry with eth_getProofs"));
         }
     };
 
@@ -68,12 +68,12 @@ pub async fn get_blockdata(
             panic!("SystemTime::elapsed failed: {e}");
         });
 
-    info!(
+    debug!(
         "Got execution witness for block {requested_block_number} in {}",
         format_duration(execution_witness_retrieval_duration)
     );
 
-    info!("Getting block data from RPC for block {requested_block_number}");
+    debug!("Getting block data from RPC for block {requested_block_number}");
 
     let block_retrieval_start_time = SystemTime::now();
 
@@ -85,12 +85,12 @@ pub async fn get_blockdata(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    info!(
+    debug!(
         "Got block {requested_block_number} in {}",
         format_duration(block_retrieval_duration)
     );
 
-    info!("Caching block {requested_block_number}");
+    debug!("Caching block {requested_block_number}");
 
     let block_cache_start_time = SystemTime::now();
 
@@ -102,7 +102,7 @@ pub async fn get_blockdata(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    info!(
+    debug!(
         "Cached block {requested_block_number} in {}",
         format_duration(block_cache_duration)
     );
