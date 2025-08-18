@@ -697,7 +697,7 @@ impl EthClient {
     ) -> Result<GenericTransaction, EthClientError> {
         match r#type {
             TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged => {}
-            _ => {
+            TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
                 return Err(EthClientError::Custom(
                     "Unsupported tx type in build_generic_tx".to_owned(),
                 ));
