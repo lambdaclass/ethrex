@@ -52,7 +52,7 @@ struct Cli {
         long,
         short='t',
         value_enum,
-        default_value_t=TestType::Erc20,
+        default_value_t=TestType::EthTransfers,
         env = "TEST_TYPE",
         help="Type of test to run. Can be eth_transfers or erc20."
     )]
@@ -87,7 +87,8 @@ struct Cli {
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
 pub enum TestType {
     EthTransfers,
-    Erc20,
+    Erc20DeployClaim,
+    Erc20Transfers,
     Fibonacci,
     IOHeavy,
 }
@@ -97,6 +98,8 @@ const ETH_TRANSFER_VALUE: u64 = 1000;
 
 // Private key for the rich account after making the initial deposits on the L2.
 const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
+// ERC20 contract address in case RICH_ACCOUNT deploying it for the first time
+const ERC20_ADDRESS: &str = "0x17435cce3d1b4fa2e5f8a08ed921d57c6762a180";
 
 async fn deploy_contract(
     client: EthClient,
@@ -180,6 +183,7 @@ enum TxBuilder {
     EthTransfer,
     Fibonacci(Address),
     IOHeavy(Address),
+    Noop,
 }
 
 impl TxBuilder {
@@ -209,6 +213,7 @@ impl TxBuilder {
                     calldata::encode_calldata("incrementNumbers()", &[]).unwrap();
                 (None, io_heavy_calldata, *contract_address)
             }
+            TxBuilder::Noop => unreachable!(),
         }
     }
 }
@@ -316,6 +321,11 @@ fn parse_private_key_into_local_signer(pkey: &str) -> Signer {
     LocalSigner::new(secret_key).into()
 }
 
+fn parse_address(addr: &str) -> Address {
+    addr.parse()
+        .unwrap_or_else(|_| panic!("Address is not a valid hex representation {addr}"))
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -334,15 +344,21 @@ async fn main() {
     let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
 
     let tx_builder = match cli.test_type {
-        TestType::Erc20 => {
-            println!("ERC20 Load test starting");
+        TestType::Erc20DeployClaim => {
+            println!("ERC20 deployment & claim starting");
             println!("Deploying ERC20 contract...");
             let contract_address = erc20_deploy(client.clone(), &deployer)
                 .await
                 .expect("Failed to deploy ERC20 contract");
+            println!("deployed at {contract_address:?}");
             claim_erc20_balances(contract_address, client.clone(), accounts.clone())
                 .await
                 .expect("Failed to claim ERC20 balances");
+            TxBuilder::Noop
+        }
+        TestType::Erc20Transfers => {
+            println!("ERC20 transfer load test starting");
+            let contract_address = parse_address(ERC20_ADDRESS);
             TxBuilder::Erc20(contract_address)
         }
         TestType::EthTransfers => {
@@ -367,24 +383,26 @@ async fn main() {
         }
     };
 
-    println!("Starting load test with {} transactions...", cli.tx_amount);
     let time_now = tokio::time::Instant::now();
 
-    let tx_hashes = load_test(
-        cli.tx_amount,
-        accounts.clone(),
-        client.clone(),
-        chain_id,
-        tx_builder,
-    )
-    .await
-    .expect("Failed to load test");
+    if !matches!(tx_builder, TxBuilder::Noop) {
+        println!("Starting load test with {} transactions...", cli.tx_amount);
+        let tx_hashes = load_test(
+            cli.tx_amount,
+            accounts.clone(),
+            client.clone(),
+            chain_id,
+            tx_builder,
+        )
+        .await
+        .expect("Failed to load test");
 
-    if cli.wait_included {
-        println!("Waiting for all transactions to be included in blocks...");
-        wait_until_all_included(client, accounts, &tx_hashes)
-            .await
-            .unwrap();
+        if cli.wait_included {
+            println!("Waiting for all transactions to be included in blocks...");
+            wait_until_all_included(client, accounts, &tx_hashes)
+                .await
+                .unwrap();
+        }
     }
     let elapsed_time = time_now.elapsed();
 
