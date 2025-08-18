@@ -214,6 +214,15 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_number == latest.number {
+            // The latest may not be marked as canonical yet
+            return self.engine.get_block_body_by_hash(latest.hash()).await;
+        }
         self.engine.get_block_body(block_number).await
     }
 
