@@ -262,29 +262,29 @@ impl Trie {
             dbg!(root.len());
         }
         dbg!(nodes.len());
-        let mut storage = nodes
+        let mut storage = nodes // here we dont clone
             .iter()
             .map(|node| {
                 (
                     NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
-                    node,
+                    node.clone(),
                 )
             })
             .collect::<HashMap<_, _>>();
         dbg!("11111111111111111111111111111111111111");
-        let nodes = storage
-            .iter()
-            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
-            .collect::<HashMap<_, _>>();
+        // let nodes = storage // here we CLONE
+        //     .iter()
+        //     .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+        //     .collect::<HashMap<_, _>>();
         dbg!("2222222222222222222222222222");
         let Some(root) = root else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
             return Ok(Trie::new(in_memory_trie));
         };
         dbg!("33333333333333333333333333333333333333");
 
         fn inner(
-            storage: &mut HashMap<NodeHash, &Vec<u8>>,
+            storage: &mut HashMap<NodeHash, Vec<u8>>,
             node: &NodeRLP,
         ) -> Result<Node, TrieError> {
             Ok(match Node::decode_raw(node)? {
@@ -296,7 +296,7 @@ impl Trie {
 
                         if hash.is_valid() {
                             *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, rlp)?.into(),
+                                Some(rlp) => inner(storage, &rlp)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -310,7 +310,7 @@ impl Trie {
                     };
 
                     node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, rlp)?.into(),
+                        Some(rlp) => inner(storage, &rlp)?.into(),
                         None => hash.into(),
                     };
 
@@ -322,12 +322,12 @@ impl Trie {
 
         let root = inner(&mut storage, root)?.into();
         dbg!("44444444444444444444444444444444444444");
-        let nodes = storage
-            .into_iter()
-            .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
-            .collect::<HashMap<_, _>>();
+        // let nodes = storage
+        //     .into_iter()
+        //     .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+        //     .collect::<HashMap<_, _>>();
         dbg!("55555555555555555555555555555555555555");
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
         dbg!("66666666666666666666666666666666666666");
 
         let mut trie = Trie::new(in_memory_trie);
