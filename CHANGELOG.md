@@ -2,9 +2,13 @@
 
 ## Perf
 
+### 2025-08-18
+
+- Changes modexp library from malachite to [rug](https://crates.io/crates/rug), improving performance further. #[4046](https://github.com/lambdaclass/ethrex/pull/4046)
+
 ### 2025-08-14
 
-- Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
+- Use malachite crate to handle big integers in modexp, improving performance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
 
 ### 2025-07-31
 

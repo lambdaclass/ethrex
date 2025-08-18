@@ -8,6 +8,7 @@ use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
 };
+use rug::Integer;
 use ethrex_crypto::blake2f::blake2b_f;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
@@ -36,9 +37,6 @@ use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
-use malachite::base::num::arithmetic::traits::ModPow as _;
-use malachite::base::num::basic::traits::Zero as _;
-use malachite::{Natural, base::num::conversion::traits::*};
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -380,33 +378,23 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
-    let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
+    let base = Integer::from_digits(&b, rug::integer::Order::MsfBe);
 
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
-    let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
+    let exponent = Integer::from_digits(&e, rug::integer::Order::MsfBe);
 
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
-    let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
-
+    let modulus = Integer::from_digits(&m, rug::integer::Order::MsfBe);
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = Natural::from_power_of_2_digits_desc(
-        8u64,
-        e.get(0..bytes_to_take).unwrap_or_default().iter().cloned(),
-    )
-    .ok_or(InternalError::TypeConversion)?;
-
+    let exp_first_32 = Integer::from_digits(e.get(0..bytes_to_take).unwrap_or_default(), rug::integer::Order::MsfBe);
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size)?;
-
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let result = mod_exp(base, exponent, modulus);
 
-    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
+    let res_bytes = result.to_digits(rug::integer::Order::MsfBe);
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
     Ok(res_bytes.slice(..modulus_size))
@@ -434,15 +422,14 @@ fn get_slice_or_default(
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-#[inline(always)]
-fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
-    if modulus == Natural::ZERO {
-        Natural::ZERO
-    } else if exponent == Natural::ZERO {
-        Natural::from(1_u8) % modulus
+fn mod_exp(base: Integer, exponent: Integer, modulus: Integer) -> Integer {
+    if modulus == Integer::ZERO {
+        Integer::ZERO
+    } else if exponent == Integer::ZERO {
+        Integer::from(1_u8) % modulus
     } else {
-        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-        base_mod.mod_pow(&exponent, &modulus)
+        #[expect(clippy::unwrap_used, reason = "Exponent and modulus are always positive integers")]
+        base.pow_mod(&exponent, &modulus).unwrap()
     }
 }
 
