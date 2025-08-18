@@ -10102,7 +10102,7 @@ dependencies = [
 [[package]]
 name = "secp256k1"
 version = "0.29.1"
-source = "git+https://github.com/JereSalo/rust-secp256k1?branch=debugging_29#b0b1c27281c1c7a0e524abd65c801dc998d4b863"
+source = "git+https://github.com/JereSalo/rust-secp256k1?branch=debugging_29_uncommented_prints#ca79af18d3446fa5eec88460c09243cf518ab761"
 dependencies = [
  "cfg-if 1.0.1",
  "k256 0.13.4 (git+https://github.com/sp1-patches/elliptic-curves?tag=patch-k256-13.4-sp1-5.0.0)",
@@ -10113,7 +10113,7 @@ dependencies = [
 [[package]]
 name = "secp256k1-sys"
 version = "0.10.0"
-source = "git+https://github.com/JereSalo/rust-secp256k1?branch=debugging_29#b0b1c27281c1c7a0e524abd65c801dc998d4b863"
+source = "git+https://github.com/JereSalo/rust-secp256k1?branch=debugging_29_uncommented_prints#ca79af18d3446fa5eec88460c09243cf518ab761"
 dependencies = [
  "cc",
 ]

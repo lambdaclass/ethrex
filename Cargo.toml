@@ -120,4 +120,4 @@ rayon = "1.10.0"
 # [patch.crates-io]
 # secp256k1 = { path = "../rust-secp256k1" }
 [patch.crates-io]
-secp256k1 = { git = "https://github.com/JereSalo/rust-secp256k1", branch = "debugging_29" }
+secp256k1 = { git = "https://github.com/JereSalo/rust-secp256k1", branch = "debugging_29_uncommented_prints" }
