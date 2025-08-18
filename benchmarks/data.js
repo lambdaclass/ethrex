@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755551519779,
+  "lastUpdate": 1755553379702,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -20814,6 +20814,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/104713523f3bbc32a9d56b54e925370e02c3cc61"
         },
         "date": 1755543823135,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014305809217577707,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f17fb7dbe2edb3e32ea30b7415c809846a9d56a",
+          "message": "fix(l2): get gas price error (#4061)\n\n**Motivation**\n\nOur CI is sometimes failing with:\n```\nthread 'l2_integration_test' panicked at crates/l2/tests/tests.rs:1847:10:\ncalled `Result::unwrap()` on an `Err` value: GetGasPriceError(RPCError(\"Internal Error: Error calculating gas price: missing data\"))\n```\n\n**Description**\n\n- Modifies `get_block_body()` to check whether the requested body is the\nlatest, and makes the query by hash if so.\n\nCloses #4006",
+          "timestamp": "2025-08-18T18:20:08Z",
+          "tree_id": "24b0289c086a3d5b08e39ca5fc5e73b5463bdb8e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9f17fb7dbe2edb3e32ea30b7415c809846a9d56a"
+        },
+        "date": 1755553363084,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
