@@ -173,6 +173,7 @@ pub struct LegacyTransaction {
     pub r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -194,6 +195,7 @@ pub struct EIP2930Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -216,6 +218,7 @@ pub struct EIP1559Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -243,6 +246,7 @@ pub struct EIP4844Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -267,6 +271,7 @@ pub struct EIP7702Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -286,6 +291,7 @@ pub struct PrivilegedL2Transaction {
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
