@@ -137,11 +137,13 @@ impl SubcommandExecute {
                 run_and_measure(future, bench).await?;
             }
             SubcommandExecute::Blocks {
-                blocks,
+                mut blocks,
                 rpc_url,
                 network,
                 bench,
             } => {
+                blocks.sort();
+
                 for block in blocks {
                     Box::pin(async {
                         SubcommandExecute::Block {
@@ -323,11 +325,13 @@ impl SubcommandProve {
                 run_and_measure(future, bench).await?;
             }
             SubcommandProve::Blocks {
-                blocks,
+                mut blocks,
                 rpc_url,
                 network,
                 bench,
             } => {
+                blocks.sort();
+
                 for block in blocks {
                     Box::pin(async {
                         SubcommandProve::Block {
