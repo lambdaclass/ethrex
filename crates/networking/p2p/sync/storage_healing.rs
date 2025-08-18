@@ -25,7 +25,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_IN_FLIGHT_REQUESTS: u32 = 30;
+const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
@@ -229,7 +229,13 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
-                "We are storage healing. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
+                state
+                    .peer_handler
+                    .peer_table
+                    .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                    .await
+                    .len(),
                 state.requests.len(),
                 state.download_queue.len(),
                 state.maximum_length_seen,
