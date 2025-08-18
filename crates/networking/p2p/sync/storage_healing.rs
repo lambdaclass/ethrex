@@ -229,8 +229,7 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
-                "We are storage healing: timeo {:?}. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
-                Instant::now(),
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}",
                 state
                     .peer_handler
                     .peer_table
@@ -282,9 +281,9 @@ pub async fn heal_storage_trie(
 
         let result = requests_task_joinset.try_join_next();
         if let Some(res) = result {
-            //if state.download_queue.len() < 350 {
-            info!("Tracking what happened to the tasks at the end {res:?}")
-            //}
+            if state.download_queue.len() < 350 {
+                info!("Tracking what happened to the tasks at the end {res:?}")
+            }
         }
 
         let Ok(trie_nodes_result) = task_receiver.try_recv() else {
@@ -293,10 +292,6 @@ pub async fn heal_storage_trie(
 
         match trie_nodes_result {
             Ok(trie_nodes) => {
-                info!(
-                    "We received from the channel the Ok(response) {}",
-                    trie_nodes.id
-                );
                 let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
                     &mut state.requests,
                     &mut state.scored_peers,
@@ -328,7 +323,6 @@ pub async fn heal_storage_trie(
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
-                info!("We received from the channel the Err(response) {}", id);
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 if state.download_queue.len() < 350 {
