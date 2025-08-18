@@ -45,17 +45,15 @@ use secp256k1::{
 };
 
 use sha3::Digest;
+use tracing::info;
 use std::ops::Mul;
 
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
-        BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
-    },
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST, BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST
+    }, TX,
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -205,6 +203,17 @@ pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
+    if *(TX.lock().unwrap()) {
+        let precompile = match address {
+            a if a == ECRECOVER_ADDRESS => "ECRECOVER_ADDRESS",
+            a if a == ECPAIRING_ADDRESS => "ECPAIRING_ADDRESS",
+            a if a == BLS12_PAIRING_CHECK_ADDRESS => "BLS12_PAIRING_CHECK_ADDRESS",
+            a if a == POINT_EVALUATION_ADDRESS => "POINT_EVALUATION_ADDRESS",
+            a if a == BLS12_PAIRING_CHECK_ADDRESS => "BLS12_PAIRING_CHECK_ADDRESS",
+            _ => "unknown",
+        };
+        info!("Executing precompile: {precompile}");
+    }
     let result = match address {
         address if address == ECRECOVER_ADDRESS => ecrecover(calldata, gas_remaining)?,
         address if address == IDENTITY_ADDRESS => identity(calldata, gas_remaining)?,
