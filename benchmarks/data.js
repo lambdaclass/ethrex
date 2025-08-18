@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755543839824,
+  "lastUpdate": 1755544359242,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8935,6 +8935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163201389057,
             "range": "± 322683311",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f17fb7dbe2edb3e32ea30b7415c809846a9d56a",
+          "message": "fix(l2): get gas price error (#4061)\n\n**Motivation**\n\nOur CI is sometimes failing with:\n```\nthread 'l2_integration_test' panicked at crates/l2/tests/tests.rs:1847:10:\ncalled `Result::unwrap()` on an `Err` value: GetGasPriceError(RPCError(\"Internal Error: Error calculating gas price: missing data\"))\n```\n\n**Description**\n\n- Modifies `get_block_body()` to check whether the requested body is the\nlatest, and makes the query by hash if so.\n\nCloses #4006",
+          "timestamp": "2025-08-18T18:20:08Z",
+          "tree_id": "24b0289c086a3d5b08e39ca5fc5e73b5463bdb8e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9f17fb7dbe2edb3e32ea30b7415c809846a9d56a"
+        },
+        "date": 1755544343856,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165792914761,
+            "range": "± 778826914",
             "unit": "ns/iter"
           }
         ]
