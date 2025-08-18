@@ -273,7 +273,7 @@ pub async fn heal_storage_trie(
         )
         .await;
 
-        let result = requests_task_joinset.join_next().await;
+        let result = requests_task_joinset.try_join_next();
         if let Some(res) = result {
             if state.download_queue.len() < 350 {
                 info!("Tracking what happened to the tasks at the end {res:?}")
