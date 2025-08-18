@@ -80,7 +80,7 @@ impl Mempool {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.hash());
+                    .remove(hash);
             }
 
             self.txs_by_sender_nonce
