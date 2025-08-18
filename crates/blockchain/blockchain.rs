@@ -350,7 +350,6 @@ impl Blockchain {
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct.
             state_trie: None,
-            storage_tries: None,
             block_headers,
             chain_config,
             state_trie_nodes: used_trie_nodes.into_iter().map(Bytes::from).collect(),

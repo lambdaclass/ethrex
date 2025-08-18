@@ -48,10 +48,6 @@ pub struct ExecutionWitnessResult {
     // Pruned state MPT
     #[serde(skip)]
     pub state_trie: Option<Trie>,
-    // Indexed by account
-    // Pruned storage MPT
-    #[serde(skip)]
-    pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -85,27 +81,26 @@ impl ExecutionWitnessResult {
         dbg!("ANANAAAAAAAAAAAA");
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
-        let addresses: Vec<Address> = self
-            .keys
-            .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
-            .collect();
-        dbg!("TRAMPITAAAAAAAAAA");
-        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-            addresses
-                .iter()
-                .filter_map(|addr| {
-                    Some((
-                        *addr,
-                        Self::rebuild_storage_trie(addr, &state_trie, &self.state_trie_nodes)?,
-                    ))
-                })
-                .collect::<Vec<(Address, Trie)>>(),
-        );
+        // let addresses: Vec<Address> = self
+        //     .keys
+        //     .iter()
+        //     .filter(|k| k.len() == Address::len_bytes())
+        //     .map(|k| Address::from_slice(k))
+        //     .collect();
+        // dbg!("TRAMPITAAAAAAAAAA");
+        // let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
+        //     addresses
+        //         .iter()
+        //         .filter_map(|addr| {
+        //             Some((
+        //                 *addr,
+        //                 Self::rebuild_storage_trie(addr, &state_trie, &self.state_trie_nodes)?,
+        //             ))
+        //         })
+        //         .collect::<Vec<(Address, Trie)>>(),
+        // );
         dbg!("JAMONNNNNNNNNNNNNNNNNNNNNNNNNNNNN");
         self.state_trie = Some(state_trie);
-        self.storage_tries = Some(storage_tries);
 
         Ok(())
     }
@@ -130,9 +125,7 @@ impl ExecutionWitnessResult {
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ExecutionWitnessError> {
-        let (Some(state_trie), Some(storage_tries_map)) =
-            (self.state_trie.as_mut(), self.storage_tries.as_mut())
-        else {
+        let Some(state_trie) = self.state_trie.as_mut() else {
             return Err(ExecutionWitnessError::ApplyAccountUpdates(
                 "Tried to apply account updates before rebuilding the tries".to_string(),
             ));
@@ -167,10 +160,25 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie =
-                        storage_tries_map.entry(update.address).or_insert_with(|| {
-                            Trie::from_nodes(None, &[]).expect("failed to create empty trie")
-                        });
+                    let hashed_address = hash_address(&update.address);
+                    let encoded_state = match state_trie.get(&hashed_address) {
+                        Ok(Some(encoded_state)) => encoded_state,
+                        _ => AccountState::default().encode_to_vec(),
+                    };
+                    let state = AccountState::decode(&encoded_state).map_err(|_| {
+                        ExecutionWitnessError::Database(
+                            "Failed to get decode account from trie".to_string(),
+                        )
+                    })?;
+                    let mut storage_trie = if state.storage_root == *EMPTY_TRIE_HASH {
+                        Trie::from_nodes(None, &[]).expect("failed to create empty trie")
+                    } else {
+                        rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
+                            ExecutionWitnessError::Database(format!(
+                                "Failed to rebuild storage trie: {e}"
+                            ))
+                        })?
+                    };
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -303,17 +311,27 @@ impl ExecutionWitnessResult {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
-        let storage_tries_map =
-            self.storage_tries
-                .as_ref()
-                .ok_or(ExecutionWitnessError::Database(
-                    "ExecutionWitness: Tried to get storage slot before rebuilding tries"
-                        .to_string(),
-                ))?;
-
-        let Some(storage_trie) = storage_tries_map.get(&address) else {
+        let state_trie = self
+            .state_trie
+            .as_ref()
+            .ok_or(ExecutionWitnessError::Database(
+                "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
+            ))?;
+        let hashed_address = hash_address(&address);
+        let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
             return Ok(None);
         };
+        let state = AccountState::decode(&encoded_state).map_err(|_| {
+            ExecutionWitnessError::Database("Failed to get decode account from trie".to_string())
+        })?;
+        if state.storage_root == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
+
+        let storage_trie =
+            rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
+                ExecutionWitnessError::Database(format!("Failed to rebuild storage trie: {}", e))
+            })?;
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
