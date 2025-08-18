@@ -423,6 +423,7 @@ impl PeerHandler {
                 downloaders.remove(&free_peer_id);
                 continue;
             };
+            // TAG JM
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
@@ -913,25 +914,13 @@ impl PeerHandler {
                 });
             }
 
-            // Check if any dump account task finished
-            // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
-                if let Err(dump_account_data) = dump_account_result {
-                    // If the dumping failed, retry it
-                    let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                    tokio::task::spawn(async move {
-                        let AccountDumpError { path, contents } = dump_account_data;
-                        // Dump the account data
-                        // TODO: check the error type and handle it properly
-                        let result = std::fs::write(path.clone(), contents.clone())
-                            .map_err(|_| AccountDumpError { path, contents });
-                        // Send the result through the channel
-                        dump_account_result_sender_cloned.send(result).await;
-                    })
-                    .await
-                    .unwrap();
-                }
-            }
+            let Some(downloader) = self
+                .get_available_downloader(&mut scores, &mut downloaders)
+                .await
+            else {
+                debug!("No available downloader found, retrying");
+                continue;
+            };
 
             // TODO: move higher?
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
@@ -942,15 +931,8 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some(mut downloader) = self
-                .get_available_downloader(&mut scores, &mut downloaders)
-                .await
-            else {
-                debug!("No available downloader found, retrying");
-                continue;
-            };
-
             downloader
+                .start()
                 .cast(DownloaderRequest::AccountRange {
                     task_sender: task_sender.clone(),
                     root_hash: state_root,
@@ -962,6 +944,26 @@ impl PeerHandler {
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
+            }
+        }
+
+        // Check if any dump account task finished
+        // TODO: consider tracking in-flight (dump) tasks
+        if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
+            if let Err(dump_account_data) = dump_account_result {
+                // If the dumping failed, retry it
+                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                tokio::task::spawn(async move {
+                    let AccountDumpError { path, contents } = dump_account_data;
+                    // Dump the account data
+                    // TODO: check the error type and handle it properly
+                    let result = std::fs::write(path.clone(), contents.clone())
+                        .map_err(|_| AccountDumpError { path, contents });
+                    // Send the result through the channel
+                    dump_account_result_sender_cloned.send(result).await;
+                })
+                .await
+                .unwrap();
             }
         }
 
@@ -1354,7 +1356,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                > 1024 * 1024 * 1024 * 8
+            {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -2035,7 +2039,7 @@ impl PeerHandler {
         &self,
         scores: &mut HashMap<H256, i64>,
         downloaders: &mut BTreeMap<H256, bool>,
-    ) -> Option<GenServerHandle<Downloader>> {
+    ) -> Option<Downloader> {
         let peer_channels = self
             .peer_table
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
@@ -2091,8 +2095,15 @@ impl PeerHandler {
             return None;
         };
 
+        // Mark the downloader as busy
+        downloaders
+            .entry(free_peer_id)
+            .and_modify(|downloader_is_free| {
+                *downloader_is_free = false;
+            });
+
         // Create and spawn Downloader Actor
-        let downloader = Downloader::new(free_peer_id, free_downloader_channels).start();
+        let downloader = Downloader::new(free_peer_id, free_downloader_channels);
         Some(downloader)
     }
 }
