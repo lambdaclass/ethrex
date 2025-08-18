@@ -184,7 +184,7 @@ pub async fn heal_storage_trie_wrap(
         peers.clone(),
         store.clone(),
         membatch.clone(),
-        staleness_timestamp,
+        staleness_timestamp
     )
     .await
 }
@@ -227,6 +227,9 @@ pub async fn heal_storage_trie(
     let mut requests_task_joinset: JoinSet<
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
+
+    let mut nodes_to_write: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> = HashMap::new();
+    let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) =
@@ -272,13 +275,30 @@ pub async fn heal_storage_trie(
             }
         }
 
-        if state.requests.is_empty() && state.download_queue.is_empty() {
-            return true;
-        }
+         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
+ 
+         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 10_000 || is_done {
+             let to_write = nodes_to_write.drain().collect();
+             let store = state.store.clone();
+             db_joinset.spawn_blocking(|| {
+                 spawned_rt::tasks::block_on(async move {
+                     store
+                         .write_storage_trie_nodes_batch(to_write)
+                         .await
+                         .expect("db write failed");
+                })
+             });
+         }
+ 
+         if is_done {
+             db_joinset.join_all().await;
+             return true;
+         }
 
-        if current_unix_time() > state.staleness_timestamp {
-            return false;
-        }
+         if current_unix_time() > state.staleness_timestamp {
+             db_joinset.join_all().await;
+             return false;
+         }
 
         ask_peers_for_nodes(
             &mut state.download_queue,
@@ -339,6 +359,7 @@ pub async fn heal_storage_trie(
                     &mut state.leafs_healed,
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
+                    &mut nodes_to_write
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
@@ -542,6 +563,7 @@ fn process_node_responses(
     leafs_healed: &mut usize,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
+    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
@@ -563,7 +585,7 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch, roots_healed).inspect_err(
+            commit_node(&node_response, store.clone(), membatch, roots_healed, to_write).inspect_err(
                 |err| error!("{err} in commit node while committing {node_response:?}"),
             )?;
         } else {
@@ -704,15 +726,13 @@ fn commit_node(
     store: Store,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
+    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
-    let trie = store.clone().open_storage_trie(
-        H256::from_slice(&node.node_request.acc_path.to_bytes()),
-        *EMPTY_TRIE_HASH,
-    )?;
-    let trie_db = trie.db();
-    trie_db
-        .put(node.node.compute_hash(), node.node.encode_to_vec())
-        .map_err(StoreError::Trie)?; // we can have an error if 2 trees have the same nodes
+    let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
+     to_write
+         .entry(hashed_account)
+         .or_default()
+         .push((node.node.compute_hash(), node.node.encode_to_vec()));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
@@ -739,7 +759,7 @@ fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        commit_node(&parent_entry.node_response, store, membatch, roots_healed)?;
+        commit_node(&parent_entry.node_response, store, membatch, roots_healed, to_write)?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }
