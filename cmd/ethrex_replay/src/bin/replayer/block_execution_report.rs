@@ -65,7 +65,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Client:* `{client}`\n*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}",
+                            "*Client:* `{client}`\n*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}\n*Time Taken:* {time_taken}",
                             client = self.client,
                             network = self.network,
                             number = self.number,
@@ -76,7 +76,8 @@ impl BlockRunReport {
                                     + &self.run_result.as_ref().err().unwrap().to_string()
                             } else {
                                 "Success".to_string()
-                            }
+                            },
+                            time_taken = format_duration(self.time_taken),
                         ),
                     }),
                 },
