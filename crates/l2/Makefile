@@ -35,8 +35,8 @@ CI_ETHREX_WORKDIR := /usr/local/bin
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
-ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
-ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
+ethrex_L2_DEV_DB?=dev_ethrex_l2
+ethrex_L1_DEV_DB=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
@@ -71,10 +71,10 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--http.addr ${L1_RPC_ADDRESS} \
 	--authrpc.port ${L1_AUTH_PORT} \
 	--dev \
-	--datadir ${ethrex_L1_DEV_LIBMDBX}
+	--datadir ${ethrex_L1_DEV_DB}
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
@@ -124,7 +124,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
-	--datadir ${ethrex_L2_DEV_LIBMDBX} \
+	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
@@ -150,7 +150,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -x ethrex || exit 0
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
