@@ -9,6 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use keccak_hash::H256;
+use tracing::info;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
