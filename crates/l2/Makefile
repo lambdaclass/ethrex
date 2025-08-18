@@ -143,6 +143,7 @@ init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	l2 --dev
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
+	L1_RPC_URL=${L1_RPC_URL} \
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
 
 down-metrics: ## 🛑 Shuts down the metrics' containers
