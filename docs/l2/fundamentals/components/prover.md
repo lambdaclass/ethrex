@@ -122,7 +122,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       // Used to handle TCP communication with other servers from any network interface.
       ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
       // Salt to use with CREATE2 deterministic deployer. Defaults to random.
-      ETHREX_DEPLOYER_DETERMINISTIC_SALT=true
+      ETHREX_DEPLOYER_DETERMINISTIC_SALT=<bytes>
       // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
       ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true
       // Check the if the contract is present on your preferred network.
