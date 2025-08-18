@@ -50,7 +50,7 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+        for (idx, (tx, tx_sender)) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?.into_iter().enumerate() {
             if block.header.number == 8135492 {
