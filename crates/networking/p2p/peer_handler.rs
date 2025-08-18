@@ -1514,7 +1514,9 @@ impl PeerHandler {
 
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                > 1024 * 1024 * 1024 * 8
+            {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -2013,14 +2015,26 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
+        logging_flag: bool,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
+        if logging_flag {
+            info!("request_storage_trienodes {id} started");
+        }
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
-            .await
-            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
+        if logging_flag {
+            info!("request_storage_trienodes {id} has finished creating the get trie nodes");
+        }
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(
+            peer_channel,
+            request,
+            id,
+            logging_flag,
+        )
+        .await
+        .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
 
     /// Returns the PeerData for each connected Peer

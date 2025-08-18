@@ -10,6 +10,7 @@ use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 use tokio::sync::mpsc;
+use tracing::info;
 
 use crate::{
     kademlia::PeerChannels,
@@ -94,7 +95,7 @@ pub async fn send_message_and_wait_for_response(
         .map_err(SendMessageError::GenServerError)?;
     let nodes = tokio::time::timeout(
         Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
+        receive_trienodes(receiver, request_id, false),
     )
     .await
     .map_err(|_| SendMessageError::PeerTimeout)?
@@ -113,19 +114,33 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
     peer_channel: &mut PeerChannels,
     message: Message,
     request_id: u64,
+    logging_flag: bool,
 ) -> Result<TrieNodes, SendMessageError> {
+    if logging_flag {
+        info!("send_trie_nodes_messages_and_wait_for_reply started");
+    }
     let mut receiver = peer_channel
         .receiver
         .try_lock()
         .map_err(|_| SendMessageError::PeerBusy)?;
+    if logging_flag {
+        info!(
+            "send_trie_nodes_messages_and_wait_for_reply got the receiver for the peer channel for requ {request_id}"
+        );
+    }
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
         .await
         .map_err(SendMessageError::GenServerError)?;
+    if logging_flag {
+        info!(
+            "send_trie_nodes_messages_and_wait_for_reply cast the message {request_id} to the peer"
+        );
+    }
     tokio::time::timeout(
         Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
+        receive_trienodes(receiver, request_id, logging_flag),
     )
     .await
     .map_err(|_| SendMessageError::PeerTimeout)?
@@ -135,8 +150,12 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
 async fn receive_trienodes(
     mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
     request_id: u64,
+    logging_flag: bool,
 ) -> Option<TrieNodes> {
     loop {
+        if logging_flag {
+            info!("receive_trienodes logging at the top of the log for req {request_id}");
+        }
         let resp = receiver.recv().await?;
         if let Message::TrieNodes(trie_nodes) = resp {
             if trie_nodes.id == request_id {

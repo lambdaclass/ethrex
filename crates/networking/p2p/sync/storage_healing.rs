@@ -300,7 +300,7 @@ pub async fn heal_storage_trie(
                     &mut state.requests,
                     &mut state.scored_peers,
                     &mut state.download_queue,
-                    trie_nodes.clone(),
+                    trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 ) else {
@@ -389,14 +389,28 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
+        let logging_flag = download_queue.len() < 350;
+
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
+            if logging_flag {
+                info!("the task {req_id} has been started");
+            }
+            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn, logging_flag).await;
+            if logging_flag {
+                info!(
+                    "the task {req_id} has finished getting the request_storage_trienodes {response:?}",
+                    
+                );
+            }
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
             })?;
+            if logging_flag {
+                info!("the task {req_id} has finished sending the thing");
+            }
             Ok(req_id)
         });
     }
