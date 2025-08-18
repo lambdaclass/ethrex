@@ -258,6 +258,10 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
+        if let Some(root) = root {
+            dbg!(root.len());
+        }
+        dbg!(nodes.len());
         let mut storage = nodes
             .iter()
             .map(|node| {
