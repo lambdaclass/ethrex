@@ -56,14 +56,14 @@ impl LEVM {
             if block.header.number == 8135492 {
                 info!("Executing tx at idx: {idx}");
             }
-            if idx == 900 && block.header.number == 8135492 {
+            if idx == 116 && block.header.number == 8135492 {
                 info!("Executing tx at idx: {idx}");
                 *TX.lock().unwrap() = true;
             } else {
                 *TX.lock().unwrap() = false;
             }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            if  idx == 900 && block.header.number == 8135492 {
+            if  idx == 116 && block.header.number == 8135492 {
                 info!("Executed tx at idx: {idx}, report: {report:?}");
             }
             if block.header.number == 8135492 {
