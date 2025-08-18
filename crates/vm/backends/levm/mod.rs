@@ -1,14 +1,13 @@
 pub mod db;
 mod tracing;
 
-use ethrex_levm::TX;
-use ::tracing::info;
 use super::BlockExecutionResult;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
+use ::tracing::info;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -19,6 +18,7 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
+use ethrex_levm::TX;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
@@ -50,9 +50,15 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (idx, (tx, tx_sender)) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?.into_iter().enumerate() {
+        for (idx, (tx, tx_sender)) in block
+            .body
+            .get_transactions_with_sender()
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?
+            .into_iter()
+            .enumerate()
+        {
             if block.header.number == 8135492 {
                 info!("Executing tx at idx: {idx}");
             }
@@ -63,7 +69,7 @@ impl LEVM {
                 *TX.lock().unwrap() = false;
             }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            if  idx == 116 && block.header.number == 8135492 {
+            if idx == 116 && block.header.number == 8135492 {
                 info!("Executed tx at idx: {idx}, report: {report:?}");
             }
             if block.header.number == 8135492 {

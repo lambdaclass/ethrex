@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{info, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -30,7 +30,8 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -484,9 +485,11 @@ impl Blockchain {
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
+        let mut last_block_num = 0;
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            last_block_num = block.header.number;
             if cancellation_token.is_cancelled() {
                 info!("Received shutdown signal, aborting");
                 return Err((ChainError::Custom(String::from("shutdown signal")), None));
@@ -534,7 +537,50 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
-        info!("Account updates: {account_updates:?}");
+        let evm = self.evm_engine;
+        let levm_filename = format!("levm_account_updates_block_{last_block_num}.json");
+        let revm_filename = format!("revm_account_updates_block_{last_block_num}.json");
+        let current_file = match evm {
+            EvmEngine::LEVM => levm_filename.clone(),
+            EvmEngine::REVM => revm_filename.clone(),
+        };
+        let prev_engine_file = match evm {
+            EvmEngine::LEVM => revm_filename,
+            EvmEngine::REVM => levm_filename,
+        };
+        info!("Writing account updates for block {last_block_num}");
+        let current_account_updates: BTreeMap<Address, AccountUpdate> = account_updates
+            .iter()
+            .map(|au| (au.address, au.clone()))
+            .collect();
+        // Write current updates
+        let current_file = File::create(current_file).unwrap();
+        serde_json::to_writer(current_file, &current_account_updates).unwrap();
+        if let Ok(prev_file) = File::open(prev_engine_file) {
+            info!("Retrieving account updates from other engine");
+            let prev_account_updates: BTreeMap<Address, AccountUpdate> =
+                serde_json::from_reader(prev_file).unwrap();
+            if current_account_updates.len() < prev_account_updates.len() {
+                warn!(
+                    "Current account updates is shorter, please run again with the prev engine for full diff"
+                );
+            }
+            for (account, update) in current_account_updates {
+                let prev_update = prev_account_updates.get(&account);
+                if let Some(prev_update) = prev_update {
+                    if prev_update != &update {
+                        info!(
+                            "Update mismatch for account {account}:
+                        current engine: {update:?},
+                        prev engine: {prev_update:?}"
+                        );
+                    }
+                } else {
+                    info!("Update missing for account {account} on prev engine");
+                }
+                info!("Comparison complete");
+            }
+        }
 
         let last_block = blocks
             .last()

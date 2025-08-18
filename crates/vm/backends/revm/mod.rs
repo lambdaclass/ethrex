@@ -25,6 +25,7 @@ use revm::{
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
+use ::tracing::info;
 use ethrex_common::{
     Address,
     types::{
@@ -38,7 +39,6 @@ use revm_primitives::{
     Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256, ruint::Uint,
 };
-use ::tracing::info;
 use std::cmp::min;
 
 #[derive(Debug)]
@@ -72,9 +72,15 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (idx, (tx, sender)) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?.into_iter().enumerate() {
+        for (idx, (tx, sender)) in block
+            .body
+            .get_transactions_with_sender()
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?
+            .into_iter()
+            .enumerate()
+        {
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
@@ -84,7 +90,7 @@ impl REVM {
                 result.logs(),
             );
 
-            if  idx == 116 && block.header.number == 8135492 {
+            if idx == 116 && block.header.number == 8135492 {
                 info!("Executed tx at idx: {idx}, receipt: {receipt:?}");
             }
 

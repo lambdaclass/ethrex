@@ -1,10 +1,21 @@
 use crate::{
-    call_frame::{CallFrame, Stack}, db::gen_db::GeneralizedDatabase, debug::DebugMode, environment::Environment, errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError}, hooks::{
+    TX, TransientStorage,
+    call_frame::{CallFrame, Stack},
+    db::gen_db::GeneralizedDatabase,
+    debug::DebugMode,
+    environment::Environment,
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    hooks::{
         backup_hook::BackupHook,
-        hook::{get_hooks, Hook},
-    }, l2_precompiles, memory::Memory, opcodes::Opcode, precompiles::{
+        hook::{Hook, get_hooks},
+    },
+    l2_precompiles,
+    memory::Memory,
+    opcodes::Opcode,
+    precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-    }, tracing::LevmCallTracer, TransientStorage, TX
+    },
+    tracing::LevmCallTracer,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -12,12 +23,12 @@ use ethrex_common::{
     tracing::CallType,
     types::{Fork, Log, Transaction},
 };
-use tracing::info;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
+use tracing::info;
 
 pub type Storage = HashMap<U256, H256>;
 
