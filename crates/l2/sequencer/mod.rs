@@ -66,6 +66,14 @@ pub async fn start_l2(
         );
         return Ok(());
     }
+    if needed_proof_types.contains(&ProverType::TDX)
+        && cfg.proof_coordinator.tdx_private_key.is_none()
+    {
+        error!(
+            "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
+        );
+        return Ok(());
+    }
 
     let _ = L1Watcher::spawn(
         store.clone(),
