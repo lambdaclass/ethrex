@@ -684,7 +684,13 @@ fn read_vk(path: &PathBuf) -> H256 {
     let cleaned = str.trim().strip_prefix("0x").unwrap_or(&str);
 
     hex::decode(cleaned)
-        .map(|bytes| H256::from_slice(&bytes))
+        .and_then(|bytes| {
+            if bytes.len() == 32 {
+                Ok(H256::from_slice(&bytes))
+            } else {
+                Err(hex::FromHexError::InvalidStringLength)
+            }
+        })
         .unwrap_or_else(|err| {
             warn!(
                 ?path,
