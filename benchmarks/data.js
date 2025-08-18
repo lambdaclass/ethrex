@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755555630034,
+  "lastUpdate": 1755556407196,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9025,6 +9025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162043841607,
             "range": "± 464138278",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "314ba222e42eef6012489904322e7c34786e597f",
+          "message": "fix(l2): ignore \"based\" capability if not in L2 (#4041)\n\n**Motivation**\n\nThe capability exchange would fail if our peer supported the \"based\"\ncapability and we were running in L1 mode.\n\n**Description**\n\nThis PR ignores the \"based\" capability if we aren't in L2 mode.",
+          "timestamp": "2025-08-18T21:42:46Z",
+          "tree_id": "7b80e14bec2e3b2a40fc139a996dc0893d0ee95f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/314ba222e42eef6012489904322e7c34786e597f"
+        },
+        "date": 1755556392183,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159979970568,
+            "range": "± 286547817",
             "unit": "ns/iter"
           }
         ]
