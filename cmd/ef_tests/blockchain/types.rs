@@ -330,7 +330,7 @@ impl From<Transaction> for EIP1559Transaction {
             signature_y_parity: !val.v.is_zero(),
             signature_r: val.r,
             signature_s: val.s,
-            .. Default::default()
+            ..Default::default()
         }
     }
 }
@@ -363,7 +363,7 @@ impl From<Transaction> for EIP4844Transaction {
             signature_y_parity: !val.v.is_zero(),
             signature_r: val.r,
             signature_s: val.s,
-            .. Default::default()
+            ..Default::default()
         }
     }
 }
@@ -407,7 +407,7 @@ impl From<Transaction> for EIP7702Transaction {
             signature_y_parity: !val.v.is_zero(),
             signature_r: val.r,
             signature_s: val.s,
-            .. Default::default()
+            ..Default::default()
         }
     }
 }
@@ -428,7 +428,7 @@ impl From<Transaction> for LegacyTransaction {
             v: val.v,
             r: val.r,
             s: val.s,
-            .. Default::default()
+            ..Default::default()
         }
     }
 }
@@ -456,7 +456,7 @@ impl From<Transaction> for EIP2930Transaction {
             signature_y_parity: !val.v.is_zero(),
             signature_r: val.r,
             signature_s: val.s,
-            .. Default::default()
+            ..Default::default()
         }
     }
 }

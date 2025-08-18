@@ -1901,7 +1901,7 @@ mod serde_impl {
                 v: deserialize_field::<U256, D>(&mut map, "v")?,
                 r: deserialize_field::<U256, D>(&mut map, "r")?,
                 s: deserialize_field::<U256, D>(&mut map, "s")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -1933,7 +1933,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -1970,7 +1970,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -2012,7 +2012,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -2056,7 +2056,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -2086,7 +2086,7 @@ mod serde_impl {
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
                 from: deserialize_field::<Address, D>(&mut map, "sender")?,
-                .. Default::default()
+                ..Default::default()
             })
         }
     }
@@ -2473,7 +2473,7 @@ mod tests {
             s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
-            .. Default::default()
+            ..Default::default()
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
@@ -2509,7 +2509,7 @@ mod tests {
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
             )
             .unwrap(),
-            .. Default::default()
+            ..Default::default()
         };
         let tx = Transaction::EIP2930Transaction(tx_eip2930);
 
@@ -2560,7 +2560,7 @@ mod tests {
             )
             .unwrap(),
             v: 6303851.into(),
-            .. Default::default()
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2593,7 +2593,7 @@ mod tests {
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![],
-            .. Default::default()
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2789,7 +2789,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(0x01),
             signature_s: U256::from(0x02),
-            .. Default::default()
+            ..Default::default()
         };
 
         assert_eq!(
@@ -2816,7 +2816,7 @@ mod tests {
             signature_y_parity: true,
             signature_r: U256::one(),
             signature_s: U256::zero(),
-            .. Default::default()
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2854,7 +2854,7 @@ mod tests {
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],
-            .. Default::default()
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2884,7 +2884,7 @@ mod tests {
             data: Bytes::new(),
             access_list: vec![],
             from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
-            .. Default::default()
+            ..Default::default()
         };
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
@@ -2910,7 +2910,7 @@ mod tests {
             v: U256::from(27),
             r: U256::from(1),
             s: U256::from(1),
-            .. Default::default()
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = legacy_tx.into();
@@ -2950,7 +2950,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),
-            .. Default::default()
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = eip2930_tx.into();

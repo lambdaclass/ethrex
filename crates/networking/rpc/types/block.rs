@@ -181,7 +181,7 @@ mod test {
                 ),
                 vec![],
             )],
-            .. Default::default()
+            ..Default::default()
         };
 
         let block_body = BlockBody {
