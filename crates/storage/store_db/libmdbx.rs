@@ -130,6 +130,7 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
@@ -1376,8 +1377,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
-// Maximum DB size, set to 2 TB
-const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
+// Maximum DB size, set to 8 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 8; // 8 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
