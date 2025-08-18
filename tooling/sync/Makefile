@@ -169,7 +169,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--metrics \
 		--metrics-address 0.0.0.0 \
 		--metrics-port 5054 \
-		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_levm \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
@@ -182,7 +182,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--metrics.port 3701 \
     		--discovery.port 30303 \
     		--network $(NETWORK) \
-    		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
+    		--datadir "${NETWORK}_data/ethrex/levm" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
     		--evm $(EVM)
