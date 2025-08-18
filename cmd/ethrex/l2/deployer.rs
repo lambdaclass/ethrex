@@ -352,7 +352,6 @@ pub struct DeployerOptions {
         long = "deployer.sequencer-registry-owner",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER_ADDRESS",
-        required_if_eq("deploy_based_contracts", "true"),
         help_heading = "L2 Based options"
     )]
     pub sequencer_registry_owner: Option<Address>,
