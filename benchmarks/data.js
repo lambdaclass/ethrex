@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755544359242,
+  "lastUpdate": 1755548697812,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8965,6 +8965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165792914761,
             "range": "± 778826914",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "443f9d0c31b4da413f7f798e58aeae0e5a51abac",
+          "message": "refactor(l2): remove redb and libmdbx from rollup store (#4063)\n\n**Motivation**\n\nWe are not using `libmdbx` and `redb` for the rollup store and\nmaintaining them is a waste of time.\n\n**Description**\n\nRemoves `libmdbx` and `redb` from the rollup store.\n\nCloses #3743",
+          "timestamp": "2025-08-18T19:28:25Z",
+          "tree_id": "5fd590c4a80d87db9a38e1ecbff420596a912339",
+          "url": "https://github.com/lambdaclass/ethrex/commit/443f9d0c31b4da413f7f798e58aeae0e5a51abac"
+        },
+        "date": 1755548683074,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163080566680,
+            "range": "± 398012153",
             "unit": "ns/iter"
           }
         ]
