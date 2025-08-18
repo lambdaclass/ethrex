@@ -149,7 +149,6 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=../../fixtures/keys/private_keys_l1.txt \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
@@ -210,7 +209,6 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=../../fixtures/keys/private_keys_l1.txt \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
@@ -292,7 +290,6 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH=../../fixtures/keys/private_keys_l1.txt \
           COMPILE_CONTRACTS=true \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 

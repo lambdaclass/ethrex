@@ -17,7 +17,6 @@ services:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
       - ../../.env:${CI_ETHREX_WORKDIR}/.env
-      - ../../fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
       - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
