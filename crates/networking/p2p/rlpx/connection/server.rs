@@ -190,7 +190,7 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RLPxConnection {
     inner_state: InnerState,
 }
@@ -262,10 +262,10 @@ impl GenServer for RLPxConnection {
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &RLPxConnectionHandle,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
@@ -348,11 +348,11 @@ impl GenServer for RLPxConnection {
 
             // Update the state
             self.inner_state = InnerState::Established(established_state);
-            CastResponse::NoReply(self)
+            CastResponse::NoReply
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply(self)
+            CastResponse::NoReply
         }
     }
 
