@@ -380,8 +380,8 @@ async fn main() {
     .await
     .expect("Failed to load test");
 
-    println!("Waiting for all transactions to be included in blocks...");
     if cli.wait_included {
+        println!("Waiting for all transactions to be included in blocks...");
         wait_until_all_included(client, accounts, &tx_hashes)
             .await
             .unwrap();
