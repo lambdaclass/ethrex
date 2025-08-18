@@ -16,6 +16,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 init: init-l1-docker deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
+	@echo "✅ localnet successfully stopped"
+
 
 restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
@@ -57,9 +59,11 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 # ==============================================================================
 
 init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose up -d ethrex_l1
 
 down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose down ethrex_l1
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -142,6 +146,7 @@ init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
 
 down-metrics: ## 🛑 Shuts down the metrics' containers
+	L1_RPC_URL=${L1_RPC_URL} \
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
