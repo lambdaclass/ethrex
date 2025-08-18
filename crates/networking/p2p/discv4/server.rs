@@ -1,8 +1,11 @@
-use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    net::SocketAddr,
+    sync::Arc,
+};
 
-use ethrex_common::H512;
+use ethrex_common::{H512, U256};
 use keccak_hash::H256;
-use rand::{rngs::OsRng, seq::IteratorRandom};
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -493,10 +496,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                let neighbors = table
-                    .iter()
-                    .map(|(_, c)| c.node.clone())
-                    .choose_multiple(&mut OsRng, 16);
+                let neighbors = get_closest_nodes(node_id, table.clone());
 
                 drop(table);
 
@@ -591,3 +591,29 @@ impl GenServer for ConnectionHandler {
 }
 
 // TODO: SNAP SYNC: REIMPL TESTS
+
+/// Returns the closest nodes to `node_id`.
+pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<Node> {
+    let mut nodes: Vec<(Node, usize)> = vec![];
+
+    for (neighbor_id, neighbor) in &table {
+        let distance = distance(&node_id, neighbor_id);
+        if nodes.len() < 16 {
+            nodes.push((neighbor.node.clone(), distance));
+        } else {
+            for (i, (_, dis)) in &mut nodes.iter().enumerate() {
+                if distance < *dis {
+                    nodes[i] = (neighbor.node.clone(), distance);
+                    break;
+                }
+            }
+        }
+    }
+    nodes.into_iter().map(|(node, _distance)| node).collect()
+}
+
+pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+    let xor = node_id_1 ^ node_id_2;
+    let distance = U256::from_big_endian(xor.as_bytes());
+    distance.bits().saturating_sub(1)
+}
