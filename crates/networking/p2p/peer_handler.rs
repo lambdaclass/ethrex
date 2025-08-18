@@ -830,7 +830,7 @@ impl PeerHandler {
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
             .expect("Failed to get account_state_snapshots directory");
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 64 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1354,7 +1354,7 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 64 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -2001,21 +2001,28 @@ impl PeerHandler {
             if response.is_none() {
                 error!("############### Error Message");
             };
-            response.unwrap()
+            response
         })
         .await;
 
+        // TODO: we need to check, this seems a scenario where the peer channel does teardown
+        // after we sent the backend message
+        let Some(Ok(response)) = response
+            .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
+            .transpose()
+        else {
+            warn!("The RLPxConnection closed the backend channel");
+            return None;
+        };
+
         match response {
-            Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
                 if id == request_id && !block_headers.is_empty() {
                     return Some(block_headers.last().expect("############### Error").clone());
                 }
             }
-            Ok(_other_msgs) => {
+            _other_msgs => {
                 info!("Received unexpected message from peer");
-            }
-            Err(_err) => {
-                info!("Timeout while waiting for sync head from peer");
             }
         }
 
