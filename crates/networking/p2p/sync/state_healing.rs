@@ -277,19 +277,23 @@ async fn heal_state_trie(
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finished first download, checking the cache of previous downloads");
-            // let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
+            paths = store
+                .get_state_heal_paths()
+                .await
+                .expect("Store Error")
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(path, hash)| RequestMetadata { path, hash })
+                .collect();
+            store
+                .set_state_heal_paths(Vec::new())
+                .await
+                .expect("Store Error");
             if paths.is_empty() {
                 info!("Nothing more to heal found");
                 break;
             }
         }
-
-        // Process the results of each batch
-        // for res in state_tasks.join_all().await {
-        //     let return_paths = res?;
-        //     // stale |= is_stale;
-        //     paths.extend(return_paths);
-        // }
 
         // We check with a clock if we are stale
         if !is_stale && current_unix_time() > staleness_timestamp {
@@ -299,7 +303,18 @@ async fn heal_state_trie(
 
         if is_stale && inflight_tasks == 0 {
             info!("Caching {} paths for the next cycle", paths.len());
-            //store.set_state_heal_paths(paths.clone()).await?;
+            let mut old_paths: Vec<(Nibbles, H256)> = store
+                .get_state_heal_paths()
+                .await
+                .expect("Store Error")
+                .unwrap_or_default();
+            old_paths.extend(
+                paths
+                    .clone()
+                    .into_iter()
+                    .map(|request_metadata| (request_metadata.path, request_metadata.hash)),
+            );
+            store.set_state_heal_paths(old_paths).await?;
             break;
         }
     }
