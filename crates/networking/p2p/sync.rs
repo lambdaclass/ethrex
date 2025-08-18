@@ -771,7 +771,7 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
         let mut pivot_is_stale = true;
-        let mut bytecode_hashes = Vec::new();
+        let mut bytecode_hashes: Vec<H256> = Vec::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
                 .request_account_range(
@@ -1053,6 +1053,15 @@ impl Syncer {
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
+
+        let mut bytecode_hashes: Vec<H256> = store
+                .iter_accounts(state_root)
+                .expect("we couldn't iterate over accounts")
+                .map(|(_, state)| state.code_hash)
+                .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
+                .collect();
+        bytecode_hashes.sort();
+        bytecode_hashes.dedup();
 
         // Download bytecodes
         info!(
