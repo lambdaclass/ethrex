@@ -176,7 +176,7 @@ impl RpcReceiptTxInfo {
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
         let from = transaction.sender()?;
-        let transaction_hash = transaction.compute_hash();
+        let transaction_hash = transaction.hash();
         let effective_gas_price =
             transaction
                 .effective_gas_price(base_fee_per_gas)

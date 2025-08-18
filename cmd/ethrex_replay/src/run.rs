@@ -55,7 +55,7 @@ pub async fn run_tx(
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
-        if tx.compute_hash() == tx_hash {
+        if tx.hash() == tx_hash {
             return Ok((receipt, account_updates));
         }
     }

@@ -206,7 +206,7 @@ impl L1Watcher {
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
 
             if self
-                .privileged_transaction_already_processed(tx.compute_hash())
+                .privileged_transaction_already_processed(tx.hash())
                 .await?
             {
                 warn!(

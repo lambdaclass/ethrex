@@ -19,6 +19,7 @@ use ethrex_rlp::{
 };
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -172,6 +173,8 @@ pub struct LegacyTransaction {
     pub r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -192,6 +195,8 @@ pub struct EIP2930Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -213,6 +218,8 @@ pub struct EIP1559Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -239,6 +246,8 @@ pub struct EIP4844Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -262,6 +271,8 @@ pub struct EIP7702Transaction {
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -280,6 +291,8 @@ pub struct PrivilegedL2Transaction {
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -718,6 +731,7 @@ impl RLPDecode for LegacyTransaction {
         let (v, decoder) = decoder.decode_field("v")?;
         let (r, decoder) = decoder.decode_field("r")?;
         let (s, decoder) = decoder.decode_field("s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = LegacyTransaction {
             nonce,
@@ -729,6 +743,7 @@ impl RLPDecode for LegacyTransaction {
             v,
             r,
             s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -748,6 +763,7 @@ impl RLPDecode for EIP2930Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP2930Transaction {
             chain_id,
@@ -761,6 +777,7 @@ impl RLPDecode for EIP2930Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -782,6 +799,7 @@ impl RLPDecode for EIP1559Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP1559Transaction {
             chain_id,
@@ -796,6 +814,7 @@ impl RLPDecode for EIP1559Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -819,6 +838,7 @@ impl RLPDecode for EIP4844Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP4844Transaction {
             chain_id,
@@ -835,6 +855,7 @@ impl RLPDecode for EIP4844Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -857,6 +878,7 @@ impl RLPDecode for EIP7702Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP7702Transaction {
             chain_id,
@@ -872,6 +894,7 @@ impl RLPDecode for EIP7702Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -891,6 +914,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (from, decoder) = decoder.decode_field("from")?;
+        let inner_hash = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -903,6 +927,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             data,
             access_list,
             from,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -1185,11 +1210,24 @@ impl Transaction {
         }
     }
 
-    pub fn compute_hash(&self) -> H256 {
+    fn compute_hash(&self) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
         keccak_hash::keccak(self.encode_canonical_to_vec())
+    }
+
+    pub fn hash(&self) -> H256 {
+        let inner_hash = match self {
+            Transaction::LegacyTransaction(tx) => &tx.inner_hash,
+            Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
+        };
+
+        *inner_hash.get_or_init(|| self.compute_hash())
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
@@ -1903,6 +1941,7 @@ mod serde_impl {
                 v: deserialize_field::<U256, D>(&mut map, "v")?,
                 r: deserialize_field::<U256, D>(&mut map, "r")?,
                 s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -1934,6 +1973,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -1970,6 +2010,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -2011,6 +2052,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -2054,6 +2096,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -2083,6 +2126,7 @@ mod serde_impl {
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
                 from: deserialize_field::<Address, D>(&mut map, "sender")?,
+                ..Default::default()
             })
         }
     }
@@ -2469,6 +2513,7 @@ mod tests {
             s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
+            ..Default::default()
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
@@ -2504,6 +2549,7 @@ mod tests {
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
             )
             .unwrap(),
+            ..Default::default()
         };
         let tx = Transaction::EIP2930Transaction(tx_eip2930);
 
@@ -2554,6 +2600,7 @@ mod tests {
             )
             .unwrap(),
             v: 6303851.into(),
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2586,6 +2633,7 @@ mod tests {
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![],
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2781,6 +2829,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(0x01),
             signature_s: U256::from(0x02),
+            ..Default::default()
         };
 
         assert_eq!(
@@ -2807,6 +2856,7 @@ mod tests {
             signature_y_parity: true,
             signature_r: U256::one(),
             signature_s: U256::zero(),
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2844,6 +2894,7 @@ mod tests {
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2873,6 +2924,7 @@ mod tests {
             data: Bytes::new(),
             access_list: vec![],
             from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            ..Default::default()
         };
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
@@ -2898,6 +2950,7 @@ mod tests {
             v: U256::from(27),
             r: U256::from(1),
             s: U256::from(1),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = legacy_tx.into();
@@ -2937,6 +2990,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = eip2930_tx.into();

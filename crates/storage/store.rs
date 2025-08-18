@@ -316,12 +316,7 @@ impl Store {
         let mut locations = vec![];
 
         for (index, transaction) in transactions.iter().enumerate() {
-            locations.push((
-                transaction.compute_hash(),
-                block_number,
-                block_hash,
-                index as Index,
-            ));
+            locations.push((transaction.hash(), block_number, block_hash, index as Index));
         }
 
         self.engine.add_transaction_locations(locations).await

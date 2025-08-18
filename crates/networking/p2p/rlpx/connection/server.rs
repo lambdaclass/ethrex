@@ -468,8 +468,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let filter =
-            |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.compute_hash()) };
+        let filter = |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.hash()) };
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool
@@ -483,7 +482,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
                 let mut txs_to_send = Vec::with_capacity(tx_count);
                 for tx in tx_chunk {
                     txs_to_send.push((**tx).clone());
-                    state.broadcasted_txs.insert(tx.compute_hash());
+                    state.broadcasted_txs.insert(tx.hash());
                 }
 
                 send(
@@ -779,7 +778,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     // Mark as broadcasted for the sender so we don't include it in the next
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
-                    state.broadcasted_txs.insert(tx.compute_hash());
+                    state.broadcasted_txs.insert(tx.hash());
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
@@ -922,7 +921,7 @@ async fn handle_broadcast(
             Message::Transactions(txs) => {
                 let mut filtered = Vec::with_capacity(txs.transactions.len());
                 for tx in &txs.transactions {
-                    let tx_hash = tx.compute_hash();
+                    let tx_hash = tx.hash();
                     if state.broadcasted_txs.contains(&tx_hash) {
                         continue;
                     }
