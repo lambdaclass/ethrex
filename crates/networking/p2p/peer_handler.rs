@@ -12,9 +12,8 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use futures::stream::select_all;
-use rand::{random, seq::SliceRandom};
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
+use rand::seq::SliceRandom;
+use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -29,12 +28,12 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
+            AccountRangeUnit, ByteCodes, GetByteCodes, GetStorageRanges, GetTrieNodes,
+            StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
-    snap_sync::downloader::{self, Downloader, DownloaderRequest},
+    snap_sync::downloader::{Downloader, DownloaderRequest},
     utils::{
         get_account_state_snapshot_file, get_account_state_snapshots_dir,
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
@@ -319,10 +318,15 @@ impl PeerHandler {
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
+                    // Penalize peer for empty response
+                    // TODO: this should be done with record_peer_failure
+                    let mut scores = self.peer_scores.lock().await;
+                    *scores.entry(peer_id).or_default() -= 1;
+                    drop(scores);
+
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
                     });
-
                     debug!("Downloader {peer_id} freed");
 
                     // reinsert the task to the queue
@@ -366,6 +370,12 @@ impl PeerHandler {
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
+
+                // Reward peer for empty response
+                // TODO: this should be done with record_peer_success
+                let mut scores = self.peer_scores.lock().await;
+                *scores.entry(peer_id).or_default() += 1;
+                drop(scores);
 
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true; // mark the downloader as free
@@ -470,59 +480,6 @@ impl PeerHandler {
         // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
-    }
-
-    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
-    ///
-    /// If it fails, returns an error message.
-    async fn download_chunk_from_peer(
-        peer_id: H256,
-        peer_channel: &mut PeerChannels,
-        startblock: u64,
-        chunk_limit: u64,
-    ) -> Result<Vec<BlockHeader>, String> {
-        debug!("Requesting block headers from peer {peer_id}");
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: HashOrNumber::Number(startblock),
-            limit: chunk_limit,
-            skip: 0,
-            reverse: false,
-        });
-        let mut receiver = peer_channel.receiver.lock().await;
-
-        // FIXME! modify the cast and wait for a `call` version
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request))
-            .await
-            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
-
-        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                        if id == request_id =>
-                    {
-                        return Some(block_headers);
-                    }
-                    // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None, // EOF
-                }
-            }
-        })
-        .await
-        .map_err(|_| "Failed to receive block headers")?
-        .ok_or("Block no received".to_owned())?;
-
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-            Ok(block_headers)
-        } else {
-            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
-            Err("Invalid block headers".into())
-        }
     }
 
     /// Internal method to request block bodies from any suitable peer given their block hashes
@@ -2033,15 +1990,6 @@ impl PeerHandler {
         let downloader = Downloader::new(free_peer_id, free_downloader_channels);
         Some(downloader)
     }
-}
-
-/// Validates the block headers received from a peer by checking that the parent hash of each header
-/// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
-    block_headers.windows(2).all(|headers| match order {
-        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
-        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
-    })
 }
 
 fn format_duration(duration: Duration) -> String {

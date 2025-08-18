@@ -16,7 +16,7 @@ use crate::{
     peer_handler::{BlockRequestOrder, MAX_RESPONSE_BYTES},
     rlpx::{
         Message as RLPxMessage,
-        connection::server::{CallMessage, CastMessage, OutMessage},
+        connection::server::CastMessage,
         eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         snap::{AccountRange, AccountRangeUnit, GetAccountRange},
     },
@@ -34,6 +34,25 @@ impl Downloader {
         Downloader {
             peer_id,
             peer_channels,
+        }
+    }
+
+    async fn send_headers_response(
+        &self,
+        response_channel: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
+        headers: Vec<BlockHeader>,
+        start_block: u64,
+        chunk_limit: u64,
+    ) {
+        if headers.is_empty() {
+            warn!("[SYNCING] Failed to get headers from downloader")
+        }
+
+        if let Err(_) = response_channel
+            .send((headers, self.peer_id, start_block, chunk_limit))
+            .await
+        {
+            error!("[SYNCING] Failed to send headers response to channel"); // TODO: irrecoverable as of now
         }
     }
 }
@@ -89,12 +108,17 @@ impl GenServer for Downloader {
                 let mut receiver = self.peer_channels.receiver.lock().await;
 
                 // FIXME! modify the cast and wait for a `call` version
-                self.peer_channels
+                if let Err(err) = self
+                    .peer_channels
                     .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
-                    .map_err(|e| format!("Failed to send message to peer {}: {e}", self.peer_id))
-                    .unwrap(); // TODO: handle unwrap
+                {
+                    warn!("Failed to send message to peer: {err:?}");
+                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
+                        .await;
+                    return CastResponse::Stop;
+                };
 
                 let block_headers = match tokio::time::timeout(Duration::from_secs(2), async move {
                     loop {
@@ -114,32 +138,32 @@ impl GenServer for Downloader {
                 {
                     Ok(Some(headers)) => headers,
                     _ => {
-                        error!(
-                            "Failed to receive block headers from peer: {}",
-                            self.peer_id
-                        );
-                        task_sender
-                            .send((vec![], self.peer_id, start_block, chunk_limit))
-                            .await
-                            .unwrap(); // TODO: handle unwrap
+                        // Too spammy
+                        // warn!(
+                        //     "[SYNCING] Failed to receive block headers from peer: {}",
+                        //     self.peer_id
+                        // );
+                        self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
+                            .await;
                         return CastResponse::Stop;
                     }
                 };
 
                 if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-                    task_sender
-                        .send((block_headers, self.peer_id, start_block, chunk_limit))
-                        .await
-                        .unwrap(); // TODO: handle unwrap
+                    self.send_headers_response(
+                        task_sender,
+                        block_headers,
+                        start_block,
+                        chunk_limit,
+                    )
+                    .await;
                 } else {
                     warn!(
                         "[SYNCING] Received invalid headers from peer: {}",
                         self.peer_id
                     );
-                    task_sender
-                        .send((vec![], self.peer_id, start_block, chunk_limit))
-                        .await
-                        .unwrap(); // TODO: handle unwrap
+                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
+                        .await;
                 }
 
                 // Nothing to do after completion, stop actor
