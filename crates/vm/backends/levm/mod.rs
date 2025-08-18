@@ -2,6 +2,7 @@ pub mod db;
 mod tracing;
 
 use ethrex_levm::TX;
+use ::tracing::info;
 use super::BlockExecutionResult;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
@@ -52,15 +53,21 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?.into_iter().enumerate() {
-            if idx == 60 && block.header.number == 6028633 {
+            if block.header.number == 8135492 {
+                info!("Executing tx at idx: {idx}");
+            }
+            if idx == 900 && block.header.number == 8135492 {
                 info!("Executing tx at idx: {idx}");
                 *TX.lock().unwrap() = true;
             } else {
                 *TX.lock().unwrap() = false;
             }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            if  idx == 60 && block.header.number == 6028633{
+            if  idx == 900 && block.header.number == 8135492 {
                 info!("Executed tx at idx: {idx}, report: {report:?}");
+            }
+            if block.header.number == 8135492 {
+                info!("Executed tx at idx: {idx}, gas used: {}", report.gas_used);
             }
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
