@@ -20,8 +20,8 @@ pub async fn send_generic_transaction(
     generic_tx: GenericTransaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
-    let r#type = generic_tx.r#type;
-    let mut encoded_tx = match r#type {
+    let mut encoded_tx = vec![generic_tx.r#type.into()];
+    match generic_tx.r#type {
         TxType::EIP1559 => {
             let tx: EIP1559Transaction = generic_tx.try_into()?;
             let signed_tx = tx
@@ -29,7 +29,7 @@ pub async fn send_generic_transaction(
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
-            signed_tx.encode_to_vec()
+            signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
             let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
@@ -38,7 +38,7 @@ pub async fn send_generic_transaction(
                 .await
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
-            tx.encode_to_vec()
+            tx.encode(&mut encoded_tx);
         }
         _ => {
             return Err(EthClientError::Custom(
@@ -46,7 +46,6 @@ pub async fn send_generic_transaction(
             ));
         }
     };
-    encoded_tx.insert(0, r#type.into());
     client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
