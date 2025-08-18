@@ -1966,7 +1966,7 @@ impl PeerHandler {
     pub async fn request_state_trienodes(
         peer_channel: &mut PeerChannels,
         state_root: H256,
-        paths: Vec<Nibbles>,
+        paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
         let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
@@ -1979,7 +1979,7 @@ impl PeerHandler {
             // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
             paths: paths
                 .iter()
-                .map(|vec| vec![Bytes::from(vec.encode_compact())])
+                .map(|vec| vec![Bytes::from(vec.path.encode_compact())])
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
@@ -1990,6 +1990,12 @@ impl PeerHandler {
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
             return Err(RequestStateTrieNodesError::InvalidData);
+        }
+
+        for (index, node) in nodes.iter().enumerate() {
+            if node.compute_hash().finalize() != paths[index].hash {
+                return Err(RequestStateTrieNodesError::InvalidHash);
+            }
         }
 
         Ok(nodes)
@@ -2112,12 +2118,20 @@ struct AccountDumpError {
     pub contents: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RequestMetadata {
+    pub hash: H256,
+    pub path: Nibbles,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RequestStateTrieNodesError {
     #[error("Send message error")]
     SendMessageError(SendMessageError),
     #[error("Invalid data")]
     InvalidData,
+    #[error("Invalid Hash")]
+    InvalidHash,
 }
 
 #[derive(Debug, thiserror::Error)]

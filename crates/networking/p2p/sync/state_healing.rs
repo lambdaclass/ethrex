@@ -24,7 +24,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{PeerHandler, RequestStateTrieNodesError},
+    peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     utils::current_unix_time,
 };
@@ -86,7 +86,8 @@ async fn heal_state_trie(
     peers: PeerHandler,
     staleness_timestamp: u64,
 ) -> Result<bool, SyncError> {
-    let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
+    // TODO:
+    // let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
     // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
@@ -95,7 +96,10 @@ async fn heal_state_trie(
     //     store.clone(),
     // ));
     // Add the current state trie root to the pending paths
-    paths.push(Nibbles::default());
+    let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
+        hash: state_root,
+        path: Nibbles::default(),
+    }];
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
     let mut is_stale = false;
@@ -108,12 +112,12 @@ async fn heal_state_trie(
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
         H256,
         Result<Vec<Node>, RequestStateTrieNodesError>,
-        Vec<Nibbles>,
+        Vec<RequestMetadata>,
     )>(1000);
 
     // channel to send the tasks to the peers
     let (returned_paths_sender, mut returned_paths_receiver) =
-        tokio::sync::mpsc::channel::<Vec<Nibbles>>(1000);
+        tokio::sync::mpsc::channel::<Vec<RequestMetadata>>(1000);
 
     let peers_table = peers
         .peer_table
@@ -208,12 +212,13 @@ async fn heal_state_trie(
         }
 
         if !is_stale {
-            let batch: Vec<Nibbles> = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            let batch: Vec<RequestMetadata> =
+                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
             if !batch.is_empty() {
                 longest_path_seen = usize::max(
                     batch
                         .iter()
-                        .map(|nibbles_vec| nibbles_vec.len())
+                        .map(|request_metadata| request_metadata.path.len())
                         .max()
                         .unwrap_or_default(),
                     longest_path_seen,
@@ -296,7 +301,7 @@ async fn heal_state_trie(
     info!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
     info!("Caching {} paths for the next cycle", paths.len());
-    store.set_state_heal_paths(paths.clone()).await?;
+    // store.set_state_heal_paths(paths.clone()).await?;
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
@@ -306,10 +311,10 @@ async fn heal_state_trie(
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
 /// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
 async fn heal_state_batch(
-    mut batch: Vec<Nibbles>,
+    mut batch: Vec<RequestMetadata>,
     nodes: Vec<Node>,
     store: Store,
-) -> Result<Vec<Nibbles>, SyncError> {
+) -> Result<Vec<RequestMetadata>, SyncError> {
     let mut hashed_addresses = vec![];
     let mut code_hashes = vec![];
     // For each node:
@@ -320,12 +325,12 @@ async fn heal_state_batch(
         let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
         for node in nodes.iter() {
             let path = batch.remove(0);
-            batch.extend(node_missing_children(node, &path, trie.db())?);
+            batch.extend(node_missing_children(node, &path.path, trie.db())?);
             if let Node::Leaf(node) = &node {
                 // Fetch bytecode & storage
                 let account = AccountState::decode(&node.value)?;
                 // By now we should have the full path = account hash
-                let path = &path.concat(node.partial.clone()).to_bytes();
+                let path = &path.path.concat(node.partial.clone()).to_bytes();
                 if path.len() != 32 {
                     // Something went wrong
                     return Err(SyncError::CorruptPath);
@@ -417,19 +422,25 @@ pub fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
     trie_state: &dyn TrieDB,
-) -> Result<Vec<Nibbles>, TrieError> {
-    let mut paths = Vec::new();
+) -> Result<Vec<RequestMetadata>, TrieError> {
+    let mut paths: Vec<RequestMetadata> = Vec::new();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
                 if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    paths.push(parent_path.append_new(index as u8));
+                    paths.push(RequestMetadata {
+                        hash: child.compute_hash().finalize(),
+                        path: parent_path.append_new(index as u8),
+                    });
                 }
             }
         }
         Node::Extension(node) => {
             if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                paths.push(parent_path.concat(node.prefix.clone()));
+                paths.push(RequestMetadata {
+                    hash: node.child.compute_hash().finalize(),
+                    path: parent_path.concat(node.prefix.clone()),
+                });
             }
         }
         _ => {}
