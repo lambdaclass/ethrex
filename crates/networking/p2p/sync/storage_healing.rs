@@ -317,7 +317,7 @@ pub async fn heal_storage_trie(
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
-                let inflight_request = state.requests.get(&id).expect("request disappeared");
+                let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 if state.download_queue.len() < 350 {
                     info!("In request {id} found error {err:?}");
