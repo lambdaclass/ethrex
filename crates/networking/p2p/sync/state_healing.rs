@@ -277,12 +277,14 @@ async fn heal_state_trie(
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finished first download, checking the cache of previous downloads");
+            let trie = store.open_state_trie(state_root).expect("Store Error");
             paths = store
                 .get_state_heal_paths()
                 .await
                 .expect("Store Error")
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|(path, _)| trie.get_node(&path.encode_compact()).is_err())
                 .map(|(path, hash)| RequestMetadata { path, hash })
                 .collect();
             store
