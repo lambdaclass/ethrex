@@ -251,6 +251,22 @@ enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
     },
+    #[command(about = "Execute a single block.")]
+    Blocks {
+        #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        blocks: Vec<usize>,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
+        )]
+        network: Network,
+        #[arg(long, required = false)]
+        bench: bool,
+    },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
@@ -305,6 +321,26 @@ impl SubcommandProve {
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandProve::Blocks {
+                blocks,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                for block in blocks {
+                    Box::pin(async {
+                        SubcommandProve::Block {
+                            block: Some(block),
+                            rpc_url: rpc_url.as_str().to_string(),
+                            network: network.clone(),
+                            bench,
+                        }
+                        .run()
+                        .await
+                    })
+                    .await?;
+                }
             }
             SubcommandProve::BlockRange {
                 start,
