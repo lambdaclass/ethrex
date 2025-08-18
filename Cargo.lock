@@ -4234,7 +4234,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
- "malachite 0.6.1",
  "revm",
  "revm-inspectors",
  "revm-primitives",
