@@ -85,7 +85,7 @@ During each auction period, a configurable number of tickets are auctioned off. 
 
 Parameters like the amount of tickets auctioned (i.e. amount of sequencing periods per allocated period), the duration of the auction periods, the duration of the sequencing periods, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.
 
-![Diagram showing leader election process](./img/leader_election_process.png)
+![Diagram showing leader election process](../img/leader_election_process.png)
 
 1. Sequencers individually opt in before auction period `n` ends, providing collateral via an L1 contract. This registration is a one-time process per Sequencer.
 2. During the auction, registered Sequencers bid for sequencing rights for a yet-to-be-revealed sequencing period within the allocated period.
@@ -96,7 +96,7 @@ In each sequencing period, the Lead Sequencer is initially determined through a 
 
 The following example assumes a sequencing period of 1 day, 1 auction challenge per hour with challenge periods of 1 hour.
 
-![Diagram showing how challenges work](./img/challenges_to_leaders.png)
+![Diagram showing how challenges work](../img/challenges_to_leaders.png)
 
 1. Auction winner (Sequencer green) starts as the lead Sequencer of the sequencing period.
 2. No one can challenge the lead in the first hour.
@@ -106,7 +106,7 @@ The following example assumes a sequencing period of 1 day, 1 auction challenge 
 
 To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:
 
-![Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer](./img/l2_p2p_diagram.png)
+![Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer](../img/l2_p2p_diagram.png)
 
 1. A User: sends a transaction to the network.
 2. Any node: Gossips in the P2P a received transaction. So every transaction lives in a public distributed mempool

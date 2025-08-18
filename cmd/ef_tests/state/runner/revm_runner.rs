@@ -10,7 +10,10 @@ use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind},
 };
-use ethrex_levm::errors::{ExecutionReport, TxResult};
+use ethrex_levm::{
+    account::LevmAccount,
+    errors::{ExecutionReport, TxResult},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
     self, DynVmDatabase, EvmError,
@@ -130,7 +133,7 @@ pub async fn re_run_failed_ef_test(
 }
 
 pub async fn re_run_failed_ef_test_tx(
-    levm_cache: BTreeMap<Address, Account>,
+    levm_cache: BTreeMap<Address, LevmAccount>,
     vector: &TestVector,
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
@@ -370,7 +373,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub async fn ensure_post_state(
-    levm_cache: BTreeMap<Address, Account>,
+    levm_cache: BTreeMap<Address, LevmAccount>,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,

@@ -31,14 +31,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install nvcc
-        uses: Jimver/cuda-toolkit@v0.2.24
-        id: cuda-toolkit
-        with:
-          cuda: "12.9.0"
-          method: "network"
-          sub-packages: '["nvcc"]'
-
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,7 +50,7 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace -- -D warnings
-          NVCC_PREPEND_FLAGS='-arch=sm_70' make lint
+          make lint
 
       - name: Run cargo fmt
         run: |
