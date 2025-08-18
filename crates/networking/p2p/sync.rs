@@ -777,11 +777,10 @@ impl Syncer {
         debug!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
-        // TODO: handle these errors
-        let account_state_snapshots_dir = get_account_state_snapshots_dir()
-            .expect("Failed to get account state snapshots directory");
+        let account_state_snapshots_dir =
+            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .expect("Failed to get account storages snapshots directory");
+            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
         self.peers
             .request_account_range(
                 state_root,
@@ -922,8 +921,7 @@ impl Syncer {
             .await
             .replace(SystemTime::now());
 
-        *METRICS.storage_tries_state_roots_to_compute.lock().await =
-            downloaded_account_storages;
+        *METRICS.storage_tries_state_roots_to_compute.lock().await = downloaded_account_storages;
 
         let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
             Arc::new(Mutex::new(HashMap::new()));
