@@ -12,6 +12,7 @@ use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
@@ -25,7 +26,7 @@ type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     // Rlp encoded state trie nodes
@@ -40,6 +41,7 @@ pub struct ExecutionWitnessResult {
         serialize_with = "serialize_storage_tries",
         deserialize_with = "deserialize_storage_tries"
     )]
+    #[rkyv(with=crate::rkyv_utils::OptionStorageWrapper)]
     pub storage_trie_nodes: Option<HashMap<Address, Vec<Vec<u8>>>>,
     // Indexed by code hash
     // Used evm bytecodes
@@ -47,13 +49,16 @@ pub struct ExecutionWitnessResult {
         serialize_with = "serialize_code",
         deserialize_with = "deserialize_code"
     )]
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
     pub codes: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub state_trie: Option<Trie>,
     // Indexed by account
     // Pruned storage MPT
     #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
