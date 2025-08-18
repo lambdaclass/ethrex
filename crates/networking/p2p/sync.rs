@@ -52,7 +52,7 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 5;
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 10;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -507,7 +507,7 @@ impl FullBlockSyncState {
     /// Obtain the current head from where to start or resume block sync
     async fn get_current_head(&self) -> Result<H256, SyncError> {
         self.store
-            .get_latest_canonical_block_hash()
+            .get_canonical_block_hash(8135333)
             .await?
             .ok_or(SyncError::NoLatestCanonical)
     }
