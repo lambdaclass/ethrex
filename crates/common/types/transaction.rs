@@ -874,7 +874,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (from, decoder) = decoder.decode_field("from")?;
-        let inner_hash  = OnceCell::new();
+        let inner_hash = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -1178,15 +1178,14 @@ impl Transaction {
     }
 
     pub fn hash(&self) -> H256 {
-        let inner_hash =
-            match self {
-                Transaction::LegacyTransaction(tx) => &tx.inner_hash,
-                Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
-                Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
-            };
+        let inner_hash = match self {
+            Transaction::LegacyTransaction(tx) => &tx.inner_hash,
+            Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
+        };
 
         *inner_hash.get_or_init(|| self.compute_hash())
     }
