@@ -96,7 +96,7 @@ impl GenServer for Downloader {
                     .map_err(|e| format!("Failed to send message to peer {}: {e}", self.peer_id))
                     .unwrap(); // TODO: handle unwrap
 
-                let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
+                let block_headers = match tokio::time::timeout(Duration::from_secs(2), async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
@@ -111,20 +111,35 @@ impl GenServer for Downloader {
                     }
                 })
                 .await
-                .map_err(|_| "Failed to receive block headers")
-                .unwrap() // TODO: handle unwrap
-                .ok_or("Block no received".to_owned())
-                .unwrap(); // TODO: handle unwrap
+                {
+                    Ok(Some(headers)) => headers,
+                    _ => {
+                        error!(
+                            "Failed to receive block headers from peer: {}",
+                            self.peer_id
+                        );
+                        task_sender
+                            .send((vec![], self.peer_id, start_block, chunk_limit))
+                            .await
+                            .unwrap(); // TODO: handle unwrap
+                        return CastResponse::Stop;
+                    }
+                };
 
                 if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                     task_sender
                         .send((block_headers, self.peer_id, start_block, chunk_limit))
                         .await
-                        .unwrap();
+                        .unwrap(); // TODO: handle unwrap
+                } else {
                     warn!(
                         "[SYNCING] Received invalid headers from peer: {}",
                         self.peer_id
                     );
+                    task_sender
+                        .send((vec![], self.peer_id, start_block, chunk_limit))
+                        .await
+                        .unwrap(); // TODO: handle unwrap
                 }
 
                 // Nothing to do after completion, stop actor
