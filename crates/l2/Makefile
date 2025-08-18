@@ -47,8 +47,8 @@ PROOF_COORDINATOR_ADDRESS?=127.0.0.1
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../.env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../.env | cut -d= -f2)
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
@@ -84,6 +84,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--deployer.env-file ../../.env \
 	--l2.dev-genesis
 
 ## Same as deploy-l1 but deploys the SP1 verifier
@@ -96,6 +97,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--deployer.env-file ../../.env \
 	--l2.dev-genesis
 
 # ==============================================================================
@@ -103,7 +105,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 # ==============================================================================
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
-	export $(shell cat ../../cmd/.env | xargs); \
+	export $(shell cat ../../.env | xargs); \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
 	--watcher.block-delay 0 \
