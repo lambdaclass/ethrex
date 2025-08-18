@@ -1550,7 +1550,6 @@ dependencies = [
  "lambdaworks-math",
  "lazy_static",
  "malachite",
- "num-bigint 0.4.6",
  "p256",
  "ripemd",
  "secp256k1",
