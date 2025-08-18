@@ -7,7 +7,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 use ethrex_config::networks::Network;
