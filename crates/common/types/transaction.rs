@@ -4,6 +4,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
@@ -28,7 +29,7 @@ use once_cell::sync::OnceCell;
 // The serialization will fail if the data does not match the structure of any variant.
 //
 // A custom Deserialization method is implemented to match the specific transaction `type`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
 #[serde(untagged)]
 pub enum Transaction {
     LegacyTransaction(LegacyTransaction),
@@ -154,7 +155,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
     pub gas_price: u64,
@@ -162,31 +163,41 @@ pub struct LegacyTransaction {
     /// The recipient of the transaction.
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub v: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub s: U256,
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub gas_price: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -194,53 +205,72 @@ pub struct EIP1559Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP4844Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP7702Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub authorization_list: AuthorizationList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -248,9 +278,13 @@ pub struct PrivilegedL2Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
     pub inner_hash: OnceCell<H256>,
 }
@@ -404,9 +438,9 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
-    Call(Address),
+    Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]
     Create,
 }
