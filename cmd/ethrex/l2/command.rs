@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_L2_DATADIR,
     cli::remove_db,
     initializers::{init_l1, init_store, init_tracing},
     l2::{
@@ -8,7 +7,7 @@ use crate::{
         options::{Options, ProverClientOptions},
     },
     networks::Network,
-    utils::{parse_private_key, set_datadir},
+    utils::{default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
@@ -101,7 +100,7 @@ pub enum Command {
     },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
         datadir: String,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
@@ -159,7 +158,7 @@ pub enum Command {
         #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
-            default_value = DEFAULT_L2_DATADIR,
+            default_value_t = default_datadir(),
             help = "Receives the name of the directory where the Database is located.",
             env = "ETHREX_DATADIR"
         )]
@@ -461,7 +460,7 @@ impl Command {
                 datadir,
                 network,
             } => {
-                let data_dir = set_datadir(&datadir);
+                let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let client = EthClient::new(rpc_url.as_str())?;
