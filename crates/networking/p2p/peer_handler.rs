@@ -106,7 +106,10 @@ async fn ask_peer_head_number(
                 );
                 Ok(sync_head_number)
             } else {
-                Err(format!("Received unexpected response from peer {peer_id}"))
+                Err(format!(
+                    "Received unexpected response from peer {peer_id}. We expected id {request_id}, and we got {id} and we received {} block headers",
+                    block_headers.len()
+                ))
             }
         }
         Ok(None) => Err(format!("Error receiving message from peer {peer_id}")),
