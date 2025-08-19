@@ -1,4 +1,5 @@
 use ethrex_common::types::ChainConfig;
+use ethrex_l2_rpc::clients::get_batch_by_number;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
 use tracing::info;
@@ -94,7 +95,7 @@ pub async fn get_batchdata(
     }
     info!("Getting batch data from RPC");
 
-    let rpc_batch = eth_client.get_batch_by_number(batch_number).await?;
+    let rpc_batch = get_batch_by_number(&eth_client, batch_number).await?;
 
     let mut cache = fetch_rangedata_from_client(
         eth_client,

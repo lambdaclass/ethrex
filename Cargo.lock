@@ -4234,6 +4234,7 @@ dependencies = [
  "charming",
  "clap 4.5.40",
  "ethrex-common",
+ "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rpc",

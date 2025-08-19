@@ -251,6 +251,7 @@ pub enum CalldataEncodeError {
     InternalError,
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetMessageProofError {
     #[error("{0}")]
@@ -291,6 +292,7 @@ pub enum TxPoolContentError {
     RPCError(String),
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
     #[error("{0}")]
