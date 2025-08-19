@@ -27,6 +27,7 @@ use crate::{
 };
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
+const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -598,7 +599,7 @@ pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<N
 
     for (contact_id, contact) in &table {
         let distance = distance(&node_id, contact_id);
-        if nodes.len() < 16 {
+        if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
             nodes.push((contact.node.clone(), distance));
         } else {
             for (i, (_, dis)) in &mut nodes.iter().enumerate() {
