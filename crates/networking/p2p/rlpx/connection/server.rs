@@ -279,7 +279,6 @@ impl GenServer for RLPxConnection {
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
-            dbg!(&established_state.blockchain.is_synced());
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message.clone() {
                 Self::CastMsg::PeerMessage(message) => {
@@ -357,12 +356,9 @@ impl GenServer for RLPxConnection {
                                 &format!("Error handling cast message {message:?}. Error: {e}"),
                             );
                         } else {
-                            // TODO: change this to debug and remove the '[SYNCING]' part
-                            log_peer_warn(
+                            log_peer_debug(
                                 &established_state.node,
-                                &format!(
-                                    "[SYNCING] Error handling cast message {message:?}. Error: {e}"
-                                ),
+                                &format!("Error handling cast message {message:?}. Error: {e}"),
                             );
                         }
                     }
