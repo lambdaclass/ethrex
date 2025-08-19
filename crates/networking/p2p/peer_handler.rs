@@ -219,6 +219,9 @@ impl PeerHandler {
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
+        // list of tasks that are in progress
+        let mut task_queue_in_progress = VecDeque::<(u64, u64, SystemTime)>::new();
+
         for i in 0..(chunk_count as u64) {
             tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
         }
@@ -266,6 +269,14 @@ impl PeerHandler {
             if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
+                // Remove the task from the in progress queue
+                if let Some(pos) = task_queue_in_progress
+                    .iter()
+                    .position(|(s, l, _)| *s == startblock && *l == previous_chunk_limit)
+                {
+                    task_queue_in_progress.remove(pos);
+                };
+
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
@@ -377,6 +388,24 @@ impl PeerHandler {
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
+            }
+
+            task_queue_in_progress.push_back((start_block, chunk_limit, SystemTime::now()));
+
+            // Check that there first in progress task is not stalled
+            // TODO: not an optimal solution, consider refactoring when adding the Coordinator actor
+            let now = SystemTime::now();
+            if let Some((start, limit, start_time)) = task_queue_in_progress.pop_front() {
+                if now.duration_since(start_time).unwrap() > Duration::from_secs(5) {
+                    // Task is stalled, reinsert it to the not started queue
+                    warn!(
+                        "Task for ({start}, {limit}) is stalled, re-adding to the queue and freeing downloader",
+                    );
+                    tasks_queue_not_started.push_back((start, limit));
+                } else {
+                    // Task is not stalled, reinsert it to the in progress queue
+                    task_queue_in_progress.push_front((start, limit, start_time));
+                }
             }
         }
 
