@@ -278,7 +278,7 @@ impl GenServer for RLPxConnection {
     ) -> CastResponse {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
-            let result = match message {
+            let result = match message.clone() {
                 Self::CastMsg::PeerMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
@@ -350,7 +350,7 @@ impl GenServer for RLPxConnection {
                     _ => {
                         log_peer_warn(
                             &established_state.node,
-                            &format!("Error handling cast message: {e}"),
+                            &format!("Error handling cast message {message:?}. Error: {e}"),
                         );
                     }
                 }
@@ -467,7 +467,10 @@ where
     Ok(())
 }
 
-async fn send_new_pooled_tx_hashes(state: &mut Established, txs: Vec<MempoolTransaction>) -> Result<(), RLPxError> {
+async fn send_new_pooled_tx_hashes(
+    state: &mut Established,
+    txs: Vec<MempoolTransaction>,
+) -> Result<(), RLPxError> {
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
