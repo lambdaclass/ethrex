@@ -149,7 +149,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
 
 pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
     // TODO: check where we should get builder values from
-    const DEFAULT_BUILDER_GAS_CEIL: u64 = 100_000_000;
+    const DEFAULT_BUILDER_GAS_CEIL: u64 = 30_000_000;
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
     let desired_limit = max(DEFAULT_BUILDER_GAS_CEIL, MIN_GAS_LIMIT);
