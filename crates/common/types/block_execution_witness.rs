@@ -48,6 +48,9 @@ pub struct ExecutionWitnessResult {
     // Pruned state MPT
     #[serde(skip)]
     pub state_trie: Option<Trie>,
+    // Storage tries accessed by account address
+    #[serde(skip)]
+    pub storage_tries: HashMap<H160, Trie>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -76,9 +79,7 @@ pub enum ExecutionWitnessError {
 
 impl ExecutionWitnessResult {
     pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
-        dbg!("PIZZZAAAAAAAAAAA");
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
-        dbg!("ANANAAAAAAAAAAAA");
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. The from_slice method panics if the input has the wrong size.
         // let addresses: Vec<Address> = self
@@ -87,7 +88,6 @@ impl ExecutionWitnessResult {
         //     .filter(|k| k.len() == Address::len_bytes())
         //     .map(|k| Address::from_slice(k))
         //     .collect();
-        // dbg!("TRAMPITAAAAAAAAAA");
         // let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
         //     addresses
         //         .iter()
@@ -99,7 +99,6 @@ impl ExecutionWitnessResult {
         //         })
         //         .collect::<Vec<(Address, Trie)>>(),
         // );
-        dbg!("JAMONNNNNNNNNNNNNNNNNNNNNNNNNNNNN");
         self.state_trie = Some(state_trie);
 
         Ok(())
@@ -107,12 +106,9 @@ impl ExecutionWitnessResult {
 
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
-        dbg!("MANZANAAAA");
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
-        dbg!("PERAAAAAAAAAA");
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
-        dbg!("BANANAAAAA");
 
         if account_state.storage_root == *EMPTY_TRIE_HASH {
             return None;
@@ -524,8 +520,6 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
     let mut initial_node = None;
 
-    dbg!("ADFVASDFVASDFV");
-
     for node in state.iter() {
         // If the node is empty we skip it
         if node == &vec![128_u8] {
@@ -540,15 +534,12 @@ pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, Execut
             break;
         }
     }
-    dbg!("SYNIOLYNIOYIUOLYUKMHJKNG");
 
-    let a = Trie::from_nodes(
+    Trie::from_nodes(
         initial_node.map(|b| b.to_vec()).as_ref(),
         &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")));
-    dbg!("::::::::::::::::::::::::::::::::::::::::::");
-    a
 }
 
 // This function is an option because we expect it to fail sometimes, and we just want to filter it

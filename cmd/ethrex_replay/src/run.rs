@@ -11,11 +11,11 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    dbg!("1111111111111111111111111111111111111");
+    dbg!("00000000000000000");
     let input = get_input(cache)?;
-    dbg!("22222222222222222222222222222222222222222");
+    dbg!("101010101010101010101001");
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
-    dbg!("33333333333333333333333333333333333333");
+    dbg!("424242424242424242424242");
     Ok(())
 }
 
