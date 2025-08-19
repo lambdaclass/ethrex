@@ -178,6 +178,14 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
+pub async fn periodically_show_peer_stats(
+    blockchain: Arc<Blockchain>,
+    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+) {
+    periodically_show_peer_stats_during_syncing(blockchain).await;
+    periodically_show_peer_stats_after_sync(peers).await;
+}
+
 pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockchain>) {
     let start = std::time::Instant::now();
     loop {
@@ -428,14 +436,6 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-}
-
-pub async fn periodically_show_peer_stats(
-    blockchain: Arc<Blockchain>,
-    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-) {
-    periodically_show_peer_stats_during_syncing(blockchain).await;
-    periodically_show_peer_stats_after_sync(peers).await;
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
