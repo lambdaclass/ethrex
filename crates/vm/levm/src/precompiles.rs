@@ -916,8 +916,10 @@ pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
-    let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
@@ -928,8 +930,8 @@ pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     };
 
     let mut padded_result = Vec::new();
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -948,19 +950,18 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     // Where:
     // s_i are scalars (numbers)
     // P_i are points in the group (in this case, points in G1)
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing,
+        reason = "bounds checked"
+    )]
     for i in 0..k {
-        let point_offset = i
-            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let scalar_offset = point_offset
-            .checked_add(128)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = scalar_offset
-            .checked_add(32)
-            .ok_or(InternalError::Overflow)?;
+        let point_offset = i * BLS12_381_G1_MSM_PAIR_LENGTH;
+        let scalar_offset = point_offset + 128;
+        let pair_end = scalar_offset + 32;
 
-        let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
-        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+        let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
+        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
         let scaled_point = G1Projective::mul(point, scalar);
         result = result.add(&scaled_point);
@@ -989,8 +990,11 @@ pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
-    let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
+    // slices are ok because the len has been validated
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let first_g2_point = parse_g2_point(&calldata[0..256], true)?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let second_g2_point = parse_g2_point(&calldata[256..512], true)?;
 
     let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
 
@@ -1000,13 +1004,13 @@ pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         result_of_addition.to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(192);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1021,19 +1025,22 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
     let mut result = G2Projective::identity();
-    for i in 0..k {
-        let point_offset = i
-            .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let scalar_offset = point_offset
-            .checked_add(256)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = scalar_offset
-            .checked_add(32)
-            .ok_or(InternalError::Overflow)?;
 
-        let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
-        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "bounds checked"
+    )]
+    for i in 0..k {
+        // No need for checked arithmetic because it wont overflow.
+        let point_offset = i * BLS12_381_G2_MSM_PAIR_LENGTH;
+        let scalar_offset = point_offset + 256;
+        let pair_end = scalar_offset + 32;
+
+        // slicing is ok because at the max value of i,
+        // (k-1) * BLS12_381_G2_MSM_PAIR_LENGTH + 256 ≤ k * BLS12_381_G2_MSM_PAIR_LENGTH
+        let point = parse_g2_point(&calldata[point_offset..scalar_offset], false)?;
+        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
         let scaled_point = G2Projective::mul(point, scalar);
         result = result.add(&scaled_point);
@@ -1048,10 +1055,10 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     let mut padded_result = Vec::new();
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1067,27 +1074,23 @@ pub fn bls12_pairing_check(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "bounds checked"
+    )]
     for i in 0..k {
-        let g1_point_offset = i
-            .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let g2_point_offset = g1_point_offset
-            .checked_add(128)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = g2_point_offset
-            .checked_add(256)
-            .ok_or(InternalError::Overflow)?;
+        let g1_point_offset = i * BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
+        let g2_point_offset = g1_point_offset + 128;
+        let pair_end = g2_point_offset + 256;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
         let g1 = G1Affine::from(parse_g1_point(
-            calldata.get(g1_point_offset..g2_point_offset),
+            &calldata[g1_point_offset..g2_point_offset],
             false,
         )?);
-        let g2 = G2Affine::from(parse_g2_point(
-            calldata.get(g2_point_offset..pair_end),
-            false,
-        )?);
+        let g2 = G2Affine::from(parse_g2_point(&calldata[g2_point_offset..pair_end], false)?);
         points.push((g1, G2Prepared::from(g2)));
     }
 
@@ -1116,7 +1119,9 @@ pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<B
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP_TO_G1_COST, gas_remaining)?;
 
-    let coordinate_bytes = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    // PADDED_FIELD_ELEMENT_SIZE_IN_BYTES == BLS12_381_FP_VALID_INPUT_LENGTH, so this slice is ok.
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let coordinate_bytes = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
     let fp = Fp::from_bytes(&coordinate_bytes)
         .into_option()
         .ok_or(ExceptionalHalt::Precompile(
@@ -1135,8 +1140,8 @@ pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<B
     };
 
     let mut padded_result = Vec::new();
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1149,10 +1154,13 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP2_TO_G2_COST, gas_remaining)?;
 
+    // slices are ok because of the previous len check.
     // Parse the input to two Fp and create a Fp2
-    let c0 = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let c0 = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let c1 = parse_coordinate(
-        calldata.get(PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH),
+        &calldata[PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH],
     )?;
     let fp_0 = Fp::from_bytes(&c0)
         .into_option()
@@ -1183,19 +1191,17 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     let mut padded_result = Vec::new();
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
 
-fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
+fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    let padded_coordinate = coordinate_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
+    let padded_coordinate = coordinate_raw_bytes;
     if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1208,15 +1214,15 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError.into())
 }
-fn parse_g1_point(
-    point_raw_bytes: Option<&[u8]>,
-    unchecked: bool,
-) -> Result<G1Projective, VMError> {
-    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
-    let x = parse_coordinate(point_bytes.get(0..64))?;
-    let y = parse_coordinate(point_bytes.get(64..128))?;
+
+/// point_bytes must have atleast 128 bytes.
+fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
+    debug_assert!(point_bytes.len() >= 128, "point_bytes must have 128 bytes");
+
+    #[expect(clippy::indexing_slicing)]
+    let x = parse_coordinate(&point_bytes[0..64])?;
+    #[expect(clippy::indexing_slicing)]
+    let y = parse_coordinate(&point_bytes[64..128])?;
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
     let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
@@ -1256,17 +1262,18 @@ fn parse_g1_point(
     Ok(g1_point)
 }
 
-fn parse_g2_point(
-    point_raw_bytes: Option<&[u8]>,
-    unchecked: bool,
-) -> Result<G2Projective, VMError> {
-    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
-    let x_0 = parse_coordinate(point_bytes.get(0..64))?;
-    let x_1 = parse_coordinate(point_bytes.get(64..128))?;
-    let y_0 = parse_coordinate(point_bytes.get(128..192))?;
-    let y_1 = parse_coordinate(point_bytes.get(192..256))?;
+/// point_bytes always has atleast 256 bytes
+fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, VMError> {
+    debug_assert!(point_bytes.len() >= 256, "point_bytes must have 256 bytes");
+
+    #[expect(clippy::indexing_slicing)]
+    let x_0 = parse_coordinate(&point_bytes[0..64])?;
+    #[expect(clippy::indexing_slicing)]
+    let x_1 = parse_coordinate(&point_bytes[64..128])?;
+    #[expect(clippy::indexing_slicing)]
+    let y_0 = parse_coordinate(&point_bytes[128..192])?;
+    #[expect(clippy::indexing_slicing)]
+    let y_1 = parse_coordinate(&point_bytes[192..256])?;
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
     let g2_point: G2Projective = if x_0.iter().all(|e| *e == 0)
@@ -1312,21 +1319,19 @@ fn parse_g2_point(
     Ok(g2_point)
 }
 
-fn add_padded_coordinate(
-    result: &mut Vec<u8>,
-    coordinate_raw_bytes: Option<&[u8]>,
-) -> Result<(), VMError> {
+// coordinate_raw_bytes usually has 48 bytes
+#[inline]
+fn add_padded_coordinate(result: &mut Vec<u8>, coordinate_raw_bytes: &[u8]) {
     // add the padding to satisfy the convention of encoding
     // https://eips.ethereum.org/EIPS/eip-2537
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    result.extend_from_slice(&sixteen_zeroes);
-    result.extend_from_slice(coordinate_raw_bytes.ok_or(InternalError::Slicing)?);
-    Ok(())
+    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
+    result.reserve(16 + 48);
+    result.extend_from_slice(&SIXTEEN_ZEROES);
+    result.extend_from_slice(coordinate_raw_bytes);
 }
 
-fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
+fn parse_scalar(scalar_raw_bytes: &[u8]) -> Result<Scalar, VMError> {
     let scalar_bytes: [u8; 32] = scalar_raw_bytes
-        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
