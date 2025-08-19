@@ -7,7 +7,9 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::verify_range;
 use keccak_hash::H256;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, InitResult};
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, InitResult,
+};
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, warn};
 
@@ -58,7 +60,18 @@ impl Downloader {
 }
 
 #[derive(Clone)]
-pub enum DownloaderRequest {
+pub enum DownloaderCallRequest {
+    CurrentHead { sync_head: H256 },
+}
+
+#[derive(Clone)]
+pub enum DownloaderCallResponse {
+    NotFound,         // Whatever we are looking for was not found
+    CurrentHead(u64), // The sync head block number
+}
+
+#[derive(Clone)]
+pub enum DownloaderCastRequest {
     Headers {
         task_sender: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
         start_block: u64,
@@ -74,9 +87,9 @@ pub enum DownloaderRequest {
 
 impl GenServer for Downloader {
     type Error = ();
-    type CallMsg = ();
-    type CastMsg = DownloaderRequest;
-    type OutMsg = ();
+    type CallMsg = DownloaderCallRequest;
+    type CastMsg = DownloaderCastRequest;
+    type OutMsg = DownloaderCallResponse;
 
     async fn init(
         self,
@@ -85,13 +98,75 @@ impl GenServer for Downloader {
         Ok(InitResult::Success(self))
     }
 
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            DownloaderCallRequest::CurrentHead { sync_head } => {
+                debug!(
+                    "Sync Log 11: Requesting sync head block number from peer {}",
+                    self.peer_id
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Hash(sync_head),
+                    limit: 1,
+                    skip: 0,
+                    reverse: false,
+                });
+
+                self.peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request.clone()))
+                    .await
+                    .map_err(|e| format!("Failed to send message to peer {}: {e}", self.peer_id))
+                    .unwrap(); // TODO: handle unwrap
+
+                let peer_id = self.peer_id;
+                match tokio::time::timeout(Duration::from_millis(100), async move {
+                    self.peer_channels.receiver.lock().await.recv().await
+                })
+                .await
+                {
+                    Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+                        if id == request_id && !block_headers.is_empty() {
+                            let sync_head_number = block_headers.last().unwrap().number;
+                            debug!(
+                                "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}",
+                            );
+                            return CallResponse::Reply(DownloaderCallResponse::CurrentHead(
+                                sync_head_number,
+                            ));
+                        } else {
+                            error!("Received unexpected response from peer {peer_id}");
+                        }
+                    }
+                    Ok(None) => {
+                        error!("Error receiving message from peer {peer_id}")
+                    }
+                    Ok(_other_msgs) => {
+                        error!("Received unexpected message from peer {peer_id}")
+                    }
+                    Err(_err) => {
+                        error!("Timeout while waiting for sync head from {peer_id}")
+                    }
+                }
+
+                CallResponse::Stop(DownloaderCallResponse::NotFound)
+            }
+        }
+    }
+
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            DownloaderRequest::Headers {
+            DownloaderCastRequest::Headers {
                 task_sender,
                 start_block,
                 chunk_limit,
@@ -169,7 +244,7 @@ impl GenServer for Downloader {
                 // Nothing to do after completion, stop actor
                 CastResponse::Stop
             }
-            DownloaderRequest::AccountRange {
+            DownloaderCastRequest::AccountRange {
                 task_sender,
                 root_hash,
                 starting_hash,

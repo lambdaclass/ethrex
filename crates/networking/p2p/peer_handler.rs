@@ -33,7 +33,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    snap_sync::downloader::{Downloader, DownloaderRequest},
+    snap_sync::downloader::{
+        Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
+    },
     utils::{
         get_account_state_snapshot_file, get_account_state_snapshots_dir,
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
@@ -222,29 +224,27 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
             .await;
 
-        let mut sync_head_number = 0_u64;
-
+        info!("Retrieving sync head block number from peers");
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        info!("Retrieving sync head block number from peers");
-
-        let mut retries = 1;
-
+        let mut sync_head_number = 0_u64;
         while sync_head_number == 0 {
-            for (peer_id, mut peer_channel) in peers_table.clone() {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
-                    Ok(number) => {
-                        sync_head_number = number;
+            for (peer_id, peer_channels) in peers_table.clone() {
+                // TODO: Warning! This process does not "reserve" peers_channels, so it may be error prone
+                match Downloader::new(peer_id, peer_channels)
+                    .start()
+                    .call(DownloaderCallRequest::CurrentHead { sync_head })
+                    .await
+                {
+                    Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
+                        sync_head_number = current_head_number;
+                        break;
                     }
-                    Err(err) => {
-                        trace!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
-                        );
+                    _ => {
+                        trace!("Failed to retrieve sync head block number from peer {peer_id}");
                     }
                 }
             }
-
-            retries += 1;
         }
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -411,7 +411,7 @@ impl PeerHandler {
 
             downloader
                 .start()
-                .cast(DownloaderRequest::Headers {
+                .cast(DownloaderCastRequest::Headers {
                     task_sender: task_sender.clone(),
                     start_block,
                     chunk_limit,
@@ -817,7 +817,7 @@ impl PeerHandler {
 
             downloader
                 .start()
-                .cast(DownloaderRequest::AccountRange {
+                .cast(DownloaderCastRequest::AccountRange {
                     task_sender: task_sender.clone(),
                     root_hash: state_root,
                     starting_hash: chunk_start,
