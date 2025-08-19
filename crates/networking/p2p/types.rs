@@ -557,18 +557,16 @@ mod tests {
             .await
             .expect("Failed to build test genesis");
 
-        let fork_id = storage.get_fork_id().await.unwrap();
-
         let node = Node::new(
             addr.ip(),
             addr.port(),
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let mut record = NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         // Drop fork ID since the test doesn't use it
         record.pairs.retain(|(k, _)| k != "eth");
-        record.sign_inplace(&signer).unwrap();
+        record.sign_record(&signer).unwrap();
 
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 

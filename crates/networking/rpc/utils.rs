@@ -317,10 +317,7 @@ pub mod test_utils {
         let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
 
-        // NOTE: we use a dummy fork ID, since it is not used in tests
-        let fork_id = Default::default();
-
-        NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap()
+        NodeRecord::from_node(&node, 1, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
