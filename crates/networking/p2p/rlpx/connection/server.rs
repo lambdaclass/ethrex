@@ -937,10 +937,11 @@ async fn handle_broadcast(
                             filtered.len()
                         ),
                     );
+                    tracing::info!("Broadcasting {} Transactions to: {}:{:?}", filtered.len(), state.node.ip, state.node.version);
                     let new_msg = Message::Transactions(Transactions {
                         transactions: filtered,
                     });
-                    send(state, new_msg).await?;
+                    //send(state, new_msg).await?;
                 }
             }
             l2_msg @ Message::L2(_) => {
