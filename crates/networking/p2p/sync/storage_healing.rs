@@ -184,7 +184,7 @@ pub async fn heal_storage_trie_wrap(
         peers.clone(),
         store.clone(),
         membatch.clone(),
-        staleness_timestamp
+        staleness_timestamp,
     )
     .await
 }
@@ -275,33 +275,33 @@ pub async fn heal_storage_trie(
             }
         }
 
-         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
- 
-         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done {
-             let to_write = nodes_to_write.drain().collect();
-             let store = state.store.clone();
-             if db_joinset.len() > 3 {
-                db_joinset.join_next().await;
-             }
-             db_joinset.spawn_blocking(|| {
-                 spawned_rt::tasks::block_on(async move {
-                     store
-                         .write_storage_trie_nodes_batch(to_write)
-                         .await
-                         .expect("db write failed");
-                })
-             });
-         }
- 
-         if is_done {
-             db_joinset.join_all().await;
-             return true;
-         }
+        let is_done = state.requests.is_empty() && state.download_queue.is_empty();
 
-         if current_unix_time() > state.staleness_timestamp {
-             db_joinset.join_all().await;
-             return false;
-         }
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done {
+            let to_write = nodes_to_write.drain().collect();
+            let store = state.store.clone();
+            if db_joinset.len() > 3 {
+                db_joinset.join_next().await;
+            }
+            db_joinset.spawn_blocking(|| {
+                spawned_rt::tasks::block_on(async move {
+                    store
+                        .write_storage_trie_nodes_batch(to_write)
+                        .await
+                        .expect("db write failed");
+                })
+            });
+        }
+
+        if is_done {
+            db_joinset.join_all().await;
+            return true;
+        }
+
+        if current_unix_time() > state.staleness_timestamp {
+            db_joinset.join_all().await;
+            return false;
+        }
 
         ask_peers_for_nodes(
             &mut state.download_queue,
@@ -362,7 +362,7 @@ pub async fn heal_storage_trie(
                     &mut state.leafs_healed,
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
-                    &mut nodes_to_write
+                    &mut nodes_to_write,
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
@@ -440,8 +440,7 @@ async fn ask_peers_for_nodes(
             let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn, logging_flag).await;
             if logging_flag {
                 info!(
-                    "the task {req_id} has finished getting the request_storage_trienodes {response:?}",
-                    
+                    "the task {req_id} has finished getting the request_storage_trienodes {response:?}"
                 );
             }
             // TODO: add error handling
@@ -588,9 +587,14 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, store.clone(), membatch, roots_healed, to_write).inspect_err(
-                |err| error!("{err} in commit node while committing {node_response:?}"),
-            )?;
+            commit_node(
+                &node_response,
+                store.clone(),
+                membatch,
+                roots_healed,
+                to_write,
+            )
+            .inspect_err(|err| error!("{err} in commit node while committing {node_response:?}"))?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -732,10 +736,10 @@ fn commit_node(
     to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
-     to_write
-         .entry(hashed_account)
-         .or_default()
-         .push((node.node.compute_hash(), node.node.encode_to_vec()));
+    to_write
+        .entry(hashed_account)
+        .or_default()
+        .push((node.node.compute_hash(), node.node.encode_to_vec()));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
@@ -762,7 +766,13 @@ fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        commit_node(&parent_entry.node_response, store, membatch, roots_healed, to_write)?;
+        commit_node(
+            &parent_entry.node_response,
+            store,
+            membatch,
+            roots_healed,
+            to_write,
+        )?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }
