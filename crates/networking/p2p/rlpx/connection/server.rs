@@ -5,13 +5,11 @@ use std::{
     time::Duration,
 };
 
-use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     H256,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
@@ -19,7 +17,7 @@ use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{
-        CallResponse, CastResponse, GenServer, GenServerHandle,
+        CastResponse, GenServer, GenServerHandle,
         InitResult::{self, NoSuccess, Success},
         send_interval, spawn_listener,
     },
@@ -38,7 +36,6 @@ use crate::{
     kademlia::{Kademlia, PeerChannels},
     metrics::METRICS,
     network::P2PContext,
-    peer_handler::MAX_RESPONSE_BYTES,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
@@ -58,17 +55,15 @@ use crate::{
                 handle_l2_broadcast,
             },
         },
-        message::RLPxMessage,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
-        snap::{AccountRange, AccountRangeUnit, AccountStateSlim, GetAccountRange},
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
-        process_trie_nodes_request, proof_to_encodable,
+        process_trie_nodes_request,
     },
     types::Node,
 };
@@ -183,13 +178,6 @@ pub enum CastMessage {
     L2(L2Cast),
 }
 
-#[derive(Clone, Debug)]
-#[allow(private_interfaces)]
-pub enum CallMessage {
-    BackendMessage(Message),
-}
-
-#[derive(Clone)]
 pub enum OutMessage {
     InitResponse {
         node: Node,
@@ -197,7 +185,6 @@ pub enum OutMessage {
     },
     Done,
     Error,
-    BackendResponse(Message),
 }
 
 #[derive(Debug)]
@@ -231,7 +218,7 @@ impl RLPxConnection {
 }
 
 impl GenServer for RLPxConnection {
-    type CallMsg = CallMessage;
+    type CallMsg = Unused;
     type CastMsg = CastMessage;
     type OutMsg = MsgResult;
     type Error = RLPxError;
@@ -399,61 +386,6 @@ impl GenServer for RLPxConnection {
             }
         };
         Ok(())
-    }
-
-    async fn handle_call(
-        &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> spawned_concurrency::tasks::CallResponse<Self> {
-        if let InnerState::Established(established_state) = self.inner_state.clone() {
-            match message {
-                CallMessage::BackendMessage(request) => match request {
-                    Message::GetAccountRange(GetAccountRange {
-                        id,
-                        root_hash,
-                        starting_hash,
-                        limit_hash,
-                        response_bytes,
-                    }) => {
-                        let mut accounts = vec![];
-                        let mut bytes_used = 0;
-                        for (hash, account) in
-                            established_state.storage.iter_accounts(root_hash).unwrap()
-                        {
-                            if hash >= starting_hash {
-                                let account = AccountStateSlim::from(account);
-                                bytes_used += 32 + account.length() as u64;
-                                accounts.push(AccountRangeUnit { hash, account });
-                            }
-                            if hash >= limit_hash || bytes_used >= response_bytes {
-                                break;
-                            }
-                        }
-                        let proof = proof_to_encodable(
-                            established_state
-                                .storage
-                                .get_account_range_proof(
-                                    root_hash,
-                                    starting_hash,
-                                    accounts.last().map(|acc| acc.hash),
-                                )
-                                .unwrap(),
-                        );
-
-                        return CallResponse::Reply(MsgResult::Ok(OutMessage::BackendResponse(
-                            Message::AccountRange(AccountRange {
-                                id,
-                                accounts,
-                                proof,
-                            }),
-                        )));
-                    }
-                    _ => unimplemented!(),
-                },
-            }
-        }
-        todo!()
     }
 }
 

@@ -12,8 +12,8 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::seq::SliceRandom;
-use spawned_concurrency::tasks::GenServer;
+use futures::stream::select_all;
+use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -28,14 +28,11 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRangeUnit, ByteCodes, GetByteCodes, GetStorageRanges, GetTrieNodes,
-            StorageRanges, TrieNodes,
+            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
+            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
-    snap_sync::downloader::{
-        Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
-    },
     utils::{
         get_account_state_snapshot_file, get_account_state_snapshots_dir,
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
@@ -68,6 +65,55 @@ pub struct PeerHandler {
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
+}
+
+async fn ask_peer_head_number(
+    peer_id: H256,
+    peer_channel: &mut PeerChannels,
+    sync_head: H256,
+    retries: i32,
+) -> Result<u64, String> {
+    // TODO: Better error handling
+    trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
+    let request_id = rand::random();
+    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+        id: request_id,
+        startblock: HashOrNumber::Hash(sync_head),
+        limit: 1,
+        skip: 0,
+        reverse: false,
+    });
+
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(request.clone()))
+        .await
+        .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
+
+    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+
+    match tokio::time::timeout(Duration::from_millis(100), async move {
+        peer_channel.receiver.lock().await.recv().await
+    })
+    .await
+    {
+        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+            if id == request_id && !block_headers.is_empty() {
+                let sync_head_number = block_headers.last().unwrap().number;
+                trace!(
+                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
+                );
+                Ok(sync_head_number)
+            } else {
+                Err(format!("Received unexpected response from peer {peer_id}"))
+            }
+        }
+        Ok(None) => Err(format!("Error receiving message from peer {peer_id}")),
+        Ok(_other_msgs) => Err("Received unexpected message from peer {peer_id}".into()),
+        Err(_err) => Err(format!(
+            "Timeout while waiting for sync head from {peer_id}"
+        )),
+    }
 }
 
 impl PeerHandler {
@@ -103,25 +149,16 @@ impl PeerHandler {
 
     // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
-    async fn record_peer_success(&self, peer_id: H256) {
-        let mut scores = self.peer_scores.lock().await;
-        *scores.entry(peer_id).or_default() += 1;
-    }
+    async fn record_peer_success(&self, _peer_id: H256) {}
 
     // TODO: Implement the logic for recording peer failures
     /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, peer_id: H256) {
-        let mut scores = self.peer_scores.lock().await;
-        *scores.entry(peer_id).or_default() -= 2;
-    }
+    async fn record_peer_failure(&self, _peer_id: H256) {}
 
     // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
-    async fn record_peer_critical_failure(&self, peer_id: H256) {
-        let mut scores = self.peer_scores.lock().await;
-        *scores.entry(peer_id).or_default() -= 10;
-    }
+    async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
     /// TODO: docs
     pub async fn get_peer_channel_with_highest_score(
@@ -184,27 +221,29 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
             .await;
 
-        info!("Retrieving sync head block number from peers");
+        let mut sync_head_number = 0_u64;
+
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        let mut sync_head_number = 0_u64;
+        info!("Retrieving sync head block number from peers");
+
+        let mut retries = 1;
+
         while sync_head_number == 0 {
-            for (peer_id, peer_channels) in peers_table.clone() {
-                // TODO: Warning! This process does not "reserve" peers_channels, so it may be error prone
-                match Downloader::new(peer_id, peer_channels)
-                    .start()
-                    .call(DownloaderCallRequest::CurrentHead { sync_head })
-                    .await
-                {
-                    Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
-                        sync_head_number = current_head_number;
-                        break;
+            for (peer_id, mut peer_channel) in peers_table.clone() {
+                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
+                    Ok(number) => {
+                        sync_head_number = number;
                     }
-                    _ => {
-                        trace!("Failed to retrieve sync head block number from peer {peer_id}");
+                    Err(err) => {
+                        trace!(
+                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
+                        );
                     }
                 }
             }
+
+            retries += 1;
         }
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -228,9 +267,6 @@ impl PeerHandler {
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
-        // list of tasks that are in progress
-        let mut task_queue_in_progress = VecDeque::<(H256, u64, u64, SystemTime)>::new();
-
         for i in 0..(chunk_count as u64) {
             tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
         }
@@ -248,7 +284,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
 
         let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
@@ -275,24 +311,16 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
-                // Remove the task from the in progress queue
-                if let Some(pos) = task_queue_in_progress
-                    .iter()
-                    .position(|(pi, _, _, _)| *pi == peer_id)
-                {
-                    task_queue_in_progress.remove(pos);
-                };
-
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
-                    self.record_peer_failure(peer_id).await;
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
                     });
+
                     debug!("Downloader {peer_id} freed");
 
                     // reinsert the task to the queue
@@ -337,25 +365,64 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.record_peer_success(peer_id).await;
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true; // mark the downloader as free
                 });
                 debug!("Downloader {peer_id} freed");
             }
 
-            let mut scores = self.peer_scores.lock().await;
-            let Some(downloader) = self
-                .get_available_downloader(&mut scores, &mut downloaders)
-                .await
+            let peer_channels = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await;
+
+            for (peer_id, _peer_channels) in &peer_channels {
+                if downloaders.contains_key(peer_id) {
+                    // Peer is already in the downloaders list, skip it
+                    continue;
+                }
+
+                downloaders.insert(*peer_id, true);
+
+                debug!("{peer_id} added as downloader");
+            }
+
+            let free_downloaders = downloaders
+                .clone()
+                .into_iter()
+                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .collect::<Vec<_>>();
+
+            if new_last_metrics_update >= Duration::from_secs(1) {
+                *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
+            }
+
+            if free_downloaders.is_empty() {
+                continue;
+            }
+
+            let Some(free_peer_id) = free_downloaders
+                .get(random::<usize>() % free_downloaders.len())
+                .map(|(peer_id, _)| *peer_id)
             else {
-                debug!("No available downloader found, retrying");
-                drop(scores);
+                debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
-            drop(scores);
 
-            let Some((start_block, chunk_limit)) = tasks_queue_not_started.pop_front() else {
+            let Some(mut free_downloader_channels) =
+                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+                })
+            else {
+                // The free downloader is not a peer of us anymore.
+                debug!(
+                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+                );
+                downloaders.remove(&free_peer_id);
+                continue;
+            };
+
+            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -370,16 +437,47 @@ impl PeerHandler {
                 continue;
             };
 
-            let peer_id = downloader.peer_id();
-            downloader
-                .start()
-                .cast(DownloaderCastRequest::Headers {
-                    task_sender: task_sender.clone(),
-                    start_block,
+            let tx = task_sender.clone();
+
+            downloaders
+                .entry(free_peer_id)
+                .and_modify(|downloader_is_free| {
+                    *downloader_is_free = false; // mark the downloader as busy
+                });
+
+            debug!("Downloader {free_peer_id} is now busy");
+
+            // run download_chunk_from_peer in a different Tokio task
+            let _download_result = tokio::spawn(async move {
+                trace!(
+                    "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+                );
+                debug!(
+                    "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+                );
+
+                let headers = Self::download_chunk_from_peer(
+                    free_peer_id,
+                    &mut free_downloader_channels,
+                    startblock,
                     chunk_limit,
-                })
+                )
                 .await
-                .unwrap(); // TODO: handle unwrap
+                .inspect_err(|err| {
+                    trace!("Sync Log 6: {free_peer_id} failed to download chunk: {err}")
+                })
+                .unwrap_or_default();
+
+                tx.send((
+                    headers,
+                    free_peer_id,
+                    free_downloader_channels,
+                    startblock,
+                    chunk_limit,
+                ))
+                .await
+                .unwrap();
+            });
 
             // 4) assign the tasks to the peers
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
@@ -388,29 +486,6 @@ impl PeerHandler {
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
-            }
-
-            let now = SystemTime::now();
-            task_queue_in_progress.push_back((peer_id, start_block, chunk_limit, now));
-
-            // Check that there first in progress task is not stalled
-            // TODO: not an optimal solution, consider refactoring when adding the Coordinator actor
-            if let Some((peer_id, start, limit, start_time)) = task_queue_in_progress.pop_front() {
-                if now.duration_since(start_time).unwrap() > Duration::from_secs(2) {
-                    // Task is stalled, reinsert it to the not started queue
-                    debug!(
-                        "Task for {peer_id} is stalled, re-adding to the queue and freeing downloader",
-                    );
-                    tasks_queue_not_started.push_front((start, limit));
-
-                    self.record_peer_failure(peer_id).await;
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true; // mark the downloader as free
-                    });
-                } else {
-                    // Task is not stalled, reinsert it to the in progress queue
-                    task_queue_in_progress.push_front((peer_id, start, limit, start_time));
-                }
             }
         }
 
@@ -465,6 +540,59 @@ impl PeerHandler {
         // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
+    }
+
+    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
+    ///
+    /// If it fails, returns an error message.
+    async fn download_chunk_from_peer(
+        peer_id: H256,
+        peer_channel: &mut PeerChannels,
+        startblock: u64,
+        chunk_limit: u64,
+    ) -> Result<Vec<BlockHeader>, String> {
+        debug!("Requesting block headers from peer {peer_id}");
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(startblock),
+            limit: chunk_limit,
+            skip: 0,
+            reverse: false,
+        });
+        let mut receiver = peer_channel.receiver.lock().await;
+
+        // FIXME! modify the cast and wait for a `call` version
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request))
+            .await
+            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
+
+        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                        if id == request_id =>
+                    {
+                        return Some(block_headers);
+                    }
+                    // Ignore replies that don't match the expected id (such as late responses)
+                    Some(_) => continue,
+                    None => return None, // EOF
+                }
+            }
+        })
+        .await
+        .map_err(|_| "Failed to receive block headers")?
+        .ok_or("Block no received".to_owned())?;
+
+        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+            Ok(block_headers)
+        } else {
+            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+            Err("Invalid block headers".into())
+        }
     }
 
     /// Internal method to request block bodies from any suitable peer given their block hashes
@@ -693,8 +821,8 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut chunk_file = 0;
         let mut scores = self.peer_scores.lock().await;
+        let mut chunk_file = 0;
 
         // TODO: handle this error
         let account_state_snapshots_dir = get_account_state_snapshots_dir()
@@ -759,10 +887,12 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    *scores.entry(peer_id).or_default() -= 1;
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     continue;
                 }
-                *scores.entry(peer_id).or_default() += 1;
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -783,15 +913,75 @@ impl PeerHandler {
                 });
             }
 
-            let Some(downloader) = self
-                .get_available_downloader(&mut scores, &mut downloaders)
-                .await
+            // Check if any dump account task finished
+            // TODO: consider tracking in-flight (dump) tasks
+            if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
+                if let Err(dump_account_data) = dump_account_result {
+                    // If the dumping failed, retry it
+                    let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                    tokio::task::spawn(async move {
+                        let AccountDumpError { path, contents } = dump_account_data;
+                        // Dump the account data
+                        // TODO: check the error type and handle it properly
+                        let result = std::fs::write(path.clone(), contents.clone())
+                            .map_err(|_| AccountDumpError { path, contents });
+                        // Send the result through the channel
+                        dump_account_result_sender_cloned.send(result).await;
+                    })
+                    .await
+                    .unwrap();
+                }
+            }
+
+            let peer_channels = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .await;
+
+            for (peer_id, _peer_channels) in &peer_channels {
+                if downloaders.contains_key(peer_id) {
+                    continue;
+                }
+                downloaders.insert(*peer_id, true);
+                debug!("{peer_id} added as downloader");
+            }
+
+            let free_downloaders = downloaders
+                .clone()
+                .into_iter()
+                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .collect::<Vec<_>>();
+
+            if new_last_metrics_update >= Duration::from_secs(1) {
+                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
+            }
+
+            if free_downloaders.is_empty() {
+                continue;
+            }
+
+            let (mut free_peer_id, _) = free_downloaders[0];
+
+            for (peer_id, _) in free_downloaders.iter() {
+                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                if peer_id_score >= max_peer_id_score {
+                    free_peer_id = *peer_id;
+                }
+            }
+
+            let Some(free_downloader_channels) =
+                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+                })
             else {
-                debug!("No available downloader found, retrying");
+                debug!(
+                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+                );
+                downloaders.remove(&free_peer_id);
                 continue;
             };
 
-            // TODO: move higher?
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
@@ -800,39 +990,122 @@ impl PeerHandler {
                 continue;
             };
 
-            downloader
-                .start()
-                .cast(DownloaderCastRequest::AccountRange {
-                    task_sender: task_sender.clone(),
+            let tx = task_sender.clone();
+            downloaders
+                .entry(free_peer_id)
+                .and_modify(|downloader_is_free| {
+                    *downloader_is_free = false;
+                });
+            debug!("Downloader {free_peer_id} is now busy");
+
+            let state_root = state_root.clone();
+            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            tokio::spawn(async move {
+                debug!(
+                    "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetAccountRange(GetAccountRange {
+                    id: request_id,
                     root_hash: state_root,
                     starting_hash: chunk_start,
                     limit_hash: chunk_end,
-                })
-                .await
-                .unwrap();
+                    response_bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                        .await
+                        .ok();
+                    return;
+                }
+                if let Some((accounts, proof)) =
+                    tokio::time::timeout(Duration::from_secs(2), async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::AccountRange(AccountRange {
+                                    id,
+                                    accounts,
+                                    proof,
+                                })) if id == request_id => return Some((accounts, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                {
+                    if accounts.is_empty() {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        // Too spammy
+                        // tracing::error!("Received empty account range");
+                        return;
+                    }
+                    // Unzip & validate response
+                    let proof = encodable_to_proof(&proof);
+                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                        .clone()
+                        .into_iter()
+                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                        .unzip();
+                    let encoded_accounts = account_states
+                        .iter()
+                        .map(|acc| acc.encode_to_vec())
+                        .collect::<Vec<_>>();
+
+                    let Ok(should_continue) = verify_range(
+                        state_root,
+                        &chunk_start,
+                        &account_hashes,
+                        &encoded_accounts,
+                        &proof,
+                    ) else {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        tracing::error!("Received invalid account range");
+                        return;
+                    };
+
+                    // If the range has more accounts to fetch, we send the new chunk
+                    let chunk_left = if should_continue {
+                        let last_hash = account_hashes
+                            .last()
+                            .expect("we already checked this isn't empty");
+                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        let new_start = H256::from_uint(&new_start_u256);
+                        Some((new_start, chunk_end))
+                    } else {
+                        None
+                    };
+                    tx.send((
+                        accounts
+                            .into_iter()
+                            .filter(|unit| unit.hash <= chunk_end)
+                            .collect(),
+                        free_peer_id,
+                        chunk_left,
+                    ))
+                    .await
+                    .ok();
+                } else {
+                    tracing::debug!("Failed to get account range");
+                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                        .await
+                        .ok();
+                }
+            });
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
-            }
-        }
-
-        // Check if any dump account task finished
-        // TODO: consider tracking in-flight (dump) tasks
-        if let Ok(dump_account_result) = dump_account_result_receiver.try_recv() {
-            if let Err(dump_account_data) = dump_account_result {
-                // If the dumping failed, retry it
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let AccountDumpError { path, contents } = dump_account_data;
-                    // Dump the account data
-                    // TODO: check the error type and handle it properly
-                    let result = std::fs::write(path.clone(), contents.clone())
-                        .map_err(|_| AccountDumpError { path, contents });
-                    // Send the result through the channel
-                    dump_account_result_sender_cloned.send(result).await;
-                })
-                .await
-                .unwrap();
             }
         }
 
@@ -953,13 +1226,15 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    *scores.entry(peer_id).or_default() -= 1;
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                *scores.entry(peer_id).or_default() += 1;
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1223,11 +1498,10 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
+
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir().unwrap();
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
-            {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -1359,7 +1633,8 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    *scores.entry(peer_id).or_default() -= 1;
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1901,71 +2176,15 @@ impl PeerHandler {
 
         None
     }
+}
 
-    // Creates a Downloader Actor from the best available peer
-    // Returns None if no peer is available
-    async fn get_available_downloader(
-        &self,
-        scores: &mut HashMap<H256, i64>,
-        downloaders: &mut BTreeMap<H256, bool>,
-    ) -> Option<Downloader> {
-        let peer_channels = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
-
-        for (peer_id, _peer_channels) in &peer_channels {
-            if downloaders.contains_key(peer_id) {
-                continue;
-            }
-            downloaders.insert(*peer_id, true);
-            debug!("{peer_id} added as downloader");
-        }
-
-        // TODO: check if downloaders can be instantiated here instead of reciving it as a parameter
-        let free_downloaders = downloaders
-            .clone()
-            .into_iter()
-            .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
-            .collect::<Vec<_>>();
-
-        if free_downloaders.is_empty() {
-            // No available downloaders to offer
-            return None;
-        }
-
-        let (free_peer_id, _) = free_downloaders
-            .iter()
-            .max_by_key(|(peer_id, _)| scores.get(peer_id).copied().unwrap_or(0))
-            .unwrap(); // TODO: remove unwrap
-
-        let Some(free_downloader_channels) = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await
-            .iter()
-            .find_map(|(peer_id, peer_channels)| {
-                peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-            })
-        else {
-            debug!(
-                "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-            );
-            downloaders.remove(&free_peer_id);
-            return None;
-        };
-
-        // Mark the downloader as busy
-        downloaders
-            .entry(*free_peer_id)
-            .and_modify(|downloader_is_free| {
-                *downloader_is_free = false;
-            });
-
-        // Create and spawn Downloader Actor
-        let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
-        Some(downloader)
-    }
+/// Validates the block headers received from a peer by checking that the parent hash of each header
+/// matches the hash of the previous one, i.e. the headers are chained
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }
 
 fn format_duration(duration: Duration) -> String {
