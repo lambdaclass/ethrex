@@ -10,7 +10,6 @@ use ethrex_common::{
     H256,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
