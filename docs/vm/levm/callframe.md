@@ -45,9 +45,3 @@ In `CREATE`/`CREATE2`, the sender (deployer) nonce is incremented before pushing
 - If a call frame completes successfully, its backup is merged into the parent backup:
   - For each account/slot already present in the parent backup, nothing is done.
   - For new accounts/slots from the child call frame's backup, they are added to the parent backup.
-
-#### Where to find the implementation
-
-- Structures: `CallFrame`, `CallFrameBackup` (see `crates/vm/levm/src/call_frame.rs`)
-- Backup/restore/merge logic: VM methods — `backup_substate`, `restore_cache_state`, `merge_call_frame_backup_with_parent` (see `crates/vm/levm/src/utils.rs`, `crates/vm/levm/src/call_frame.rs`, `crates/vm/levm/src/opcode_handlers/system.rs`)
-- Usage example: the `generic_call` function (see `crates/vm/levm/src/opcode_handlers/system.rs`)
