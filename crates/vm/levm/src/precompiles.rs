@@ -738,6 +738,7 @@ fn handle_pairing_from_coordinates(
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
+    info!("ECPAIRING CALLDATA: {calldata:?}");
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
         return Err(PrecompileError::ParsingInputError.into());
