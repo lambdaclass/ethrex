@@ -612,7 +612,6 @@ type FirstPointCoordinates = (
 fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
     let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
     let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
-
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(first_point_x) == U256::zero())
         ^ (u256_from_big_endian(first_point_y) == U256::zero())
@@ -624,7 +623,7 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
         .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
     let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
         .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-
+    info!("first_point_x: {first_point_x}");
     Ok((first_point_x, first_point_y))
 }
 
@@ -765,7 +764,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
         let input_data = calldata
             .get(input_start..input_end)
             .ok_or(InternalError::Slicing)?;
-
+        info!("Input Data: {input_data:?}");
         let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
 
         let (second_point_x, second_point_y) = parse_second_point_coordinates(input_data)?;
