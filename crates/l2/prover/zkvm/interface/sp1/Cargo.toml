@@ -7,6 +7,8 @@ edition = "2024"
 
 [dependencies]
 sp1-zkvm = { version = "=5.0.8", features = ["embedded"] }
+rkyv = "0.8.10"
+
 zkvm_interface = { path = "../" }
 
 ethrex-common = { path = "../../../../../common", default-features = false }

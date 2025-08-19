@@ -60,7 +60,7 @@ make init-prover PROVER<sp1/risc0> # optional: GPU=true
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
-   - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
+   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.

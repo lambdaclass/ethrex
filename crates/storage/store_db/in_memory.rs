@@ -125,7 +125,7 @@ impl StoreEngine for Store {
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 store
                     .transaction_locations
-                    .entry(transaction.compute_hash())
+                    .entry(transaction.hash())
                     .or_default()
                     .push((number, hash, index as u64));
             }
@@ -254,7 +254,7 @@ impl StoreEngine for Store {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+                .map(|(i, tx)| (tx.hash(), number, hash, i as u64));
 
             self.add_transaction_locations(locations.collect()).await?;
             self.add_block_body(hash, block.body.clone()).await?;
