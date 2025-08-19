@@ -44,7 +44,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
@@ -309,10 +308,10 @@ impl GenServer for L1ProofSender {
     type Error = ProofSenderError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
@@ -322,7 +321,7 @@ impl GenServer for L1ProofSender {
         }
         let check_interval = random_duration(self.proof_send_interval_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Send);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 
