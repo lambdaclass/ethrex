@@ -112,18 +112,13 @@ impl SubcommandExecute {
             } => {
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                dbg!("**********************************");
                 let cache = get_blockdata(eth_client, network.clone(), block).await?;
-                dbg!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    dbg!("#######################################");
                     exec(BACKEND, cache).await?;
-                    dbg!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$44");
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
-                dbg!("=============================================");
             }
             SubcommandExecute::BlockRange {
                 start,

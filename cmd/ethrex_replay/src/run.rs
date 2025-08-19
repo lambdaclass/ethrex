@@ -11,11 +11,8 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    dbg!("00000000000000000");
     let input = get_input(cache)?;
-    dbg!("101010101010101010101001");
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
-    dbg!("424242424242424242424242");
     Ok(())
 }
 
@@ -58,7 +55,7 @@ pub async fn run_tx(
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
-        if tx.compute_hash() == tx_hash {
+        if tx.hash() == tx_hash {
             return Ok((receipt, account_updates));
         }
     }

@@ -5,7 +5,7 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlockHeader, ChainConfig,
-        block_execution_witness::{self, ExecutionWitnessError, ExecutionWitnessResult},
+        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -87,19 +87,20 @@ pub fn execution_witness_from_rpc_chain_config(
             .cloned()
             .unwrap_or_else(|| panic!("No parent block header found for block {parent_block_number} in the RpcExecutionWitness"));
 
-    let state_trie =
-        block_execution_witness::rebuild_trie(parent_header.state_root, &rpc_witness.state)?;
-
-    Ok(ExecutionWitnessResult {
+    let mut witness = ExecutionWitnessResult {
         state_trie_nodes: rpc_witness.state,
         keys: rpc_witness.keys,
         codes,
-        state_trie: Some(state_trie),
-        storage_tries: HashMap::new(),
+        state_trie: None, // `None` because we'll rebuild the tries afterwards
+        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
-    })
+    };
+
+    witness.rebuild_tries()?;
+
+    Ok(witness)
 }
 
 pub struct ExecutionWitnessRequest {
