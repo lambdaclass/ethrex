@@ -292,17 +292,17 @@ impl GenServer for DiscoverySideCar {
     type Error = DiscoverySideCarError;
 
     async fn handle_cast(
-        self,
+        &mut self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Revalidate => {
                 debug!(received = "Revalidate");
 
                 self.revalidate().await;
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
             Self::CastMsg::Lookup => {
                 debug!(received = "Lookup");
@@ -312,14 +312,14 @@ impl GenServer for DiscoverySideCar {
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
             Self::CastMsg::Prune => {
                 debug!(received = "Prune");
 
                 self.prune().await;
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }

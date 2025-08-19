@@ -304,10 +304,10 @@ impl GenServer for DiscoveryServer {
     type Error = DiscoveryServerError;
 
     async fn handle_cast(
-        self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Listen => {
                 let _ = self.handle_listens().await.inspect_err(|e| {
@@ -396,7 +396,7 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConnectionHandler {
     discovery_server: DiscoveryServer,
 }
@@ -421,10 +421,10 @@ impl GenServer for ConnectionHandler {
     type Error = ConnectionHandlerError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Ping {
                 from,

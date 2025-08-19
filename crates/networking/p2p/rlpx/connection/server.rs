@@ -79,7 +79,6 @@ pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
-#[derive(Clone)]
 pub struct RLPxConnectionState(InnerState);
 
 #[derive(Clone, Debug)]
@@ -179,7 +178,6 @@ pub enum CastMessage {
     L2(L2Cast),
 }
 
-#[derive(Clone)]
 pub enum OutMessage {
     InitResponse {
         node: Node,
