@@ -618,6 +618,7 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     {
         return Err(PrecompileError::InvalidPoint.into());
     }
+    info!("first_point_x: {first_point_x:?}");
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
         .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
