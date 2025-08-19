@@ -69,7 +69,6 @@ use crate::{
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(20000);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
@@ -79,7 +78,6 @@ pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
-pub struct RLPxConnectionState(InnerState);
 
 #[derive(Clone, Debug)]
 pub struct Initiator {
@@ -147,23 +145,6 @@ pub enum InnerState {
     Initiator(Initiator),
     Receiver(Receiver),
     Established(Established),
-}
-
-impl RLPxConnectionState {
-    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Self {
-        Self(InnerState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream: Arc::new(stream),
-        }))
-    }
-
-    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        Self(InnerState::Initiator(Initiator {
-            context,
-            node: node.clone(),
-        }))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -420,13 +401,6 @@ where
     // Send transactions transaction hashes from mempool at connection start
     send_all_pooled_tx_hashes(state).await?;
 
-    // Periodic broadcast check repeated events.
-    /*send_interval(
-        TX_BROADCAST_INTERVAL,
-        handle.clone(),
-        CastMessage::SendNewPooledTxHashes,
-    );*/
-
     // Periodic Pings repeated events.
     send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
 
@@ -474,29 +448,28 @@ async fn send_new_pooled_tx_hashes(
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
+        && !txs.is_empty()
     {
-        if !txs.is_empty() {
-            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
-                for tx in tx_chunk {
-                    txs_to_send.push((**tx).clone());
-                    state.broadcasted_txs.insert(tx.hash());
-                }
-
-                send(
-                    state,
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        txs_to_send,
-                        &state.blockchain,
-                    )?),
-                )
-                .await?;
-                log_peer_debug(
-                    &state.node,
-                    &format!("Sent {tx_count} transaction hashes to peer"),
-                );
+        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+            let tx_count = tx_chunk.len();
+            let mut txs_to_send = Vec::with_capacity(tx_count);
+            for tx in tx_chunk {
+                txs_to_send.push((**tx).clone());
+                state.broadcasted_txs.insert(tx.hash());
             }
+
+            send(
+                state,
+                Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                    txs_to_send,
+                    &state.blockchain,
+                )?),
+            )
+            .await?;
+            log_peer_debug(
+                &state.node,
+                &format!("Sent {tx_count} transaction hashes to peer"),
+            );
         }
     }
     Ok(())
