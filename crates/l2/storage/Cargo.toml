@@ -15,8 +15,6 @@ futures.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-libmdbx = { workspace = true, optional = true }
-redb = { workspace = true, optional = true }
 libsql = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
@@ -28,8 +26,6 @@ bincode.workspace = true
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "dep:tokio"]
-redb = ["dep:redb", "dep:tokio"]
 sql = ["dep:libsql", "dep:tokio"]
 l2 = []
 
