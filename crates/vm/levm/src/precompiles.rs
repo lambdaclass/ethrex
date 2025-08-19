@@ -16,7 +16,7 @@ use lambdaworks_math::{
             curves::bn_254::{
                 curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
                 field_extension::{
-                    BN254FieldModulus, Degree2ExtensionField, Degree12ExtensionField,
+                    BN254FieldModulus, Degree12ExtensionField, Degree2ExtensionField, BN254_PRIME_FIELD_ORDER
                 },
                 pairing::BN254AtePairing,
                 twist::BN254TwistCurve,
@@ -29,7 +29,7 @@ use lambdaworks_math::{
         element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
         fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
     },
-    traits::ByteConversion,
+    traits::ByteConversion, unsigned_integer::element::UnsignedInteger,
 };
 
 use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
@@ -596,20 +596,21 @@ type FirstPointCoordinates = (
 
 /// Parses first point coordinates and makes verification of invalid infinite
 fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
-
+    let first_point_x = UnsignedInteger::from_bytes_be(input_data.get(..32).ok_or(InternalError::Slicing)?).map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
+    let first_point_y = UnsignedInteger::from_bytes_be(input_data.get(32..64).ok_or(InternalError::Slicing)?).map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(first_point_x) == U256::zero())
-        ^ (u256_from_big_endian(first_point_y) == U256::zero())
+    if (first_point_x == UnsignedInteger::default())
+        ^ (first_point_y == UnsignedInteger::default())
     {
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
+    if first_point_x > BN254_PRIME_FIELD_ORDER || first_point_y > BN254_PRIME_FIELD_ORDER{
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into())
+    }
+
+    let first_point_y = BN254FieldElement::from_raw(first_point_y);
+    let first_point_x = BN254FieldElement::from_raw(first_point_x);
 
     Ok((first_point_x, first_point_y))
 }
