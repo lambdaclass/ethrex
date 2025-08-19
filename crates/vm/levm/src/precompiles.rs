@@ -272,7 +272,6 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
     println!("Hash: {}", hex::encode(hash));
     let Ok(message) = Message::from_digest_slice(hash) else {
-        println!("5");
         println!("Precompile ecrecover error on message");
         return Ok(Bytes::new());
     };
@@ -321,7 +320,10 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let mut output = vec![0u8; 12];
     output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
 
-    println!("Precompile ecrecover exited successfully: {:?}", output);
+    println!(
+        "Precompile ecrecover exited successfully: {}",
+        hex::encode(output.clone())
+    );
     Ok(Bytes::from(output.to_vec()))
 }
 
