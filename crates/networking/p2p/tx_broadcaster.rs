@@ -68,17 +68,17 @@ impl GenServer for TxBroadcaster {
     type Error = TxBroadcasterError;
 
     async fn handle_cast(
-        self,
+        &mut self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::BroadcastTxs => {
                 debug!(received = "BroadcastTxs");
 
                 self.broadcast_txs().await;
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }
