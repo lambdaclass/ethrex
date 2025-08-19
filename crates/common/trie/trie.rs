@@ -49,7 +49,6 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (NodeHash, NodeRLP);
 
-#[derive(Debug)]
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
@@ -335,7 +334,6 @@ impl Trie {
     /// Only use it for proof verification or computing a hash from an iterator
     pub(crate) fn stateless() -> Trie {
         // We will only be using the trie's cache so we don't need a working DB
-        #[derive(Debug)]
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {

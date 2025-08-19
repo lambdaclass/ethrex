@@ -84,25 +84,6 @@ pub enum ExecutionWitnessError {
 impl ExecutionWitnessResult {
     pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
-        // Keys can either be account addresses or storage slots. They have different sizes,
-        // so we filter them by size. The from_slice method panics if the input has the wrong size.
-        // let addresses: Vec<Address> = self
-        //     .keys
-        //     .iter()
-        //     .filter(|k| k.len() == Address::len_bytes())
-        //     .map(|k| Address::from_slice(k))
-        //     .collect();
-        // let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-        //     addresses
-        //         .iter()
-        //         .filter_map(|addr| {
-        //             Some((
-        //                 *addr,
-        //                 Self::rebuild_storage_trie(addr, &state_trie, &self.state_trie_nodes)?,
-        //             ))
-        //         })
-        //         .collect::<Vec<(Address, Trie)>>(),
-        // );
         self.state_trie = Some(state_trie);
 
         Ok(())

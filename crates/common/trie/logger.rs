@@ -9,7 +9,6 @@ use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
 
 pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
 
-#[derive(Debug)]
 pub struct TrieLogger {
     inner_db: Box<dyn TrieDB>,
     witness: TrieWitness,
