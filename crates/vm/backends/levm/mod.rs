@@ -59,20 +59,20 @@ impl LEVM {
             .into_iter()
             .enumerate()
         {
-            if block.header.number == 8135492 {
+            if block.header.number == 0 {
                 info!("Executing tx at idx: {idx}");
             }
-            if idx == 116 && block.header.number == 8135492 {
+            if idx == 116 && block.header.number == 0 {
                 info!("Executing tx at idx: {idx}");
                 *TX.lock().unwrap() = true;
             } else {
                 *TX.lock().unwrap() = false;
             }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            if idx == 116 && block.header.number == 8135492 {
+            if idx == 116 && block.header.number == 0 {
                 info!("Executed tx at idx: {idx}, report: {report:?}");
             }
-            if block.header.number == 8135492 {
+            if block.header.number == 0 {
                 info!("Executed tx at idx: {idx}, gas used: {}", report.gas_used);
             }
             cumulative_gas_used += report.gas_used;
