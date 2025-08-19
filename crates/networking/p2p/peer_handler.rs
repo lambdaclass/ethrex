@@ -220,7 +220,7 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
         // list of tasks that are in progress
-        let mut task_queue_in_progress = VecDeque::<(u64, u64, SystemTime)>::new();
+        let mut task_queue_in_progress = VecDeque::<(H256, u64, u64, SystemTime)>::new();
 
         for i in 0..(chunk_count as u64) {
             tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
@@ -272,7 +272,7 @@ impl PeerHandler {
                 // Remove the task from the in progress queue
                 if let Some(pos) = task_queue_in_progress
                     .iter()
-                    .position(|(s, l, _)| *s == startblock && *l == previous_chunk_limit)
+                    .position(|(pi, _, _, _)| *pi == peer_id)
                 {
                     task_queue_in_progress.remove(pos);
                 };
@@ -371,6 +371,7 @@ impl PeerHandler {
                 continue;
             };
 
+            let peer_id = downloader.peer_id();
             downloader
                 .start()
                 .cast(DownloaderCastRequest::Headers {
@@ -390,21 +391,29 @@ impl PeerHandler {
                 last_metrics_update = SystemTime::now();
             }
 
-            task_queue_in_progress.push_back((start_block, chunk_limit, SystemTime::now()));
+            task_queue_in_progress.push_back((
+                peer_id,
+                start_block,
+                chunk_limit,
+                SystemTime::now(),
+            ));
 
             // Check that there first in progress task is not stalled
             // TODO: not an optimal solution, consider refactoring when adding the Coordinator actor
             let now = SystemTime::now();
-            if let Some((start, limit, start_time)) = task_queue_in_progress.pop_front() {
+            if let Some((peer_id, start, limit, start_time)) = task_queue_in_progress.pop_front() {
                 if now.duration_since(start_time).unwrap() > Duration::from_secs(5) {
                     // Task is stalled, reinsert it to the not started queue
-                    warn!(
-                        "Task for ({start}, {limit}) is stalled, re-adding to the queue and freeing downloader",
+                    debug!(
+                        "Task for {peer_id} is stalled, re-adding to the queue and freeing downloader",
                     );
                     tasks_queue_not_started.push_back((start, limit));
+                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                        *downloader_is_free = true; // mark the downloader as free
+                    });
                 } else {
                     // Task is not stalled, reinsert it to the in progress queue
-                    task_queue_in_progress.push_front((start, limit, start_time));
+                    task_queue_in_progress.push_front((peer_id, start, limit, start_time));
                 }
             }
         }

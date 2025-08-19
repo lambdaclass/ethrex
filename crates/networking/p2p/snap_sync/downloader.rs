@@ -39,6 +39,10 @@ impl Downloader {
         }
     }
 
+    pub fn peer_id(&self) -> H256 {
+        self.peer_id
+    }
+
     async fn send_headers_response(
         &self,
         response_channel: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
