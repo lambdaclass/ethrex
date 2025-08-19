@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755570710638,
+  "lastUpdate": 1755612488963,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -21082,6 +21082,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00855597435897436,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "66d3e7dcec4d7628a6fe34762251fc5106e3a589",
+          "message": "chore(l1,l2): upgraded spawned to 0.3.0 (#4062)\n\nSpawned 0.3.0 has a major performance upgrade on certain GenServers.\n\nUpgrades spawned to the version 0.3.0 and updates the code accordingly",
+          "timestamp": "2025-08-18T20:20:17Z",
+          "tree_id": "2b97d7572f7a52b050247324c3f2c6d7cb1aee53",
+          "url": "https://github.com/lambdaclass/ethrex/commit/66d3e7dcec4d7628a6fe34762251fc5106e3a589"
+        },
+        "date": 1755612488495,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008723738562091504,
             "unit": "Mgas/s"
           }
         ]
