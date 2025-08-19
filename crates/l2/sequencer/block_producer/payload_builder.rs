@@ -339,11 +339,13 @@ fn get_account_diffs_in_tx(
                 for key in original_storage_slots.keys() {
                     added_storage.insert(
                         *key,
-                        *account_info.storage.get(key).ok_or(
-                            BlockProducerError::FailedToGetDataFrom(
+                        account_info
+                            .storage
+                            .get(key)
+                            .ok_or(BlockProducerError::FailedToGetDataFrom(
                                 "Account info Storage".to_owned(),
-                            ),
-                        )?,
+                            ))?
+                            .current_value,
                     );
                 }
                 if let Some(account_state_diff) = modified_accounts.get_mut(address) {
