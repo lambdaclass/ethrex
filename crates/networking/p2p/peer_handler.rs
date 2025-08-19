@@ -33,10 +33,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::{
-        dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
-    },
+    utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -274,10 +271,8 @@ impl PeerHandler {
 
         // Push the reminder
         if block_count % chunk_count != 0 {
-            tasks_queue_not_started.push_back((
-                chunk_count * chunk_limit + start,
-                block_count % chunk_count,
-            ));
+            tasks_queue_not_started
+                .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
 
         let mut downloaded_count = 0_u64;
@@ -935,7 +930,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send account dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -1520,7 +1515,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                > 1024 * 1024 * 1024 * 8
+            {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -1731,7 +1728,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send storage dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -2218,10 +2215,9 @@ impl PeerHandler {
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
-        let response = tokio::time::timeout(Duration::from_secs(5), async move {
-            receiver.recv().await
-        })
-        .await;
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
+                .await;
 
         // TODO: we need to check, this seems a scenario where the peer channel does teardown
         // after we sent the backend message

@@ -467,7 +467,10 @@ where
     Ok(())
 }
 
-async fn send_new_pooled_tx_hashes(state: &mut Established, txs: Vec<MempoolTransaction>) -> Result<(), RLPxError> {
+async fn send_new_pooled_tx_hashes(
+    state: &mut Established,
+    txs: Vec<MempoolTransaction>,
+) -> Result<(), RLPxError> {
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
