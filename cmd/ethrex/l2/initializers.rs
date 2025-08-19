@@ -101,11 +101,8 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
-        } else if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
+        }
+        else {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }

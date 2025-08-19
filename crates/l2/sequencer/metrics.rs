@@ -23,7 +23,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct MetricsGatherer {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
@@ -137,24 +136,24 @@ impl GenServer for MetricsGatherer {
     type Error = MetricsGathererError;
 
     async fn handle_call(
-        self,
+        &mut self,
         _message: Self::CallMsg,
         _handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
-        CallResponse::Reply(self, OutMessage::Done)
+        CallResponse::Reply(OutMessage::Done)
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Gather message, so we ignore the message
         let _ = self
             .gather_metrics()
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
         send_after(self.check_interval, handle.clone(), Self::CastMsg::Gather);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }

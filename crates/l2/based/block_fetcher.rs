@@ -78,7 +78,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct BlockFetcher {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
@@ -489,10 +488,10 @@ impl GenServer for BlockFetcher {
     type Error = BlockFetcherError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         if let SequencerStatus::Syncing = self.sequencer_state.status().await {
             let _ = self.fetch().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
@@ -503,7 +502,7 @@ impl GenServer for BlockFetcher {
             handle.clone(),
             Self::CastMsg::Fetch,
         );
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 
