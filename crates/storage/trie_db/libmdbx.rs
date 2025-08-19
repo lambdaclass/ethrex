@@ -29,19 +29,12 @@ where
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>(key).map_err(TrieError::DbError)
     }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
-            txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
-        }
-        txn.commit().map_err(TrieError::DbError)
-    }
 }
 
 #[cfg(test)]
 mod test {
     use super::LibmdbxTrieDB;
+    use crate::trie_db::test_utils::libmdbx::put_node;
     use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
     use ethrex_trie::NodeHash;
     use ethrex_trie::Trie;
@@ -61,9 +54,9 @@ mod test {
         );
         let inner_db = new_db::<Nodes>();
         let key = NodeHash::from_encoded_raw(b"hello");
+        put_node::<Nodes>(&inner_db, key, "value".into());
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
         assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
         assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
@@ -82,10 +75,11 @@ mod test {
             .collect();
 
         let inner_db = Arc::new(Database::create(None, &tables).unwrap());
+        let key = NodeHash::from_encoded_raw(b"hello");
+        put_node::<TableA>(&inner_db, key, "value".into());
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
-        let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "value".into()).unwrap();
+        assert_eq!(db_a.get(key).unwrap(), Some("value".into()));
         assert_eq!(db_b.get(key).unwrap(), None);
     }
 
