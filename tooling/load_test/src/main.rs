@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::Bytes;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::clients::{deploy, send_eip1559_transaction};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
@@ -31,6 +32,10 @@ const FIBO_CODE: &str = "6080604052348015600e575f5ffd5b506103198061001c5f395ff3f
 // Contract with a function that touches 100 storage slots on every transaction.
 // See `fixtures/contracts/load_test/IOHeavyContract.sol` for the code.
 const IO_HEAVY_CODE: &str = "6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033";
+
+// Used for load tests related to Sovra
+const SIMPLE_SIDETREE_ANCHOR_CODE: &str =
+    include_str!("../../../fixtures/contracts/sidetree/SimpleSidetreeAnchor.bin").trim_ascii();
 
 #[derive(Parser)]
 #[command(name = "load_test")]
@@ -87,6 +92,8 @@ struct Cli {
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
 pub enum TestType {
     EthTransfers,
+    SidetreeDeploy,
+    SidetreeAnchor,
     Erc20DeployClaim,
     Erc20Transfers,
     Fibonacci,
@@ -100,6 +107,8 @@ const ETH_TRANSFER_VALUE: u64 = 1000;
 const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
 // ERC20 contract address in case RICH_ACCOUNT deploying it for the first time
 const ERC20_ADDRESS: &str = "0x17435cce3d1b4fa2e5f8a08ed921d57c6762a180";
+// SimpleSidetreeAnchor contract address in case RICH_ACCOUNT deploying it for the first time
+const SIDETREE_ANCHOR_ADDRESS: &str = "0xb4b46bdaa835f8e4b4d8e208b6559cd267851051";
 
 async fn deploy_contract(
     client: EthClient,
@@ -125,6 +134,12 @@ async fn deploy_fibo(client: EthClient, deployer: &Signer) -> eyre::Result<Addre
 async fn deploy_io_heavy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
     let io_heavy_bytecode = hex::decode(IO_HEAVY_CODE).expect("Failed to decode IO Heavy bytecode");
     deploy_contract(client, deployer, io_heavy_bytecode).await
+}
+
+async fn deploy_sidetree(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
+    let erc20_bytecode = hex::decode(SIMPLE_SIDETREE_ANCHOR_CODE)
+        .expect("Failed to decode SimpleSidetreeAnchor bytecode");
+    deploy_contract(client, deployer, erc20_bytecode).await
 }
 
 // Given an account vector and the erc20 contract address, claim balance for all accounts.
@@ -180,6 +195,7 @@ async fn claim_erc20_balances(
 #[derive(Clone)]
 enum TxBuilder {
     Erc20(Address),
+    SidetreeAnchor(Address),
     EthTransfer,
     Fibonacci(Address),
     IOHeavy(Address),
@@ -195,6 +211,19 @@ impl TxBuilder {
                 let send_calldata = calldata::encode_calldata(
                     "transfer(address,uint256)",
                     &[Value::Address(dst), Value::Uint(U256::one())],
+                )
+                .unwrap();
+                (None, send_calldata, *contract_address)
+            }
+            TxBuilder::SidetreeAnchor(contract_address) => {
+                let anchor_hash: [u8; 32] = rand::random();
+                let number_of_operations: [u8; 32] = rand::random();
+                let send_calldata = calldata::encode_calldata(
+                    "anchorHash(bytes32,uint256)",
+                    &[
+                        Value::FixedBytes(Bytes::copy_from_slice(&anchor_hash)),
+                        Value::Uint(U256::from_big_endian(&number_of_operations)),
+                    ],
                 )
                 .unwrap();
                 (None, send_calldata, *contract_address)
@@ -360,6 +389,20 @@ async fn main() {
             println!("ERC20 transfer load test starting");
             let contract_address = parse_address(ERC20_ADDRESS);
             TxBuilder::Erc20(contract_address)
+        }
+        TestType::SidetreeDeploy => {
+            println!("SimpleSidetreeAnchor deployment starting");
+            println!("Deploying SimpleSidetreeAnchor contract...");
+            let contract_address = deploy_sidetree(client.clone(), &deployer)
+                .await
+                .expect("Failed to deploy contract");
+            println!("deployed at {contract_address:?}");
+            TxBuilder::Noop
+        }
+        TestType::SidetreeAnchor => {
+            println!("ERC20 transfer load test starting");
+            let contract_address = parse_address(SIDETREE_ANCHOR_ADDRESS);
+            TxBuilder::SidetreeAnchor(contract_address)
         }
         TestType::EthTransfers => {
             println!("Eth transfer load test starting");
