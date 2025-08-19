@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ethrex_common::{
     Address, U256,
-    types::{AccountUpdate, Fork, Genesis, code_hash},
+    types::{AccountUpdate, Fork, Genesis, StorageValue, code_hash},
 };
 use ethrex_levm::{
     account::LevmAccount,
@@ -267,7 +267,15 @@ pub fn check_accounts_state(
                         .unwrap()
                         .storage
                         .iter()
-                        .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                        .map(|(k, v)| {
+                            (
+                                H256::from(k.to_big_endian()),
+                                StorageValue {
+                                    current_value: *v,
+                                    previous_value: U256::from(0),
+                                },
+                            )
+                        })
                         .collect();
                 }
                 account
@@ -312,7 +320,13 @@ fn verify_matching_accounts(
     let code_matches = actual_account.info.code_hash == keccak(&expected_account.code);
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
-    let storage_matches = formatted_expected_storage == actual_account.storage;
+    let storage_matches = formatted_expected_storage
+        == actual_account
+            .storage
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v.current_value))
+            .collect();
 
     if !code_matches {
         account_mismatch.code_diff = Some((
@@ -328,8 +342,15 @@ fn verify_matching_accounts(
         account_mismatch.nonce_diff = Some((expected_account.nonce, actual_account.info.nonce));
     }
     if !storage_matches {
-        account_mismatch.storage_diff =
-            Some((formatted_expected_storage, actual_account.storage.clone()));
+        account_mismatch.storage_diff = Some((
+            formatted_expected_storage,
+            actual_account
+                .storage
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.current_value))
+                .collect(),
+        ));
     }
 
     if account_mismatch != AccountMismatch::default() {
