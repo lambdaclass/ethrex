@@ -2,6 +2,11 @@
 
 ## Perf
 
+### 2025-08-19
+
+- Improve performance of calldataload, calldatacopy, extcodecopy, codecopy, returndatacopy [#4070](https://github.com/lambdaclass/ethrex/pull/4070)
+
+
 ### 2025-08-14
 
 - Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
