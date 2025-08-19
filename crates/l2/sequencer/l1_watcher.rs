@@ -5,7 +5,7 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::PrivilegedL2Transaction;
+use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
@@ -393,8 +393,9 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        eth_client
-            .build_privileged_transaction(
+        let generic_tx = eth_client
+            .build_generic_tx(
+                TxType::Privileged,
                 self.to_address,
                 self.from,
                 Bytes::copy_from_slice(&self.calldata),
@@ -414,6 +415,7 @@ impl PrivilegedTransactionData {
                     ..Default::default()
                 },
             )
-            .await
+            .await?;
+        Ok(generic_tx.try_into()?)
     }
 }

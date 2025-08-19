@@ -1,13 +1,15 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
+use ethrex_common::types::TxType;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::clients::send_generic_transaction;
 use ethrex_l2_rpc::{
-    clients::{deploy, send_eip1559_transaction},
+    clients::deploy,
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -818,7 +820,8 @@ async fn test_send(
 ) -> RpcReceipt {
     let signer: Signer = LocalSigner::new(*private_key).into();
     let mut tx = client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             to,
             signer.address(),
             encode_calldata(signature, data).unwrap().into(),
@@ -826,10 +829,8 @@ async fn test_send(
         )
         .await
         .unwrap();
-    tx.gas_limit *= 2; // tx reverts in some cases otherwise
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer)
-        .await
-        .unwrap();
+    tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .unwrap()
