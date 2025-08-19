@@ -277,9 +277,12 @@ pub async fn heal_storage_trie(
 
          let is_done = state.requests.is_empty() && state.download_queue.is_empty();
  
-         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 10_000 || is_done {
+         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done {
              let to_write = nodes_to_write.drain().collect();
              let store = state.store.clone();
+             if db_joinset.len() > 3 {
+                db_joinset.join_next().await;
+             }
              db_joinset.spawn_blocking(|| {
                  spawned_rt::tasks::block_on(async move {
                      store
