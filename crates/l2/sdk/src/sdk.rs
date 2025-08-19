@@ -888,9 +888,31 @@ async fn priority_fee_from_override_or_rpc(
     get_fee_from_override_or_get_gas_price(client, None).await
 }
 
-// ==============================================================================
-// L2
-// ==============================================================================
+pub async fn wait_for_message_proof(
+    client: &EthClient,
+    transaction_hash: H256,
+    max_retries: u64,
+) -> Result<Vec<L1MessageProof>, EthClientError> {
+    let mut message_proof = get_message_proof(client, transaction_hash).await?;
+    let mut r#try = 1;
+    while message_proof.is_none() {
+        println!(
+            "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
+        );
+
+        if max_retries == r#try {
+            return Err(EthClientError::Custom(format!(
+                "L1Message proof for tx {transaction_hash:#x} not found after {max_retries} retries"
+            )));
+        }
+        r#try += 1;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        message_proof = get_message_proof(client, transaction_hash).await?;
+    }
+    message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
+}
 
 pub async fn get_last_committed_batch(
     client: &EthClient,
@@ -965,32 +987,6 @@ pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthC
         .chunks_exact(32)
         .map(|chunk| Ok(H256::from_slice(chunk)))
         .collect()
-}
-
-pub async fn wait_for_message_proof(
-    client: &EthClient,
-    transaction_hash: H256,
-    max_retries: u64,
-) -> Result<Vec<L1MessageProof>, EthClientError> {
-    let mut message_proof = get_message_proof(client, transaction_hash).await?;
-    let mut r#try = 1;
-    while message_proof.is_none() {
-        println!(
-            "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
-        );
-
-        if max_retries == r#try {
-            return Err(EthClientError::Custom(format!(
-                "L1Message proof for tx {transaction_hash:#x} not found after {max_retries} retries"
-            )));
-        }
-        r#try += 1;
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        message_proof = get_message_proof(client, transaction_hash).await?;
-    }
-    message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
 }
 
 async fn _generic_call(
