@@ -592,18 +592,18 @@ impl GenServer for ConnectionHandler {
 
 // TODO: SNAP SYNC: REIMPL TESTS
 
-/// Returns the closest nodes to `node_id`.
+/// Returns the nodes closest to the given `node_id`.
 pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<Node> {
     let mut nodes: Vec<(Node, usize)> = vec![];
 
-    for (neighbor_id, neighbor) in &table {
-        let distance = distance(&node_id, neighbor_id);
+    for (contact_id, contact) in &table {
+        let distance = distance(&node_id, contact_id);
         if nodes.len() < 16 {
-            nodes.push((neighbor.node.clone(), distance));
+            nodes.push((contact.node.clone(), distance));
         } else {
             for (i, (_, dis)) in &mut nodes.iter().enumerate() {
                 if distance < *dis {
-                    nodes[i] = (neighbor.node.clone(), distance);
+                    nodes[i] = (contact.node.clone(), distance);
                     break;
                 }
             }
