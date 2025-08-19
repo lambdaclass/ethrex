@@ -181,7 +181,7 @@ mod test {
                 ),
                 vec![],
             )],
-            inner_hash: once_cell::sync::OnceCell::new(),
+            ..Default::default()
         };
 
         let block_body = BlockBody {

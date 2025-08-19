@@ -410,10 +410,7 @@ impl Blockchain {
 
             // Check if we have enough gas to run the transaction
             if context.remaining_gas < head_tx.tx.gas_limit() {
-                debug!(
-                    "Skipping transaction: {}, no gas left",
-                    head_tx.tx.hash()
-                );
+                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
@@ -428,7 +425,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                self.remove_transaction_from_pool(&head_tx.tx.hash())?;
+                self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
 
@@ -437,7 +434,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.hash())?;
+                    self.remove_transaction_from_pool(&tx_hash)?;
 
                     metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt

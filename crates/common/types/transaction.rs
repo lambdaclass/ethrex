@@ -4,6 +4,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
@@ -28,7 +29,7 @@ use once_cell::sync::OnceCell;
 // The serialization will fail if the data does not match the structure of any variant.
 //
 // A custom Deserialization method is implemented to match the specific transaction `type`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
 #[serde(untagged)]
 pub enum Transaction {
     LegacyTransaction(LegacyTransaction),
@@ -154,7 +155,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
     pub gas_price: u64,
@@ -162,31 +163,43 @@ pub struct LegacyTransaction {
     /// The recipient of the transaction.
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub v: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub gas_price: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -194,53 +207,75 @@ pub struct EIP1559Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP4844Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP7702Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub authorization_list: AuthorizationList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -248,10 +283,15 @@ pub struct PrivilegedL2Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
+    #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
 
@@ -404,9 +444,9 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
-    Call(Address),
+    Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]
     Create,
 }
@@ -874,7 +914,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (from, decoder) = decoder.decode_field("from")?;
-        let inner_hash  = OnceCell::new();
+        let inner_hash = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -1178,15 +1218,14 @@ impl Transaction {
     }
 
     pub fn hash(&self) -> H256 {
-        let inner_hash =
-            match self {
-                Transaction::LegacyTransaction(tx) => &tx.inner_hash,
-                Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
-                Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
-                Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
-            };
+        let inner_hash = match self {
+            Transaction::LegacyTransaction(tx) => &tx.inner_hash,
+            Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
+        };
 
         *inner_hash.get_or_init(|| self.compute_hash())
     }
@@ -1902,7 +1941,7 @@ mod serde_impl {
                 v: deserialize_field::<U256, D>(&mut map, "v")?,
                 r: deserialize_field::<U256, D>(&mut map, "r")?,
                 s: deserialize_field::<U256, D>(&mut map, "s")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -1934,7 +1973,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -1971,7 +2010,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -2013,7 +2052,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -2057,7 +2096,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -2087,7 +2126,7 @@ mod serde_impl {
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
                 from: deserialize_field::<Address, D>(&mut map, "sender")?,
-                inner_hash: OnceCell::new(),
+                ..Default::default()
             })
         }
     }
@@ -2474,7 +2513,7 @@ mod tests {
             s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
@@ -2510,7 +2549,7 @@ mod tests {
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
             )
             .unwrap(),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         let tx = Transaction::EIP2930Transaction(tx_eip2930);
 
@@ -2561,7 +2600,7 @@ mod tests {
             )
             .unwrap(),
             v: 6303851.into(),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2594,7 +2633,7 @@ mod tests {
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![],
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2790,7 +2829,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(0x01),
             signature_s: U256::from(0x02),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
 
         assert_eq!(
@@ -2817,7 +2856,7 @@ mod tests {
             signature_y_parity: true,
             signature_r: U256::one(),
             signature_s: U256::zero(),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2855,7 +2894,7 @@ mod tests {
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2885,7 +2924,7 @@ mod tests {
             data: Bytes::new(),
             access_list: vec![],
             from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
@@ -2911,7 +2950,7 @@ mod tests {
             v: U256::from(27),
             r: U256::from(1),
             s: U256::from(1),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = legacy_tx.into();
@@ -2951,7 +2990,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),
-            inner_hash: OnceCell::new(),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = eip2930_tx.into();
