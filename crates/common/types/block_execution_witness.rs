@@ -16,10 +16,8 @@ use keccak_hash::H256;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
-
-type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 
 /// In-memory execution witness database for single batch execution data.
 ///
@@ -41,14 +39,6 @@ pub struct ExecutionWitnessResult {
     )]
     #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
     pub state_trie_nodes: Vec<Bytes>,
-    // Indexed by account
-    // Rlp encoded state trie nodes
-    #[serde(
-        serialize_with = "serialize_storage_tries",
-        deserialize_with = "deserialize_storage_tries"
-    )]
-    #[rkyv(with=crate::rkyv_utils::OptionStorageWrapper)]
-    pub storage_trie_nodes: Option<StorageTrieNodes>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
@@ -371,99 +361,6 @@ where
         seq_serializer.serialize_element(&obj)?;
     }
     seq_serializer.end()
-}
-
-pub fn serialize_storage_tries<S>(
-    map: &Option<HashMap<H160, Vec<Vec<u8>>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(map) = map else {
-        return Err(ser::Error::custom("Storage trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-
-    for (address, keys) in map {
-        let address_hex = format!("0x{}", hex::encode(address));
-        let values_hex: Vec<String> = keys
-            .iter()
-            .map(|v| format!("0x{}", hex::encode(v)))
-            .collect();
-
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            address_hex,
-            serde_json::Value::Array(
-                values_hex
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-
-        seq_serializer.serialize_element(&obj)?;
-    }
-
-    seq_serializer.end()
-}
-
-pub fn deserialize_storage_tries<'de, D>(
-    deserializer: D,
-) -> Result<Option<StorageTrieNodes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct KeysVisitor;
-
-    impl<'de> Visitor<'de> for KeysVisitor {
-        type Value = Option<StorageTrieNodes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str(
-                "a list of maps with H160 keys and array of hex-encoded strings as values",
-            )
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = HashMap::new();
-
-            #[derive(Deserialize)]
-            struct KeyEntry(HashMap<String, Vec<String>>);
-
-            while let Some(entry) = seq.next_element::<KeyEntry>()? {
-                let obj = entry.0;
-                if obj.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in obj {
-                    let h160 =
-                        H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let vecs = v
-                        .into_iter()
-                        .map(|s| {
-                            let s = s.trim_start_matches("0x");
-                            hex::decode(s).map_err(de::Error::custom)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    map.insert(h160, vecs);
-                }
-            }
-
-            Ok(Some(map))
-        }
-    }
-
-    deserializer.deserialize_seq(KeysVisitor)
 }
 
 pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
