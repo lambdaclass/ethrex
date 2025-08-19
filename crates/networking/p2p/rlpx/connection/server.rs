@@ -279,6 +279,7 @@ impl GenServer for RLPxConnection {
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
+            dbg!(&established_state.blockchain.is_synced());
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message.clone() {
                 Self::CastMsg::PeerMessage(message) => {
