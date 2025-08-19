@@ -76,7 +76,7 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
 pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(&path, &contents)
         .inspect_err(|err| {
-            tracing::error!("Failed to write accounts to path {}. Error: {}", &path, err)
+            tracing::error!("Failed to write snapshot to path {}. Error: {}", &path, err)
         })
         .map_err(|err| DumpError {
             path,
