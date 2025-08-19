@@ -772,7 +772,6 @@ impl Syncer {
 
         let state_root = pivot_header.state_root;
         let mut pivot_is_stale = true;
-        let mut bytecode_hashes: Vec<H256> = Vec::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
                 .request_account_range(
@@ -876,28 +875,20 @@ impl Syncer {
 
                 let trie = store.open_state_trie(computed_state_root).unwrap();
 
-                let (current_state_root, current_bytecode_hashes) =
-                    tokio::task::spawn_blocking(move || {
-                        let mut bytecode_hashes = vec![];
-                        let mut trie = trie;
+                let current_state_root = tokio::task::spawn_blocking(move || {
+                    let mut trie = trie;
 
-                        for (account_hash, account) in account_state_snapshot {
-                            if account.code_hash != *EMPTY_KECCACK_HASH {
-                                bytecode_hashes.push(account.code_hash);
-                            }
-                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                                .unwrap();
-                        }
-                        let current_state_root = trie.hash().unwrap();
-                        bytecode_hashes.sort();
-                        bytecode_hashes.dedup();
-                        (current_state_root, bytecode_hashes)
-                    })
-                    .await
-                    .expect("");
+                    for (account_hash, account) in account_state_snapshot {
+                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                            .unwrap();
+                    }
+                    let current_state_root = trie.hash().unwrap();
+                    current_state_root
+                })
+                .await
+                .expect("");
 
                 computed_state_root = current_state_root;
-                bytecode_hashes.extend(&current_bytecode_hashes);
             }
 
             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
@@ -1041,7 +1032,6 @@ impl Syncer {
                 if !healing_done {
                     continue;
                 }
-                validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     self.peers.clone(),
@@ -1052,6 +1042,7 @@ impl Syncer {
                 .await;
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
+            validate_state_root(store.clone(), pivot_header.state_root).await;
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
