@@ -165,7 +165,7 @@ pub fn stateless_validation_l2(
         codes: db.codes.clone(),
         keys: db.keys.clone(),
         state_trie: None,
-        storage_tries: None,
+        storage_tries: HashMap::new(),
         state_trie_nodes: db.state_trie_nodes.clone(),
         parent_block_header: db.parent_block_header.clone(),
     };
@@ -236,16 +236,13 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    dbg!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     db.rebuild_tries()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
-    dbg!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
-    dbg!("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 
     // Validate block hashes, except parent block hash (latest block hash)
     if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
@@ -253,7 +250,6 @@ fn execute_stateless(
             invalid_block_header,
         ));
     }
-    dbg!("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 
     // Validate parent block header
     let parent_block_header = &wrapped_db
@@ -265,26 +261,21 @@ fn execute_stateless(
                 .number,
         )
         .map_err(StatelessExecutionError::ExecutionWitness)?;
-    dbg!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
     let first_block_header = &blocks
         .first()
         .ok_or(StatelessExecutionError::EmptyBatchError)?
         .header;
-    dbg!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
     if parent_block_header.hash() != first_block_header.parent_hash {
         return Err(StatelessExecutionError::InvalidParentBlockHeader);
     }
-    dbg!("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGG");
 
     // Validate the initial state
     let initial_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;
-    dbg!("HHHHHHHHHHHHHHHHHHHHHHHHHHHHHH");
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
-    dbg!("IIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
 
     // Execute blocks
     let mut parent_block_header = parent_block_header;
@@ -300,29 +291,25 @@ fn execute_stateless(
             elasticity_multiplier,
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
-        dbg!("JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ");
 
+        dbg!("EXECUTING BLOCK");
         // Execute block
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
-        dbg!("KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK");
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
-        dbg!("LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLl");
         let receipts = result.receipts;
         let account_updates = vm
             .get_state_transitions()
             .map_err(StatelessExecutionError::EvmError)?;
-        dbg!("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
 
         // Update db for the next block
         wrapped_db
             .apply_account_updates(&account_updates)
             .map_err(StatelessExecutionError::ExecutionWitness)?;
-        dbg!("NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN");
 
         // Update acc_account_updates
         for account in account_updates {

@@ -50,7 +50,7 @@ pub struct ExecutionWitnessResult {
     pub state_trie: Option<Trie>,
     // Storage tries accessed by account address
     #[serde(skip)]
-    pub storage_tries: HashMap<H160, Trie>,
+    pub storage_tries: HashMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -303,31 +303,42 @@ impl ExecutionWitnessResult {
     }
 
     pub fn get_storage_slot(
-        &self,
+        &mut self,
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
-        let state_trie = self
-            .state_trie
-            .as_ref()
-            .ok_or(ExecutionWitnessError::Database(
-                "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
-            ))?;
-        let hashed_address = hash_address(&address);
-        let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
-            return Ok(None);
-        };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
-            ExecutionWitnessError::Database("Failed to get decode account from trie".to_string())
-        })?;
-        if state.storage_root == *EMPTY_TRIE_HASH {
-            return Ok(None);
-        }
-
-        let storage_trie =
-            rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
-                ExecutionWitnessError::Database(format!("Failed to rebuild storage trie: {}", e))
+        let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
+            storage_trie
+        } else {
+            let state_trie = self
+                .state_trie
+                .as_ref()
+                .ok_or(ExecutionWitnessError::Database(
+                    "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
+                ))?;
+            let hashed_address = hash_address(&address);
+            let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+                return Ok(None);
+            };
+            let state = AccountState::decode(&encoded_state).map_err(|_| {
+                ExecutionWitnessError::Database(
+                    "Failed to get decode account from trie".to_string(),
+                )
             })?;
+            if state.storage_root == *EMPTY_TRIE_HASH {
+                return Ok(None);
+            }
+
+            let storage_trie =
+                rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
+                    ExecutionWitnessError::Database(format!(
+                        "Failed to rebuild storage trie: {}",
+                        e
+                    ))
+                })?;
+
+            self.storage_tries.entry(address).or_insert(storage_trie)
+        };
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
@@ -539,7 +550,7 @@ pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, Execut
         initial_node.map(|b| b.to_vec()).as_ref(),
         &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
     )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")));
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
 }
 
 // This function is an option because we expect it to fail sometimes, and we just want to filter it

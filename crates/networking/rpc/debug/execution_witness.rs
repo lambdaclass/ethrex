@@ -95,6 +95,7 @@ pub fn execution_witness_from_rpc_chain_config(
         keys: rpc_witness.keys,
         codes,
         state_trie: Some(state_trie),
+        storage_tries: HashMap::new(),
         block_headers,
         chain_config,
         parent_block_header: parent_header,
