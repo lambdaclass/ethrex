@@ -615,7 +615,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let hash = transaction.compute_hash();
+        let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -642,7 +642,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let hash = transaction.compute_hash();
+        let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
