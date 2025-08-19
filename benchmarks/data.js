@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755622713977,
+  "lastUpdate": 1755625910548,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -21228,6 +21228,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008898213333333333,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d744176e86df0f0aa6239607decdf96f1312937c",
+          "message": "chore(l2): avoid CI_ETHREX_WORKDIR docker warnings (#4064)\n\n**Motivation**\n\nRunning `make down` or `make init` prints the following warnings:\n\n```\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\nWARN[0000] The \"CI_ETHREX_WORKDIR\" variable is not set. Defaulting to a blank string.\n```\n\nThe same was happening for the `L1_RPC_URL` variable.\n\n**Description**\n\n- Sets the variables when running docker compose targets.\n- Renames `CI_ETHREX_WORKDIR` to `DOCKER_ETHREX_WORKDIR`.\n\nCloses #3810",
+          "timestamp": "2025-08-19T15:59:20Z",
+          "tree_id": "08994c1f264588261d858b53a144692de442d348",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d744176e86df0f0aa6239607decdf96f1312937c"
+        },
+        "date": 1755625894265,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014398403451995685,
             "unit": "Mgas/s"
           }
         ]
