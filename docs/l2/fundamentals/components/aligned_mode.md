@@ -86,7 +86,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
     --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
-    --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
 ```
 
 Aligned params explanation:
@@ -94,7 +93,6 @@ Aligned params explanation:
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
 - `ETHREX_ALIGNED_VERIFIER_INTERVAL_MS`: Interval in millisecs, that the `proof_verifier` will sleep between each proof aggregation check.
 - `ETHREX_ALIGNED_BEACON_CLIENT_URL`: URL of the beacon client used by the Aligned SDK to verify proof aggregations.
-- `ETHREX_ALIGNED_SP1_ELF_PATH`: Path to the SP1 ELF program. This is the same file used for SP1 verification outside of Aligned mode.
 - `ETHREX_ALIGNED_NETWORK` and `ETHREX_ALIGNED_FEE_ESTIMATE`: Parameters used by the [Aligned SDK](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference).
 
 ### 4. Running the Prover

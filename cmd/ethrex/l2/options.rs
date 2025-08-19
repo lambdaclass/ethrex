@@ -223,7 +223,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                sp1_elf_path: opts.aligned_opts.sp1_elf_path,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -617,24 +616,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        default_value_t = format!("{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub sp1_elf_path: String,
-    #[arg(
-        long,
-        default_value_t = format!("{}/../../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
-        value_name = "ETHREX_ALIGNED_RISC0_ELF_PATH",
-        env = "ETHREX_ALIGNED_RISC0_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the RISC0 elf. This is used for proof verification."
-    )]
-    pub risc0_elf_path: String,
 }
 
 impl Default for AlignedOptions {
@@ -645,14 +626,6 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            sp1_elf_path: format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            risc0_elf_path: format!(
-                "{}/../../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            ),
         }
     }
 }
