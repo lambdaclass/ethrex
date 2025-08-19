@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-19
+
+- Improve addmod and mulmod opcode performance [#4072](https://github.com/lambdaclass/ethrex/pull/4072)
+
 ### 2025-08-14
 
 - Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
