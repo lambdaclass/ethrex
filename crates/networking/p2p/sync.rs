@@ -21,7 +21,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Trie, TrieError};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::cell::OnceCell;
 use std::{
     array,
@@ -1246,23 +1246,21 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 
 pub async fn validate_storage_root(store: Store, state_root: H256) {
     info!("Starting validate_storage_root");
-    for (hashed_address, account_state) in store
+    store
         .clone()
         .iter_accounts(state_root)
         .expect("We should be able to open the store")
+        .par_bridge()
+        .for_each(|(hashed_address, account_state)|
     {
         let store_clone = store.clone();
-        let computed_storage_root = tokio::task::spawn_blocking(move || {
-            Trie::compute_hash_from_unsorted_iter(
+        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
                 store_clone
                     .iter_storage(state_root, hashed_address)
                     .expect("we couldn't iterate over accounts")
                     .expect("This address should be valid")
                     .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-            )
-        })
-        .await
-        .expect("We should be able to create threads");
+            );
 
         let tree_validated = account_state.storage_root == computed_storage_root;
         if tree_validated {
@@ -1273,6 +1271,6 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
                 account_state.storage_root
             );
         }
-    }
+    });
     info!("Finished validate_storage_root");
 }
