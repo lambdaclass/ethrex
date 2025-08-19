@@ -519,7 +519,7 @@ impl Blockchain {
                     )
                 })?;
             info!("Executed block with number {}", block.header.number);
-            if block.header.number == 8135492 {
+            if block.header.number == 8135493 {
                 break;
             }
             last_valid_hash = block.hash();
