@@ -44,7 +44,7 @@ use crate::{
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+            transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
         l2::{
@@ -69,7 +69,7 @@ use crate::{
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);
+const TX_BROADCAST_INTERVAL: u64 = 500;
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
@@ -202,15 +202,17 @@ impl RLPxConnection {
         stream: TcpStream,
     ) -> RLPxConnectionHandle {
         let inner_state = InnerState::Receiver(Receiver {
-            context,
+            context: context.clone(),
             peer_addr,
             stream: Arc::new(stream),
         });
+        tracing::info!(target: "p2p::connection", peer_ip = %peer_addr.ip(), peer_port = peer_addr.port(), direction = "inbound", "Spawn RLPx receiver connection");
         let connection = RLPxConnection { inner_state };
         connection.start()
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
+        tracing::info!(target: "p2p::connection", peer_enode = %node.enode_url(), peer_ip = %node.ip, node_version = ?node.version, tcp_port = node.tcp_port, udp_port = node.udp_port, direction = "outbound", "Spawn RLPx initiator connection");
         let inner_state = InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
@@ -232,6 +234,7 @@ impl GenServer for RLPxConnection {
     ) -> Result<InitResult<Self>, Self::Error> {
         match handshake::perform(self.inner_state).await {
             Ok((mut established_state, stream)) => {
+                tracing::info!(target: "p2p::connection", peer_enode = %established_state.node.enode_url(), peer_ip = %established_state.node.ip, node_version = ?established_state.node.version, tcp_port = established_state.node.tcp_port, udp_port = established_state.node.udp_port, inbound = established_state.inbound, "RLPx handshake succeeded");
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
 
                 if let Err(reason) =
@@ -252,8 +255,7 @@ impl GenServer for RLPxConnection {
                 }
             }
             Err(err) => {
-                // Handshake failed, just log a debug message.
-                // No connection was established so no need to perform any other action
+                tracing::warn!(target: "p2p::connection", error = %err, "RLPx handshake failed {}", err);
                 debug!("Failed Handshake on RLPx connection {err}");
                 self.inner_state = InnerState::HandshakeFailed;
                 Ok(NoSuccess(self))
@@ -412,13 +414,14 @@ where
     }
     init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
+    tracing::info!(target: "p2p::connection", peer_enode = %state.node.enode_url(), peer_ip = %state.node.ip, tcp_port = state.node.tcp_port, udp_port = state.node.udp_port, inbound = state.inbound, node_version = ?state.node.version, negotiated_eth = ?state.negotiated_eth_capability, negotiated_snap = ?state.negotiated_snap_capability, "Peer connection initialized");
 
     // Send transactions transaction hashes from mempool at connection start
     send_new_pooled_tx_hashes(state).await?;
 
     // Periodic broadcast check repeated events.
     send_interval(
-        TX_BROADCAST_INTERVAL,
+        Duration::from_millis(random::<u64>() % TX_BROADCAST_INTERVAL + TX_BROADCAST_INTERVAL) ,
         handle.clone(),
         CastMessage::SendNewPooledTxHashes,
     );
@@ -454,9 +457,11 @@ where
     );
 
     if state.negotiated_eth_capability.is_some() {
+        tracing::info!("AAAAAAAA NEGOTIATED CAPABILITY {:?}", state.node.version);
         let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
         let message_builder =
             |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
+        
         spawn_listener(handle.clone(), message_builder, stream);
     }
 
@@ -478,13 +483,11 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .collect();
         if !txs.is_empty() {
             for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
+                let mut txs_to_send = Vec::with_capacity(tx_chunk.len());
                 for tx in tx_chunk {
                     txs_to_send.push((**tx).clone());
                     state.broadcasted_txs.insert(tx.hash());
                 }
-
                 send(
                     state,
                     Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
@@ -495,7 +498,11 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
                 .await?;
                 log_peer_debug(
                     &state.node,
-                    &format!("Sent {tx_count} transaction hashes to peer"),
+                    &format!(
+                        "Sent {} transaction hashes to peer (chunked, soft limit {})",
+                        tx_chunk.len(),
+                        NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT
+                    ),
                 );
             }
         }
@@ -700,7 +707,7 @@ where
             if negotiated_eth_version == 0 {
                 return Err(RLPxError::NoMatchingCapabilities());
             }
-            debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
+            tracing::info!("Negotatied eth version: eth/{}, for {:?}", negotiated_eth_version, hello_message.client_id);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
@@ -785,15 +792,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                     valid_txs.push(tx);
                 }
-                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
-                // subset and send only the hashes to everyone else.
-                // Consider sending to the sqrt of the number of peers like geth does.
                 if !valid_txs.is_empty() {
+                    // We no longer rebroadcast full Transactions; rely on NewPooledTransactionHashes + Get/PooledTransactions flow.
                     log_peer_debug(
                         &state.node,
-                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
+                        &format!(
+                            "Ingested {} transactions (no full tx rebroadcast; hashes will be advertised)",
+                            valid_txs.len()
+                        ),
                     );
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
         }
@@ -835,11 +842,44 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             );
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
+            // Mark all received hashes so we don't echo them back later.
+            for h in &new_pooled_transaction_hashes.transaction_hashes {
+                state.broadcasted_txs.insert(*h);
+            }
+            const SOFT_LIMIT: usize = 256; // GetPooledTransactions soft limit
+            let unknown_hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            let request = GetPooledTransactions::new(random(), hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
+            // Get hashes already requested but not yet received.
+            let already_requested_hashes: HashSet<H256> = state
+                .requested_pooled_txs
+                .values()
+                .flat_map(|hashes| hashes.transaction_hashes.iter())
+                .cloned()
+                .collect();
+
+            let hashes_to_request: Vec<H256> = unknown_hashes
+                .into_iter()
+                .filter(|hash| !already_requested_hashes.contains(hash))
+                .collect();
+
+            if !hashes_to_request.is_empty() {
+                log_peer_debug(
+                    &state.node,
+                    &format!(
+                        "Requesting {} transaction hashes from peer",
+                        hashes_to_request.len()
+                    ),
+                );
+                for hashes_chunk in hashes_to_request.chunks(SOFT_LIMIT) {
+                    let request = GetPooledTransactions::new(random::<u64>(), hashes_chunk.to_vec());
+                    // Store original announcement for validation
+                    state
+                        .requested_pooled_txs
+                        .insert(request.id, new_pooled_transaction_hashes.clone());
+                    send(state, Message::GetPooledTransactions(request)).await?;
+                }
+            }
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
@@ -918,29 +958,13 @@ async fn handle_broadcast(
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
-            Message::Transactions(txs) => {
-                let mut filtered = Vec::with_capacity(txs.transactions.len());
-                for tx in &txs.transactions {
-                    let tx_hash = tx.hash();
-                    if state.broadcasted_txs.contains(&tx_hash) {
-                        continue;
-                    }
-                    filtered.push(tx.clone());
-                    state.broadcasted_txs.insert(tx_hash);
-                }
-                if !filtered.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!(
-                            "Sending {} transactions to peer from broadcast",
-                            filtered.len()
-                        ),
-                    );
-                    let new_msg = Message::Transactions(Transactions {
-                        transactions: filtered,
-                    });
-                    send(state, new_msg).await?;
-                }
+            Message::Transactions(_) => {
+                tracing::info!("BBBBBB handle_broadcast Broadcasting Transactions, WHY? {:?}", state.node.version);
+                // Drop full transaction broadcasts (hash-based propagation only).
+                log_peer_debug(
+                    &state.node,
+                    "Ignoring broadcasted full Transactions (using hash-based propagation)",
+                );
             }
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
@@ -965,14 +989,9 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
-        txs_msg @ Message::Transactions(_) => {
-            let txs = Arc::new(txs_msg);
-            let task_id = tokio::task::id();
-            let Ok(_) = state.connection_broadcast_send.send((task_id, txs)) else {
-                let error_message = "Could not broadcast received transactions";
-                log_peer_error(&state.node, error_message);
-                return Err(RLPxError::BroadcastError(error_message.to_owned()));
-            };
+        Message::Transactions(_) => {
+            tracing::info!("CCCCCCCC broadcast_message Broadcasting Transactions MESSAGE, WHY? {:?}", state.node.version);
+            // Silently ignore attempts to broadcast full Transactions; spec-compliant hash flow in use.
             Ok(())
         }
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
