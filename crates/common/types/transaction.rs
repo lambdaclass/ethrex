@@ -2432,6 +2432,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 chain_id: value.chain_id.unwrap_or_default(),
                 from: value.from,
+                ..Default::default()
             })
         }
     }
