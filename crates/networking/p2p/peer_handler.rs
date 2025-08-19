@@ -14,12 +14,11 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
+use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels, PeerData},
-    metrics::METRICS,
-    rlpx::{
+    kademlia::{Kademlia, PeerChannels, PeerData}, metrics::METRICS, rlpx::{
         connection::server::CastMessage,
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
@@ -31,12 +30,7 @@ use crate::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
-    },
-    snap::encodable_to_proof,
-    utils::{
-        dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
-    },
+    }, snap::encodable_to_proof, snap_sync::downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse}, utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file}
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -228,23 +222,22 @@ impl PeerHandler {
 
         info!("Retrieving sync head block number from peers");
 
-        let mut retries = 1;
-
         while sync_head_number == 0 {
-            for (peer_id, mut peer_channel) in peers_table.clone() {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
-                    Ok(number) => {
-                        sync_head_number = number;
+            for (peer_id, peer_channels) in peers_table.clone() {
+                match Downloader::new(peer_id, peer_channels)
+                    .start()
+                    .call(DownloaderCallRequest::CurrentHead { sync_head })
+                    .await
+                {
+                    Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
+                        sync_head_number = current_head_number;
+                        break;
                     }
-                    Err(err) => {
-                        trace!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
-                        );
+                    _ => {
+                        trace!("Failed to retrieve sync head block number from peer {peer_id}");
                     }
                 }
             }
-
-            retries += 1;
         }
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -274,10 +267,8 @@ impl PeerHandler {
 
         // Push the reminder
         if block_count % chunk_count != 0 {
-            tasks_queue_not_started.push_back((
-                chunk_count * chunk_limit + start,
-                block_count % chunk_count,
-            ));
+            tasks_queue_not_started
+                .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
 
         let mut downloaded_count = 0_u64;
@@ -935,7 +926,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send account dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -1520,7 +1511,9 @@ impl PeerHandler {
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 1024 * 8 {
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                > 1024 * 1024 * 1024 * 8
+            {
                 let current_account_hashes = account_storage_roots
                     .iter()
                     .map(|a| a.0)
@@ -1731,7 +1724,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send storage dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -2218,10 +2211,9 @@ impl PeerHandler {
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
-        let response = tokio::time::timeout(Duration::from_secs(5), async move {
-            receiver.recv().await
-        })
-        .await;
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
+                .await;
 
         // TODO: we need to check, this seems a scenario where the peer channel does teardown
         // after we sent the backend message
