@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::seq::SliceRandom;
+use rand::{random, seq::SliceRandom};
 use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
@@ -2101,7 +2101,7 @@ impl PeerHandler {
         }
 
         let (free_peer_id, _) = free_downloaders
-            .choose(&mut rand::thread_rng())
+            .get(random::<usize>() % free_downloaders.len())
             .expect("There should be at least one free downloader");
 
         let Some(free_downloader_channels) = self
