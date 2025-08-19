@@ -18,7 +18,9 @@ use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels, PeerData}, metrics::METRICS, rlpx::{
+    kademlia::{Kademlia, PeerChannels, PeerData},
+    metrics::METRICS,
+    rlpx::{
         connection::server::CastMessage,
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
@@ -30,7 +32,10 @@ use crate::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
-    }, snap::encodable_to_proof, snap_sync::downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse}, utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file}
+    },
+    snap::encodable_to_proof,
+    snap_sync::downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse},
+    utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);

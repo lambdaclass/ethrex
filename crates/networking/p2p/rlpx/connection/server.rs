@@ -14,19 +14,17 @@ use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle,
-        InitResult::{self, NoSuccess, Success},
-        send_interval, spawn_listener,
-    },
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle,
+    InitResult::{self, NoSuccess, Success},
+    send_interval, spawn_listener,
 };
 use spawned_rt::tasks::{BroadcastStream, mpsc};
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast},
     task::{self, Id},
+    time::timeout,
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -37,7 +35,7 @@ use crate::{
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
-        Message,
+        self, Message,
         connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
@@ -178,6 +176,12 @@ pub enum CastMessage {
     L2(L2Cast),
 }
 
+#[derive(Clone, Debug)]
+pub enum CallMessage {
+    // BackendMessages contain the receiver end of a channel to get the response
+    BackendMessage(Arc<Mutex<mpsc::Receiver<rlpx::Message>>>, Message),
+}
+
 pub enum OutMessage {
     InitResponse {
         node: Node,
@@ -185,6 +189,7 @@ pub enum OutMessage {
     },
     Done,
     Error,
+    BlockHeadersRequest(BlockHeaders),
 }
 
 #[derive(Debug)]
@@ -218,7 +223,7 @@ impl RLPxConnection {
 }
 
 impl GenServer for RLPxConnection {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = CastMessage;
     type OutMsg = MsgResult;
     type Error = RLPxError;
@@ -363,6 +368,48 @@ impl GenServer for RLPxConnection {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
             CastResponse::NoReply
+        }
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match &mut self.inner_state {
+            InnerState::Established(established_state) => {
+                match message {
+                    CallMessage::BackendMessage(receiver_end, message) => {
+                        // We first get a lock of the receiver end so we are sure no other task
+                        // is trying to read from it.
+                        let mut receiver_end = receiver_end.lock().await;
+
+                        // Send message through the sink
+                        send(established_state, message).await.unwrap(); // TODO: handle unwrap
+
+                        // Then wait for the reply
+                        match timeout(Duration::from_millis(1500), receiver_end.recv()).await {
+                            Ok(Some(response)) => {
+                                if let Message::BlockHeaders(block_headers) = response {
+                                    CallResponse::Reply(Ok(OutMessage::BlockHeadersRequest(
+                                        block_headers,
+                                    )))
+                                } else {
+                                    CallResponse::Reply(Err(RLPxError::BadRequest(
+                                        "Expected BlockHeaders response".to_string(),
+                                    )))
+                                }
+                            }
+                            _ => CallResponse::Reply(Err(RLPxError::InternalError(
+                                "Timeout waiting for backend response".to_string(),
+                            ))),
+                        }
+                    }
+                }
+            }
+            _ => {
+                todo!("Handle other connection cases")
+            }
         }
     }
 
