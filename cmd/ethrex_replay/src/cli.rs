@@ -432,7 +432,8 @@ impl SubcommandProve {
                     }
 
                     if to_csv {
-                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+                        let file_name =
+                            format!("ethrex_replay_{network}_{}.csv", ReplayerMode::ProveSP1);
 
                         let mut file = std::fs::OpenOptions::new()
                             .append(true)
