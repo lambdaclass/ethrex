@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755625910548,
+  "lastUpdate": 1755630176235,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9115,6 +9115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163275290928,
             "range": "± 297007885",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6aac0d0ac0d05e0ca11df68cf1584400d6937fa3",
+          "message": "chore(levm): improve organization of new levm test runner (#3958)\n\n**Motivation**\n\n- this runner was inside the same folder as the other runner and also\nthe internal structure wasn't the most organized\n\n**Description**\n\n- move files\n- improve makefile\n- improve files structure\n\n<img width=\"290\" height=\"416\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/7d4f6583-2af1-4b3f-b77b-dcf355dee897\"\n/>",
+          "timestamp": "2025-08-19T18:09:41Z",
+          "tree_id": "15581f9fa6e5e69afbc8ffdb842dc5599f505b16",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6aac0d0ac0d05e0ca11df68cf1584400d6937fa3"
+        },
+        "date": 1755630160656,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165813045703,
+            "range": "± 1221492121",
             "unit": "ns/iter"
           }
         ]
