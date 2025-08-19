@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end < current_call_frame.bytecode.len() {
+            if code_offset_end <= current_call_frame.bytecode.len() {
                 #[expect(unsafe_code, reason = "bounds checked beforehand")]
                 let slice = unsafe {
                     current_call_frame
