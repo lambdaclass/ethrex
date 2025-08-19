@@ -21,7 +21,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
-    types::{Account, Fork, Transaction, tx_fields::*},
+    types::{Account, Fork, StorageValue, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -673,7 +673,17 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
             info: account.info,
-            storage: account.storage,
+            storage: account
+                .storage
+                .into_iter()
+                .map(|(key, value)| {
+                    let storage_value = StorageValue {
+                        current_value: value,
+                        previous_value: None,
+                    };
+                    (key, storage_value)
+                })
+                .collect(),
             status: AccountStatus::Unmodified,
         },
         account.code,

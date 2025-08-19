@@ -11,6 +11,7 @@ use keccak_hash::keccak;
 
 use super::Database;
 use crate::account::LevmAccount;
+use crate::account::StorageValue;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
@@ -130,7 +131,11 @@ impl GeneralizedDatabase {
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
-                account.storage.insert(key, value);
+                let storage_value = StorageValue {
+                    current_value: value,
+                    previous_value: None,
+                };
+                account.storage.insert(key, storage_value);
             }
             None => {
                 // If we are fetching the storage of an account it means that we previously fetched the account from database before.
@@ -407,7 +412,7 @@ impl<'a> VM<'a> {
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
-                return Ok(*value);
+                return Ok((*value).current_value);
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
@@ -418,7 +423,11 @@ impl<'a> VM<'a> {
 
         // Update the account with the fetched value
         let account = self.get_account_mut(address)?;
-        account.storage.insert(key, value);
+        let storage_value = StorageValue {
+            current_value: value,
+            previous_value: None,
+        };
+        account.storage.insert(key, storage_value);
 
         Ok(value)
     }
@@ -434,7 +443,11 @@ impl<'a> VM<'a> {
         self.backup_storage_slot(address, key, current_value)?;
 
         let account = self.get_account_mut(address)?;
-        account.storage.insert(key, new_value);
+        let updated_storage_value = StorageValue {
+            current_value: new_value,
+            previous_value: Some(current_value),
+        };
+        account.storage.insert(key, updated_storage_value);
         Ok(())
     }
 

@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::{Address, H256, U256, types::AccountInfo};
+use crate::{
+    Address, H256,
+    types::{AccountInfo, StorageValue},
+};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +13,7 @@ pub struct AccountUpdate {
     pub removed: bool,
     pub info: Option<AccountInfo>,
     pub code: Option<Bytes>,
-    pub added_storage: BTreeMap<H256, U256>,
+    pub added_storage: BTreeMap<H256, StorageValue>,
     // Matches TODO in code
     // removed_storage_keys: Vec<H256>,
 }

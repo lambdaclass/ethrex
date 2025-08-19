@@ -215,14 +215,15 @@ impl ExecutionWitnessResult {
                         });
 
                     for (storage_key, storage_value) in &update.added_storage {
+                        let current = storage_value.current_value;
                         let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
+                        if current.is_zero() {
                             storage_trie
                                 .remove(hashed_key)
                                 .expect("failed to remove key");
                         } else {
                             storage_trie
-                                .insert(hashed_key, storage_value.encode_to_vec())
+                                .insert(hashed_key, current.encode_to_vec())
                                 .expect("failed to insert in trie");
                         }
                     }

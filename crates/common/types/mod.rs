@@ -10,6 +10,7 @@ mod genesis;
 pub mod payload;
 mod receipt;
 pub mod requests;
+pub mod storage_value;
 pub mod transaction;
 pub mod tx_fields;
 
@@ -21,5 +22,6 @@ pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
 pub use receipt::*;
+pub use storage_value::*;
 pub use transaction::*;
 pub use tx_fields::*;

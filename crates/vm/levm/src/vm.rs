@@ -60,8 +60,6 @@ pub struct VM<'a> {
     pub tx: Transaction,
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
-    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
@@ -92,7 +90,6 @@ impl<'a> VM<'a> {
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
             substate_backups: Vec::new(),
-            storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
