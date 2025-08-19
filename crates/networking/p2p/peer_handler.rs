@@ -70,55 +70,6 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
-async fn ask_peer_head_number(
-    peer_id: H256,
-    peer_channel: &mut PeerChannels,
-    sync_head: H256,
-    retries: i32,
-) -> Result<u64, String> {
-    // TODO: Better error handling
-    trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
-    let request_id = rand::random();
-    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-        id: request_id,
-        startblock: HashOrNumber::Hash(sync_head),
-        limit: 1,
-        skip: 0,
-        reverse: false,
-    });
-
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(request.clone()))
-        .await
-        .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
-
-    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
-
-    match tokio::time::timeout(Duration::from_millis(100), async move {
-        peer_channel.receiver.lock().await.recv().await
-    })
-    .await
-    {
-        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
-            if id == request_id && !block_headers.is_empty() {
-                let sync_head_number = block_headers.last().unwrap().number;
-                trace!(
-                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
-                );
-                Ok(sync_head_number)
-            } else {
-                Err(format!("Received unexpected response from peer {peer_id}"))
-            }
-        }
-        Ok(None) => Err(format!("Error receiving message from peer {peer_id}")),
-        Ok(_other_msgs) => Err("Received unexpected message from peer {peer_id}".into()),
-        Err(_err) => Err(format!(
-            "Timeout while waiting for sync head from {peer_id}"
-        )),
-    }
-}
-
 impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {

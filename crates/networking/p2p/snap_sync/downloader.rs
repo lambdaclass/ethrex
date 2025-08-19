@@ -46,9 +46,10 @@ impl Downloader {
         start_block: u64,
         chunk_limit: u64,
     ) {
-        if headers.is_empty() {
-            warn!("[SYNCING] Failed to get headers from downloader")
-        }
+        // Too spammy
+        // if headers.is_empty() {
+        //     warn!("[SYNCING] Failed to get headers from downloader")
+        // }
 
         if let Err(_) = response_channel
             .send((headers, self.peer_id, start_block, chunk_limit))
