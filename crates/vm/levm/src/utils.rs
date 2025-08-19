@@ -183,7 +183,11 @@ pub fn restore_cache_state(
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
-            account.storage.insert(key, value);
+            let storage_value = StorageValue {
+                current_value: value,
+                previous_value: U256::from(0),
+            };
+            account.storage.insert(key, storage_value);
         }
     }
 
@@ -679,7 +683,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
                 .map(|(key, value)| {
                     let storage_value = StorageValue {
                         current_value: value,
-                        previous_value: None,
+                        previous_value: U256::from(0),
                     };
                     (key, storage_value)
                 })

@@ -6,12 +6,12 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
+use ethrex_common::types::StorageValue;
 use keccak_hash::H256;
 use keccak_hash::keccak;
 
 use super::Database;
 use crate::account::LevmAccount;
-use crate::account::StorageValue;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
@@ -133,7 +133,7 @@ impl GeneralizedDatabase {
             Some(account) => {
                 let storage_value = StorageValue {
                     current_value: value,
-                    previous_value: None,
+                    previous_value: U256::from(0),
                 };
                 account.storage.insert(key, storage_value);
             }
@@ -190,7 +190,12 @@ impl GeneralizedDatabase {
                             ))))?
                             .clone(),
                     ),
-                    added_storage: new_state_account.storage.clone(),
+                    added_storage: new_state_account
+                        .storage
+                        .clone()
+                        .into_iter()
+                        .map(|(key, storage_value)| (key, storage_value.current_value))
+                        .collect(),
                 };
                 account_updates.push(new_account_update);
                 continue;
@@ -224,11 +229,12 @@ impl GeneralizedDatabase {
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = BTreeMap::new();
 
-            for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
+            for (key, new_account_storage_value) in &new_state_account.storage {
+                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?.current_value;
 
+                let new_value = new_account_storage_value.current_value;
                 if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
+                    added_storage.insert(*key, new_value.clone());
                     storage_updated = true;
                 }
             }
@@ -372,13 +378,13 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(value) = self.storage_original_values.get(&(address, key)) {
-            return Ok(*value);
-        }
+        let storage_value = self.get_account_mut(address)?.storage.get(&key);
+        let original_value = match storage_value {
+            Some(value) => value.previous_value,
+            None => U256::from(0),
+        };
 
-        let value = self.get_storage_value(address, key)?;
-        self.storage_original_values.insert((address, key), value);
-        Ok(value)
+        Ok(original_value)
     }
 
     /// Accesses to an account's storage slot and returns the value in it.
@@ -411,8 +417,8 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
-            if let Some(value) = account.storage.get(&key) {
-                return Ok((*value).current_value);
+            if let Some(storage_value) = account.storage.get(&key) {
+                return Ok(storage_value.current_value);
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
@@ -425,7 +431,7 @@ impl<'a> VM<'a> {
         let account = self.get_account_mut(address)?;
         let storage_value = StorageValue {
             current_value: value,
-            previous_value: None,
+            previous_value: U256::from(0),
         };
         account.storage.insert(key, storage_value);
 
@@ -445,7 +451,7 @@ impl<'a> VM<'a> {
         let account = self.get_account_mut(address)?;
         let updated_storage_value = StorageValue {
             current_value: new_value,
-            previous_value: Some(current_value),
+            previous_value: current_value,
         };
         account.storage.insert(key, updated_storage_value);
         Ok(())

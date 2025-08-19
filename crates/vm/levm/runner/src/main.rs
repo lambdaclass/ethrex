@@ -246,12 +246,12 @@ fn compare_initial_and_current_accounts(
             }
 
             for (slot, value) in &acc.storage {
-                let default_value = U256::default();
-                let prev_value = prev.storage.get(slot).unwrap_or(&default_value);
-                if prev_value != value {
+                let prev_value = value.previous_value;
+                let current_value = value.current_value;
+                if prev_value != current_value {
                     info!(
                         "    Storage slot {:?} changed: {:?} -> {:?}",
-                        slot, prev_value, value
+                        slot, prev_value, current_value
                     );
                 }
             }

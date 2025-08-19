@@ -215,7 +215,7 @@ impl ExecutionWitnessResult {
                         });
 
                     for (storage_key, storage_value) in &update.added_storage {
-                        let current = storage_value.current_value;
+                        let current = storage_value;
                         let hashed_key = hash_key(storage_key);
                         if current.is_zero() {
                             storage_trie

@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::{
-    Address, H256,
-    types::{AccountInfo, StorageValue},
-};
+use crate::{Address, H256, types::AccountInfo};
 use bytes::Bytes;
+use ethereum_types::U256;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -13,7 +11,7 @@ pub struct AccountUpdate {
     pub removed: bool,
     pub info: Option<AccountInfo>,
     pub code: Option<Bytes>,
-    pub added_storage: BTreeMap<H256, StorageValue>,
+    pub added_storage: BTreeMap<H256, U256>,
     // Matches TODO in code
     // removed_storage_keys: Vec<H256>,
 }
