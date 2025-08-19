@@ -618,18 +618,14 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     {
         return Err(PrecompileError::InvalidPoint.into());
     }
-    info!("first_point_x: {first_point_x:?}");
 
-    if first_point_x > BN254_PRIME_FIELD_ORDER {
-        return Err(InternalError::msg("X Coordinate exceeds field modulus").into())
-    }
-    if first_point_y > BN254_PRIME_FIELD_ORDER {
-        return Err(InternalError::msg("Y Coordinate exceeds field modulus").into())
+    if first_point_x > BN254_PRIME_FIELD_ORDER || first_point_y > BN254_PRIME_FIELD_ORDER{
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into())
     }
 
     let first_point_y = BN254FieldElement::from_raw(first_point_y);
     let first_point_x = BN254FieldElement::from_raw(first_point_x);
-    info!("first_point_x: {first_point_x}");
+
     Ok((first_point_x, first_point_y))
 }
 
