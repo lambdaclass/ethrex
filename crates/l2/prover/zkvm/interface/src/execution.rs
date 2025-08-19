@@ -126,7 +126,6 @@ pub fn stateless_validation_l1(
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    dbg!("INSIDE L1 STATLESS VALIDATION");
     let StatelessResult {
         initial_state_hash,
         final_state_hash,
@@ -134,7 +133,6 @@ pub fn stateless_validation_l1(
         non_privileged_count,
         ..
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
-    dbg!("AFTER EXECUTE_STATELESS");
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -292,7 +290,6 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
-        dbg!("EXECUTING BLOCK");
         // Execute block
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
