@@ -223,7 +223,7 @@ impl StoreEngine for Store {
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         let hashes_and_numbers = block_headers
             .iter()
-            .map(|header| (header.hash().into(), header.number.into()))
+            .map(|header| (header.hash().into(), header.number))
             .collect();
         self.write_batch::<BlockNumbers>(hashes_and_numbers).await?;
         let hashes_and_headers = block_headers

@@ -1,6 +1,6 @@
 use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
 
-use ethrex_common::{H512, types::ForkId};
+use ethrex_common::H512;
 use keccak_hash::H256;
 use rand::{rngs::OsRng, seq::IteratorRandom};
 use secp256k1::SecretKey;

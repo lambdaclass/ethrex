@@ -135,7 +135,7 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
-            inbound,
+            _inbound: inbound,
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
