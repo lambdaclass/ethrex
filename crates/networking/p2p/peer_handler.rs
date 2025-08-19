@@ -112,13 +112,16 @@ impl PeerHandler {
     /// Helper method to record failed peer response
     async fn record_peer_failure(&self, peer_id: H256) {
         let mut scores = self.peer_scores.lock().await;
-        *scores.entry(peer_id).or_default() -= 1;
+        *scores.entry(peer_id).or_default() -= 2;
     }
 
     // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
-    async fn record_peer_critical_failure(&self, _peer_id: H256) {}
+    async fn record_peer_critical_failure(&self, peer_id: H256) {
+        let mut scores = self.peer_scores.lock().await;
+        *scores.entry(peer_id).or_default() -= 10;
+    }
 
     /// TODO: docs
     pub async fn get_peer_channel_with_highest_score(
@@ -393,7 +396,7 @@ impl PeerHandler {
             // Check that there first in progress task is not stalled
             // TODO: not an optimal solution, consider refactoring when adding the Coordinator actor
             if let Some((peer_id, start, limit, start_time)) = task_queue_in_progress.pop_front() {
-                if now.duration_since(start_time).unwrap() > Duration::from_secs(3) {
+                if now.duration_since(start_time).unwrap() > Duration::from_secs(2) {
                     // Task is stalled, reinsert it to the not started queue
                     debug!(
                         "Task for {peer_id} is stalled, re-adding to the queue and freeing downloader",
@@ -1926,24 +1929,15 @@ impl PeerHandler {
             .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
             .collect::<Vec<_>>();
 
-        // TODO: move metric elsewhere
-        // if new_last_metrics_update >= Duration::from_secs(1) {
-        //     *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-        // }
-
         if free_downloaders.is_empty() {
             // No available downloaders to offer
             return None;
         }
 
-        let (mut free_peer_id, _) = free_downloaders[0];
-        for (peer_id, _) in free_downloaders.iter() {
-            let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
-            let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-            if peer_id_score >= max_peer_id_score {
-                free_peer_id = *peer_id;
-            }
-        }
+        let (free_peer_id, _) = free_downloaders
+            .iter()
+            .max_by_key(|(peer_id, _)| scores.get(peer_id).copied().unwrap_or(0))
+            .unwrap(); // TODO: remove unwrap
 
         let Some(free_downloader_channels) = self
             .peer_table
@@ -1963,13 +1957,13 @@ impl PeerHandler {
 
         // Mark the downloader as busy
         downloaders
-            .entry(free_peer_id)
+            .entry(*free_peer_id)
             .and_modify(|downloader_is_free| {
                 *downloader_is_free = false;
             });
 
         // Create and spawn Downloader Actor
-        let downloader = Downloader::new(free_peer_id, free_downloader_channels);
+        let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
         Some(downloader)
     }
 }
