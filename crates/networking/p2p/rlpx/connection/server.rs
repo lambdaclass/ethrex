@@ -10,7 +10,9 @@ use ethrex_common::{
     H256,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_storage::Store;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
@@ -347,10 +349,26 @@ impl GenServer for RLPxConnection {
                         );
                         return CastResponse::Stop;
                     }
+                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree)) => {
+                        if established_state.blockchain.is_synced() {
+                            log_peer_error(
+                                &established_state.node,
+                                &format!("Error handling cast message {message:?}. Error: {e}"),
+                            );
+                        } else {
+                            // TODO: change this to debug and remove the '[SYNCING]' part
+                            log_peer_warn(
+                                &established_state.node,
+                                &format!(
+                                    "[SYNCING] Error handling cast message {message:?}. Error: {e}"
+                                ),
+                            );
+                        }
+                    }
                     _ => {
                         log_peer_warn(
                             &established_state.node,
-                            &format!("Error handling cast message {message:?}. Error: {e}"),
+                            &format!("Error handling cast message {e}"),
                         );
                     }
                 }
