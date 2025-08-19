@@ -394,15 +394,8 @@ impl SubcommandProve {
 
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
-                #[cfg(feature = "sp1")]
-                let replay_mode = ReplayerMode::ExecuteSP1;
-                #[cfg(feature = "risc0")]
-                let replay_mode = ReplayerMode::ExecuteSP1;
-                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-                let replay_mode = ReplayerMode::Execute;
-
                 for (i, block_number) in blocks.iter().enumerate() {
-                    info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
+                    info!("Proving block {}/{}: {block_number}", i + 1, blocks.len());
 
                     let block = eth_client
                         .get_raw_block(BlockIdentifier::Number(*block_number as u64))
@@ -428,7 +421,7 @@ impl SubcommandProve {
                         block,
                         network.clone(),
                         res,
-                        replay_mode.clone(),
+                        ReplayerMode::ProveSP1, // TODO: Support RISC0
                         elapsed,
                     );
 
