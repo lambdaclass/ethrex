@@ -93,7 +93,7 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
 
-    match tokio::time::timeout(Duration::from_millis(100), async move {
+    match tokio::time::timeout(Duration::from_millis(500), async move {
         peer_channel.receiver.lock().await.recv().await
     })
     .await
@@ -231,10 +231,18 @@ impl PeerHandler {
         let mut retries = 1;
 
         while sync_head_number == 0 {
-            for (peer_id, mut peer_channel) in peers_table.clone() {
+            let peers_table = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await;
+
+            for (peer_id, mut peer_channel) in peers_table {
                 match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
                     Ok(number) => {
                         sync_head_number = number;
+                        if number != 0 {
+                            break;
+                        }
                     }
                     Err(err) => {
                         trace!(
