@@ -1,0 +1,4 @@
+./success_report.txt
+./failure_report.txt
+# vectors is not yet part of this folder but will be soon.
+./vectors

@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_ETHREX_WORKDIR: /usr/local/bin
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
 
 permissions:
   # deployments permission to deploy GitHub pages website
