@@ -100,18 +100,6 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
-
         let size = 32;
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
