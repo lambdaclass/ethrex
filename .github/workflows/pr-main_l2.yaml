@@ -150,6 +150,7 @@ jobs:
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Start Sequencer
@@ -210,7 +211,7 @@ jobs:
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          COMPILE_CONTRACTS=true \
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Install rex
@@ -290,7 +291,7 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          COMPILE_CONTRACTS=true \
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Run tests
