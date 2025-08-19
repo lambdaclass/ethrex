@@ -1,8 +1,12 @@
-use crate::calldata::{self};
+use crate::{
+    build_generic_tx,
+    calldata::{self},
+    send_generic_transaction,
+};
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::{clients::send_generic_transaction, signer::LocalSigner};
+use ethrex_l2_rpc::signer::LocalSigner;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
@@ -78,15 +82,15 @@ pub async fn send_l1_to_l2_tx(
         ..Overrides::default()
     };
 
-    let mut l1_to_l2_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            bridge_address,
-            l1_from,
-            l1_calldata.into(),
-            l1_tx_overrides,
-        )
-        .await?;
+    let mut l1_to_l2_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        bridge_address,
+        l1_from,
+        l1_calldata.into(),
+        l1_tx_overrides,
+    )
+    .await?;
 
     l1_to_l2_tx.gas = l1_to_l2_tx.gas.map(|gas| gas * 2); // tx reverts in some cases otherwise
 
