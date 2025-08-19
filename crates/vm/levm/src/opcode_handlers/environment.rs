@@ -102,19 +102,7 @@ impl<'a> VM<'a> {
         let mut data = [0u8; 32];
         let size = 32;
 
-        // Happy fast path
-        if let Some(calldata_offset_end) = offset.checked_add(size) {
-            if calldata_offset_end <= current_call_frame.calldata.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe {
-                    current_call_frame
-                        .calldata
-                        .get_unchecked(offset..calldata_offset_end)
-                };
-
-                data.copy_from_slice(slice);
-            }
-        } else if offset < current_call_frame.calldata.len() {
+        if offset < current_call_frame.calldata.len() {
             let diff = current_call_frame.calldata.len().wrapping_sub(offset);
             let final_size = size.min(diff);
             let end = offset.wrapping_add(final_size);
