@@ -259,48 +259,46 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 /// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
 /// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
+    println!("Precompile ecrecover called");
     let gas_cost = ECRECOVER_COST;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
-    println!("{}", hex::encode(calldata.clone()));
+    println!("Calldata: {}", hex::encode(calldata.clone()));
 
-    println!("4");
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
     println!("Hash: {}", hex::encode(hash));
     let Ok(message) = Message::from_digest_slice(hash) else {
         println!("5");
+        println!("Precompile ecrecover error on message");
         return Ok(Bytes::new());
     };
 
-    println!("6");
     let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
     println!("v: {}", v);
 
-    println!("7");
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
         println!("8");
+        println!("Precompile ecrecover error on v");
         return Ok(Bytes::new());
     }
 
-    println!("9");
     let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
     let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
     let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
-        println!("10");
+        println!("Precompile ecrecover error on recovery id");
         return Ok(Bytes::new());
     };
     println!("Recovery Id: {:?}", recovery_id);
 
-    println!("11");
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
     let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
-        println!("12");
+        println!("Precompile ecrecover error on signature");
         return Ok(Bytes::new());
     };
 
@@ -308,26 +306,22 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     println!("Signature: {:?}", signature);
     println!("Message: {:?}", message);
 
-    println!("13");
     // Recover the address using secp256k1
     let Ok(public_key) = signature.recover(&message) else {
-        println!("14");
+        println!("Precompile ecrecover error on recover");
         return Ok(Bytes::new());
     };
 
-    println!("15");
     let mut public_key = public_key.serialize_uncompressed();
 
-    println!("16");
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);
 
-    println!("17");
     // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
     let mut output = vec![0u8; 12];
     output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
 
-    println!("18");
+    println!("Precompile ecrecover exited successfully: {:?}", output);
     Ok(Bytes::from(output.to_vec()))
 }
 
