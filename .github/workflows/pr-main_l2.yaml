@@ -39,10 +39,13 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
-      - name: Create placeholder SP1 ELF
+      - name: Create placeholder for SP1 and RISC0 VKs
         run: |
           mkdir -p crates/l2/prover/zkvm/interface/sp1/out
+          mkdir -p crates/l2/prover/zkvm/interface/risc0/out
           touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          touch crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -141,15 +144,14 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Start Sequencer
         run: |
@@ -203,16 +205,14 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Install rex
         run: |
@@ -227,7 +227,6 @@ jobs:
 
       - name: Register sequencer
         run: |
-          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
 
@@ -240,13 +239,11 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
-          cd ../crates/l2
+          cd crates/l2
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
@@ -289,15 +286,13 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Run tests
         run: |

@@ -10,9 +10,10 @@ use ethrex_l2_rpc::{
     clients::{send_eip1559_transaction, send_tx_bump_gas_exponential_backoff},
     signer::{LocalSigner, Signer},
 };
-use ethrex_rpc::clients::eth::L1MessageProof;
-use ethrex_rpc::clients::eth::{EthClient, Overrides, WrappedTransaction, errors::EthClientError};
-use ethrex_rpc::types::receipt::RpcReceipt;
+use ethrex_rpc::{
+    clients::eth::{EthClient, L1MessageProof, Overrides, errors::EthClientError},
+    types::receipt::RpcReceipt,
+};
 
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -533,60 +534,20 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
     )
 }
 
-pub async fn initialize_contract(
-    contract_address: Address,
-    initialize_calldata: Vec<u8>,
-    initializer: &Signer,
-    eth_client: &EthClient,
-) -> Result<H256, EthClientError> {
-    let gas_price = eth_client
-        .get_gas_price_with_extra(20)
-        .await?
-        .try_into()
-        .map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
-    let initialize_tx = eth_client
-        .build_eip1559_transaction(
-            contract_address,
-            initializer.address(),
-            initialize_calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
-
-    eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer.address())
-        .await?;
-
-    let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, &mut wrapped_tx, initializer).await?;
-
-    Ok(initialize_tx_hash)
-}
-
 pub async fn call_contract(
     client: &EthClient,
-    private_key: &SecretKey,
+    signer: &Signer,
     to: Address,
     signature: &str,
     parameters: Vec<Value>,
 ) -> Result<H256, EthClientError> {
     let calldata = encode_calldata(signature, &parameters)?.into();
-    let signer: Signer = Signer::Local(LocalSigner::new(*private_key));
     let from = signer.address();
     let tx = client
         .build_eip1559_transaction(to, from, calldata, Default::default())
         .await?;
 
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer).await?;
+    let tx_hash = send_eip1559_transaction(client, &tx, signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)
