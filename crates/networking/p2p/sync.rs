@@ -1208,7 +1208,7 @@ enum SyncError {
     SnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
-    #[error("Failed to aqcuire lock on maybe_big_account_storage")]
+    #[error("Failed to acquire lock on maybe_big_account_storage")]
     MaybeBigAccount,
     #[error("Failed to fetch bytecodes from peers")]
     BytecodesNotFound,
