@@ -116,10 +116,10 @@ impl GenServer for RLPxInitiator {
     type Error = RLPxInitiatorError;
 
     async fn handle_cast(
-        self,
+        &mut self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::LookForPeers => {
                 debug!(received = "Look for peers");
@@ -132,7 +132,7 @@ impl GenServer for RLPxInitiator {
                     Self::CastMsg::LookForPeers,
                 );
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }

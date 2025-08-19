@@ -75,8 +75,8 @@ impl DiscoverySideCar {
             udp_socket,
             kademlia,
 
-            revalidation_check_interval: Duration::from_secs(5),
-            revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+            revalidation_check_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+            revalidation_interval: Duration::from_secs(12 * 60 * 60),       // 12 hours
 
             initial_lookup_interval: Duration::from_secs(5),
             lookup_interval: Duration::from_secs(5 * 60), // 5 minutes
@@ -291,17 +291,17 @@ impl GenServer for DiscoverySideCar {
     type Error = DiscoverySideCarError;
 
     async fn handle_cast(
-        self,
+        &mut self,
         message: Self::CastMsg,
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Revalidate => {
                 debug!(received = "Revalidate");
 
                 self.revalidate().await;
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
             Self::CastMsg::Lookup => {
                 debug!(received = "Lookup");
@@ -311,14 +311,14 @@ impl GenServer for DiscoverySideCar {
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
             Self::CastMsg::Prune => {
                 debug!(received = "Prune");
 
                 self.prune().await;
 
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }

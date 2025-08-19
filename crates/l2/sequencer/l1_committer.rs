@@ -60,7 +60,6 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Clone)]
 pub struct L1Committer {
     eth_client: EthClient,
     blockchain: Arc<Blockchain>,
@@ -551,10 +550,10 @@ impl GenServer for L1Committer {
     type Error = CommitterError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
@@ -564,7 +563,7 @@ impl GenServer for L1Committer {
         }
         let check_interval = random_duration(self.commit_time_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 

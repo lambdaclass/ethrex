@@ -168,7 +168,7 @@ pub struct ProofCoordinator {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     rpc_url: String,
-    tdx_private_key: SecretKey,
+    tdx_private_key: Option<SecretKey>,
     blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
@@ -376,10 +376,13 @@ impl ProofCoordinator {
 
         match prover_type {
             ProverType::TDX => {
+                let Some(key) = self.tdx_private_key.as_ref() else {
+                    return Err(ProofCoordinatorError::MissingTDXPrivateKey);
+                };
                 prepare_quote_prerequisites(
                     &self.eth_client,
                     &self.rpc_url,
-                    &hex::encode(self.tdx_private_key.as_ref()),
+                    &hex::encode(key.secret_bytes()),
                     &hex::encode(&payload),
                 )
                 .await
@@ -388,7 +391,7 @@ impl ProofCoordinator {
                 })?;
                 register_tdx_key(
                     &self.eth_client,
-                    &self.tdx_private_key,
+                    key,
                     self.on_chain_proposer_address,
                     payload,
                 )
@@ -490,10 +493,10 @@ impl GenServer for ProofCoordinator {
     type Error = ProofCoordinatorError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ProofCordInMessage::Listen { listener } => {
                 self.handle_listens(listener).await;
@@ -608,10 +611,10 @@ impl GenServer for ConnectionHandler {
     type Error = ProofCoordinatorError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ConnInMessage::Connection { stream, addr } => {
                 if let Err(err) = self.handle_connection(stream).await {
