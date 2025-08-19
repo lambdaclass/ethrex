@@ -771,7 +771,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
-            if state.node.version.clone().map(|v| v.contains("reth")).unwrap_or(false) { return Ok(()); }
+            // if state.node.version.clone().map(|v| v.contains("reth")).unwrap_or(false) { return Ok(()); }
             tracing::info!("Received {} Transactions from: {}:{:?}", txs.transactions.len(), state.node.ip, state.node.version);
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
