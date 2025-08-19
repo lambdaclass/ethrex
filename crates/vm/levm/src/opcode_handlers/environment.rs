@@ -102,7 +102,7 @@ impl<'a> VM<'a> {
         let mut data = [0u8; 32];
         let size = 32;
 
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        // Happy fast path
         if let Some(calldata_offset_end) = offset.checked_add(size) {
             if calldata_offset_end <= current_call_frame.calldata.len() {
                 #[expect(unsafe_code, reason = "bounds checked beforehand")]
