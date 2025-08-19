@@ -13,12 +13,14 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::{seq::SliceRandom};
+use rand::seq::SliceRandom;
 use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels, PeerData}, metrics::METRICS, rlpx::{
+    kademlia::{Kademlia, PeerChannels, PeerData},
+    metrics::METRICS,
+    rlpx::{
         connection::server::CastMessage,
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
@@ -30,7 +32,12 @@ use crate::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
-    }, snap::encodable_to_proof, snap_sync::downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest}, utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file}
+    },
+    snap::encodable_to_proof,
+    snap_sync::downloader::{
+        Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
+    },
+    utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -315,9 +322,7 @@ impl PeerHandler {
                 debug!("Downloader {peer_id} freed");
             }
 
-            let mut scores = self.peer_scores.lock().await;
-            let available_downloader = self.get_available_downloader(&mut scores, &mut downloaders).await;
-            drop(scores);
+            let available_downloader = self.get_random_available_downloader(&mut downloaders).await;
             let Some(available_downloader) = available_downloader else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
@@ -343,7 +348,9 @@ impl PeerHandler {
                 .cast(DownloaderCastRequest::Headers {
                     task_sender: task_sender.clone(),
                     start_block,
-                    chunk_limit,}).await
+                    chunk_limit,
+                })
+                .await
                 .unwrap(); // TODO: handle unwrap
 
             // 4) assign the tasks to the peers
@@ -2062,9 +2069,72 @@ impl PeerHandler {
         Ok(None)
     }
 
+    // Creates a Downloader Actor from a random peer
+    // Returns None if no peer is available
+    async fn get_random_available_downloader(
+        &self,
+        downloaders: &mut BTreeMap<H256, bool>,
+    ) -> Option<Downloader> {
+        let peer_channels = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
+        for (peer_id, _peer_channels) in &peer_channels {
+            if downloaders.contains_key(peer_id) {
+                continue;
+            }
+            downloaders.insert(*peer_id, true);
+            debug!("{peer_id} added as downloader");
+        }
+
+        // TODO: check if downloaders can be instantiated here instead of reciving it as a parameter
+        let free_downloaders = downloaders
+            .clone()
+            .into_iter()
+            .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+            .collect::<Vec<_>>();
+
+        if free_downloaders.is_empty() {
+            // No available downloaders to offer
+            return None;
+        }
+
+        let (free_peer_id, _) = free_downloaders
+            .choose(&mut rand::thread_rng())
+            .expect("There should be at least one free downloader");
+
+        let Some(free_downloader_channels) = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await
+            .iter()
+            .find_map(|(peer_id, peer_channels)| {
+                peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+            })
+        else {
+            debug!(
+                "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+            );
+            downloaders.remove(&free_peer_id);
+            return None;
+        };
+
+        // Mark the downloader as busy
+        downloaders
+            .entry(*free_peer_id)
+            .and_modify(|downloader_is_free| {
+                *downloader_is_free = false;
+            });
+
+        // Create and spawn Downloader Actor
+        let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
+        Some(downloader)
+    }
+
     // Creates a Downloader Actor from the best available peer
     // Returns None if no peer is available
-    async fn get_available_downloader(
+    async fn _get_best_available_downloader(
         &self,
         scores: &mut HashMap<H256, i64>,
         downloaders: &mut BTreeMap<H256, bool>,

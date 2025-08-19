@@ -2,18 +2,20 @@ use std::time::Duration;
 
 use ethrex_common::types::BlockHeader;
 use keccak_hash::H256;
-use spawned_concurrency::{
-    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
-};
+use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-    kademlia::PeerChannels, peer_handler::BlockRequestOrder, rlpx::{
-        connection::server::CastMessage, eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber}, Message as RLPxMessage
-    }
+    kademlia::PeerChannels,
+    peer_handler::BlockRequestOrder,
+    rlpx::{
+        Message as RLPxMessage,
+        connection::server::CastMessage,
+        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
+    },
 };
 
-use tracing::{debug, warn, error};
+use tracing::{debug, error, warn};
 
 pub struct Downloader {
     peer_id: H256,
@@ -129,85 +131,85 @@ impl GenServer for Downloader {
     }
 
     async fn handle_cast(
-            &mut self,
-            message: Self::CastMsg,
-            _handle: &GenServerHandle<Self>,
-        ) -> CastResponse {
-            match message {
-                DownloaderCastRequest::Headers {
-                    task_sender,
-                    start_block,
-                    chunk_limit,
-                } => {
-                    debug!("Requesting block headers from peer {}", self.peer_id);
-                    let request_id = rand::random();
-                    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                        id: request_id,
-                        startblock: HashOrNumber::Number(start_block),
-                        limit: chunk_limit,
-                        skip: 0,
-                        reverse: false,
-                    });
-                    let mut receiver = self.peer_channels.receiver.lock().await;
+        &mut self,
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            DownloaderCastRequest::Headers {
+                task_sender,
+                start_block,
+                chunk_limit,
+            } => {
+                debug!("Requesting block headers from peer {}", self.peer_id);
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(start_block),
+                    limit: chunk_limit,
+                    skip: 0,
+                    reverse: false,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
 
-                    // FIXME! modify the cast and wait for a `call` version
-                    if let Err(err) = self
-                        .peer_channels
-                        .connection
-                        .cast(CastMessage::BackendMessage(request))
-                        .await
-                    {
-                        warn!("Failed to send message to peer: {err:?}");
+                // FIXME! modify the cast and wait for a `call` version
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    warn!("Failed to send message to peer: {err:?}");
+                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
+                        .await;
+                    return CastResponse::Stop;
+                };
+
+                let block_headers = match tokio::time::timeout(Duration::from_secs(2), async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                                if id == request_id =>
+                            {
+                                return Some(block_headers);
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None, // EOF
+                        }
+                    }
+                })
+                .await
+                {
+                    Ok(Some(headers)) => headers,
+                    _ => {
                         self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
                             .await;
                         return CastResponse::Stop;
-                    };
-
-                    let block_headers = match tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                                    if id == request_id =>
-                                {
-                                    return Some(block_headers);
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None, // EOF
-                            }
-                        }
-                    })
-                    .await
-                    {
-                        Ok(Some(headers)) => headers,
-                        _ => {
-                            self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
-                                .await;
-                            return CastResponse::Stop;
-                        }
-                    };
-
-                    if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-                        self.send_headers_response(
-                            task_sender,
-                            block_headers,
-                            start_block,
-                            chunk_limit,
-                        )
-                        .await;
-                    } else {
-                        warn!(
-                            "[SYNCING] Received invalid headers from peer: {}",
-                            self.peer_id
-                        );
-                        self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
-                            .await;
                     }
+                };
 
-                    // Nothing to do after completion, stop actor
-                    CastResponse::Stop
+                if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                    self.send_headers_response(
+                        task_sender,
+                        block_headers,
+                        start_block,
+                        chunk_limit,
+                    )
+                    .await;
+                } else {
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer: {}",
+                        self.peer_id
+                    );
+                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
+                        .await;
                 }
+
+                // Nothing to do after completion, stop actor
+                CastResponse::Stop
             }
+        }
     }
 }
 
