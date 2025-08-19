@@ -111,6 +111,33 @@ impl<'a> VM<'a> {
                 *data_byte = *byte;
             }
         }
+
+        let size = 32;
+
+        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        if let Some(calldata_offset_end) = offset.checked_add(size) {
+            if calldata_offset_end <= current_call_frame.calldata.len() {
+                #[expect(unsafe_code, reason = "bounds checked beforehand")]
+                let slice = unsafe {
+                    current_call_frame
+                        .calldata
+                        .get_unchecked(offset..calldata_offset_end)
+                };
+
+                data.copy_from_slice(slice);
+            }
+        } else if offset < current_call_frame.calldata.len() {
+            let diff = current_call_frame.calldata.len().wrapping_sub(offset);
+            let final_size = size.min(diff);
+            let end = offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(current_call_frame.calldata.get_unchecked(offset..end));
+            }
+        }
+
         let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push1(result)?;
