@@ -78,7 +78,6 @@ pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
-
 #[derive(Clone, Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
