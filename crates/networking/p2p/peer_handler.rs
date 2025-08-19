@@ -103,11 +103,17 @@ impl PeerHandler {
 
     // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
-    async fn record_peer_success(&self, _peer_id: H256) {}
+    async fn record_peer_success(&self, peer_id: H256) {
+        let mut scores = self.peer_scores.lock().await;
+        *scores.entry(peer_id).or_default() += 1;
+    }
 
     // TODO: Implement the logic for recording peer failures
     /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, _peer_id: H256) {}
+    async fn record_peer_failure(&self, peer_id: H256) {
+        let mut scores = self.peer_scores.lock().await;
+        *scores.entry(peer_id).or_default() -= 1;
+    }
 
     // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
@@ -280,12 +286,7 @@ impl PeerHandler {
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
-                    // Penalize peer for empty response
-                    // TODO: this should be done with record_peer_failure
-                    let mut scores = self.peer_scores.lock().await;
-                    *scores.entry(peer_id).or_default() -= 1;
-                    drop(scores);
-
+                    self.record_peer_failure(peer_id).await;
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
                     });
@@ -333,12 +334,7 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                // Reward peer for empty response
-                // TODO: this should be done with record_peer_success
-                let mut scores = self.peer_scores.lock().await;
-                *scores.entry(peer_id).or_default() += 1;
-                drop(scores);
-
+                self.record_peer_success(peer_id).await;
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true; // mark the downloader as free
                 });
@@ -391,23 +387,20 @@ impl PeerHandler {
                 last_metrics_update = SystemTime::now();
             }
 
-            task_queue_in_progress.push_back((
-                peer_id,
-                start_block,
-                chunk_limit,
-                SystemTime::now(),
-            ));
+            let now = SystemTime::now();
+            task_queue_in_progress.push_back((peer_id, start_block, chunk_limit, now));
 
             // Check that there first in progress task is not stalled
             // TODO: not an optimal solution, consider refactoring when adding the Coordinator actor
-            let now = SystemTime::now();
             if let Some((peer_id, start, limit, start_time)) = task_queue_in_progress.pop_front() {
-                if now.duration_since(start_time).unwrap() > Duration::from_secs(5) {
+                if now.duration_since(start_time).unwrap() > Duration::from_secs(3) {
                     // Task is stalled, reinsert it to the not started queue
                     debug!(
                         "Task for {peer_id} is stalled, re-adding to the queue and freeing downloader",
                     );
-                    tasks_queue_not_started.push_back((start, limit));
+                    tasks_queue_not_started.push_front((start, limit));
+
+                    self.record_peer_failure(peer_id).await;
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
                     });
