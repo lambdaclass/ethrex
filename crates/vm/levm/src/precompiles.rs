@@ -39,6 +39,7 @@ use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
+use num_bigint::BigUint;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -738,7 +739,8 @@ fn handle_pairing_from_coordinates(
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
-    info!("ECPAIRING CALLDATA: {calldata:?}");
+    let calldata_num = BigUint::from_bytes_be(&calldata);
+    info!("ECPAIRING CALLDATA: {calldata_num:#x}");
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
         return Err(PrecompileError::ParsingInputError.into());
