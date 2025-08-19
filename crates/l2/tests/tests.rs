@@ -8,16 +8,12 @@ use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1M
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::clients::send_generic_transaction;
-use ethrex_l2_rpc::{
-    clients::deploy,
-    signer::{LocalSigner, Signer},
-};
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, claim_withdraw,
-    compile_contract, deposit_erc20, get_address_alias, get_address_from_secret_key,
-    get_erc1967_slot, git_clone, wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,
+    claim_withdraw, compile_contract, create_deploy, deposit_erc20, get_address_alias,
+    get_address_from_secret_key, get_erc1967_slot, git_clone,
+    l1_to_l2_tx_data::L1ToL2TransactionData, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, L1MessageProof, Overrides, from_hex_string_to_u256},
@@ -1462,7 +1458,7 @@ async fn test_deploy(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let (deploy_tx_hash, contract_address) = deploy(
+    let (deploy_tx_hash, contract_address) = create_deploy(
         l2_client,
         &deployer,
         init_code.to_vec().into(),
@@ -1516,7 +1512,7 @@ async fn test_deploy_l1(
 
     let deployer_signer: Signer = LocalSigner::new(*private_key).into();
 
-    let (deploy_tx_hash, contract_address) = deploy(
+    let (deploy_tx_hash, contract_address) = create_deploy(
         client,
         &deployer_signer,
         init_code.to_vec().into(),

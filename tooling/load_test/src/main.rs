@@ -3,9 +3,12 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::types::TxType;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::{deploy, send_generic_transaction};
+use ethrex_l2_rpc::clients::send_generic_transaction;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
-use ethrex_l2_sdk::calldata::{self};
+use ethrex_l2_sdk::{
+    calldata::{self},
+    create_deploy,
+};
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
@@ -90,7 +93,7 @@ async fn deploy_contract(
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
     let (_, contract_address) =
-        deploy(&client, deployer, contract.into(), Overrides::default()).await?;
+        create_deploy(&client, deployer, contract.into(), Overrides::default()).await?;
 
     eyre::Ok(contract_address)
 }

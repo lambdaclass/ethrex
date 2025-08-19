@@ -19,7 +19,7 @@ use ethrex_l2_rpc::{
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
+    calldata::encode_calldata, create2_deploy_from_bytecode, deploy_with_proxy_from_bytecode,
     initialize_contract,
 };
 use ethrex_rpc::{
@@ -619,7 +619,7 @@ async fn deploy_contracts(
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
         let (verifier_deployment_tx_hash, sp1_verifier_address) =
-            deploy_contract_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
+            create2_deploy_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
                 .await?;
 
         info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");

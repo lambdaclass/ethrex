@@ -1,15 +1,10 @@
 use crate::signer::{Signable, Signer};
-use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
-    types::{EIP1559Transaction, GenericTransaction, TxKind, TxType, WrappedEIP4844Transaction},
+    H256, U256,
+    types::{EIP1559Transaction, GenericTransaction, TxType, WrappedEIP4844Transaction},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::{
-    clients::{EthClientError, Overrides, eth::EthClient},
-    types::block_identifier::{BlockIdentifier, BlockTag},
-};
-use keccak_hash::keccak;
+use ethrex_rpc::clients::{EthClientError, eth::EthClient};
 use std::ops::Div;
 use tracing::warn;
 
@@ -47,44 +42,6 @@ pub async fn send_generic_transaction(
         }
     };
     client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
-pub async fn deploy(
-    client: &EthClient,
-    deployer: &Signer,
-    init_code: Bytes,
-    overrides: Overrides,
-) -> Result<(H256, Address), EthClientError> {
-    let mut deploy_overrides = overrides;
-    deploy_overrides.to = Some(TxKind::Create);
-
-    let deploy_tx = client
-        .build_generic_tx(
-            TxType::EIP1559,
-            Address::zero(),
-            deployer.address(),
-            init_code,
-            deploy_overrides,
-        )
-        .await?;
-    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
-
-    let nonce = client
-        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
-        .await?;
-    let mut encode = vec![];
-    (deployer.address(), nonce).encode(&mut encode);
-
-    //Taking the last 20bytes so it matches an H160 == Address length
-    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-        EthClientError::Custom("Failed to get deployed_address".to_owned()),
-    )?);
-
-    client
-        .wait_for_transaction_receipt(deploy_tx_hash, 1000)
-        .await?;
-
-    Ok((deploy_tx_hash, deployed_address))
 }
 
 pub async fn send_tx_bump_gas_exponential_backoff(

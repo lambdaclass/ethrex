@@ -1,23 +1,26 @@
-use std::ops::Add;
-use std::{fs::read_to_string, path::Path};
-
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::TxType;
+use ethereum_types::{H160, H256, U256};
+use ethrex_common::{
+    Address,
+    types::{TxKind, TxType},
+};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::clients::send_generic_transaction;
 use ethrex_l2_rpc::{
     clients::send_tx_bump_gas_exponential_backoff,
     signer::{LocalSigner, Signer},
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
-
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ops::Add;
+use std::{fs::read_to_string, path::Path};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -382,7 +385,45 @@ pub enum DeployError {
     ProxyBytecodeNotFound,
 }
 
-pub async fn deploy_contract(
+pub async fn create_deploy(
+    client: &EthClient,
+    deployer: &Signer,
+    init_code: Bytes,
+    overrides: Overrides,
+) -> Result<(H256, Address), EthClientError> {
+    let mut deploy_overrides = overrides;
+    deploy_overrides.to = Some(TxKind::Create);
+
+    let deploy_tx = client
+        .build_generic_tx(
+            TxType::EIP1559,
+            Address::zero(),
+            deployer.address(),
+            init_code,
+            deploy_overrides,
+        )
+        .await?;
+    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
+
+    let nonce = client
+        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let mut encode = vec![];
+    (deployer.address(), nonce).encode(&mut encode);
+
+    //Taking the last 20bytes so it matches an H160 == Address length
+    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
+        EthClientError::Custom("Failed to get deployed_address".to_owned()),
+    )?);
+
+    client
+        .wait_for_transaction_receipt(deploy_tx_hash, 1000)
+        .await?;
+
+    Ok((deploy_tx_hash, deployed_address))
+}
+
+pub async fn create2_deploy_from_path(
     constructor_args: &[u8],
     contract_path: &Path,
     deployer: &Signer,
@@ -390,11 +431,11 @@ pub async fn deploy_contract(
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
-    deploy_contract_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
+    create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
 /// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
-pub async fn deploy_contract_from_bytecode(
+pub async fn create2_deploy_from_bytecode(
     constructor_args: &[u8],
     bytecode: &[u8],
     deployer: &Signer,
@@ -444,7 +485,7 @@ pub async fn deploy_with_proxy(
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
-        deploy_contract(&[], contract_path, deployer, salt, eth_client).await?;
+        create2_deploy_from_path(&[], contract_path, deployer, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) =
         deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
@@ -465,7 +506,7 @@ pub async fn deploy_with_proxy_from_bytecode(
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
-        deploy_contract_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
+        create2_deploy_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) =
         deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
