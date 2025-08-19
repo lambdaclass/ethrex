@@ -2147,7 +2147,7 @@ struct AccountDumpError {
     pub contents: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, std::hash::Hash)]
 pub struct RequestMetadata {
     pub hash: H256,
     pub path: Nibbles,

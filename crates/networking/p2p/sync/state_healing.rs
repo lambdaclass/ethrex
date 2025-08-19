@@ -114,10 +114,6 @@ async fn heal_state_trie(
         Vec<RequestMetadata>,
     )>(1000);
 
-    // channel to send the tasks to the peers
-    let (returned_paths_sender, mut returned_paths_receiver) =
-        tokio::sync::mpsc::channel::<Vec<RequestMetadata>>(1000);
-
     let peers_table = peers
         .peer_table
         .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
@@ -193,21 +189,14 @@ async fn heal_state_trie(
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
+                    // TODO: Check if it's faster to reach the leafs of the trie
+                    // by doing batch.extend(paths);paths = batch
+                    // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
                     scores.entry(peer_id).and_modify(|score| *score -= 1);
                 }
             }
-        }
-
-        // Attempt to receive paths returned by the healing tasks, and add them to the paths vector
-        if let Ok(mut returned_paths) = returned_paths_receiver.try_recv() {
-            inflight_tasks -= 1;
-            // We try to extend returned_paths so that the new nodes are the first to be downloaded.
-            // This is so we do depth first search, which should make the algorithm more efficient if we need
-            // to move the pivot. This is for testing.
-            returned_paths.extend(paths);
-            paths = returned_paths;
         }
 
         if !is_stale {
@@ -257,21 +246,14 @@ async fn heal_state_trie(
             }
         }
 
-        let store_cloned = store.clone();
-        let tx = returned_paths_sender.clone();
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
-            inflight_tasks += 1;
-            // TODO: consider adding a semaphore to limit the concurrent tasks that access the db
-            tokio::spawn(async move {
-                if let Ok(return_paths) = heal_state_batch(batch, nodes, store_cloned).await {
-                    let _ = tx
-                        .send(return_paths)
-                        .await
-                        .inspect_err(|err| error!("Failed to send returned paths. Error: {err}"));
+            match heal_state_batch(batch, nodes, store.clone()).await {
+                Ok(return_paths) => paths.extend(return_paths),
+                Err(err) => {
+                    error!("We have found a sync error while trying to write to DB a batch: {err}");
                 }
-            });
-            tokio::task::yield_now().await;
+            }
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
@@ -305,18 +287,34 @@ async fn heal_state_trie(
 
         if is_stale && inflight_tasks == 0 {
             info!("Caching {} paths for the next cycle", paths.len());
-            let mut old_paths: Vec<(Nibbles, H256)> = store
+            let old_paths: Vec<RequestMetadata> = store
                 .get_state_heal_paths()
                 .await
                 .expect("Store Error")
-                .unwrap_or_default();
-            old_paths.extend(
-                paths
-                    .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(path, hash)| RequestMetadata { path, hash })
+                .collect();
+            info!("We had {} old paths from a previous cycle", old_paths.len());
+            let mut paths_hashmap: HashMap<Nibbles, RequestMetadata> = HashMap::from_iter(
+                old_paths
                     .into_iter()
-                    .map(|request_metadata| (request_metadata.path, request_metadata.hash)),
+                    .map(|request_metadata| (request_metadata.path.clone(), request_metadata)),
             );
-            store.set_state_heal_paths(old_paths).await?;
+
+            for path in paths.clone() {
+                paths_hashmap.insert(path.path.clone(), path);
+            }
+            store
+                .set_state_heal_paths(
+                    paths_hashmap
+                        .values()
+                        .map(|request_metadata| {
+                            (request_metadata.path.clone(), request_metadata.hash)
+                        })
+                        .collect(),
+                )
+                .await?;
             break;
         }
     }
