@@ -76,8 +76,8 @@ impl DiscoverySideCar {
             udp_socket,
             kademlia,
 
-            revalidation_check_interval: Duration::from_secs(5),
-            revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+            revalidation_check_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+            revalidation_interval: Duration::from_secs(12 * 60 * 60),       // 12 hours
 
             initial_lookup_interval: Duration::from_secs(5),
             lookup_interval: Duration::from_secs(5 * 60), // 5 minutes
