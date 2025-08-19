@@ -1353,8 +1353,6 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
 
 #[cfg(test)]
 mod tests {
-    use std::u64;
-
     use super::*;
 
     fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
