@@ -91,7 +91,7 @@ async fn ask_peer_head_number(
         .await
         .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
 
-    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+    debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
     match tokio::time::timeout(Duration::from_millis(500), async move {
         peer_channel.receiver.lock().await.recv().await
@@ -245,7 +245,7 @@ impl PeerHandler {
                         }
                     }
                     Err(err) => {
-                        trace!(
+                        debug!(
                             "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
                         );
                     }
