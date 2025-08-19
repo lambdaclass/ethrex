@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     report::add_test_to_report,
     result_check::check_test_case_results,
@@ -22,9 +22,9 @@ use crate::runner_v2::{
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
-    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let successful_report_path = PathBuf::from("./success_report.txt");
     let _ = fs::remove_file(&successful_report_path);
-    let _ = fs::remove_file("./runner_v2/failure_report.txt");
+    let _ = fs::remove_file("./failure_report.txt");
 
     let mut success_report = OpenOptions::new()
         .append(true)

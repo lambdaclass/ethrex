@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_ETHREX_WORKDIR: /usr/local/bin
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
 
 jobs:
   lint:
@@ -146,9 +146,9 @@ jobs:
         run: |
           touch .env
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
@@ -156,7 +156,7 @@ jobs:
       - name: Start Sequencer
         run: |
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
@@ -207,9 +207,9 @@ jobs:
         run: |
           touch .env
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
@@ -243,7 +243,7 @@ jobs:
           export SEQUENCER_REGISTRY
           cd crates/l2
 
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
@@ -288,9 +288,9 @@ jobs:
         run: |
           touch .env
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           docker compose up -d ethrex_l1
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
           docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
