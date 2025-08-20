@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use ethrex_common::{
     Address, U256,
-    types::{AccountUpdate, Fork, Genesis, StorageValue, code_hash},
+    types::{AccountUpdate, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
-    account::LevmAccount,
+    account::{LevmAccount, LevmStorageSlot},
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::VM,
@@ -270,7 +270,7 @@ pub fn check_accounts_state(
                         .map(|(k, v)| {
                             (
                                 H256::from(k.to_big_endian()),
-                                StorageValue {
+                                LevmStorageSlot {
                                     current_value: *v,
                                     previous_value: None,
                                 },

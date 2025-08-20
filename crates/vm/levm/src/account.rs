@@ -1,6 +1,7 @@
 use ethrex_common::{
+    U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, GenesisAccount, StorageValue},
+    types::{AccountInfo, GenesisAccount},
 };
 use keccak_hash::{H256, keccak};
 use serde::{Deserialize, Serialize};
@@ -16,9 +17,15 @@ use std::collections::BTreeMap;
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmAccount {
     pub info: AccountInfo,
-    pub storage: BTreeMap<H256, StorageValue>,
+    pub storage: BTreeMap<H256, LevmStorageSlot>,
     /// Current status of the account.
     pub status: AccountStatus,
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LevmStorageSlot {
+    pub current_value: U256,
+    pub previous_value: U256,
 }
 
 impl From<AccountInfo> for LevmAccount {
@@ -39,9 +46,9 @@ impl From<GenesisAccount> for LevmAccount {
             .map(|(key, value)| {
                 (
                     H256::from(key.to_big_endian()),
-                    StorageValue {
+                    LevmStorageSlot {
                         current_value: value,
-                        previous_value: None,
+                        previous_value: value,
                     },
                 )
             })

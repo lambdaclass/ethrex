@@ -1,6 +1,6 @@
 use crate::{
     EVMConfig, Environment,
-    account::{AccountStatus, LevmAccount},
+    account::{AccountStatus, LevmAccount, LevmStorageSlot},
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -21,7 +21,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
-    types::{Account, Fork, StorageValue, Transaction, tx_fields::*},
+    types::{Account, Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -183,9 +183,9 @@ pub fn restore_cache_state(
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
-            let storage_value = StorageValue {
+            let storage_value = LevmStorageSlot {
                 current_value: value,
-                previous_value: None,
+                previous_value: value,
             };
             account.storage.insert(key, storage_value);
         }
@@ -681,9 +681,9 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
                 .storage
                 .into_iter()
                 .map(|(key, value)| {
-                    let storage_value = StorageValue {
+                    let storage_value = LevmStorageSlot {
                         current_value: value,
-                        previous_value: None,
+                        previous_value: value,
                     };
                     (key, storage_value)
                 })

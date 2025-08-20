@@ -6,12 +6,11 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use ethrex_common::types::StorageValue;
 use keccak_hash::H256;
 use keccak_hash::keccak;
 
 use super::Database;
-use crate::account::LevmAccount;
+use crate::account::{LevmAccount, LevmStorageSlot};
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
@@ -131,9 +130,9 @@ impl GeneralizedDatabase {
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
-                let storage_value = StorageValue {
+                let storage_value = LevmStorageSlot {
                     current_value: value,
-                    previous_value: None,
+                    previous_value: value,
                 };
                 account.storage.insert(key, storage_value);
             }
@@ -378,19 +377,7 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        let account_storage_slot = self
-            .get_account_mut(address)?
-            .storage
-            .get_mut(&key)
-            .ok_or(InternalError::AccountNotFound)?;
-        if let Some(prev) = account_storage_slot.previous_value {
-            return Ok(prev);
-        }
-
-        let value = account_storage_slot.current_value;
-        account_storage_slot.previous_value = Some(value);
-
-        Ok(value)
+        Ok(self.get_storage_slot(address, key)?.current_value)
     }
 
     /// Accesses to an account's storage slot and returns the value in it.
@@ -410,38 +397,47 @@ impl<'a> VM<'a> {
             .or_default()
             .insert(key);
 
-        let storage_slot = self.get_storage_value(address, key)?;
+        let storage_slot = self.get_current_storage_value(address, key)?;
 
         Ok((storage_slot, storage_slot_was_cold))
     }
 
     /// Gets storage value of an account, caching it if not already cached.
     #[inline(always)]
-    pub fn get_storage_value(
+    pub fn get_current_storage_value(
         &mut self,
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(account) = self.db.current_accounts_state.get(&address) {
-            if let Some(storage_value) = account.storage.get(&key) {
-                return Ok(storage_value.current_value);
-            }
-        } else {
-            // When requesting storage of an account we should've previously requested and cached the account
-            return Err(InternalError::AccountNotFound);
-        }
+        Ok(self.get_storage_slot(address, key)?.current_value)
+    }
 
-        let value = self.db.get_value_from_database(address, key)?;
-
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
-        let storage_value = StorageValue {
-            current_value: value,
-            previous_value: None,
+    pub fn get_storage_slot(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<LevmStorageSlot, InternalError> {
+        // When requesting storage of an account we should've previously requested and cached the account
+        let account = self
+            .db
+            .current_accounts_state
+            .get(&address)
+            .ok_or(InternalError::AccountNotFound)?;
+        if let Some(slot) = account.storage.get(&key) {
+            return Ok(*slot);
         };
-        account.storage.insert(key, storage_value);
 
-        Ok(value)
+        let current_value = self.db.get_value_from_database(address, key)?;
+
+        let storage_slot = LevmStorageSlot {
+            current_value: current_value,
+            previous_value: current_value,
+        };
+
+        let account = self.get_account_mut(address)?;
+        account.storage.insert(key, storage_slot);
+
+        Ok(storage_slot)
     }
 
     /// Updates storage of an account, caching it if not already cached.
@@ -454,12 +450,9 @@ impl<'a> VM<'a> {
     ) -> Result<(), InternalError> {
         self.backup_storage_slot(address, key, current_value)?;
 
-        let account = self.get_account_mut(address)?;
-        let updated_storage_value = StorageValue {
-            current_value: new_value,
-            previous_value: Some(current_value),
-        };
-        account.storage.insert(key, updated_storage_value);
+        let mut storage_slot = self.get_storage_slot(address, key)?;
+        storage_slot.current_value = new_value;
+
         Ok(())
     }
 
