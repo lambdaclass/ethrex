@@ -58,23 +58,6 @@ impl Account {
     }
 }
 
-pub async fn get_latest_block_number(rpc_url: &str) -> eyre::Result<usize> {
-    let request = &json!({
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "eth_blockNumber",
-        "params": []
-    });
-    let response = CLIENT.post(rpc_url).json(request).send().await?;
-    let res = response.json::<serde_json::Value>().await?;
-    let mut bytes = decode_hex(get_result(res)?)?;
-    bytes.reverse();
-    bytes.resize(8, 0);
-    let latest_bytes: [u8; 8] = bytes
-        .try_into()
-        .map_err(|_| eyre::Error::msg("decode error".to_string()))?;
-    Ok(usize::from_le_bytes(latest_bytes))
-}
 pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block> {
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
@@ -233,21 +216,4 @@ fn decode_hex(hex: String) -> eyre::Result<Vec<u8>> {
         trimmed = "0".to_string() + &trimmed;
     }
     Ok(hex::decode(trimmed)?)
-}
-pub async fn get_tx_block(tx: &str, rpc_url: &str) -> eyre::Result<usize> {
-    let request = &json!({
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "eth_getTransactionByHash",
-        "params": [tx]
-    });
-    let response = CLIENT.post(rpc_url).json(request).send().await?;
-    let res = response.json::<serde_json::Value>().await?;
-    let res = res.get("result").ok_or(eyre::Error::msg("result key"))?;
-    let block_number = res
-        .get("blockNumber")
-        .and_then(|v| v.as_str())
-        .ok_or(eyre::Error::msg("bad blockNumber key"))?;
-    let block_number = usize::from_str_radix(block_number.trim_start_matches("0x"), 16)?;
-    Ok(block_number)
 }

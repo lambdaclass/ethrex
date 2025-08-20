@@ -6,9 +6,8 @@ use ethrex_common::{
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{
-    DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper,
-    backends::levm::LEVM,
-    prover_db::{self, WitnessProof},
+    DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM,
+    prover_db::WitnessProof,
 };
 use eyre::Ok;
 use std::sync::Arc;
