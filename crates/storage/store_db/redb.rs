@@ -10,6 +10,7 @@ use crate::{
         PayloadBundleRLP, ReceiptRLP, TupleRLP,
     },
 };
+use bytes::Bytes;
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
     H256, U256,
@@ -21,7 +22,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
@@ -381,6 +382,7 @@ impl StoreEngine for RedBStore {
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         let hashes_and_numbers = block_headers
+            .clone()
             .into_iter()
             .map(|header| {
                 (
@@ -389,8 +391,8 @@ impl StoreEngine for RedBStore {
                 )
             })
             .collect();
-        self.write_batch(BLOCK_NUMBERS_TABLE, hashes_and_headers)
-            .await;
+        self.write_batch(BLOCK_NUMBERS_TABLE, hashes_and_numbers)
+            .await?;
         let hashes_and_headers = block_headers
             .into_iter()
             .map(|header| {
@@ -1324,6 +1326,20 @@ impl StoreEngine for RedBStore {
             <H256 as Into<BlockHashRLP>>::into(latest_valid),
         )
         .await
+    }
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        _storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        unimplemented!("write_storage_trie_nodes_batch is not implemented for RedBStore");
+    }
+
+    async fn write_account_code_batch(
+        &self,
+        _account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        unimplemented!("write_account_code_batch is not implemented for RedBStore");
     }
 }
 

@@ -401,7 +401,7 @@ impl Syncer {
                             self.cancel_token.clone(),
                         )
                         .await?;
-                    block_headers.clear();  
+                    block_headers.clear();
                 }
             }
 
