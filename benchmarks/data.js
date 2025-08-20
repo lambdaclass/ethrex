@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755698627430,
+  "lastUpdate": 1755702750450,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9265,6 +9265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162635210673,
             "range": "± 333683648",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5677a0d7ca9945eea7e7f08268928fc82021381c",
+          "message": "fix(l1): subtract DB read times from block execution. (#4051)\n\n**Motivation**\nBe able to get the _net_ block execution, substracting the DB reads in\nGrafana.\n\n**Description**\nThis is how it looks:\n<img width=\"577\" height=\"297\" alt=\"Screenshot 2025-08-14 at 13 24 56\"\nsrc=\"https://github.com/user-attachments/assets/feb5d9fd-3dce-426e-8705-4049e5c2b98e\"\n/>",
+          "timestamp": "2025-08-20T14:21:44Z",
+          "tree_id": "2f07cdfd14cac1e33afdda2196da6f590af74562",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5677a0d7ca9945eea7e7f08268928fc82021381c"
+        },
+        "date": 1755702734828,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161115969571,
+            "range": "± 251108843",
             "unit": "ns/iter"
           }
         ]
