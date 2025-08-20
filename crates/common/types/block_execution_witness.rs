@@ -82,6 +82,8 @@ pub enum ExecutionWitnessError {
 }
 
 impl ExecutionWitnessResult {
+    /// Use the state nodes to build the state trie and store them in `self.state_trie`
+    /// This function will fail if the state trie cannot be rebuilt.
     pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
         self.state_trie = Some(state_trie);
@@ -89,6 +91,8 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
+    /// Helper function to rebuild the storage trie for a given account address
+    /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
@@ -102,6 +106,9 @@ impl ExecutionWitnessResult {
         rebuild_trie(account_state.storage_root, state).ok()
     }
 
+    /// Helper function to apply account updates to the execution witness
+    /// It updates the state trie and storage tries with the given account updates
+    /// Returns an error if the updates cannot be applied
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
@@ -179,6 +186,8 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
+    /// Returns the root hash of the state trie
+    /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
         let state_trie = self
             .state_trie
@@ -226,6 +235,8 @@ impl ExecutionWitnessResult {
         Ok(None)
     }
 
+    /// Retrieves the parent block header for the specified block number
+    /// Searches within `self.block_headers`
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
@@ -235,6 +246,8 @@ impl ExecutionWitnessResult {
             .ok_or(ExecutionWitnessError::MissingParentHeader(block_number))
     }
 
+    /// Retrieves the account info based on what is stored in the state trie.
+    /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
     pub fn get_account_info(
         &self,
         address: Address,
@@ -261,6 +274,8 @@ impl ExecutionWitnessResult {
         }))
     }
 
+    /// Fetches the block hash for a specific block number.
+    /// Looks up `self.block_headers` and computes the hash if it is not already computed.
     pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number)
@@ -272,6 +287,9 @@ impl ExecutionWitnessResult {
             })
     }
 
+    /// Retrieves a storage slot value for an account.
+    /// Lazily rebuilds the storage trie for the address if not already available.
+    /// Searches for the struct in the storage trie if it has not been rebuilt yet.
     pub fn get_storage_slot(
         &mut self,
         address: Address,
@@ -280,32 +298,14 @@ impl ExecutionWitnessResult {
         let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
             storage_trie
         } else {
-            let state_trie = self
-                .state_trie
-                .as_ref()
-                .ok_or(ExecutionWitnessError::Database(
-                    "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
-                ))?;
-            let hashed_address = hash_address(&address);
-            let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+            let Some(state_trie) = self.state_trie.as_ref() else {
                 return Ok(None);
             };
-            let state = AccountState::decode(&encoded_state).map_err(|_| {
-                ExecutionWitnessError::Database(
-                    "Failed to get decode account from trie".to_string(),
-                )
-            })?;
-            if state.storage_root == *EMPTY_TRIE_HASH {
+            let Some(storage_trie) =
+                Self::rebuild_storage_trie(&address, state_trie, &self.state_trie_nodes)
+            else {
                 return Ok(None);
-            }
-
-            let storage_trie =
-                rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
-                    ExecutionWitnessError::Database(format!(
-                        "Failed to rebuild storage trie: {}",
-                        e
-                    ))
-                })?;
+            };
 
             self.storage_tries.entry(address).or_insert(storage_trie)
         };
@@ -324,10 +324,13 @@ impl ExecutionWitnessResult {
         }
     }
 
+    /// Retrieves the chain configuration for the execution witness.
     pub fn get_chain_config(&self) -> Result<ChainConfig, ExecutionWitnessError> {
         Ok(self.chain_config)
     }
 
+    /// Retrieves the account code for a specific account.
+    /// Returns an Err if the code is not found.
     pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
@@ -439,17 +442,4 @@ pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, Execut
         &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
-}
-
-// This function is an option because we expect it to fail sometimes, and we just want to filter it
-pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
-    let account_state_rlp = trie.get(&hash_address(address)).ok()??;
-
-    let account_state = AccountState::decode(&account_state_rlp).ok()?;
-
-    if account_state.storage_root == *EMPTY_TRIE_HASH {
-        return None;
-    }
-
-    rebuild_trie(account_state.storage_root, state).ok()
 }
