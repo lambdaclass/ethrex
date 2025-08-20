@@ -287,9 +287,10 @@ impl ExecutionWitnessResult {
             })
     }
 
-    /// Retrieves a storage slot value for an account.
-    /// Lazily rebuilds the storage trie for the address if not already available.
-    /// Searches for the struct in the storage trie if it has not been rebuilt yet.
+    /// Retrieves a storage slot value for an account in its storage trie.
+    ///
+    /// Lazily builds the storage trie for the address if not already available.
+    /// This lazy loading approach minimizes memory usage by only building tries when needed.
     pub fn get_storage_slot(
         &mut self,
         address: Address,
