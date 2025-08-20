@@ -285,7 +285,7 @@ async fn heal_state_trie(
             is_stale = true;
         }
 
-        if is_stale && inflight_tasks == 0 {
+        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Caching {} paths for the next cycle", paths.len());
             let old_paths: Vec<RequestMetadata> = store
                 .get_state_heal_paths()
