@@ -50,6 +50,8 @@ use spawned_concurrency::{
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+// Default wake up time for the committer to check if it should send a commit tx
+const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 300_000;
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -112,7 +114,9 @@ impl L1Committer {
             signer: committer_config.signer.clone(),
             based,
             sequencer_state,
-            committer_wake_up_ms: committer_config.commit_time_ms.min(300_000),
+            committer_wake_up_ms: committer_config
+                .commit_time_ms
+                .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
             last_committed_batch_timestamp: 0,
         })
     }
