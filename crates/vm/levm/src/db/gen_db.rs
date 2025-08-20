@@ -452,6 +452,7 @@ impl<'a> VM<'a> {
 
         let mut storage_slot = self.get_storage_slot(address, key)?;
         storage_slot.current_value = new_value;
+        storage_slot.previous_value = current_value;
 
         Ok(())
     }
