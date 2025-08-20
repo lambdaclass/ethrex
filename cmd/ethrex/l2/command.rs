@@ -284,10 +284,8 @@ impl Command {
                 cfg_if::cfg_if! {
                     if #[cfg(feature = "libmdbx")] {
                         let store_type = EngineType::Libmdbx;
-                    } else if #[cfg(feature = "redb")] {
-                        let store_type = EngineType::RedB;
                     } else {
-                        eyre::bail!("Expected one of libmdbx or redb store engine");
+                        eyre::bail!("Expected libmdbx store engine");
                     }
                 };
                 cfg_if::cfg_if! {
