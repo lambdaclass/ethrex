@@ -1,7 +1,6 @@
 use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
-    opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
 use ethrex_common::{U256, U512};
@@ -226,30 +225,30 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let bits_per_byte = U256::from(8);
-        let sign_bit_position_on_byte = U256::from(7);
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "Since byte_size_minus_one ≤ 31, overflow is impossible"
+        )]
+        let sign_bit_index = byte_size_minus_one * 8 + 7;
 
-        let sign_bit_index = bits_per_byte
-            .checked_mul(byte_size_minus_one)
-            .and_then(|total_bits| total_bits.checked_add(sign_bit_position_on_byte))
-            .ok_or(InternalError::Overflow)?;
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
+        )]
+        {
+            let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
+            let mask = (U256::one() << sign_bit_index) - U256::one();
 
-        #[expect(clippy::arithmetic_side_effects)]
-        let shifted_value = value_to_extend >> sign_bit_index;
-        let sign_bit = shifted_value & U256::one();
+            let result = if sign_bit.is_zero() {
+                value_to_extend & mask
+            } else {
+                value_to_extend | !mask
+            };
 
-        let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
-            .checked_sub(U256::one())
-            .ok_or(InternalError::Underflow)?; //Shifted should be at least one
+            current_call_frame.stack.push1(result)?;
 
-        let result = if sign_bit.is_zero() {
-            value_to_extend & sign_bit_mask
-        } else {
-            value_to_extend | !sign_bit_mask
-        };
-        current_call_frame.stack.push1(result)?;
-
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+            Ok(OpcodeResult::Continue { pc_increment: 1 })
+        }
     }
 }
 
