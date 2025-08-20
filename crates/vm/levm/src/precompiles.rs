@@ -200,6 +200,7 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
     PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
 }
 
+#[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
@@ -207,7 +208,6 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64) -> Result<Bytes, VMError>;
 
-    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
     const PRECOMPILES: [Option<PrecompileFn>; 18] = const {
         let mut precompiles = [const { None }; 18];
         precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
@@ -235,7 +235,12 @@ pub fn execute_precompile(
         precompiles
     };
 
-    #[expect(clippy::indexing_slicing, clippy::as_conversions)]
+    let index = address.0[19] as usize;
+
+    if index >= PRECOMPILES.len() {
+        return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
+    }
+
     let precompile = PRECOMPILES[address.0[19] as usize]
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
