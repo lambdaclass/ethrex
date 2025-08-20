@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755718336354,
+  "lastUpdate": 1755719316923,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9355,6 +9355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160626623969,
             "range": "± 366738909",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2ffd28ee6022cb951f3cdaf99179bec16d503d6c",
+          "message": "fix(l1): `ethrex-replay` block execution in different networks (#3992)\n\n**Motivation**\n\nThe `ethrex-replay` tool is not working correctly in many aspects. From\nthe starts block execution is not working correctly in the different\nnetworks (Hoodi, Sepolia, and Mainnet).\n\n**Description**\n\nThis PR fixes the following related to `ethrex-replay`:\n- `ExecutionWitnessResult` serialization and deserialization to make it\ncompliant with Reth nodes.\n- Ensures the use of the correct chain configuration on each command.\n- The latest block is now correctly cached and labeled (by network and\nblock number, e.g. `cache_network_number.json`).\n- Ensures the replay of the last canonical block when replaying the\nlatest block.\n\nAnd the following extras:\n- Improves logging.\n- Renames some functions and variables.\n\n> [!NOTE]\n> - This PR ensures the correct execution of most of blocks produced by\nreth and ethrex clients.\n> - Some block execution may fail, and their corresponding fixes should\nbe done in other PRs.\n> - To ensure block execution from other clients than the stated above,\nwe need to support retrieving block execution data using the endpoint\n`eth_getProofs` (this is a WIP, we're currently using\n`debug_executionWitness`, but only Reth and ethrex nodes support this\nendpoint).\n\n**Test it out**\n\n```\n# reth RPCs\nHoodi = http://65.108.69.58:8545\nSepolia = http://65.109.97.102:8545\nMainnet = http://157.180.1.98:8545\n\n# Executing\ncargo run --release --package ethrex-replay --bin ethrex-replay -- execute block --rpc-url http://65.108.69.58:8545 --network hoodi\n\n# Executing (SP1)\ncargo run --release --package ethrex-replay --bin ethrex-replay --features sp1 -- execute block 1033114 --rpc-url http://65.108.69.58:8545 --network hoodi\n\n # Proving (SP1) \n SP1_PROVER=cuda cargo run --release --package ethrex-replay --bin ethrex-replay --features sp1,gpu -- execute block 1033114 --rpc-url http://65.108.69.58:8545 --network hoodi\n```\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-08-20T18:48:52Z",
+          "tree_id": "5d2a8b5bacc6729b70814ce28dae7f90370c22d4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2ffd28ee6022cb951f3cdaf99179bec16d503d6c"
+        },
+        "date": 1755719301346,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161296961507,
+            "range": "± 251308618",
             "unit": "ns/iter"
           }
         ]
