@@ -558,8 +558,14 @@ impl GenServer for L1Committer {
             }
         }
         let check_interval = if self.retry_mode {
-            warn!("Committer is in retry mode trying to resend commit in 5 minutes");
-            random_duration(300_000)
+            let duration = 300_000.min(self.commit_time_ms);
+            let minutes = duration / 60000;
+            warn!(
+                "Committer is in retry mode trying to resend commit in {} {}",
+                minutes,
+                if minutes == 1 { "minute" } else { "minutes" }
+            );
+            random_duration(duration)
         } else {
             random_duration(self.commit_time_ms)
         };
