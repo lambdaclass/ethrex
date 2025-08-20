@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755687207763,
+  "lastUpdate": 1755694824975,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -21522,6 +21522,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008723738562091504,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2a9c4185ed8361d4827877bd4617b3f173574db1",
+          "message": "perf(levm): improve perf of calldataload, calldatacopy,  extcodecopy, codecopy, returndatacopy (#4070)\n\n**Motivation**\n\nimprove perf of calldataload, calldatacopy, extcodecopy, codecopy,\nreturndatacopy\n\n\n(left is this pr, right is main)\n\n<img width=\"1383\" height=\"1273\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/d82a9e4f-51da-4db4-82ec-7d38e3c31477\"\n/>",
+          "timestamp": "2025-08-20T08:25:26Z",
+          "tree_id": "b89e7487e4bf097aa473c4f7c3a006c3ce6d53bc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2a9c4185ed8361d4827877bd4617b3f173574db1"
+        },
+        "date": 1755694824491,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00850147770700637,
             "unit": "Mgas/s"
           }
         ]
