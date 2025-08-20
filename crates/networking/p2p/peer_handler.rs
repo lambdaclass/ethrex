@@ -2005,6 +2005,8 @@ impl PeerHandler {
             return Err(RequestStateTrieNodesError::InvalidData);
         }
 
+        // TODO: this scenario respect the spec, and state healing supports receiving partial lists.
+        // Consider removing this block and returning the partial list nodes
         if nodes.len() < expected_nodes {
             error!(
                 "A peer is sending less data than we asked for when doing GTN {:?}",
