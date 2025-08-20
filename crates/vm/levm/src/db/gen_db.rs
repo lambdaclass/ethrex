@@ -233,7 +233,7 @@ impl GeneralizedDatabase {
 
                 let new_value = new_account_storage_value.current_value;
                 if new_value != old_value {
-                    added_storage.insert(*key, new_value.clone());
+                    added_storage.insert(*key, new_value);
                     storage_updated = true;
                 }
             }
@@ -430,7 +430,7 @@ impl<'a> VM<'a> {
         let current_value = self.db.get_value_from_database(address, key)?;
 
         let storage_slot = LevmStorageSlot {
-            current_value: current_value,
+            current_value,
             previous_value: current_value,
         };
 
