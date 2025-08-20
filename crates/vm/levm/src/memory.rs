@@ -5,7 +5,6 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, VMError},
 };
 use ExceptionalHalt::OutOfBounds;
-use ExceptionalHalt::OutOfGas;
 use ethrex_common::{
     U256,
     utils::{u256_from_big_endian_const, u256_to_big_endian},
@@ -284,16 +283,13 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
 fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size = u64::try_from(memory_size).map_err(|_| InternalError::TypeConversion)?;
 
-    let memory_size_in_words =
-        memory_size.wrapping_add(WORD_SIZE_IN_BYTES_U64.wrapping_sub(1)) / WORD_SIZE_IN_BYTES_U64;
+    // memory size measured in 32 byte words
+    let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64);
 
-    // For this multiplication to overflow `memory_size_in_words` should be 2**32, which is impossible.
-    let gas_cost = (memory_size_in_words
-        .checked_mul(memory_size_in_words)
-        .ok_or(OutOfGas)?
-        / MEMORY_EXPANSION_QUOTIENT)
-        .checked_add(3u64.checked_mul(memory_size_in_words).ok_or(OutOfGas)?)
-        .ok_or(OutOfGas)?;
+    // Cost(words) ≈ floor(words^2 / q) + 3 * words
+    // For this to overflow memory size in words should be 2^32, which is impossible.
+    #[expect(clippy::arithmetic_side_effects)]
+    let gas_cost = words * words / MEMORY_EXPANSION_QUOTIENT + 3 * words;
 
     Ok(gas_cost)
 }
