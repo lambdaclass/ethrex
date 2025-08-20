@@ -73,12 +73,14 @@ pub enum ExecutionWitnessError {
     Database(String),
     #[error("No block headers stored, should at least store parent header")]
     NoBlockHeaders,
-    #[error("Parent block header not found for block number {0}")]
-    MissingParentHeader(u64),
+    #[error("Parent block header of block {0} was not found")]
+    MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 impl ExecutionWitnessResult {
@@ -247,7 +249,7 @@ impl ExecutionWitnessResult {
     ) -> Result<&BlockHeader, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number.saturating_sub(1))
-            .ok_or(ExecutionWitnessError::MissingParentHeader(block_number))
+            .ok_or(ExecutionWitnessError::MissingParentHeaderOf(block_number))
     }
 
     pub fn get_account_info(
