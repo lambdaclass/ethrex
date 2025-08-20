@@ -184,7 +184,7 @@ impl StoreEngine for Store {
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u32)>, IndexedChunk<Receipt>)> = vec![];
+                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
 
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index.try_into()?).into();
@@ -637,16 +637,14 @@ impl StoreEngine for Store {
     async fn get_transaction_by_location(
         &self,
         block_hash: H256,
-        index: u32,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        let index: usize = index.try_into()?;
+        Ok(block_body.transactions.get(index).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -1638,7 +1636,7 @@ mod tests {
         let block_hash = H256::random();
         let mut key_values = vec![];
         for (i, receipt) in receipts.iter().enumerate() {
-            let key = (block_hash, i as u32).into();
+            let key = (block_hash, i as u64).into();
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;

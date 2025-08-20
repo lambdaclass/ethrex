@@ -33,7 +33,7 @@ struct TraceConfig {
     #[serde(default, with = "serde_utils::duration::opt")]
     timeout: Option<Duration>,
     #[serde(default)]
-    reexec: Option<usize>,
+    reexec: Option<u32>,
 }
 
 #[derive(Default, Deserialize)]
