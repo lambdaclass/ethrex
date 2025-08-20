@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     types::{Test, Tests},
 };
@@ -11,7 +11,8 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 pub struct RunnerOptions {
     /// For running tests in a specific file (could be either a directory or a .json)
-    #[arg(short, long, value_name = "PATH", default_value = "./vectors")]
+    //TODO: Change default path to ./vectors when the other EFTests are replaced by this runner
+    #[arg(short, long, value_name = "PATH", default_value = "../state/vectors")]
     pub path: PathBuf,
     /// For running tests in specific .json files. If this is not empty, "path" flag will be ignored.
     #[arg(short, long, value_name = "JSON_FILES", value_delimiter = ',')]
@@ -21,18 +22,19 @@ pub struct RunnerOptions {
     pub skip_files: Vec<PathBuf>,
 }
 
+//TODO: Use this constant, improve it.
 const IGNORED_TESTS: [&str; 12] = [
     "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
     "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
     "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
     "loopMul.json",                 // Skip because it takes too long to run
-    "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
-    "RevertInCreateInInitCreate2Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
-    "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
-    "create2collisionStorageParis.json", // Skip because it fails on REVM
-    "InitCollisionParis.json",         // Skip because it fails on REVM
-    "InitCollision.json",              // Skip because it fails on REVM
+    "dynamicAccountOverwriteEmpty_Paris.json",
+    "RevertInCreateInInitCreate2Paris.json",
+    "RevertInCreateInInit_Paris.json",
+    "create2collisionStorageParis.json",
+    "InitCollisionParis.json",
+    "InitCollision.json",
     "contract_create.json", // Skip for now as it requires special transaction type handling
 ];
 

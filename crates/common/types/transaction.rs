@@ -7,7 +7,7 @@ pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction};
+pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
@@ -1487,12 +1487,15 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
+    use ethereum_types::H160;
     use serde::Deserialize;
     use serde::{Deserializer, de::Error};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    use crate::types::{AccessListItem, AuthorizationTuple};
+    #[cfg(feature = "c-kzg")]
+    use crate::types::BYTES_PER_BLOB;
+    use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
 
     use super::*;
 
@@ -2131,6 +2134,14 @@ mod serde_impl {
         }
     }
 
+    #[derive(Debug, thiserror::Error)]
+    pub enum GenericTransactionError {
+        #[error("Invalid transaction type: {0}")]
+        InvalidTxType(TxType),
+        #[error("Blob bundle error: {0}")]
+        BlobBundleError(#[from] BlobsBundleError),
+    }
+
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
     /// Used to perform gas estimations and access list creation
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
@@ -2169,7 +2180,7 @@ mod serde_impl {
             flatten,
             rename = "input_or_data",
             deserialize_with = "deserialize_input",
-            serialize_with = "crates::serde_utils::bytes::serialize"
+            serialize_with = "crate::serde_utils::bytes::serialize"
         )]
         pub input: Bytes,
     }
@@ -2231,6 +2242,33 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<GenericTransaction> for EIP1559Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP1559 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: value.to,
+                gas_limit: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                chain_id: value.chain_id.unwrap_or_default(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<EIP4844Transaction> for GenericTransaction {
         fn from(value: EIP4844Transaction) -> Self {
             Self {
@@ -2255,6 +2293,60 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
+        }
+    }
+
+    #[cfg(feature = "c-kzg")]
+    impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            let blobs = value
+                .blobs
+                .iter()
+                .map(|bytes| {
+                    let slice = bytes.as_ref();
+                    let mut blob = [0u8; BYTES_PER_BLOB];
+                    blob.copy_from_slice(slice);
+                    blob
+                })
+                .collect();
+
+            Ok(Self {
+                tx: value.try_into()?,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+            })
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for EIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP4844 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: match value.to {
+                    TxKind::Call(to) => to,
+                    _ => H160::default(),
+                },
+                gas: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                blob_versioned_hashes: value.blob_versioned_hashes,
+                chain_id: value.chain_id.unwrap_or_default(),
+                ..Default::default()
+            })
         }
     }
 
@@ -2315,6 +2407,33 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for PrivilegedL2Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::Privileged {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: value.to,
+                gas_limit: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                chain_id: value.chain_id.unwrap_or_default(),
+                from: value.from,
+                ..Default::default()
+            })
         }
     }
 
