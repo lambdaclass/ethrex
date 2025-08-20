@@ -755,52 +755,11 @@ impl PeerHandler {
                 });
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            let available_downloader = self
+                .get_best_available_downloader(&mut scores, &mut downloaders)
                 .await;
-
-            for (peer_id, _peer_channels) in &peer_channels {
-                if downloaders.contains_key(peer_id) {
-                    continue;
-                }
-                downloaders.insert(*peer_id, true);
-                debug!("{peer_id} added as downloader");
-            }
-
-            let free_downloaders = downloaders
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let (mut free_peer_id, _) = free_downloaders[0];
-
-            for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-                if peer_id_score >= max_peer_id_score {
-                    free_peer_id = *peer_id;
-                }
-            }
-
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
-            else {
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                downloaders.remove(&free_peer_id);
+            let Some(available_downloader) = available_downloader else {
+                info!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
 
@@ -812,127 +771,16 @@ impl PeerHandler {
                 continue;
             };
 
-            let tx = task_sender.clone();
-            downloaders
-                .entry(free_peer_id)
-                .and_modify(|downloader_is_free| {
-                    *downloader_is_free = false;
-                });
-            debug!("Downloader {free_peer_id} is now busy");
-
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                    id: request_id,
+            available_downloader
+                .start()
+                .cast(DownloaderCastRequest::AccountRange {
+                    task_sender: task_sender.clone(),
                     root_hash: state_root,
                     starting_hash: chunk_start,
                     limit_hash: chunk_end,
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (free_downloader_channels_clone.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                if let Some((accounts, proof)) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            if let RLPxMessage::AccountRange(AccountRange {
-                                id,
-                                accounts,
-                                proof,
-                            }) = receiver.recv().await?
-                            {
-                                if id == request_id {
-                                    return Some((accounts, proof));
-                                }
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    if accounts.is_empty() {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        return Ok(());
-                    }
-                    // Unzip & validate response
-                    let proof = encodable_to_proof(&proof);
-                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                        .clone()
-                        .into_iter()
-                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                        .unzip();
-                    let encoded_accounts = account_states
-                        .iter()
-                        .map(|acc| acc.encode_to_vec())
-                        .collect::<Vec<_>>();
-
-                    let Ok(should_continue) = verify_range(
-                        state_root,
-                        &chunk_start,
-                        &account_hashes,
-                        &encoded_accounts,
-                        &proof,
-                    ) else {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        tracing::error!("Received invalid account range");
-                        return Ok(());
-                    };
-
-                    // If the range has more accounts to fetch, we send the new chunk
-                    let chunk_left = if should_continue {
-                        let last_hash = match account_hashes.last() {
-                            Some(last_hash) => last_hash,
-                            None => {
-                                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                                    .await
-                                    .ok();
-                                error!("Account hashes last failed, this shouldn't happen");
-                                return Err(PeerHandlerError::AccountHashes);
-                            }
-                        };
-                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                        let new_start = H256::from_uint(&new_start_u256);
-                        Some((new_start, chunk_end))
-                    } else {
-                        None
-                    };
-                    tx.send((
-                        accounts
-                            .into_iter()
-                            .filter(|unit| unit.hash <= chunk_end)
-                            .collect(),
-                        free_peer_id,
-                        chunk_left,
-                    ))
-                    .await
-                    .ok();
-                } else {
-                    tracing::debug!("Failed to get account range");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                }
-                Ok::<(), PeerHandlerError>(())
-            });
+                })
+                .await
+                .unwrap(); // TODO: handle unwrap
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -2134,7 +1982,7 @@ impl PeerHandler {
 
     // Creates a Downloader Actor from the best available peer
     // Returns None if no peer is available
-    async fn _get_best_available_downloader(
+    async fn get_best_available_downloader(
         &self,
         scores: &mut HashMap<H256, i64>,
         downloaders: &mut BTreeMap<H256, bool>,
