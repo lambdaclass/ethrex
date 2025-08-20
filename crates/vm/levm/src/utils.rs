@@ -680,10 +680,10 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     )
 }
 
-/// Converts a U256 value into usize, fails if the value is over 64 bytes
+/// Converts a U256 value into usize, returning an error if the value is over 32 bits
+/// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    // Only allow values that fit in 32 bits, otherwise there would be an OOM anyway.
     if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
