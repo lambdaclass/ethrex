@@ -1551,6 +1551,7 @@ dependencies = [
  "keccak-hash",
  "lambdaworks-crypto",
  "lazy_static",
+ "secp256k1",
  "serde",
  "sha3",
  "thiserror",
