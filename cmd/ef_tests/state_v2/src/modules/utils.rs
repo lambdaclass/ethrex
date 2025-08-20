@@ -7,7 +7,7 @@ use keccak_hash::H256;
 
 use std::sync::Arc;
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     types::{Env, Test, TestCase},
 };
