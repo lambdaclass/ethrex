@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755649114776,
+  "lastUpdate": 1755681381106,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9175,6 +9175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160326816552,
             "range": "± 467847575",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2a9c4185ed8361d4827877bd4617b3f173574db1",
+          "message": "perf(levm): improve perf of calldataload, calldatacopy,  extcodecopy, codecopy, returndatacopy (#4070)\n\n**Motivation**\n\nimprove perf of calldataload, calldatacopy, extcodecopy, codecopy,\nreturndatacopy\n\n\n(left is this pr, right is main)\n\n<img width=\"1383\" height=\"1273\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/d82a9e4f-51da-4db4-82ec-7d38e3c31477\"\n/>",
+          "timestamp": "2025-08-20T08:25:26Z",
+          "tree_id": "b89e7487e4bf097aa473c4f7c3a006c3ce6d53bc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2a9c4185ed8361d4827877bd4617b3f173574db1"
+        },
+        "date": 1755681365845,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161329618294,
+            "range": "± 599999401",
             "unit": "ns/iter"
           }
         ]
