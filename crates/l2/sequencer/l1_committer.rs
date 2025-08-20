@@ -72,6 +72,7 @@ pub struct L1Committer {
     signer: Signer,
     based: bool,
     sequencer_state: SequencerState,
+    retry_mode: bool,
 }
 
 impl L1Committer {
@@ -105,6 +106,7 @@ impl L1Committer {
             signer: committer_config.signer.clone(),
             based,
             sequencer_state,
+            retry_mode: false,
         })
     }
 
@@ -548,12 +550,19 @@ impl GenServer for L1Committer {
     ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .commit_next_batch_to_l1()
-                .await
-                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+            if let Err(err) = self.commit_next_batch_to_l1().await {
+                error!("L1 Committer Error: {err}");
+                self.retry_mode = true;
+            } else {
+                self.retry_mode = false;
+            }
         }
-        let check_interval = random_duration(self.commit_time_ms);
+        let check_interval = if self.retry_mode {
+            warn!("Committer is in retry mode trying to resend commit in 5 minutes");
+            random_duration(300_000)
+        } else {
+            random_duration(self.commit_time_ms)
+        };
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
         CastResponse::NoReply
     }
