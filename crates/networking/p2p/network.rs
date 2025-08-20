@@ -2,16 +2,12 @@ use crate::{
     discv4::{
         server::{DiscoveryServer, DiscoveryServerError},
         side_car::{DiscoverySideCar, DiscoverySideCarError},
-    },
-    kademlia::Kademlia,
-    metrics::METRICS,
-    rlpx::{
+    }, kademlia::Kademlia, metrics::METRICS, rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
         l2::l2_connection::P2PBasedContext,
         message::Message,
-    },
-    types::{Node, NodeRecord},
+    }, tx_broadcaster::{TxBroadcaster, TxBroadcasterError}, types::{Node, NodeRecord}
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -86,6 +82,8 @@ pub enum NetworkError {
     DiscoverySideCarError(#[from] DiscoverySideCarError),
     #[error("Failed to start RLPx Initiator: {0}")]
     RLPxInitiatorError(#[from] RLPxInitiatorError),
+    #[error("Failed to start Tx Broadcaster: {0}")]
+    TxBroadcasterError(#[from] TxBroadcasterError),
 }
 
 pub fn peer_table() -> Kademlia {
@@ -126,6 +124,12 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
+        })?;
+
+    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
