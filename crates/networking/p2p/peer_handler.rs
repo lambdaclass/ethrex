@@ -34,10 +34,9 @@ use crate::{
     },
     snap::encodable_to_proof,
     utils::{
-        dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
-        SendMessageError, current_unix_time, get_account_state_snapshot_file,
-        get_account_state_snapshots_dir, get_account_storages_snapshot_file,
+        SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
+        get_account_state_snapshot_file, get_account_state_snapshots_dir,
+        get_account_storages_snapshot_file, get_account_storages_snapshot_file,
         get_account_storages_snapshots_dir,
     },
 };
@@ -290,10 +289,8 @@ impl PeerHandler {
 
         // Push the reminder
         if block_count % chunk_count != 0 {
-            tasks_queue_not_started.push_back((
-                chunk_count * chunk_limit + start,
-                block_count % chunk_count,
-            ));
+            tasks_queue_not_started
+                .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
 
         let mut downloaded_count = 0_u64;
@@ -952,7 +949,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send account dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -1756,7 +1753,7 @@ impl PeerHandler {
                             error!(
                                 "Failed to send storage dump result through channel. Error: {err}"
                             )
-                    })
+                        })
                 });
             }
 
@@ -2173,10 +2170,9 @@ impl PeerHandler {
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
-        let response = tokio::time::timeout(Duration::from_secs(5), async move {
-            receiver.recv().await
-        })
-        .await;
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
+                .await;
 
         // TODO: we need to check, this seems a scenario where the peer channel does teardown
         // after we sent the backend message

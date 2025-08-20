@@ -7,9 +7,9 @@ pub mod rlpx;
 pub(crate) mod snap;
 pub mod sync;
 pub mod sync_manager;
+pub mod tx_broadcaster;
 pub mod types;
 pub mod utils;
-pub mod tx_broadcaster;
 
 pub use network::periodically_show_peer_stats;
 pub use network::start_network;

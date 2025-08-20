@@ -2,12 +2,17 @@ use crate::{
     discv4::{
         server::{DiscoveryServer, DiscoveryServerError},
         side_car::{DiscoverySideCar, DiscoverySideCarError},
-    }, kademlia::Kademlia, metrics::METRICS, rlpx::{
+    },
+    kademlia::Kademlia,
+    metrics::METRICS,
+    rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
         l2::l2_connection::P2PBasedContext,
         message::Message,
-    }, tx_broadcaster::{TxBroadcaster, TxBroadcasterError}, types::{Node, NodeRecord}
+    },
+    tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
+    types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
