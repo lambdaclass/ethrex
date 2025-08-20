@@ -524,6 +524,7 @@ impl Blockchain {
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
 
+            // Convertion is safe because EXECUTE_BATCH_SIZE=1024
             log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;
         }

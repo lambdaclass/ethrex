@@ -127,7 +127,7 @@ impl StoreEngine for Store {
                     .transaction_locations
                     .entry(transaction.hash())
                     .or_default()
-                    .push((number, hash, index.try_into()?));
+                    .push((number, hash, index as u64));
             }
             store.bodies.insert(hash, block.body);
             store.headers.insert(hash, block.header);
@@ -140,7 +140,7 @@ impl StoreEngine for Store {
                     .receipts
                     .entry(block_hash)
                     .or_default()
-                    .insert(index.try_into()?, receipt);
+                    .insert(index as u64, receipt);
             }
         }
 
@@ -250,15 +250,14 @@ impl StoreEngine for Store {
             let number = header.number;
             let hash = header.hash();
 
-            let locations: Vec<_> = block
+            let locations = block
                 .body
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| Ok((tx.hash(), number, hash, i.try_into()?)))
-                .collect::<Result<_, StoreError>>()?;
+                .map(|(i, tx)| (tx.hash(), number, hash, i as u64));
 
-            self.add_transaction_locations(locations).await?;
+            self.add_transaction_locations(locations.collect()).await?;
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
             self.add_block_number(hash, number).await?;
@@ -526,7 +525,7 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
         let entry = store.receipts.entry(block_hash).or_default();
         for (index, receipt) in receipts.into_iter().enumerate() {
-            entry.insert(index.try_into()?, receipt);
+            entry.insert(index as u64, receipt);
         }
         Ok(())
     }
