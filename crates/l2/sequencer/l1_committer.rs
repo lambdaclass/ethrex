@@ -51,7 +51,7 @@ const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 // Default wake up time for the committer to check if it should send a commit tx
-const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 300_000;
+const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub enum InMessage {
