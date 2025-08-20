@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755719316923,
+  "lastUpdate": 1755719442706,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9385,6 +9385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161296961507,
             "range": "± 251308618",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5dfb043809bfde94b927325fe69a505d7762a1f5",
+          "message": "ci(l1,l2): separate GPU builds and use x86-64-v2 target (#4090)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrent releases need CUDA installed in order to run. Also, some not so\nold CPUs were incompatible because of a build flag.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nRemove that dependency separating GPU binaries.\nChange CPU target for more compatibility. Worst case bench throw ~25%\nlower performance. For a more efficient build, consider building from\nsource with native CPU target\n\n<img width=\"1210\" height=\"786\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/fa4f43eb-7809-4f22-b131-e71e0234de89\"\n/>\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-20T18:58:47Z",
+          "tree_id": "5145f3ea027951ea92cf351fb189062d70d23f26",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5dfb043809bfde94b927325fe69a505d7762a1f5"
+        },
+        "date": 1755719427667,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 157942216563,
+            "range": "± 337289051",
             "unit": "ns/iter"
           }
         ]
