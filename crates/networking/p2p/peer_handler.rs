@@ -2005,6 +2005,14 @@ impl PeerHandler {
             return Err(RequestStateTrieNodesError::InvalidData);
         }
 
+        if nodes.len() < expected_nodes {
+            error!(
+                "A peer is sending less data than we asked for when doing GTN {:?}",
+                nodes.len()
+            );
+            return Err(RequestStateTrieNodesError::InvalidData);
+        }
+
         for (index, node) in nodes.iter().enumerate() {
             if node.compute_hash().finalize() != paths[index].hash {
                 error!(
