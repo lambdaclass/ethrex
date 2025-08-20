@@ -54,8 +54,10 @@ pub async fn get_blockdata(
     let execution_witness_retrieval_start_time = SystemTime::now();
 
     let witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => execution_witness_from_rpc_chain_config(witness, chain_config)
-            .expect("Failed to convert witness"),
+        Ok(witness) => {
+            execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
+                .expect("Failed to convert witness")
+        }
         Err(e) => {
             warn!("{e}");
             return Err(eyre::eyre!("Unimplemented: Retry with eth_getProofs"));
@@ -165,7 +167,7 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config)
+    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from as u64)
         .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
