@@ -322,7 +322,6 @@ impl StoreEngine for RedBStore {
 
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         transaction_table.insert(
-                            <H256 as Into<Bytes32>>::into(transaction.compute_hash()),
                             <H256 as Into<Bytes32>>::into(transaction.hash()),
                             <(u64, BlockHash, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into(
                                 (number, block.hash(), index as u64),
@@ -435,7 +434,6 @@ impl StoreEngine for RedBStore {
 
                         for (index, transaction) in block.body.transactions.iter().enumerate() {
                             transaction_table.insert(
-                                <H256 as Into<Bytes32>>::into(transaction.compute_hash()),
                                 <H256 as Into<Bytes32>>::into(transaction.hash()),
                                 <(u64, H256, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into(
                                     (block_number, block_hash, index as u64),
