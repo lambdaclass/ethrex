@@ -13,6 +13,7 @@ use ethrex_common::{
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
+use ethrex_levm::vm::VMType;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::LEVM;
@@ -37,10 +38,16 @@ pub struct RpcDB {
     pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
     pub codes: Arc<Mutex<HashMap<H256, Bytes>>>,
     pub chain_config: ChainConfig,
+    pub vm_type: VMType,
 }
 
 impl RpcDB {
-    pub fn new(rpc_url: &str, chain_config: ChainConfig, block_number: usize) -> Self {
+    pub fn new(
+        rpc_url: &str,
+        chain_config: ChainConfig,
+        block_number: usize,
+        vm_type: VMType,
+    ) -> Self {
         RpcDB {
             rpc_url: rpc_url.to_string(),
             block_number,
@@ -49,6 +56,7 @@ impl RpcDB {
             block_hashes: Arc::new(Mutex::new(HashMap::new())),
             codes: Arc::new(Mutex::new(HashMap::new())),
             chain_config,
+            vm_type,
         }
     }
 
@@ -57,8 +65,9 @@ impl RpcDB {
         chain_config: ChainConfig,
         block_number: usize,
         block: &Block,
+        vm_type: VMType,
     ) -> eyre::Result<Self> {
-        let mut db = RpcDB::new(rpc_url, chain_config, block_number);
+        let mut db = RpcDB::new(rpc_url, chain_config, block_number, vm_type);
 
         db.cache_accounts(block).await?;
 
@@ -241,8 +250,7 @@ impl RpcDB {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
 
         // pre-execute and get all state changes
-        let _ =
-            LEVM::execute_block(block, &mut db, ethrex_levm::vm::VMType::L1).map_err(Box::new)?; // TODO: CHANGE VM TYPE
+        let _ = LEVM::execute_block(block, &mut db, self.vm_type).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self

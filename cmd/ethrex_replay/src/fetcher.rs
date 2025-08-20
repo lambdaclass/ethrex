@@ -2,6 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
+use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::GetWitnessError},
@@ -83,11 +84,19 @@ pub async fn get_blockdata(
         Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
+            // TODO: for now we use L2 only for local devnet
+            let vm_type = if let Network::LocalDevnetL2 = network {
+                VMType::L2
+            } else {
+                VMType::L1
+            };
+
             let rpc_db = RpcDB::with_cache(
                 eth_client.urls.first().unwrap().as_str(),
                 chain_config,
                 (requested_block_number - 1).try_into()?,
                 &block,
+                vm_type,
             )
             .await
             .wrap_err("failed to create rpc db")?;
