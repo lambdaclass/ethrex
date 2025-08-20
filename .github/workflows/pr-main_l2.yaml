@@ -189,7 +189,7 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      # lso creates empty verification keys (as workflow runs with exec backend)
+      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
