@@ -1,5 +1,5 @@
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
