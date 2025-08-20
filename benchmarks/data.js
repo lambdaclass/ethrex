@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755702750450,
+  "lastUpdate": 1755704124693,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -21669,6 +21669,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0014413952483801297,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "72007d4f3ce2302d71af2863b25ca15cb02ded34",
+          "message": "feat(l1): engine_getBlobsV1 request endpoint (#3636)\n\n**Motivation**\n\nWe need to implement the RPC endpoint as it will be needed for Fusaka.\n\n**Description**\n\nThis pr incorporates a new module to handle RPC endpoint for the\n**engine_getBlobsV1** request according to the following spec's\ndescription from\n[here](https://ethereum.github.io/execution-apis/api-documentation/) and\n[here](https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_getblobsv1).\n\nTo check the messages are sent correctly you can set the\n`fixtures/network/network_params.yaml` like this:\n```bash\nparticipants:\n  # NOTE: Both erigon and geth work on this example, but they provide wrong nodes information on discovery protocol\n  # - el_type: erigon\n  #   el_image: ethpandaops/erigon:main-764a2c50\n  #   cl_type: lighthouse\n  #   cl_image: sigp/lighthouse:v7.0.0-beta.0\n  #   validator_count: 32\n  # - el_type: reth\n  #   el_image: ghcr.io/paradigmxyz/reth:v1.2.2\n  #   cl_type: lighthouse\n  #   cl_image: sigp/lighthouse:v7.0.0-beta.0\n  #   validator_count: 32\n  - el_type: besu\n    el_image: ethpandaops/besu:main-142a5e6\n    cl_type: lighthouse\n    cl_image: sigp/lighthouse:v7.0.0-beta.0\n    validator_count: 32\n  - el_type: geth\n    el_image: ethereum/client-go:v1.15.2\n    cl_type: lighthouse\n    cl_image: sigp/lighthouse:v7.0.0-beta.0\n    validator_count: 32\n    count: 1\n  - el_type: ethrex\n    cl_type: lighthouse\n    cl_image: sigp/lighthouse:v7.0.0-beta.0\n    validator_count: 32\n    snooper_enabled: true\n\nnetwork_params:\n  electra_fork_epoch: 1\n\n  # The address of the staking contract address on the Eth1 chain\n  deposit_contract_address: \"0x4242424242424242424242424242424242424242\"\n\nethereum_metrics_exporter_enabled: true\n\nadditional_services:\n  - dora\n  - forkmon\n  - spamoor\n\nblockscout_params:\n  image: \"blockscout/blockscout:latest\"\n  verif_image: \"ghcr.io/blockscout/smart-contract-verifier:latest\"\n  frontend_image: \"ghcr.io/blockscout/frontend:latest\"\n\nprometheus_params:\n  # TODO: switch to latest when it points to v3.x\n  image: \"prom/prometheus:v3.2.1\"\n```\n\nThen run in a console:\n```bash\nmake localnet\n```\n\nAnd run in another console:\n```bash\ndocker logs -f $(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)\n```\n\nThis last console will show all the rpc requests and the responses. It's\noverwhelming. Here I left some pictures of my logs:\n\n<img width=\"785\" height=\"411\" alt=\"Screenshot 2025-07-22 at 16 07 22\"\nsrc=\"https://github.com/user-attachments/assets/474ee749-0721-4ae6-8934-fc8c00fae70d\"\n/>\n<img width=\"855\" height=\"195\" alt=\"Screenshot 2025-07-22 at 16 07 42\"\nsrc=\"https://github.com/user-attachments/assets/be879e7c-244c-4130-9ae9-c4e2976f513d\"\n/>\n<img width=\"898\" height=\"155\" alt=\"Screenshot 2025-07-22 at 16 07 59\"\nsrc=\"https://github.com/user-attachments/assets/7f8922a0-077f-4361-9eed-2b42dd89dd99\"\n/>\n<img width=\"843\" height=\"144\" alt=\"Screenshot 2025-07-22 at 16 08 18\"\nsrc=\"https://github.com/user-attachments/assets/eb7e1246-1aba-417f-8217-34cbfec6b95c\"\n/>\n<img width=\"861\" height=\"129\" alt=\"Screenshot 2025-07-22 at 16 08 34\"\nsrc=\"https://github.com/user-attachments/assets/eee3c6c5-17fd-44f8-8e14-6bff8aba4a63\"\n/>\n<img width=\"831\" height=\"117\" alt=\"Screenshot 2025-07-22 at 16 08 52\"\nsrc=\"https://github.com/user-attachments/assets/3f450e2a-cd8d-4374-b87c-9f83107c09c3\"\n/>\n<img width=\"830\" height=\"105\" alt=\"Screenshot 2025-07-22 at 16 09 18\"\nsrc=\"https://github.com/user-attachments/assets/b7a8c40a-02c2-44f3-8f96-129a682a5046\"\n/>\n\nI haven't found a better way of testing it. I think you can check it\nwith the dora service but I'm not sure how.\n\nCloses #3428",
+          "timestamp": "2025-08-20T13:11:53Z",
+          "tree_id": "92e25588a855d9a907fa478597704351c3ab0abe",
+          "url": "https://github.com/lambdaclass/ethrex/commit/72007d4f3ce2302d71af2863b25ca15cb02ded34"
+        },
+        "date": 1755704108839,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00855597435897436,
             "unit": "Mgas/s"
           }
         ]
