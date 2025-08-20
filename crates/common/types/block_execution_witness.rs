@@ -80,6 +80,8 @@ pub enum ExecutionWitnessError {
     NoncontiguousBlockHeaders,
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 impl ExecutionWitnessResult {
