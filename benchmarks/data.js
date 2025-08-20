@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755705667249,
+  "lastUpdate": 1755706513300,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9295,6 +9295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161115969571,
             "range": "± 251108843",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38d96c3466a2054591152b9376d0996f00f9551b",
+          "message": "refactor(levm): change ecrecover implementation to use k256 instead of secp256k1 (#4085)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Change precompile ecrecover to use `k256` instead of `secp256k1`\n\n\n\nI tested this out by going to the fix_execution_witness_serde branch,\nmerging this branch into that and executing a block that used to fail\nwith a Gas Mismatch like the 8968278 with SP1. Execution passed in\nmultiple blocks that had this problem.\n\nCloses #4087",
+          "timestamp": "2025-08-20T15:22:01Z",
+          "tree_id": "f46e0727b506747f23d0a8c97cedd31c90e20230",
+          "url": "https://github.com/lambdaclass/ethrex/commit/38d96c3466a2054591152b9376d0996f00f9551b"
+        },
+        "date": 1755706499046,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161822657113,
+            "range": "± 263864181",
             "unit": "ns/iter"
           }
         ]
