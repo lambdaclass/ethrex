@@ -43,7 +43,7 @@ enum SubcommandExecute {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -61,7 +61,7 @@ enum SubcommandExecute {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -77,7 +77,7 @@ enum SubcommandExecute {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -93,7 +93,7 @@ enum SubcommandExecute {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -209,7 +209,7 @@ enum SubcommandProve {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -227,7 +227,7 @@ enum SubcommandProve {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -243,7 +243,7 @@ enum SubcommandProve {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
         #[arg(long, required = false)]
@@ -336,7 +336,7 @@ enum EthrexReplayCommand {
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
             value_parser = clap::value_parser!(Network),
-            default_value_t = Network::mainnet(),
+            default_value_t = Network::default(),
         )]
         network: Network,
     },
