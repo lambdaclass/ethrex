@@ -142,25 +142,6 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    // let hashed_address = hash_address(&update.address);
-                    // let encoded_state = match state_trie.get(&hashed_address) {
-                    //     Ok(Some(encoded_state)) => encoded_state,
-                    //     _ => AccountState::default().encode_to_vec(),
-                    // };
-                    // let state = AccountState::decode(&encoded_state).map_err(|_| {
-                    //     ExecutionWitnessError::Database(
-                    //         "Failed to get decode account from trie".to_string(),
-                    //     )
-                    // })?;
-                    // let mut storage_trie = if state.storage_root == *EMPTY_TRIE_HASH {
-                    //     Trie::from_nodes(None, &[]).expect("failed to create empty trie")
-                    // } else {
-                    //     rebuild_trie(state.storage_root, &self.state_trie_nodes).map_err(|e| {
-                    //         ExecutionWitnessError::Database(format!(
-                    //             "Failed to rebuild storage trie: {e}"
-                    //         ))
-                    //     })?
-                    // };
                     let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
                         Trie::from_nodes(None, &[]).expect("failed to create empty trie")
                     });
