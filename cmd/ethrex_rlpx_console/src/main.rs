@@ -50,8 +50,8 @@ pub fn init_tracing(log_level: Level) {
 async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
     let genesis: Genesis = match network.as_str() {
         "localnet" => {
-            let file = File::open("/Users/mateo/ethrex/local_testnet_data/genesis.json")
-                .expect("Failed to open genesis file");
+            let file =
+                File::open("local_testnet_data/genesis.json").expect("Failed to open genesis file");
             let reader = BufReader::new(file);
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
         }
