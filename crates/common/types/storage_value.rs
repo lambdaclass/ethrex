@@ -7,5 +7,5 @@ pub struct StorageValue {
     // Whether the slot is cold can be inferred from the type of previous value
     // If its Some(U256) then it's not cold
     // But if it's none if means the slot wasn't accessed in the current transaction
-    pub previous_value: U256,
+    pub previous_value: Option<U256>,
 }

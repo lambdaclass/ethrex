@@ -272,7 +272,7 @@ pub fn check_accounts_state(
                                 H256::from(k.to_big_endian()),
                                 StorageValue {
                                     current_value: *v,
-                                    previous_value: U256::from(0),
+                                    previous_value: None,
                                 },
                             )
                         })

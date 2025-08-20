@@ -133,7 +133,7 @@ impl GeneralizedDatabase {
             Some(account) => {
                 let storage_value = StorageValue {
                     current_value: value,
-                    previous_value: U256::from(0),
+                    previous_value: None,
                 };
                 account.storage.insert(key, storage_value);
             }
@@ -378,13 +378,19 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        let storage_value = self.get_account_mut(address)?.storage.get(&key);
-        let original_value = match storage_value {
-            Some(value) => value.previous_value,
-            None => U256::from(0),
-        };
+        let account_storage_slot = self
+            .get_account_mut(address)?
+            .storage
+            .get_mut(&key)
+            .ok_or(InternalError::AccountNotFound)?;
+        if let Some(prev) = account_storage_slot.previous_value {
+            return Ok(prev);
+        }
 
-        Ok(original_value)
+        let value = account_storage_slot.current_value;
+        account_storage_slot.previous_value = Some(value);
+
+        Ok(value)
     }
 
     /// Accesses to an account's storage slot and returns the value in it.
@@ -431,7 +437,7 @@ impl<'a> VM<'a> {
         let account = self.get_account_mut(address)?;
         let storage_value = StorageValue {
             current_value: value,
-            previous_value: U256::from(0),
+            previous_value: None,
         };
         account.storage.insert(key, storage_value);
 
@@ -451,7 +457,7 @@ impl<'a> VM<'a> {
         let account = self.get_account_mut(address)?;
         let updated_storage_value = StorageValue {
             current_value: new_value,
-            previous_value: current_value,
+            previous_value: Some(current_value),
         };
         account.storage.insert(key, updated_storage_value);
         Ok(())

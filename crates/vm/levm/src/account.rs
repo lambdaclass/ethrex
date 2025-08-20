@@ -1,5 +1,4 @@
 use ethrex_common::{
-    U256,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, GenesisAccount, StorageValue},
 };
@@ -42,7 +41,7 @@ impl From<GenesisAccount> for LevmAccount {
                     H256::from(key.to_big_endian()),
                     StorageValue {
                         current_value: value,
-                        previous_value: U256::from(0),
+                        previous_value: None,
                     },
                 )
             })
