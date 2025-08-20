@@ -7,14 +7,19 @@ use ethrex_common::{
     types::{AccountInfo, AccountUpdate, ChainConfig},
 };
 use ethrex_trie::{NodeRLP, Trie, TrieError};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::errors::ProverDBError;
 use crate::{EvmError, VmDatabase};
+use ethrex_common::rkyv_utils::{
+    AccountInfoWrapper, BytesWrapper, H160Wrapper, H256Wrapper, StorageProofsWrapper, U256Wrapper,
+};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 
-#[derive(Serialize, Deserialize)]
+#[expect(clippy::large_enum_variant)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub enum WitnessProof {
     DB(ProverDB),
     Witness(ExecutionWitnessResult),
@@ -24,13 +29,16 @@ pub enum WitnessProof {
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 pub struct ProverDB {
     /// indexed by account address
+    #[rkyv(with=rkyv::with::MapKV<H160Wrapper, AccountInfoWrapper>)]
     pub accounts: HashMap<Address, AccountInfo>,
     /// indexed by code hash
+    #[rkyv(with=rkyv::with::MapKV<H256Wrapper, BytesWrapper>)]
     pub code: HashMap<H256, Bytes>,
     /// indexed by account address and storage key
+    #[rkyv(with=rkyv::with::MapKV<H160Wrapper, rkyv::with::MapKV<H256Wrapper, U256Wrapper>>)]
     pub storage: HashMap<Address, HashMap<H256, U256>>,
     /// indexed by block number
     pub block_headers: HashMap<u64, BlockHeader>,
@@ -39,11 +47,13 @@ pub struct ProverDB {
     /// Encoded nodes to reconstruct a state trie, but only including relevant data ("pruned trie").
     ///
     /// Root node is stored separately from the rest as the first tuple member.
+    #[rkyv(with=StorageProofsWrapper)]
     pub state_proofs: (Option<NodeRLP>, Vec<NodeRLP>),
     /// Encoded nodes to reconstruct every storage trie, but only including relevant data ("pruned
     /// trie").
     ///
     /// Root node is stored separately from the rest as the first tuple member.
+    #[rkyv(with=rkyv::with::MapKV<H160Wrapper, StorageProofsWrapper>)]
     pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
 }
 

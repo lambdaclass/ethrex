@@ -348,7 +348,7 @@ impl Blockchain {
         Ok(ExecutionWitnessResult {
             keys: keys.into_iter().map(Bytes::from).collect(),
             codes,
-            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct.
+            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
             storage_tries: None,
             block_headers,
@@ -615,7 +615,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let hash = transaction.compute_hash();
+        let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -642,7 +642,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let hash = transaction.compute_hash();
+        let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
