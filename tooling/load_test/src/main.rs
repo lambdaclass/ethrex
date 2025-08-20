@@ -1,8 +1,9 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::types::TxType;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::{deploy, send_eip1559_transaction};
+use ethrex_l2_rpc::clients::{deploy, send_generic_transaction};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
@@ -125,7 +126,8 @@ async fn claim_erc20_balances(
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
 
             let claim_tx = client
-                .build_eip1559_transaction(
+                .build_generic_tx(
+                    TxType::EIP1559,
                     contract,
                     account.address(),
                     claim_balance_calldata.into(),
@@ -133,7 +135,7 @@ async fn claim_erc20_balances(
                 )
                 .await
                 .unwrap();
-            let tx_hash = send_eip1559_transaction(&client, &claim_tx, &account)
+            let tx_hash = send_generic_transaction(&client, claim_tx, &account)
                 .await
                 .unwrap();
             client.wait_for_transaction_receipt(tx_hash, RETRIES).await
@@ -220,7 +222,8 @@ async fn load_test(
             for i in 0..tx_amount {
                 let (value, calldata, dst) = tx_builder.build_tx();
                 let tx = client
-                    .build_eip1559_transaction(
+                    .build_generic_tx(
+                        TxType::EIP1559,
                         dst,
                         src,
                         calldata.into(),
@@ -237,7 +240,7 @@ async fn load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = send_eip1559_transaction(&client, &tx, &account).await?;
+                let _sent = send_generic_transaction(&client, tx, &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())
