@@ -1,9 +1,9 @@
 use std::{
-    cmp::{Ordering, max},
+    cmp::{max, Ordering},
     collections::HashMap,
     ops::Div,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use ethrex_common::{
@@ -312,15 +312,27 @@ impl Blockchain {
     }
 
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
-        let self_clone = self.clone();
-        let payload_build_task =
-            tokio::task::spawn(async move { self_clone.build_payload(payload).await });
-        let mut payloads = self.payloads.lock().await;
-        if payloads.len() == MAX_PAYLOADS {
+            let self_clone = self.clone();
+            let payload_build_task = tokio::task::spawn(async move { self_clone.build_payload_loop(payload).await });
+            let mut payloads = self.payloads.lock().await;
+            if payloads.len() == MAX_PAYLOADS {
             // Remove oldest unclaimed payload
             payloads.remove(0);
         }
         payloads.push((payload_id, PayloadOrTask::Task(payload_build_task)));
+    }
+
+    pub async fn build_payload_loop(self: Arc<Blockchain>, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        let start = Instant::now();
+        let self_clone = self.clone();
+        const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
+        // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
+        let mut res= self_clone.build_payload(payload.clone()).await?;
+        while  start.elapsed() < SECONDS_PER_SLOT {
+            let payload = payload.clone();
+            res = self_clone.build_payload(payload).await?;
+        }
+        Ok(res)
     }
 
     /// Completes the payload building process, return the block value
