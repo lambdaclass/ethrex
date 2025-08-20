@@ -73,7 +73,6 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
