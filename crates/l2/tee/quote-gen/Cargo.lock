@@ -2695,6 +2695,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "k256",
  "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
