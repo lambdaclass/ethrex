@@ -561,7 +561,7 @@ impl GenServer for L1Committer {
             let duration = 300_000.min(self.commit_time_ms);
             let minutes = duration / 60000;
             warn!(
-                "Committer is in retry mode trying to resend commit in {} {}",
+                "Committer is in retry mode retrying to send commit in {} {}",
                 minutes,
                 if minutes == 1 { "minute" } else { "minutes" }
             );
