@@ -86,9 +86,9 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
-      - name: Install CUDA (only Linux x86)
+      - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
-        if: ${{ matrix.platform == 'ubuntu-22.04' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
