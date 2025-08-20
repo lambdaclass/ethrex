@@ -400,7 +400,7 @@ async fn main() {
             TxBuilder::Noop
         }
         TestType::SidetreeAnchor => {
-            println!("ERC20 transfer load test starting");
+            println!("Sidetree transfer load test starting");
             let contract_address = parse_address(SIDETREE_ANCHOR_ADDRESS);
             TxBuilder::SidetreeAnchor(contract_address)
         }
