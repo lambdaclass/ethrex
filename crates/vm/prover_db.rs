@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use crate::errors::ProverDBError;
 use crate::{EvmError, VmDatabase};
 use ethrex_common::rkyv_utils::{
-    AccountInfoWrapper, BytesWrapper, H160Wrapper, H256Wrapper, StorageProofsWrapper, U256Wrapper,
+    AccountInfoWrapper, BytesWrapper, EncodedTrieWrapper, H160Wrapper, H256Wrapper, U256Wrapper,
 };
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 
@@ -47,13 +47,13 @@ pub struct ProverDB {
     /// Encoded nodes to reconstruct a state trie, but only including relevant data ("pruned trie").
     ///
     /// Root node is stored separately from the rest as the first tuple member.
-    #[rkyv(with=StorageProofsWrapper)]
+    #[rkyv(with=EncodedTrieWrapper)]
     pub state_proofs: (Option<NodeRLP>, Vec<NodeRLP>),
     /// Encoded nodes to reconstruct every storage trie, but only including relevant data ("pruned
     /// trie").
     ///
     /// Root node is stored separately from the rest as the first tuple member.
-    #[rkyv(with=rkyv::with::MapKV<H160Wrapper, StorageProofsWrapper>)]
+    #[rkyv(with=rkyv::with::MapKV<H160Wrapper, EncodedTrieWrapper>)]
     pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
 }
 

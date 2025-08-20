@@ -235,18 +235,6 @@ pub struct AccountInfoWrapperResolver {
     inner: VecResolver,
 }
 
-// impl From<AccountInfoWrapper> for AccountInfo {
-//     fn from(value: AccountInfoWrapper) -> Self {
-//         Self {
-//             code_hash: value.code_hash,
-//             balance: value.balance,
-//             nonce: value.nonce,
-//         }
-//     }
-// }
-
-// pub struct ArchiveAccountInfo;
-
 impl ArchiveWith<AccountInfo> for AccountInfoWrapper {
     type Archived = ArchivedVec<u8>;
     type Resolver = AccountInfoWrapperResolver;
@@ -300,16 +288,16 @@ where
     }
 }
 
-pub struct StorageProofsWrapper;
+pub struct EncodedTrieWrapper;
 
-pub struct StorageProofsWrapperResolver {
+pub struct EncodedTrieWrapperResolver {
     len: usize,
     inner: VecResolver,
 }
 
-impl ArchiveWith<(Option<Vec<u8>>, Vec<Vec<u8>>)> for StorageProofsWrapper {
+impl ArchiveWith<(Option<Vec<u8>>, Vec<Vec<u8>>)> for EncodedTrieWrapper {
     type Archived = ArchivedVec<u8>;
-    type Resolver = StorageProofsWrapperResolver;
+    type Resolver = EncodedTrieWrapperResolver;
 
     fn resolve_with(
         _: &(Option<Vec<u8>>, Vec<Vec<u8>>),
@@ -320,7 +308,7 @@ impl ArchiveWith<(Option<Vec<u8>>, Vec<Vec<u8>>)> for StorageProofsWrapper {
     }
 }
 
-impl<S> SerializeWith<(Option<Vec<u8>>, Vec<Vec<u8>>), S> for StorageProofsWrapper
+impl<S> SerializeWith<(Option<Vec<u8>>, Vec<Vec<u8>>), S> for EncodedTrieWrapper
 where
     S: Fallible + Allocator + Writer + ?Sized,
 {
@@ -353,7 +341,7 @@ where
             encoded.extend_from_slice(node);
         }
 
-        Ok(StorageProofsWrapperResolver {
+        Ok(EncodedTrieWrapperResolver {
             len: encoded.len(),
             inner: ArchivedVec::serialize_from_slice(encoded.as_slice(), serializer)?,
         })
@@ -361,7 +349,7 @@ where
 }
 
 impl<D> DeserializeWith<Archived<Vec<u8>>, (Option<Vec<u8>>, Vec<Vec<u8>>), D>
-    for StorageProofsWrapper
+    for EncodedTrieWrapper
 where
     D: Fallible<Error = rkyv::rancor::Error> + ?Sized,
 {
