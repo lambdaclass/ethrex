@@ -26,10 +26,6 @@ clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
 
-[[bin]]
-name = "replayer"
-path = "src/bin/replayer/main.rs"
-
 [features]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]

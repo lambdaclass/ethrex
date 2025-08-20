@@ -4,8 +4,8 @@ use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 
 use crate::{
-    ReplayerMode,
     slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest},
+    ReplayerMode,
 };
 
 pub struct BlockRunReport {
