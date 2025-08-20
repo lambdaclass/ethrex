@@ -22,6 +22,7 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    l2: bool,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
@@ -85,11 +86,7 @@ pub async fn get_blockdata(
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
             // TODO: for now we use L2 only for local devnet
-            let vm_type = if let Network::LocalDevnetL2 = network {
-                VMType::L2
-            } else {
-                VMType::L1
-            };
+            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
             let rpc_db = RpcDB::with_cache(
                 eth_client.urls.first().unwrap().as_str(),
