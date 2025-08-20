@@ -682,9 +682,9 @@ async fn try_execute_payload(
         }
         Ok(()) => {
             // Remove executed transactions from mempool
-            // context
-            //     .blockchain
-            //     .remove_block_transactions_from_pool(block)?;
+            context
+                .blockchain
+                .remove_block_transactions_from_pool(block)?;
             info!("Block with hash {block_hash} executed and added to storage succesfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
