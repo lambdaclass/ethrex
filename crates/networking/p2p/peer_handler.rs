@@ -759,7 +759,7 @@ impl PeerHandler {
                 .get_best_available_downloader(&mut scores, &mut downloaders)
                 .await;
             let Some(available_downloader) = available_downloader else {
-                info!("No free downloaders available, waiting for a peer to finish, retrying");
+                debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
 
