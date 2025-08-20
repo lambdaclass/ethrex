@@ -197,7 +197,6 @@ impl StoreEngine for Store {
                 {
                     key_values.append(&mut entries);
                 }
-
                 let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
                 for (key, value) in key_values {
                     cursor

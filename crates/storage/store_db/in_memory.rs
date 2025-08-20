@@ -249,7 +249,6 @@ impl StoreEngine for Store {
             let header = block.header;
             let number = header.number;
             let hash = header.hash();
-
             let locations = block
                 .body
                 .transactions
