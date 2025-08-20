@@ -1,11 +1,14 @@
 #![no_main]
 
-use zkvm_interface::{io::JSONProgramInput, execution::execution_program};
+use rkyv::rancor::Error;
+use zkvm_interface::{execution::execution_program, io::ProgramInput};
 
 sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
-    let input = sp1_zkvm::io::read::<JSONProgramInput>().0;
+    let input = sp1_zkvm::io::read_vec();
+    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
+
     let output = execution_program(input).unwrap();
 
     sp1_zkvm::io::commit(&output.encode());
