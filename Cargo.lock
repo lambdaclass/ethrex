@@ -4133,6 +4133,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
