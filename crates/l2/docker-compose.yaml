@@ -14,23 +14,23 @@ services:
     image: "ethrex:unstable"
     build: ../../
     volumes:
-      # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
-      - ./contracts:${CI_ETHREX_WORKDIR}/contracts
-      - ../../cmd/.env:${CI_ETHREX_WORKDIR}/.env
-      - ../../fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
-      - ../../fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
-      - ../../fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
-      - ./prover/zkvm/interface/risc0/out/riscv32im-risc0-vk:${CI_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
+      - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
+      - ../../cmd/.env:${DOCKER_ETHREX_WORKDIR}/.env
+      - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
+      - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
+      - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ./prover/zkvm/interface/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
-      - ETHREX_DEPLOYER_ENV_FILE_PATH=${CI_ETHREX_WORKDIR}/.env
-      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
-      - ETHREX_DEPLOYER_GENESIS_L2_PATH=${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
-      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
+      - ETHREX_DEPLOYER_ENV_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/.env
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ETHREX_DEPLOYER_GENESIS_L2_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
+      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${ETHREX_DEPLOYER_DEPLOY_RICH:-true}
       - ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
@@ -38,8 +38,8 @@ services:
       - ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER:-false}
       - ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=${ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS:-0x00000000000000000000000000000000000000aa}
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
       - ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER:-false}
       - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
