@@ -13,6 +13,23 @@ use std::{
 };
 
 #[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Vec<Bytes>)]
+pub struct BytesVecWrapper {
+    #[rkyv(getter = bytes_vec_to_vec)]
+    bytes_vec: Vec<Vec<u8>>,
+}
+
+fn bytes_vec_to_vec(bytes_vec: &[Bytes]) -> Vec<Vec<u8>> {
+    bytes_vec.iter().map(|b| b.to_vec()).collect()
+}
+
+impl From<BytesVecWrapper> for Vec<Bytes> {
+    fn from(value: BytesVecWrapper) -> Self {
+        value.bytes_vec.into_iter().map(Bytes::from).collect()
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = U256)]
 pub struct U256Wrapper([u64; 4]);
 

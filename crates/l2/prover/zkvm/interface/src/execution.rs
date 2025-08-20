@@ -93,7 +93,6 @@ pub enum StatelessExecutionError {
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
-    let chain_id = input.db.chain_config.chain_id;
     let ProgramInput {
         blocks,
         db,
@@ -103,6 +102,9 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         #[cfg(feature = "l2")]
         blob_proof,
     } = input;
+
+    let chain_id = db.chain_config.chain_id;
+
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
         return stateless_validation_l2(
@@ -114,6 +116,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             chain_id,
         );
     }
+
     stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id)
 }
 
@@ -158,11 +161,11 @@ pub fn stateless_validation_l2(
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
         codes: db.codes.clone(),
-        parent_block_header: db.parent_block_header.clone(),
-        state_trie_nodes: db.state_trie_nodes.clone(),
-        storage_trie_nodes: db.storage_trie_nodes.clone(),
+        keys: db.keys.clone(),
         state_trie: None,
         storage_tries: None,
+        state_trie_nodes: db.state_trie_nodes.clone(),
+        parent_block_header: db.parent_block_header.clone(),
     };
 
     let StatelessResult {
@@ -232,7 +235,7 @@ fn execute_stateless(
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     db.rebuild_tries()
-        .map_err(StatelessExecutionError::ExecutionWitness)?;
+        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
