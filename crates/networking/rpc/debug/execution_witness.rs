@@ -98,7 +98,7 @@ pub fn execution_witness_from_rpc_chain_config(
         parent_block_header: parent_header,
     };
 
-    witness.rebuild_tries()?;
+    witness.rebuild_state_trie()?;
 
     Ok(witness)
 }

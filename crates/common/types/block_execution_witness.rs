@@ -82,7 +82,7 @@ pub enum ExecutionWitnessError {
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+    pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
         self.state_trie = Some(state_trie);
 

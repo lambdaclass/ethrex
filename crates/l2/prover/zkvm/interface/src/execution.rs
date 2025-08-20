@@ -192,7 +192,7 @@ pub fn stateless_validation_l2(
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         initial_db
-            .rebuild_tries()
+            .rebuild_state_trie()
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
         let wrapped_db = ExecutionWitnessWrapper::new(initial_db);
         let state_diff = prepare_state_diff(
@@ -234,7 +234,7 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries()
+    db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
