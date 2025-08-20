@@ -1223,16 +1223,19 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
 }
 
 /// point_bytes must have atleast 128 bytes.
+#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
-    debug_assert!(point_bytes.len() >= 128, "point_bytes must have 128 bytes");
+    if point_bytes.len() != 128 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
 
-    #[expect(clippy::indexing_slicing)]
     let x = parse_coordinate(&point_bytes[0..64])?;
-    #[expect(clippy::indexing_slicing)]
     let y = parse_coordinate(&point_bytes[64..128])?;
 
+    const ALL_ZERO: [u8; 48] = [0; 48];
+
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
+    let g1_point: G1Projective = if x == ALL_ZERO && y == ALL_ZERO {
         G1Projective::identity()
     } else {
         let g1_bytes: [u8; 96] = [x, y]
@@ -1270,59 +1273,57 @@ fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, V
 }
 
 /// point_bytes always has atleast 256 bytes
+#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, VMError> {
-    debug_assert!(point_bytes.len() >= 256, "point_bytes must have 256 bytes");
+    if point_bytes.len() != 256 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
 
-    #[expect(clippy::indexing_slicing)]
+    const ALL_ZERO: [u8; 48] = [0; 48];
+
     let x_0 = parse_coordinate(&point_bytes[0..64])?;
-    #[expect(clippy::indexing_slicing)]
     let x_1 = parse_coordinate(&point_bytes[64..128])?;
-    #[expect(clippy::indexing_slicing)]
     let y_0 = parse_coordinate(&point_bytes[128..192])?;
-    #[expect(clippy::indexing_slicing)]
     let y_1 = parse_coordinate(&point_bytes[192..256])?;
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g2_point: G2Projective = if x_0.iter().all(|e| *e == 0)
-        && x_1.iter().all(|e| *e == 0)
-        && y_0.iter().all(|e| *e == 0)
-        && y_1.iter().all(|e| *e == 0)
-    {
-        G2Projective::identity()
-    } else {
-        // The crate serialize the coordinates in a reverse order
-        // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-        let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
-            .concat()
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
-        if unchecked {
-            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-            // note that there is no subgroup check for the G1 addition precompile
-            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-                .into_option()
-                .ok_or(ExceptionalHalt::Precompile(
-                    PrecompileError::ParsingInputError,
-                ))?;
-
-            // We still need to check if the point is on the curve
-            if !bool::from(g2_affine.is_on_curve()) {
-                return Err(ExceptionalHalt::Precompile(
-                    PrecompileError::BLS12381G2PointNotInCurve,
-                )
-                .into());
-            }
-
-            G2Projective::from(g2_affine)
+    let g2_point: G2Projective =
+        if x_0 == ALL_ZERO && x_1 == ALL_ZERO && y_0 == ALL_ZERO && y_1 == ALL_ZERO {
+            G2Projective::identity()
         } else {
-            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
-                .into_option()
-                .ok_or(PrecompileError::ParsingInputError)?;
+            // The crate serialize the coordinates in a reverse order
+            // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
+            let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
+                .concat()
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?;
 
-            G2Projective::from(g2_affine)
-        }
-    };
+            if unchecked {
+                // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+                // note that there is no subgroup check for the G1 addition precompile
+                let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
+                    .into_option()
+                    .ok_or(ExceptionalHalt::Precompile(
+                        PrecompileError::ParsingInputError,
+                    ))?;
+
+                // We still need to check if the point is on the curve
+                if !bool::from(g2_affine.is_on_curve()) {
+                    return Err(ExceptionalHalt::Precompile(
+                        PrecompileError::BLS12381G2PointNotInCurve,
+                    )
+                    .into());
+                }
+
+                G2Projective::from(g2_affine)
+            } else {
+                let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                    .into_option()
+                    .ok_or(PrecompileError::ParsingInputError)?;
+
+                G2Projective::from(g2_affine)
+            }
+        };
     Ok(g2_point)
 }
 
