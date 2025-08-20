@@ -84,10 +84,9 @@ pub fn execution_witness_from_rpc_chain_config(
             "First block number cannot be zero".to_string(),
         ))?;
 
-    let parent_header = block_headers
-        .get(&parent_number)
-        .cloned()
-        .ok_or(ExecutionWitnessError::MissingParentHeader(parent_number))?;
+    let parent_header = block_headers.get(&parent_number).cloned().ok_or(
+        ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
+    )?;
 
     let mut witness = ExecutionWitnessResult {
         state_trie_nodes: rpc_witness.state,
