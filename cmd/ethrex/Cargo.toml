@@ -70,11 +70,9 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
-libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup/libmdbx"]
+libmdbx = ["ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
-rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
-rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]
