@@ -84,7 +84,7 @@ pub async fn get_blockdata(
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
             let rpc_db = RpcDB::with_cache(
-                eth_client.urls.first().unwrap().as_str(), // TODO: CHANGE THIS
+                eth_client.urls.first().unwrap().as_str(),
                 chain_config,
                 (requested_block_number - 1).try_into()?,
                 &block,
@@ -92,7 +92,7 @@ pub async fn get_blockdata(
             .await
             .wrap_err("failed to create rpc db")?;
             let db = rpc_db
-                .to_exec_db(&block)
+                .to_prover_db(&block)
                 .wrap_err("failed to build execution db")?;
             let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
                 .elapsed()
@@ -124,7 +124,7 @@ pub async fn get_blockdata(
 
             return Ok(cache);
         }
-        _ => panic!("Unexpected response from get_witness"),
+        Err(e) => panic!("Unexpected response from get_witness: {e}"),
     };
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time

@@ -25,7 +25,7 @@ use std::sync::Mutex;
 
 use super::{Account, NodeRLP};
 
-const RPC_RATE_LIMIT: usize = 100;
+const RPC_RATE_LIMIT: usize = 15;
 
 #[derive(Clone)]
 pub struct RpcDB {
@@ -235,10 +235,7 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
-    pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
-        // TODO: Simplify this function and potentially merge with the implementation for
-        // StoreWrapper.
-
+    pub fn to_prover_db(&self, block: &Block) -> Result<ProverDB, ProverDBError> {
         let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
