@@ -20,7 +20,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 
 #[expect(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
-pub enum WitnessProof {
+pub enum PreExecutionState {
     DB(ProverDB),
     Witness(ExecutionWitnessResult),
 }

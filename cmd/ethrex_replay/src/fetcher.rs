@@ -9,7 +9,7 @@ use ethrex_rpc::{
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_vm::prover_db::WitnessProof;
+use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
 use tracing::{info, warn};
 
@@ -118,7 +118,7 @@ pub async fn get_blockdata(
 
             let block_cache_start_time = SystemTime::now();
 
-            let cache = Cache::new(vec![block], WitnessProof::DB(db));
+            let cache = Cache::new(vec![block], PreExecutionState::DB(db));
 
             write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -151,7 +151,7 @@ pub async fn get_blockdata(
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], WitnessProof::Witness(witness));
+    let cache = Cache::new(vec![block], PreExecutionState::Witness(witness));
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -236,7 +236,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, WitnessProof::Witness(witness));
+    let cache = Cache::new(blocks, PreExecutionState::Witness(witness));
 
     Ok(cache)
 }

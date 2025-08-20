@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::prover_db::WitnessProof;
+use ethrex_vm::prover_db::PreExecutionState;
 use ethrex_vm::{
     Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDB, ProverDBError, VmDatabase,
 };
@@ -103,7 +103,7 @@ pub enum StatelessExecutionError {
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        db,
+        pre_execution_state: db,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
@@ -112,8 +112,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
     } = input;
 
     let chain_id = match db {
-        WitnessProof::DB(ref prover_db) => prover_db.chain_config.chain_id,
-        WitnessProof::Witness(ref execution_witness_result) => {
+        PreExecutionState::DB(ref prover_db) => prover_db.chain_config.chain_id,
+        PreExecutionState::Witness(ref execution_witness_result) => {
             execution_witness_result.chain_config.chain_id
         }
     };
@@ -135,7 +135,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    db: WitnessProof,
+    pre_execution_state: PreExecutionState,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -145,9 +145,11 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = match db {
-        WitnessProof::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
-        WitnessProof::DB(db) => execute_stateless_prover_db(blocks, db, elasticity_multiplier)?,
+    } = match pre_execution_state {
+        PreExecutionState::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        PreExecutionState::DB(db) => {
+            execute_stateless_prover_db(blocks, db, elasticity_multiplier)?
+        }
     };
 
     Ok(ProgramOutput {
@@ -168,14 +170,14 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    db: WitnessProof,
+    pre_execution_state: PreExecutionState,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let initial_db = match db {
-        WitnessProof::Witness(ref db) => WitnessProof::Witness(ExecutionWitnessResult {
+    let initial_db = match pre_execution_state {
+        PreExecutionState::Witness(ref db) => PreExecutionState::Witness(ExecutionWitnessResult {
             block_headers: db.block_headers.clone(),
             chain_config: db.chain_config,
             codes: db.codes.clone(),
@@ -185,7 +187,7 @@ pub fn stateless_validation_l2(
             state_trie_nodes: db.state_trie_nodes.clone(),
             parent_block_header: db.parent_block_header.clone(),
         }),
-        WitnessProof::DB(ref db) => WitnessProof::DB(db.clone()),
+        PreExecutionState::DB(ref db) => PreExecutionState::DB(db.clone()),
     };
 
     let StatelessResult {
@@ -196,9 +198,11 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = match db {
-        WitnessProof::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
-        WitnessProof::DB(db) => execute_stateless_prover_db(blocks, db, elasticity_multiplier)?,
+    } = match pre_execution_state {
+        PreExecutionState::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        PreExecutionState::DB(db) => {
+            execute_stateless_prover_db(blocks, db, elasticity_multiplier)?
+        }
     };
 
     let (l1messages, privileged_transactions) =
@@ -215,7 +219,7 @@ pub fn stateless_validation_l2(
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         match initial_db {
-            WitnessProof::Witness(mut initial_db) => {
+            PreExecutionState::Witness(mut initial_db) => {
                 initial_db
                     .rebuild_tries()
                     .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
@@ -229,7 +233,7 @@ pub fn stateless_validation_l2(
                 )?;
                 verify_blob(state_diff, blob_commitment, blob_proof)?
             }
-            WitnessProof::DB(initial_db) => {
+            PreExecutionState::DB(initial_db) => {
                 let state_diff = prepare_state_diff(
                     last_block_header,
                     &initial_db,

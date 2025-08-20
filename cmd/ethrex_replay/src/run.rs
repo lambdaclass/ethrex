@@ -7,7 +7,7 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{
     DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM,
-    prover_db::WitnessProof,
+    prover_db::PreExecutionState,
 };
 use eyre::Ok;
 use std::sync::Arc;
@@ -35,9 +35,9 @@ pub async fn run_tx(
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let prover_db = cache.proof;
+    let prover_db = cache.pre_execution_state;
     match prover_db {
-        WitnessProof::Witness(mut witness) => {
+        PreExecutionState::Witness(mut witness) => {
             witness.rebuild_tries()?;
             let mut wrapped_db = ExecutionWitnessWrapper::new(witness);
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
@@ -65,7 +65,7 @@ pub async fn run_tx(
                 }
             }
         }
-        WitnessProof::DB(mut wrapped_db) => {
+        PreExecutionState::DB(mut wrapped_db) => {
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
             let changes = {
@@ -101,7 +101,7 @@ pub async fn run_tx(
 fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        proof: db,
+        pre_execution_state: db,
         l2_fields,
     } = cache;
 
@@ -113,7 +113,7 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
         Ok(ProgramInput {
             blocks,
-            db,
+            pre_execution_state: db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
