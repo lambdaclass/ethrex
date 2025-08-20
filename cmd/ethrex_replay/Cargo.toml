@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 ethrex-config.workspace = true
 ethrex-common.workspace = true
+ethrex-l2-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true

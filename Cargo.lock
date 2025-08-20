@@ -4246,6 +4246,7 @@ dependencies = [
  "clap 4.5.45",
  "ethrex-common",
  "ethrex-config",
+ "ethrex-l2-common",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rpc",
