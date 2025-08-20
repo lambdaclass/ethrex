@@ -162,7 +162,7 @@ impl StoreEngine for Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
                         transaction.hash().into(),
-                        (number, hash, index as u64).into(),
+                        (number, hash, index.try_into()?).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
                 }
@@ -184,19 +184,17 @@ impl StoreEngine for Store {
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                        })
-                {
-                    key_values.append(&mut entries);
+                let mut key_values: Vec<(Rlp<(H256, u32)>, IndexedChunk<Receipt>)> = vec![];
+
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    let key = (block_hash, index.try_into()?).into();
+                    let receipt_rlp = receipt.encode_to_vec();
+
+                    if let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) {
+                        key_values.append(&mut entries);
+                    }
                 }
+
                 let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
                 for (key, value) in key_values {
                     cursor
@@ -263,7 +261,7 @@ impl StoreEngine for Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
                         transaction.hash().into(),
-                        (number, hash, index as u64).into(),
+                        (number, hash, index.try_into()?).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
                 }
@@ -639,7 +637,7 @@ impl StoreEngine for Store {
     async fn get_transaction_by_location(
         &self,
         block_hash: H256,
-        index: u64,
+        index: u32,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
@@ -755,7 +753,7 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
+            let key = (block_hash, index.try_into()?).into();
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;
@@ -1640,7 +1638,7 @@ mod tests {
         let block_hash = H256::random();
         let mut key_values = vec![];
         for (i, receipt) in receipts.iter().enumerate() {
-            let key = (block_hash, i as u64).into();
+            let key = (block_hash, i as u32).into();
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;

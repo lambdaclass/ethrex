@@ -40,8 +40,8 @@ pub mod create_opcode {
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 
 // Blob constants
-pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
-pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u64 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
+pub const TARGET_BLOB_GAS_PER_BLOCK: u32 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
+pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u32 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 
 pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
 
@@ -53,8 +53,8 @@ pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: u64 = 5007716; // Defined in [EI
 
 // WARNING: Do _not_ use the MAX_BLOB_COUNT_* family of constants as
 // is. Use the `max_blobs_per_block` function instead
-pub const MAX_BLOB_COUNT: u64 = 6;
-pub const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
+pub const MAX_BLOB_COUNT: u32 = 6;
+pub const MAX_BLOB_COUNT_ELECTRA: u32 = 9;
 
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 

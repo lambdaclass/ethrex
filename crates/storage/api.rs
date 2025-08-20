@@ -157,16 +157,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_transaction_by_location(
         &self,
         block_hash: H256,
-        index: u64,
+        index: u32,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        Ok(block_body.transactions.get(index as usize).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {

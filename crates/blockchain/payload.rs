@@ -376,7 +376,7 @@ impl Blockchain {
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+            .unwrap_or_default();
 
         debug!("Fetching transactions from mempool");
         // Fetch mempool transactions
@@ -388,7 +388,8 @@ impl Blockchain {
                 debug!("No more gas to run transactions");
                 break;
             };
-            if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block
+            if !blob_txs.is_empty()
+                && context.blobs_bundle.blobs.len() >= max_blob_number_per_block as usize
             {
                 debug!("No more blob gas to run blob transactions");
                 blob_txs.clear();
@@ -481,14 +482,16 @@ impl Blockchain {
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+            .unwrap_or_default();
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
             );
         };
-        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
+        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len()
+            > max_blob_number_per_block as usize
+        {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -497,7 +500,7 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
+            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
     }
