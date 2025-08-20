@@ -1143,7 +1143,7 @@ pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<B
         G1Affine::from(point).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(128);
     add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
@@ -1192,7 +1192,7 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
         G2Affine::from(point).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
@@ -1203,18 +1203,21 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     Ok(Bytes::from(padded_result))
 }
 
+/// coordinate raw bytes should have a len of 64
+#[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
+#[inline]
 fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    let padded_coordinate = coordinate_raw_bytes;
-    if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
+    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
+
+    if coordinate_raw_bytes.len() != 64 {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    let unpadded_coordinate = padded_coordinate
-        .get(16..64)
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    unpadded_coordinate
+
+    if coordinate_raw_bytes[0..16] != SIXTEEN_ZEROES {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    coordinate_raw_bytes[16..64]
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError.into())
 }
