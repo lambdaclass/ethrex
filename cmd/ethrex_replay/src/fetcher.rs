@@ -85,7 +85,6 @@ pub async fn get_blockdata(
         Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
-            // TODO: for now we use L2 only for local devnet
             let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
             let rpc_db = RpcDB::with_cache(
