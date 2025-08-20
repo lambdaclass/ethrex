@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-20
+
+- Make precompiles use a constant table [#4097](https://github.com/lambdaclass/ethrex/pull/4097)
+
 ### 2025-08-19
 
 - Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
