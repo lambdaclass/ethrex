@@ -3911,7 +3911,6 @@ dependencies = [
  "lazy_static",
  "local-ip-address",
  "rand 0.8.5",
- "redb",
  "reqwest 0.12.20",
  "secp256k1",
  "serde",
@@ -4350,7 +4349,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
- "redb",
  "serde",
  "serde_json",
  "sha3",
@@ -8845,15 +8843,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 dependencies = [
  "rand_core 0.3.1",
-]
-
-[[package]]
-name = "redb"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0a72cd7140de9fc3e318823b883abf819c20d478ec89ce880466dc2ef263c6"
-dependencies = [
- "libc",
 ]
 
 [[package]]

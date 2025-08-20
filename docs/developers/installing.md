@@ -34,7 +34,6 @@ the following feature can be enable with `--features <features>`
 |**c-kzg**|Enables the c-kzg crate instead of kzg-rs|
 |**blst**|Enables the blst crate|
 |**libmdbx**|Enables libmdbx as the database for the ethereum state|
-|redb|Enables redb as the database for the ethereum state|
 |**rollup_storage_sql**|Enables sql as the database for the L2 batch data|
 |sp1|Enables the sp1 backend for the L2 prover|
 |risc0|Enables the risc0 backend for the L2 prover|
