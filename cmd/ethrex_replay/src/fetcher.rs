@@ -4,6 +4,7 @@ use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_rpc::{
     EthClient,
+    clients::{EthClientError, eth::errors::GetWitnessError},
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
@@ -79,7 +80,7 @@ pub async fn get_blockdata(
             execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
                 .expect("Failed to convert witness")
         }
-        Err(e) => {
+        Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
             let rpc_db = RpcDB::with_cache(
@@ -123,6 +124,7 @@ pub async fn get_blockdata(
 
             return Ok(cache);
         }
+        _ => panic!("Unexpected response from get_witness"),
     };
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
