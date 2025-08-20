@@ -346,17 +346,15 @@ impl ExecutionWitnessResult {
             return Ok(None);
         };
         let hashed_key = hash_key(&key);
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| ExecutionWitnessError::Database(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
+        match storage_trie.get(&hashed_key) {
+            Ok(Some(encoded_key)) => U256::decode(&encoded_key)
                 .map_err(|_| {
                     ExecutionWitnessError::Database("failed to read storage from trie".to_string())
                 })
-                .map(Some)
-        } else {
-            Ok(None)
+                .map(Some),
+            Ok(None) => Ok(None),
+            // If the pruned trie does not contain nodes for this key path, treat it as absent
+            Err(_e) => Ok(None),
         }
     }
 
