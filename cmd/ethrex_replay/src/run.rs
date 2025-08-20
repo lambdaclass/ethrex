@@ -36,11 +36,11 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let prover_db = cache.pre_execution_state;
+    let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
     match prover_db {
         PreExecutionState::Witness(mut witness) => {
             witness.rebuild_tries()?;
             let mut wrapped_db = ExecutionWitnessWrapper::new(witness);
-            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
             let changes = {
                 let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
@@ -65,27 +65,25 @@ pub async fn run_tx(
                 }
             }
         }
-        PreExecutionState::DB(mut wrapped_db) => {
-            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
-
+        PreExecutionState::DB(mut prover_db) => {
             let changes = {
-                let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
+                let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
                 let mut db = GeneralizedDatabase::new(store.clone());
                 LEVM::prepare_block(block, &mut db, vm_type)?;
                 LEVM::get_state_transitions(&mut db)?
             };
-            wrapped_db.apply_account_updates(&changes);
+            prover_db.apply_account_updates(&changes);
 
             for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
                 let mut vm = if l2 {
-                    Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
+                    Evm::new_for_l2(EvmEngine::LEVM, prover_db.clone())?
                 } else {
-                    Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
+                    Evm::new_for_l1(EvmEngine::LEVM, prover_db.clone())
                 };
                 let (receipt, _) =
                     vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
                 let account_updates = vm.get_state_transitions()?;
-                wrapped_db.apply_account_updates(&account_updates);
+                prover_db.apply_account_updates(&account_updates);
                 if tx.hash() == tx_hash {
                     return Ok((receipt, account_updates));
                 }
