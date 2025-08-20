@@ -17,7 +17,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, TrieDB, TrieError};
 use prometheus::core::AtomicU64;
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
@@ -107,11 +107,11 @@ async fn heal_state_trie(
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
 
-    // channel to send the tasks to the peers
+    // channel with the task result, including the peer id, the result of the request and what we asked
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
-        H256,
-        Result<Vec<Node>, RequestStateTrieNodesError>,
-        Vec<RequestMetadata>,
+        H256,                                          // peer id
+        Result<Vec<Node>, RequestStateTrieNodesError>, // result of the request
+        Vec<RequestMetadata>,                          // What we asked for from the peers
     )>(1000);
 
     let peers_table = peers
@@ -445,6 +445,17 @@ pub fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
+                if child.is_valid() {
+                    match child {
+                        NodeRef::Node(_, _) => {
+                            error!("Decoding gave us a node")
+                        }
+                        NodeRef::Hash(NodeHash::Inline(node)) => {
+                            error!("We have inflined nodes in our tree {node:?}")
+                        }
+                        _ => (),
+                    }
+                }
                 if child.is_valid() && child.get_node(trie_state)?.is_none() {
                     paths.push(RequestMetadata {
                         hash: child.compute_hash().finalize(),
@@ -454,6 +465,17 @@ pub fn node_missing_children(
             }
         }
         Node::Extension(node) => {
+            if node.child.is_valid() {
+                match node.child {
+                    NodeRef::Node(_, _) => {
+                        error!("Decoding gave us a node")
+                    }
+                    NodeRef::Hash(NodeHash::Inline(node)) => {
+                        error!("We have inflined nodes in our tree {node:?}")
+                    }
+                    _ => (),
+                }
+            }
             if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 paths.push(RequestMetadata {
                     hash: node.child.compute_hash().finalize(),
