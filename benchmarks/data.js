@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755681381106,
+  "lastUpdate": 1755684107429,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9205,6 +9205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161329618294,
             "range": "± 599999401",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cc1346ecb067f1ab698c4ac80af8a5fec528e0bd",
+          "message": "perf(levm): improve signextend opcode performance (#4071)\n\n**Motivation**\n\nRemoved some unnecesary double checks.\n\n(left is pr, right is main)\n<img width=\"1416\" height=\"925\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/ee0272b3-014d-4317-bad5-c7b738b7edd2\"\n/>",
+          "timestamp": "2025-08-20T09:06:44Z",
+          "tree_id": "bc51ca03ebf268c67ab509865a7bc1591293c444",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cc1346ecb067f1ab698c4ac80af8a5fec528e0bd"
+        },
+        "date": 1755684092148,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163063236090,
+            "range": "± 279481958",
             "unit": "ns/iter"
           }
         ]
