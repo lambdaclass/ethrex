@@ -35,8 +35,7 @@ use crate::{
     snap::encodable_to_proof,
     utils::{
         SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
-        get_account_state_snapshot_file, get_account_state_snapshots_dir,
-        get_account_storages_snapshot_file, get_account_storages_snapshot_file,
+        get_account_state_snapshots_dir, get_account_storages_snapshot_file,
         get_account_storages_snapshots_dir,
     },
 };

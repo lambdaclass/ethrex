@@ -1,7 +1,6 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::SNAP_LIMIT;
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -21,10 +20,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, TrieError};
-use ethrex_trie::{Trie, TrieError};
+use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::cell::OnceCell;
 use std::path::PathBuf;
 use std::{
@@ -879,7 +876,7 @@ impl Syncer {
             let account_store_start = Instant::now();
 
             let mut computed_state_root = *EMPTY_TRIE_HASH;
-            let mut bytecode_hashes = Vec::new();
+            let mut bytecode_hashes: Vec<H256> = Vec::new();
 
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -1027,7 +1024,7 @@ impl Syncer {
                 // This if is an edge case for the skip snap sync scenario
                 if current_unix_time() > staleness_timestamp {
                     (pivot_header, staleness_timestamp) =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await;
+                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
                 }
                 healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
