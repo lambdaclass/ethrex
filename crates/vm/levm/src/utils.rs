@@ -199,7 +199,7 @@ pub fn get_base_fee_per_blob_gas(
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         block_excess_blob_gas.unwrap_or_default(),
-        base_fee_update_fraction.into(),
+        base_fee_update_fraction,
     )
 }
 

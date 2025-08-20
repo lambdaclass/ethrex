@@ -775,34 +775,47 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
-    let mut i = U256::one();
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
+    if denominator == 0 {
+        return Err(InternalError::DivisionByZero.into());
+    }
+
+    if numerator.is_zero() {
+        return Ok(factor);
+    }
+
+    let mut i: u64 = 1;
     let mut output: U256 = U256::zero();
+    let denominator_u256: U256 = denominator.into();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
-        .checked_mul(denominator)
+        .checked_mul(denominator_u256)
         .ok_or(InternalError::Overflow)?;
 
-    while !numerator_accum.is_zero() {
-        // Safe addition to output
-        output = output
-            .checked_add(numerator_accum)
-            .ok_or(InternalError::Overflow)?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division can't overflow since denominator is not 0 and i is never 0"
+    )]
+    {
+        while !numerator_accum.is_zero() {
+            // Safe addition to output
+            output = output
+                .checked_add(numerator_accum)
+                .ok_or(InternalError::Overflow)?;
 
-        // Safe multiplication and division within loop
-        numerator_accum = numerator_accum
-            .checked_mul(numerator)
-            .ok_or(InternalError::Overflow)?
-            .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
-            .ok_or(InternalError::DivisionByZero)?;
+            // Safe multiplication and division within loop
+            numerator_accum = numerator_accum
+                .checked_mul(numerator)
+                .ok_or(InternalError::Overflow)?
+                / denominator.checked_mul(i).ok_or(InternalError::Overflow)?;
 
-        i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
+            // i will never realistically overflow before the other variables do
+            i = i.wrapping_add(1);
+        }
+
+        Ok(output / denominator)
     }
-
-    output
-        .checked_div(denominator)
-        .ok_or(InternalError::DivisionByZero.into())
 }
 
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
