@@ -7,18 +7,12 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
-use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
-};
+use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
-    catch_unwind(AssertUnwindSafe(|| {
-        ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))
-    }))
-    .map_err(|_e| eyre::Error::msg("SP1 panicked while executing"))??;
+    ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 
