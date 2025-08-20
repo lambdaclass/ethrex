@@ -943,8 +943,8 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "sum by(function_name) (function_duration_seconds_sum)",
+          "editorMode": "code",
+          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
           "fullMetaSearch": false,
           "includeNullMetadata": false,
           "legendFormat": "__auto",
