@@ -302,7 +302,10 @@ impl ExecutionWitnessResult {
             storage_trie
         } else {
             let Some(state_trie) = self.state_trie.as_ref() else {
-                return Ok(None);
+                return Err(ExecutionWitnessError::Database(
+                    "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
+                        .to_string(),
+                ));
             };
             let Some(storage_trie) =
                 Self::rebuild_storage_trie(&address, state_trie, &self.state_trie_nodes)
