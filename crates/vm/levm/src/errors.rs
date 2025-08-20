@@ -190,6 +190,8 @@ pub enum PrecompileError {
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
     BLS12381G2PointNotInCurve,
+    #[error("Coordinate Exceeds Field Modulus")]
+    CoordinateExceedsFieldModulus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
