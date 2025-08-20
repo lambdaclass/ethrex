@@ -32,7 +32,7 @@ use crate::initializers::{
 };
 use crate::l2::L2Options;
 use crate::utils::{
-    NodeConfigFile, get_client_version, read_jwtsecret_file, set_datadir, store_node_config_file,
+    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -101,11 +101,8 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
-        } else if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
+        }
+        else {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
@@ -151,7 +148,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         panic!("L2 Doesn't support REVM, use LEVM instead.");
     }
 
-    let data_dir = set_datadir(&opts.node_opts.datadir);
+    let data_dir = init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
     let network = get_network(&opts.node_opts);

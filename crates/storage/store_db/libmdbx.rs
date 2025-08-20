@@ -128,6 +128,7 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
@@ -158,7 +159,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -259,7 +260,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;

@@ -3,9 +3,8 @@ lazy_static::lazy_static! {
 }
 
 use clap::{ArgGroup, Parser};
-use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
-use ethrex::utils::set_datadir;
+use ethrex::utils::{default_datadir, init_datadir};
 use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
@@ -537,7 +536,7 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value = DEFAULT_DATADIR,
+        default_value_t = default_datadir(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         env = "ETHREX_DATADIR"
@@ -575,7 +574,7 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = set_datadir(&args.datadir);
+    let data_dir = init_datadir(&args.datadir);
     let store = open_store(&data_dir);
     archive_sync(
         args.ipc_path,

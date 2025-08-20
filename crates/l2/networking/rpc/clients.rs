@@ -2,73 +2,51 @@ use crate::signer::{Signable, Signer};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{EIP1559Transaction, TxKind, TxType, WrappedEIP4844Transaction},
+    types::{EIP1559Transaction, GenericTransaction, TxKind, TxType, WrappedEIP4844Transaction},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::{
-        EthClientError, Overrides,
-        eth::{EthClient, WrappedTransaction},
-    },
+    clients::{EthClientError, Overrides, eth::EthClient},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::keccak;
+use std::ops::Div;
 use tracing::warn;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
-pub async fn send_eip1559_transaction(
+pub async fn send_generic_transaction(
     client: &EthClient,
-    tx: &EIP1559Transaction,
+    generic_tx: GenericTransaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
-    let signed_tx = tx
-        .sign(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = signed_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP1559.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
-pub async fn send_eip4844_transaction(
-    client: &EthClient,
-    wrapped_tx: &WrappedEIP4844Transaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    let mut wrapped_tx = wrapped_tx.clone();
-    wrapped_tx
-        .tx
-        .sign_inplace(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = wrapped_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP4844.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
-pub async fn send_wrapped_transaction(
-    client: &EthClient,
-    wrapped_tx: &WrappedTransaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    match wrapped_tx {
-        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            send_eip4844_transaction(client, wrapped_eip4844_transaction, signer).await
-        }
-        WrappedTransaction::EIP1559(eip1559_transaction) => {
-            send_eip1559_transaction(client, eip1559_transaction, signer).await
-        }
-        WrappedTransaction::L2(privileged_l2_transaction) => {
-            client
-                .send_privileged_l2_transaction(privileged_l2_transaction)
+    let mut encoded_tx = vec![generic_tx.r#type.into()];
+    match generic_tx.r#type {
+        TxType::EIP1559 => {
+            let tx: EIP1559Transaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
                 .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            signed_tx.encode(&mut encoded_tx);
         }
-    }
+        TxType::EIP4844 => {
+            let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
+            tx.tx
+                .sign_inplace(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            tx.encode(&mut encoded_tx);
+        }
+        _ => {
+            return Err(EthClientError::Custom(
+                "Unsupported transaction type".to_string(),
+            ));
+        }
+    };
+    client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
 pub async fn deploy(
@@ -81,14 +59,15 @@ pub async fn deploy(
     deploy_overrides.to = Some(TxKind::Create);
 
     let deploy_tx = client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             Address::zero(),
             deployer.address(),
             init_code,
             deploy_overrides,
         )
         .await?;
-    let deploy_tx_hash = send_eip1559_transaction(client, &deploy_tx, deployer).await?;
+    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
     let nonce = client
         .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -110,24 +89,20 @@ pub async fn deploy(
 
 pub async fn send_tx_bump_gas_exponential_backoff(
     client: &EthClient,
-    wrapped_tx: &mut WrappedTransaction,
+    mut tx: GenericTransaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let mut number_of_retries = 0;
 
     'outer: while number_of_retries < client.max_number_of_retries {
         if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
-            let (tx_max_fee, tx_max_priority_fee) = match wrapped_tx {
-                WrappedTransaction::EIP4844(tx) => (
-                    &mut tx.tx.max_fee_per_gas,
-                    &mut tx.tx.max_priority_fee_per_gas,
-                ),
-                WrappedTransaction::EIP1559(tx) => {
-                    (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
-                }
-                WrappedTransaction::L2(tx) => {
-                    (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
-                }
+            let (Some(tx_max_fee), Some(tx_max_priority_fee)) =
+                (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+            else {
+                return Err(EthClientError::Custom(
+                    "Invalid transaction: max_fee_per_gas or max_priority_fee_per_gas is missing"
+                        .to_string(),
+                ));
             };
 
             if *tx_max_fee > max_fee_per_gas {
@@ -145,18 +120,18 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         }
 
         // Check blob gas fees only for EIP4844 transactions
-        if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
             if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
                     warn!(
                         "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
                     );
                 }
             }
         }
-        let Ok(tx_hash) = send_wrapped_transaction(client, wrapped_tx, signer).await else {
-            bump_gas_wrapped_tx(client, wrapped_tx, 30);
+        let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer).await else {
+            bump_gas_generic_tx(&mut tx, 30);
             number_of_retries += 1;
             continue;
         };
@@ -179,7 +154,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas
                 // and go to the next one.
-                bump_gas_wrapped_tx(client, wrapped_tx, 30);
+                bump_gas_generic_tx(&mut tx, 30);
 
                 number_of_retries += 1;
                 continue 'outer;
@@ -201,20 +176,17 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     Err(EthClientError::TimeoutError)
 }
 
-fn bump_gas_wrapped_tx(
-    client: &EthClient,
-    wrapped_tx: &mut WrappedTransaction,
-    bump_percentage: u64,
-) {
-    match wrapped_tx {
-        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            client.bump_eip4844(wrapped_eip4844_transaction, bump_percentage);
-        }
-        WrappedTransaction::EIP1559(eip1559_transaction) => {
-            client.bump_eip1559(eip1559_transaction, bump_percentage);
-        }
-        WrappedTransaction::L2(privileged_l2_transaction) => {
-            client.bump_privileged_l2(privileged_l2_transaction, bump_percentage);
-        }
+fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
+    if let (Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) =
+        (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+    {
+        *max_fee_per_gas = (*max_fee_per_gas * (100 + bump_percentage)) / 100;
+        *max_priority_fee_per_gas = (*max_priority_fee_per_gas * (100 + bump_percentage)) / 100;
+    }
+    if let Some(max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
+        let factor = 1 + (bump_percentage / 100) * 10;
+        *max_fee_per_blob_gas = max_fee_per_blob_gas
+            .saturating_mul(U256::from(factor))
+            .div(10);
     }
 }
