@@ -882,15 +882,15 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
             .await
     }
 
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::StateHealPaths)
             .await?
-            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .map(|ref h| <Vec<(Nibbles, H256)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }

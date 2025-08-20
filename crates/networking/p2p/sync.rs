@@ -1,5 +1,11 @@
+mod state_healing;
+mod storage_healing;
+
+use crate::peer_handler::SNAP_LIMIT;
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::sync::state_healing::heal_state_trie_wrap;
+use crate::sync::storage_healing::heal_storage_trie_wrap;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
 };
@@ -18,6 +24,9 @@ use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{NodeHash, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::path::PathBuf;
+use ethrex_trie::{Trie, TrieError};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use std::cell::OnceCell;
 use std::{
     array,
     cmp::min,
@@ -781,14 +790,21 @@ impl Syncer {
             get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
-        self.peers
-            .request_account_range(
-                state_root,
-                H256::zero(),
-                H256::repeat_byte(0xff),
-                account_state_snapshots_dir,
-            )
-            .await?;
+
+
+        let mut pivot_is_stale = true;
+        if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
+            self.peers
+                .request_account_range(
+                    state_root,
+                    H256::zero(),
+                    H256::repeat_byte(0xff),
+                    account_state_snapshots_dir,
+                    staleness_timestamp,
+                )
+                .await;
+        
+
 
         let empty = *EMPTY_TRIE_HASH;
 
@@ -844,12 +860,14 @@ impl Syncer {
                     account_storages_snapshots_dir.clone(),
                     chunk_index,
                     &mut downloaded_account_storages,
+                    staleness_timestamp,
                 )
                 .await
                 .map_err(SyncError::PeerHandler)?;
             dbg!(&downloaded_account_storages);
         }
         info!("All account storages downloaded successfully");
+        pivot_is_stale = current_unix_time() > staleness_timestamp;
         info!(
             "Finished downloading account ranges, total storage slots: {}",
             *METRICS.downloaded_storage_slots.lock().await
@@ -999,6 +1017,52 @@ impl Syncer {
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
+    }
+
+        if pivot_is_stale {
+            info!("Starting Fast Sync");
+            let membatch = OnceCell::new();
+            membatch.get_or_init(HashMap::new);
+            let mut healing_done = false;
+            while !healing_done {
+                // This if is an edge case for the skip snap sync scenario
+                if current_unix_time() > staleness_timestamp {
+                    (pivot_header, staleness_timestamp) =
+                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await;
+                }
+                healing_done = heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                )
+                .await?;
+                if !healing_done {
+                    continue;
+                }
+                healing_done = heal_storage_trie_wrap(
+                    pivot_header.state_root,
+                    self.peers.clone(),
+                    store.clone(),
+                    membatch.clone(),
+                    staleness_timestamp,
+                )
+                .await;
+            }
+            // TODO: 💀💀💀 either remove or change to a debug flag
+            validate_state_root(store.clone(), pivot_header.state_root).await;
+            validate_storage_root(store.clone(), pivot_header.state_root).await;
+            info!("Finished healing");
+        }
+
+        let mut bytecode_hashes: Vec<H256> = store
+            .iter_accounts(pivot_header.state_root)
+            .expect("we couldn't iterate over accounts")
+            .map(|(_, state)| state.code_hash)
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
+            .collect();
+        bytecode_hashes.sort();
+        bytecode_hashes.dedup();
 
         // Download bytecodes
         info!(
@@ -1045,7 +1109,9 @@ impl Syncer {
             .await?;
         Ok(())
     }
-}
+}    
+
+
 
 async fn get_number_of_storage_tries_to_download() -> Result<u64, SyncError> {
     let account_state_snapshots_dir =
@@ -1128,7 +1194,7 @@ async fn update_pivot(
 ) -> Result<(BlockHeader, u64), SyncError> {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
@@ -1226,10 +1292,67 @@ enum SyncError {
     NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
+    #[error("Corrupt Path")]
+    CorruptPath,
 }
 
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
     }
+}
+
+pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_state_root");
+    let computed_state_root = tokio::task::spawn_blocking(move || {
+        Trie::compute_hash_from_unsorted_iter(
+            store
+                .iter_accounts(state_root)
+                .expect("we couldn't iterate over accounts")
+                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+        )
+    })
+    .await
+    .expect("We should be able to create threads");
+
+    let tree_validated = state_root == computed_state_root;
+    if tree_validated {
+        info!("Succesfully validated tree, {state_root} found");
+    } else {
+        error!(
+            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
+        );
+    }
+    tree_validated
+}
+
+pub async fn validate_storage_root(store: Store, state_root: H256) {
+    info!("Starting validate_storage_root");
+    store
+        .clone()
+        .iter_accounts(state_root)
+        .expect("We should be able to open the store")
+        .par_bridge()
+        .for_each(|(hashed_address, account_state)|
+    {
+        let store_clone = store.clone();
+        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+                store_clone
+                    .iter_storage(state_root, hashed_address)
+                    .expect("we couldn't iterate over accounts")
+                    .expect("This address should be valid")
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+            );
+
+        let tree_validated = account_state.storage_root == computed_storage_root;
+        if tree_validated {
+            //info!("Succesfully validated tree, {computed_storage_root} found");
+        } else {
+            error!(
+                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
+                account_state.storage_root
+            );
+        }
+    });
+    info!("Finished validate_storage_root");
 }

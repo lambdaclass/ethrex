@@ -4,8 +4,18 @@ use std::{
 };
 
 use ethrex_common::{H256, H512};
+use ethrex_rlp::error::RLPDecodeError;
+use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::error::GenServerError;
+use tokio::sync::mpsc;
+use tracing::info;
+
+use crate::{
+    kademlia::PeerChannels,
+    rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
+};
 
 use crate::peer_handler::DumpError;
 
@@ -83,4 +93,103 @@ pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
             contents,
             error: err.kind(),
         })
+}
+
+/// TODO: make it more generic
+pub async fn send_message_and_wait_for_response(
+    peer_channel: &mut PeerChannels,
+    message: Message,
+    request_id: u64,
+) -> Result<Vec<Node>, SendMessageError> {
+    let mut receiver = peer_channel.receiver.lock().await;
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(message))
+        .await
+        .map_err(SendMessageError::GenServerError)?;
+    let nodes = tokio::time::timeout(
+        Duration::from_secs(7),
+        receive_trienodes(receiver, request_id, false),
+    )
+    .await
+    .map_err(|_| SendMessageError::PeerTimeout)?
+    .ok_or(SendMessageError::PeerDisconnected)?;
+
+    nodes
+        .nodes
+        .iter()
+        .map(|node| Node::decode_raw(node))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SendMessageError::RLPDecodeError)
+}
+
+/// TODO: make it more generic
+pub async fn send_trie_nodes_messages_and_wait_for_reply(
+    peer_channel: &mut PeerChannels,
+    message: Message,
+    request_id: u64,
+    logging_flag: bool,
+) -> Result<TrieNodes, SendMessageError> {
+    if logging_flag {
+        info!("send_trie_nodes_messages_and_wait_for_reply started");
+    }
+    let mut receiver = peer_channel
+        .receiver
+        .try_lock()
+        .map_err(|_| SendMessageError::PeerBusy)?;
+    if logging_flag {
+        info!(
+            "send_trie_nodes_messages_and_wait_for_reply got the receiver for the peer channel for requ {request_id}"
+        );
+    }
+    peer_channel
+        .connection
+        .cast(CastMessage::BackendMessage(message))
+        .await
+        .map_err(SendMessageError::GenServerError)?;
+    if logging_flag {
+        info!(
+            "send_trie_nodes_messages_and_wait_for_reply cast the message {request_id} to the peer"
+        );
+    }
+    tokio::time::timeout(
+        Duration::from_secs(7),
+        receive_trienodes(receiver, request_id, logging_flag),
+    )
+    .await
+    .map_err(|_| SendMessageError::PeerTimeout)?
+    .ok_or(SendMessageError::PeerDisconnected)
+}
+
+async fn receive_trienodes(
+    mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
+    request_id: u64,
+    logging_flag: bool,
+) -> Option<TrieNodes> {
+    loop {
+        if logging_flag {
+            info!("receive_trienodes logging at the top of the log for req {request_id}");
+        }
+        let resp = receiver.recv().await?;
+        if let Message::TrieNodes(trie_nodes) = resp {
+            if trie_nodes.id == request_id {
+                return Some(trie_nodes);
+            }
+        }
+    }
+}
+
+// TODO: find a better name for this type
+#[derive(thiserror::Error, Debug)]
+pub enum SendMessageError {
+    #[error("Peer timed out")]
+    PeerTimeout,
+    #[error("GenServerError")]
+    GenServerError(GenServerError),
+    #[error("Peer disconnected")]
+    PeerDisconnected,
+    #[error("Peer Busy")]
+    PeerBusy,
+    #[error("RLP decode error")]
+    RLPDecodeError(RLPDecodeError),
 }
