@@ -12,29 +12,28 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::widget::{
-        ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
-        HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
+    monitor::{
+        utils::SelectableScroller,
+        widget::{
+            ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
+            HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
+        },
     },
     sequencer::errors::MonitorError,
 };
 
+#[derive(Clone, Default)]
 pub struct BlocksTable {
     pub state: TableState,
     // block number | #transactions | hash | coinbase | gas | blob gas | size
     pub items: Vec<(String, String, String, String, String, String, String)>,
     last_l2_block_known: u64,
+    selected: bool,
 }
 
 impl BlocksTable {
-    pub async fn new(store: &Store) -> Result<Self, MonitorError> {
-        let mut last_l2_block_known = 0;
-        let items = Self::refresh_items(&mut last_l2_block_known, store).await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l2_block_known,
-        })
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub async fn on_tick(&mut self, store: &Store) -> Result<(), MonitorError> {
@@ -80,7 +79,7 @@ impl BlocksTable {
         let last_l2_block_number = store
             .get_latest_block_number()
             .await
-            .expect("Failed to get latest L2 block");
+            .map_err(|_| MonitorError::GetLatestBlock)?;
 
         let mut new_blocks = Vec::new();
         while *last_l2_block_known < last_l2_block_number {
@@ -166,7 +165,11 @@ impl StatefulWidget for &mut BlocksTable {
             )
             .block(
                 ratatui::widgets::Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L2 Blocks",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -174,5 +177,24 @@ impl StatefulWidget for &mut BlocksTable {
             );
 
         latest_blocks_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for BlocksTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

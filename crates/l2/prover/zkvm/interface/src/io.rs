@@ -1,7 +1,8 @@
 use ethrex_common::{
-    H256,
+    H256, U256,
     types::{Block, block_execution_witness::ExecutionWitnessResult},
 };
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
@@ -10,7 +11,7 @@ use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
 pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
@@ -90,6 +91,10 @@ pub struct ProgramOutput {
     pub blob_versioned_hash: H256,
     /// hash of the last block in a batch
     pub last_block_hash: H256,
+    /// chain_id of the network
+    pub chain_id: U256,
+    /// amount of non-privileged transactions
+    pub non_privileged_count: U256,
 }
 
 impl ProgramOutput {
@@ -104,6 +109,8 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
+            self.chain_id.to_big_endian(),
+            self.non_privileged_count.to_big_endian(),
         ]
         .concat()
     }

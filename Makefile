@@ -9,12 +9,15 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
+	# Note that we are compiling without the "gpu" feature (see #4048 for why)
+	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
+	cargo clippy --all-targets -F debug,redb,risc0,sp1,sync-test \
+		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain \
+		--release -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
 	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
-	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -22,16 +25,16 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex . --build-arg BUILD_FLAGS="--features metrics"
+	docker build -t ethrex:unstable .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:unstable --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex --features dev -- \
+	cargo run --bin ethrex -- \
 			--network ./fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
@@ -40,18 +43,23 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
+ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+ETHEREUM_PACKAGE_DIR := ethereum-package
 
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-ethereum-package:
-	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
-
-checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
-	cd ethereum-package && \
-		git fetch && \
-		git checkout $(ETHEREUM_PACKAGE_REVISION)
+checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
+	@if [ ! -d "$(ETHEREUM_PACKAGE_DIR)" ]; then \
+		echo "Cloning ethereum-package repository..."; \
+		git clone --quiet https://github.com/ethpandaops/ethereum-package $(ETHEREUM_PACKAGE_DIR); \
+	fi
+	@cd $(ETHEREUM_PACKAGE_DIR) && \
+	CURRENT_REV=$$(git rev-parse HEAD) && \
+	if [ "$$CURRENT_REV" != "$(ETHEREUM_PACKAGE_REVISION)" ]; then \
+		echo "Current HEAD ($$CURRENT_REV) is not the target revision. Checking out $(ETHEREUM_PACKAGE_REVISION)..."; \
+		git fetch --quiet && \
+		git checkout --quiet $(ETHEREUM_PACKAGE_REVISION); \
+	else \
+		echo "ethereum-package is already at the correct revision."; \
+	fi
 
 ENCLAVE ?= lambdanet
 
@@ -59,8 +67,12 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
+localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex exchanges with the consensus client
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
+	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
+
 localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
@@ -69,7 +81,7 @@ localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-pack
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_ethrex_only.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
@@ -106,7 +118,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 1
+SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
@@ -159,8 +171,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	fi; \
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev" \
-	--  \
+	-- \
 	--evm $$LEVM \
 	--network fixtures/genesis/l2.json \
 	--http.port 1729 \

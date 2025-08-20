@@ -1,15 +1,18 @@
 use crate::{
+    account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    opcodes::Opcode,
-    utils::{get_invalid_jump_destinations, restore_cache_state},
+    utils::{JumpTargetFilter, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Account};
+use ethrex_common::{Address, U256};
 use keccak_hash::H256;
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -28,29 +31,47 @@ pub struct Stack {
 }
 
 impl Stack {
+    #[inline]
     pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
         // Compile-time check for stack underflow.
-        if N > STACK_LIMIT {
-            return Err(ExceptionalHalt::StackUnderflow);
+        const {
+            assert!(N <= STACK_LIMIT);
         }
 
         // The following operation can never overflow as both `self.offset` and N are within
         // STACK_LIMIT (1024).
-        #[expect(clippy::arithmetic_side_effects)]
-        let next_offset = self.offset + N;
+        let next_offset = self.offset.wrapping_add(N);
 
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[expect(clippy::indexing_slicing)]
-        let values = self.values[self.offset..]
-            .first_chunk::<N>()
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        #[expect(unsafe_code)]
+        let values = unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .first_chunk::<N>()
+                .ok_or(ExceptionalHalt::StackUnderflow)?
+        };
+        // Due to previous error check in first_chunk, next_offset is guaranteed to be < STACK_LIMIT
         self.offset = next_offset;
 
         Ok(values)
     }
 
+    #[inline]
+    pub fn pop1(&mut self) -> Result<U256, ExceptionalHalt> {
+        let value = *self
+            .values
+            .get(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        // The following operation can never overflow as both `self.offset` and N are within
+        // STACK_LIMIT (1024).
+        self.offset = self.offset.wrapping_add(1);
+
+        Ok(value)
+    }
+
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -61,8 +82,44 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[next_offset..self.offset].copy_from_slice(values);
+        #[expect(
+            unsafe_code,
+            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
+        )]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                values.as_ptr(),
+                self.values
+                    .get_unchecked_mut(next_offset..self.offset)
+                    .as_mut_ptr(),
+                N,
+            );
+        }
+        self.offset = next_offset;
+
+        Ok(())
+    }
+
+    /// Push a single U256 value to the stack, faster than the generic push.
+    #[inline]
+    pub fn push1(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                value.0.as_ptr(),
+                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
+                4,
+            );
+        }
         self.offset = next_offset;
 
         Ok(())
@@ -84,12 +141,16 @@ impl Stack {
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[self.offset..]
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .get(index)
+                .ok_or(ExceptionalHalt::StackUnderflow)
+        }
     }
 
+    #[inline(always)]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
         let index = self
             .offset
@@ -134,7 +195,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -168,15 +229,15 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub invalid_jump_destinations: Box<[usize]>,
+    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
     /// Return data offset
-    pub ret_offset: U256,
+    pub ret_offset: usize,
     /// Return data size
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
@@ -185,7 +246,7 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_accounts_info: HashMap<Address, LevmAccount>,
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
@@ -193,14 +254,14 @@ impl CallFrameBackup {
     pub fn backup_account_info(
         &mut self,
         address: Address,
-        account: &Account,
+        account: &LevmAccount,
     ) -> Result<(), InternalError> {
         self.original_accounts_info
             .entry(address)
-            .or_insert_with(|| Account {
+            .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                code: account.code.clone(),
-                storage: HashMap::new(),
+                storage: BTreeMap::new(),
+                status: account.status.clone(),
             });
 
         Ok(())
@@ -221,6 +282,9 @@ impl CallFrameBackup {
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
+    // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
+    // because passing so much data is costly. Verified with samply.
+    #[inline(always)]
     pub fn new(
         msg_sender: Address,
         to: Address,
@@ -233,39 +297,41 @@ impl CallFrame {
         depth: usize,
         should_transfer_value: bool,
         is_create: bool,
-        ret_offset: U256,
+        ret_offset: usize,
         ret_size: usize,
         stack: Stack,
+        memory: Memory,
     ) -> Self {
-        let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
+        // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
             gas_remaining: gas_limit,
             msg_sender,
             to,
             code_address,
-            bytecode,
+            bytecode: bytecode.clone(),
             msg_value,
             calldata,
             is_static,
             depth,
-            invalid_jump_destinations,
+            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
             ret_size,
             stack,
-            ..Default::default()
+            memory,
+            call_frame_backup: CallFrameBackup::default(),
+            output: Bytes::default(),
+            pc: 0,
+            sub_return_data: Bytes::default(),
         }
     }
 
-    pub fn next_opcode(&self) -> Opcode {
-        self.bytecode
-            .get(self.pc)
-            .copied()
-            .map(Opcode::from)
-            .unwrap_or(Opcode::STOP)
+    #[inline(always)]
+    pub fn next_opcode(&self) -> u8 {
+        // 0 is the opcode stop.
+        self.bytecode.get(self.pc).copied().unwrap_or(0)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
@@ -287,32 +353,42 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+        self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
         Ok(())
     }
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
-        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
+    /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
+    #[inline(always)]
+    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        self.call_frames.push(new_call_frame);
+        #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
+        unsafe {
+            std::mem::swap(
+                &mut self.current_call_frame,
+                self.call_frames.last_mut().unwrap_unchecked(),
+            );
+        }
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
-        self.call_frames.last().ok_or(InternalError::CallFrame)
-    }
-
+    #[inline(always)]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
-        self.call_frames.pop().ok_or(InternalError::CallFrame)
+        let mut new = self.call_frames.pop().ok_or(InternalError::CallFrame)?;
+
+        std::mem::swap(&mut new, &mut self.current_call_frame);
+
+        Ok(new)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {
-        self.call_frames.len() == 1
+        self.call_frames.is_empty()
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -325,7 +401,7 @@ impl<'a> VM<'a> {
         child_call_frame_backup: &CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_accounts_info;
         for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
@@ -335,16 +411,14 @@ impl<'a> VM<'a> {
         }
 
         let parent_backup_storage = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_account_storage_slots;
         for (address, storage) in child_call_frame_backup
             .original_account_storage_slots
             .iter()
         {
-            let parent_storage = parent_backup_storage
-                .entry(*address)
-                .or_insert(HashMap::new());
+            let parent_storage = parent_backup_storage.entry(*address).or_default();
             for (key, value) in storage {
                 if parent_storage.get(key).is_none() {
                     parent_storage.insert(*key, *value);
@@ -356,6 +430,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame_mut()?.increment_pc_by(count)
+        self.current_call_frame.increment_pc_by(count)
     }
 }

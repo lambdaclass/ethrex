@@ -30,7 +30,12 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         .or(test._info.hash)
         .unwrap_or_default();
 
-    let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
+    let mut ef_test_report = EFTestReport::new(
+        test.name.clone(),
+        test.dir.clone(),
+        test._info.clone(),
+        hash,
+    );
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
@@ -64,7 +69,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 }
                 Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
                     return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-                        "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
+                        format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution. LEVM runner {}",line!())
                             .to_owned(),
                     )));
                 }
@@ -80,12 +85,13 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 }
                 Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
-                        "This case should not happen".to_owned(),
+                        format!("This case should not happen. LEVM Runner {}.", line!()).to_owned(),
                     )));
                 }
                 Err(EFTestRunnerError::TestsFailed) => {
                     unreachable!(
-                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag. LEVM Runner {}.",
+                        line!()
                     )
                 }
             }
@@ -128,7 +134,13 @@ pub fn prepare_vm_for_tx<'a>(
         .transactions
         .get(vector)
         .ok_or(EFTestRunnerError::Internal(
-            InternalError::FirstRunInternal("Failed to get transaction".to_owned()),
+            InternalError::FirstRunInternal(
+                format!(
+                    "Failed to get transaction in prepare_vm_for_tx(). LEVM runner, line: {}.",
+                    line!()
+                )
+                .to_owned(),
+            ),
         ))?;
 
     let access_list = test_tx
@@ -175,7 +187,7 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    Ok(VM::new(
+    VM::new(
         Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
@@ -202,29 +214,30 @@ pub fn prepare_vm_for_tx<'a>(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
-    ))
+    )
+    .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account(*address).map_err(|e| {
+        let account_info = world_state.get_account_info(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
-                "Failed to get account info when ensuring pre state: {e}",
+                "Failed to read account {address:#x} from world state: {e}",
             )))
         })?;
         ensure_pre_state_condition(
-            account.info.nonce == pre_value.nonce,
+            account_info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.nonce, account.info.nonce
+                pre_value.nonce, account_info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.info.balance == pre_value.balance,
+            account_info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.balance, account.info.balance
+                pre_value.balance, account_info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
@@ -239,11 +252,11 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            account.info.code_hash == keccak(pre_value.code.as_ref()),
+            account_info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {address:#x}: expected {}, got {}",
                 keccak(pre_value.code.as_ref()),
-                account.info.code_hash
+                account_info.code_hash
             ),
         )?;
     }
@@ -364,7 +377,7 @@ pub async fn ensure_post_state(
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
                         .map_err(|_| {
                             InternalError::Custom(
-                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                format!("Error at LEVM::get_state_transitions in ensure_post_state(). LEVM runner, line:{}",line!())
                                     .to_owned(),
                             )
                         })?;
@@ -375,7 +388,7 @@ pub async fn ensure_post_state(
                     {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
-                            "Post-state root mismatch".to_string(),
+                            format!("Post-state root mismatch. LEVM runner, line:{}", line!()),
                             cache,
                         ));
                     }
@@ -393,7 +406,7 @@ pub async fn ensure_post_state(
                     if keccak_logs != vector_post_value.logs {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
-                            "Logs mismatch".to_string(),
+                            format!("Logs mismatch. LEVM runner, line:{}", line!()),
                             cache,
                         ));
                     }
@@ -416,7 +429,7 @@ pub async fn ensure_post_state(
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
                         .map_err(|_| {
                             InternalError::Custom(
-                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                format!("Error at LEVM::get_state_transitions in ensure_post_state(). LEVM runner, line:{}", line!())
                                     .to_owned(),
                             )
                         })?;
@@ -425,9 +438,10 @@ pub async fn ensure_post_state(
                     // Compare the post-state root hash with the expected post-state root hash to ensure levm state is correct (was reverted)
                     if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
                     {
-                        return Err(EFTestRunnerError::FailedToRevertLEVMState(
-                            "Failed to revert LEVM state".to_string(),
-                        ));
+                        return Err(EFTestRunnerError::FailedToRevertLEVMState(format!(
+                            "Failed to revert LEVM state. LEVM runner, line:{}",
+                            line!()
+                        )));
                     }
                 }
                 // Execution result was unsuccessful but no exception was expected.

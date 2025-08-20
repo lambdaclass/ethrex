@@ -23,6 +23,7 @@ ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-l2-common.workspace = true
+ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
@@ -46,7 +47,7 @@ ethers = "2.0"
 cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
-crossterm = "0.29.0"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
 tui-scrollview = "0.5.1"

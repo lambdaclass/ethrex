@@ -15,4 +15,5 @@ pub mod tracing;
 pub mod utils;
 pub mod vm;
 pub use environment::*;
+pub mod account;
 pub mod l2_precompiles;

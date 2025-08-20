@@ -1,3 +1,4 @@
+use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
@@ -7,41 +8,52 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::based::sequencer_state::SequencerState;
+use crate::{based::sequencer_state::SequencerState, sequencer::errors::MonitorError};
 
+#[derive(Clone)]
 pub struct NodeStatusTable {
     pub state: TableState,
     pub items: [(String, String); 5],
     sequencer_state: SequencerState,
+    is_based: bool,
 }
 
 impl NodeStatusTable {
-    pub async fn new(sequencer_state: SequencerState, store: &Store) -> Self {
+    pub fn new(sequencer_state: SequencerState, is_based: bool) -> Self {
         Self {
             state: TableState::default(),
-            items: Self::refresh_items(&sequencer_state, store).await,
+            items: Default::default(),
             sequencer_state,
+            is_based,
         }
     }
 
-    pub async fn on_tick(&mut self, store: &Store) {
-        self.items = Self::refresh_items(&self.sequencer_state, store).await;
+    pub async fn on_tick(
+        &mut self,
+        store: &Store,
+        l2_client: &EthClient,
+    ) -> Result<(), MonitorError> {
+        self.items =
+            Self::refresh_items(&self.sequencer_state, store, l2_client, self.is_based).await?;
+        Ok(())
     }
 
     async fn refresh_items(
         sequencer_state: &SequencerState,
         store: &Store,
-    ) -> [(String, String); 5] {
+        l2_client: &EthClient,
+        is_based: bool,
+    ) -> Result<[(String, String); 5], MonitorError> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let status = sequencer_state.status().await;
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
         let last_known_block = store
             .get_latest_block_number()
             .await
-            .expect("Failed to get latest known L2 block");
-        let follower_nodes = "NaN"; // TODO: Implement follower nodes retrieval
+            .map_err(|_| MonitorError::GetLatestBlock)?;
+        let active_peers = l2_client.peer_count().await?;
 
-        [
+        Ok([
             ("Last Update:".to_string(), last_update),
             ("Status:".to_string(), status.to_string()),
             (
@@ -52,8 +64,12 @@ impl NodeStatusTable {
                 "Last Known Block:".to_string(),
                 last_known_block.to_string(),
             ),
-            ("Peers:".to_string(), follower_nodes.to_string()),
-        ]
+            if is_based {
+                ("Peers:".to_string(), active_peers.to_string())
+            } else {
+                ("".to_string(), "".to_string())
+            },
+        ])
     }
 }
 

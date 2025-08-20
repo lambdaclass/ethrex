@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
 use crate::{
@@ -8,7 +8,8 @@ use crate::{
 };
 use clap::Parser;
 use colored::Colorize;
-use ethrex_common::{Address, types::Account};
+use ethrex_common::Address;
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ pub enum EFTestRunnerError {
     #[error("Failed to ensure pre-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
-    FailedToEnsurePostState(Box<ExecutionReport>, String, HashMap<Address, Account>),
+    FailedToEnsurePostState(Box<ExecutionReport>, String, BTreeMap<Address, LevmAccount>),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
@@ -80,6 +81,9 @@ pub struct EFTestRunnerOptions {
     /// For running tests ONLY with revm
     #[arg(long, value_name = "REVM", default_value = "false")]
     pub revm: bool,
+    /// For running particular tests that have their specified paths listed with the tests flag.
+    #[arg(long, value_name = "PATHS", default_value = "false")]
+    pub paths: bool,
 }
 
 pub async fn run_ef_tests(
@@ -105,8 +109,13 @@ pub async fn run_ef_tests(
         }
         return Ok(());
     }
-    re_run_with_revm(&mut reports, &ef_tests, opts).await?;
-    write_report(&reports)
+    if reports.iter().any(|r| !r.passed()) {
+        re_run_with_revm(&mut reports, &ef_tests, opts).await?;
+        return write_report(&reports);
+    }
+    let mut report_spinner = Spinner::new(Dots, "Loading report...".to_owned(), Color::Cyan);
+    report_spinner.success(&format!("{}", "All tests passed!".bold()));
+    Ok(())
 }
 
 async fn run_with_levm(
@@ -116,7 +125,7 @@ async fn run_with_levm(
 ) -> Result<(), EFTestRunnerError> {
     let levm_run_time = std::time::Instant::now();
 
-    println!("{}", report::progress(reports, levm_run_time.elapsed()));
+    print!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     for test in ef_tests.iter() {
         let is_not_specific = !opts.specific_tests.is_empty()
@@ -147,16 +156,16 @@ async fn run_with_levm(
             }
         };
         reports.push(ef_test_report);
-        println!("{}", report::progress(reports, levm_run_time.elapsed()));
+        print!("{}", report::progress(reports, levm_run_time.elapsed()));
     }
-    println!("{}", report::progress(reports, levm_run_time.elapsed()));
+    print!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     if opts.summary {
         report::write_summary_for_slack(reports)?;
         report::write_summary_for_github(reports)?;
     }
 
-    println!("{}", "Loading summary...".to_owned());
+    println!("{}", "\nLoading summary...".to_owned());
     println!("{}", report::summary_for_shell(reports));
 
     Ok(())
@@ -221,8 +230,8 @@ async fn re_run_with_revm(
         if opts.verbose {
             println!("Running test: {:?}", failed_test_report.name);
         }
-        println!(
-            "{} {}/{failed_tests} - {}",
+        print!(
+            "\r{} {}/{failed_tests} - {}",
             "Re-running failed tests with REVM".bold(),
             idx + 1,
             format_duration_as_mm_ss(revm_run_time.elapsed())
@@ -262,6 +271,7 @@ async fn re_run_with_revm(
                 )));
             }
             non_re_run_internal_errors => {
+                println!("{} \n{failed_test_report}", "Failing Test:".bold());
                 return Err(EFTestRunnerError::Internal(
                     InternalError::MainRunnerInternal(format!(
                         "Non-internal error raised when executing revm. This should not happen: {non_re_run_internal_errors:?}"
@@ -271,7 +281,7 @@ async fn re_run_with_revm(
         }
     }
     println!(
-        "Re-ran failed tests with REVM in {}",
+        "\nRe-ran failed tests with REVM in {}",
         format_duration_as_mm_ss(revm_run_time.elapsed())
     );
     Ok(())

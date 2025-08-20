@@ -1,14 +1,15 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, Overrides, eth::WrappedTransaction},
+    clients::{EthClientError, Overrides},
 };
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
 use rand::Rng;
-use secp256k1::SecretKey;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -37,8 +38,7 @@ pub async fn send_verify_tx(
     encoded_calldata: Vec<u8>,
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
-    l1_address: Address,
-    l1_private_key: &SecretKey,
+    l1_signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -49,9 +49,10 @@ pub async fn send_verify_tx(
         })?;
 
     let verify_tx = eth_client
-        .build_eip1559_transaction(
+        .build_generic_tx(
+            TxType::EIP1559,
             on_chain_proposer_address,
-            l1_address,
+            l1_signer.address(),
             encoded_calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -61,54 +62,50 @@ pub async fn send_verify_tx(
         )
         .await?;
 
-    let mut tx = WrappedTransaction::EIP1559(verify_tx);
-
-    let verify_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, l1_private_key)
-        .await?;
+    let verify_tx_hash =
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer).await?;
 
     Ok(verify_tx_hash)
 }
 
 pub async fn get_needed_proof_types(
-    dev_mode: bool,
     rpc_urls: Vec<String>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
 
     let mut needed_proof_types = vec![];
-    if !dev_mode {
-        for prover_type in ProverType::all() {
-            let Some(getter) = prover_type.verifier_getter() else {
-                continue;
-            };
-            let calldata = keccak(getter)[..4].to_vec();
+    for prover_type in ProverType::all() {
+        let Some(getter) = prover_type.verifier_getter() else {
+            continue;
+        };
+        let calldata = keccak(getter)[..4].to_vec();
 
-            let response = eth_client
-                .call(
-                    on_chain_proposer_address,
-                    calldata.into(),
-                    Overrides::default(),
-                )
-                .await?;
-            // trim to 20 bytes, also removes 0x prefix
-            let trimmed_response = &response[26..];
+        let response = eth_client
+            .call(
+                on_chain_proposer_address,
+                calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
+        // trim to 20 bytes, also removes 0x prefix
+        let trimmed_response = &response[26..];
 
-            let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                EthClientError::Custom(format!(
-                    "Failed to parse OnChainProposer response {response}"
-                ))
-            })?;
+        let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
+            EthClientError::Custom(format!(
+                "Failed to parse OnChainProposer response {response}"
+            ))
+        })?;
 
-            if address != DEV_MODE_ADDRESS {
-                info!("{prover_type} proof needed");
-                needed_proof_types.push(prover_type);
-            }
+        if address != DEV_MODE_ADDRESS {
+            info!("{prover_type} proof needed");
+            needed_proof_types.push(prover_type);
         }
-    } else {
+    }
+    if needed_proof_types.is_empty() {
         needed_proof_types.push(ProverType::Exec);
     }
+
     Ok(needed_proof_types)
 }
 

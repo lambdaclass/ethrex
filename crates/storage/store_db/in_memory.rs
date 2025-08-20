@@ -125,7 +125,7 @@ impl StoreEngine for Store {
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 store
                     .transaction_locations
-                    .entry(transaction.compute_hash())
+                    .entry(transaction.hash())
                     .or_default()
                     .push((number, hash, index as u64));
             }
@@ -226,14 +226,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .headers
-            .extend(block_hashes.into_iter().zip(block_headers));
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?.headers.extend(
+            block_headers
+                .into_iter()
+                .map(|header| (header.hash(), header)),
+        );
         Ok(())
     }
 
@@ -256,22 +254,12 @@ impl StoreEngine for Store {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+                .map(|(i, tx)| (tx.hash(), number, hash, i as u64));
 
             self.add_transaction_locations(locations.collect()).await?;
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
             self.add_block_number(hash, number).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        for block in blocks {
-            self.inner()?
-                .canonical_hashes
-                .insert(block.header.number, block.hash());
         }
 
         Ok(())
@@ -374,13 +362,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        self.inner()?
-            .chain_data
-            .chain_config
-            .ok_or(StoreError::Custom("No Chain Congif".to_string()))
-    }
-
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
@@ -392,49 +373,20 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner()?.chain_data.earliest_block_number)
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner()?.chain_data.latest_block_number)
     }
 
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .chain_data
-            .finalized_block_number
-            .replace(block_number);
-        Ok(())
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner()?.chain_data.earliest_block_number)
     }
 
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner()?.chain_data.finalized_block_number)
     }
 
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.inner()?
-            .chain_data
-            .safe_block_number
-            .replace(block_number);
-        Ok(())
-    }
-
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner()?.chain_data.safe_block_number)
-    }
-
-    async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .chain_data
-            .latest_block_number
-            .replace(block_number);
-        Ok(())
-    }
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner()?.chain_data.latest_block_number)
     }
 
     async fn update_pending_block_number(
@@ -483,15 +435,6 @@ impl StoreEngine for Store {
         Ok(self.inner()?.headers.get(&block_hash).cloned())
     }
 
-    async fn set_canonical_block(
-        &self,
-        number: BlockNumber,
-        hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        self.inner()?.canonical_hashes.insert(number, hash);
-        Ok(())
-    }
-
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
@@ -506,8 +449,42 @@ impl StoreEngine for Store {
         self.get_canonical_block_hash_sync(block_number)
     }
 
-    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.inner()?.canonical_hashes.remove(&number);
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        // Make all ancestors to head canonical.
+        if let Some(new_canonical_blocks) = new_canonical_blocks {
+            for (number, hash) in new_canonical_blocks {
+                store.canonical_hashes.insert(number, hash);
+            }
+        }
+
+        // Remove anything after the head from the canonical chain.
+        let latest = store.chain_data.latest_block_number.unwrap_or(0);
+        for number in (head_number + 1)..(latest + 1) {
+            store.canonical_hashes.remove(&number);
+        }
+
+        // Make head canonical and label all special blocks correctly.
+        store.canonical_hashes.insert(head_number, head_hash);
+
+        if let Some(finalized) = finalized {
+            store.chain_data.finalized_block_number.replace(finalized);
+        }
+
+        if let Some(safe) = safe {
+            store.chain_data.safe_block_number.replace(safe);
+        }
+
+        store.chain_data.latest_block_number.replace(head_number);
+
         Ok(())
     }
 

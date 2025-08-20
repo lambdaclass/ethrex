@@ -14,18 +14,20 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{self, widget::HASH_LENGTH_IN_DIGITS},
+    monitor::{self, utils::SelectableScroller, widget::HASH_LENGTH_IN_DIGITS},
     sequencer::{errors::MonitorError, l1_watcher::PrivilegedTransactionData},
 };
 
 // kind | status | L1 tx hash | L2 tx hash | amount
 pub type L1ToL2MessagesRow = (L1ToL2MessageKind, L1ToL2MessageStatus, H256, H256, U256);
 
+#[derive(Clone, Default)]
 pub struct L1ToL2MessagesTable {
     pub state: TableState,
     pub items: Vec<L1ToL2MessagesRow>,
     last_l1_block_fetched: U256,
     common_bridge_address: Address,
+    selected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -43,18 +45,18 @@ impl L1ToL2MessageStatus {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
-            Self::ProcessedOnL2
+            Ok(Self::ProcessedOnL2)
         } else if eth_client
             .get_pending_privileged_transactions(common_bridge_address)
             .await
-            .expect("Failed to get pending L1 to L2 messages")
+            .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
             .contains(&l2_tx_hash)
         {
-            Self::Pending
+            Ok(Self::Pending)
         } else {
-            Self::Unknown
+            Ok(Self::Unknown)
         }
     }
 }
@@ -97,29 +99,11 @@ impl Display for L1ToL2MessageKind {
 }
 
 impl L1ToL2MessagesTable {
-    pub async fn new(
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        store: &Store,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(common_bridge_address)
-            .await
-            .expect("Failed to get last fetched L1 block")
-            .into();
-        let items = Self::fetch_new_items(
-            &mut last_l1_block_fetched,
+    pub fn new(common_bridge_address: Address) -> Self {
+        Self {
             common_bridge_address,
-            eth_client,
-            store,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            common_bridge_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(
@@ -138,13 +122,17 @@ impl L1ToL2MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client, store).await;
+        self.refresh_items(eth_client, store).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
         Ok(())
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient, store: &Store) {
+    async fn refresh_items(
+        &mut self,
+        eth_client: &EthClient,
+        store: &Store,
+    ) -> Result<(), MonitorError> {
         for (_kind, status, _l1_tx_hash, l2_tx_hash, ..) in self.items.iter_mut() {
             *status = L1ToL2MessageStatus::for_tx(
                 *l2_tx_hash,
@@ -152,8 +140,9 @@ impl L1ToL2MessagesTable {
                 eth_client,
                 store,
             )
-            .await;
+            .await?;
         }
+        Ok(())
     }
 
     async fn fetch_new_items(
@@ -169,7 +158,7 @@ impl L1ToL2MessagesTable {
             eth_client,
         )
         .await?;
-        Ok(Self::process_logs(&logs, common_bridge_address, eth_client, store).await)
+        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
     }
 
     async fn process_logs(
@@ -177,12 +166,12 @@ impl L1ToL2MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Vec<L1ToL2MessagesRow> {
+    ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
         for log in logs {
             let l1_to_l2_message = PrivilegedTransactionData::from_log(log.log.clone())
-                .expect("Failed to parse PrivilegedTxSent log");
+                .map_err(|_| MonitorError::PrivilegedTxParseError)?;
 
             let l1_to_l2_message_hash = keccak(
                 [
@@ -204,14 +193,14 @@ impl L1ToL2MessagesTable {
                     eth_client,
                     store,
                 )
-                .await,
+                .await?,
                 log.transaction_hash,
                 l1_to_l2_message_hash,
                 l1_to_l2_message.value,
             ));
         }
 
-        processed_logs
+        Ok(processed_logs)
     }
 }
 
@@ -250,7 +239,11 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
             )
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L1 to L2 Messages",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -258,5 +251,24 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
             );
 
         l1_to_l2_messages_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for L1ToL2MessagesTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

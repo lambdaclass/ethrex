@@ -1,12 +1,8 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
-#[cfg(feature = "redb")]
-use crate::store_db::redb::RedBStoreRollup;
 #[cfg(feature = "sql")]
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
@@ -33,10 +29,6 @@ impl Default for Store {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
-    #[cfg(feature = "redb")]
-    RedB,
     #[cfg(feature = "sql")]
     SQL,
 }
@@ -45,16 +37,8 @@ impl Store {
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreRollup::new(_path)?),
-            },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-            },
-            #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStoreRollup::new()?),
             },
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
@@ -187,21 +171,23 @@ impl Store {
                 "Failed while trying to retrieve the state root of a known batch. This is a bug."
                     .to_owned(),
             ))?;
+
         let blobs_bundle = BlobsBundle::create_from_blobs(
+            // Currently validium mode doesn't generate blobs, so no one will be stored
+            // TODO: If/When that behaviour change, this should throw error on None
             &self
                 .get_blobs_by_batch(batch_number)
                 .await?
-                .ok_or(RollupStoreError::Custom(
-                    "Failed while trying to retrieve the blobs of a known batch. This is a bug."
-                        .to_owned(),
-                ))?,
+                .unwrap_or_default()
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
+
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
+
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
@@ -248,6 +234,53 @@ impl Store {
     /// Returns whether the batch with the given number is present.
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         self.engine.contains_batch(batch_number).await
+    }
+
+    /// Stores the sequencer signature for a given block hash.
+    /// When the lead sequencer sends a block by P2P, it signs the message and it is validated
+    /// If we want to gossip or broadcast the message, we need to store the signature for later use
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given block hash.
+    /// We want to retrieve the validated signature to broadcast or gossip the block to the peers
+    /// So they can also validate the message
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
     }
 
     /// Returns the lastest sent batch proof
@@ -308,5 +341,18 @@ impl Store {
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
+    }
+
+    /// Returns privileged transactions about to be included in the next batch
+    pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        self.engine.precommit_privileged().await
+    }
+
+    /// Updates privileged transaction
+    pub async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        self.engine.update_precommit_privileged(range).await
     }
 }

@@ -1,15 +1,17 @@
+use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
-use zkvm_interface::io::{JSONProgramInput, ProgramInput};
+use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use std::time::Instant;
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -53,13 +55,16 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
+    let now = Instant::now();
     setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program.");
+    info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
 }
 
@@ -68,7 +73,8 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 

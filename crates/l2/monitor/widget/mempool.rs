@@ -7,33 +7,39 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::widget::{
-    ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS,
+use crate::{
+    monitor::{
+        utils::SelectableScroller,
+        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    },
+    sequencer::errors::MonitorError,
 };
 
+#[derive(Clone, Default)]
 pub struct MempoolTable {
     pub state: TableState,
     // type | hash | sender | nonce
     pub items: Vec<(String, String, String, String)>,
+    selected: bool,
 }
 
 impl MempoolTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
-        Self {
-            state: TableState::default(),
-            items: Self::refresh_items(rollup_client).await,
-        }
+    pub fn new() -> Self {
+        Default::default()
     }
 
-    pub async fn on_tick(&mut self, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(rollup_client).await;
+    pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {
+        self.items = Self::refresh_items(rollup_client).await?;
+        Ok(())
     }
 
-    async fn refresh_items(rollup_client: &EthClient) -> Vec<(String, String, String, String)> {
+    async fn refresh_items(
+        rollup_client: &EthClient,
+    ) -> Result<Vec<(String, String, String, String)>, MonitorError> {
         let mempool = rollup_client
             .tx_pool_content()
             .await
-            .expect("Failed to get mempool content");
+            .map_err(|_| MonitorError::TxPoolError)?;
 
         let mut pending_txs = mempool
             .pending
@@ -56,7 +62,7 @@ impl MempoolTable {
             },
         );
 
-        pending_txs
+        Ok(pending_txs)
     }
 }
 
@@ -85,7 +91,11 @@ impl StatefulWidget for &mut MempoolTable {
             .header(Row::new(vec!["Type", "Hash", "Sender", "Nonce"]).style(Style::default()))
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "Mempool",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -93,5 +103,24 @@ impl StatefulWidget for &mut MempoolTable {
             );
 
         mempool_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for MempoolTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

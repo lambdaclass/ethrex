@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -22,7 +22,7 @@ use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 pub struct Account {
     pub info: AccountInfo,
     pub code: Bytes,
-    pub storage: HashMap<H256, U256>,
+    pub storage: BTreeMap<H256, U256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
@@ -158,7 +158,7 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,
@@ -169,28 +169,11 @@ impl Account {
             storage,
         }
     }
+}
 
-    pub fn has_nonce(&self) -> bool {
-        self.info.nonce != 0
-    }
-
-    pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_code_or_nonce(&self) -> bool {
-        self.has_code() || self.has_nonce()
-    }
-
+impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero()
-            && self.info.nonce == 0
-            && self.info.code_hash == *EMPTY_KECCACK_HASH
-    }
-
-    pub fn set_code(&mut self, code: Bytes) {
-        self.info.code_hash = keccak(code.as_ref()).0.into();
-        self.code = code;
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
     }
 }
 

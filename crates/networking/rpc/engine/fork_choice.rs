@@ -148,7 +148,7 @@ fn parse(
             match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
                 Ok(attributes) => attributes,
                 Err(error) => {
-                    info!("Could not parse params {}", error);
+                    warn!("Could not parse payload attributes {}", error);
                     None
                 }
             };
@@ -235,7 +235,7 @@ async fn handle_forkchoice(
                     for tx in &block.body.transactions {
                         context
                             .blockchain
-                            .remove_transaction_from_pool(&tx.compute_hash())
+                            .remove_transaction_from_pool(&tx.hash())
                             .map_err(|err| RpcErr::Internal(err.to_string()))?;
                     }
                 }

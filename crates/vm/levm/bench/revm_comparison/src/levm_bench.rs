@@ -5,6 +5,7 @@ use ethrex_common::{
     Address, U256,
     types::{Account, EIP1559Transaction, Transaction, TxKind},
 };
+use ethrex_levm::errors::VMError;
 use ethrex_levm::{
     Environment,
     db::gen_db::GeneralizedDatabase,
@@ -14,8 +15,9 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
+use std::collections::BTreeMap;
 use std::hint::black_box;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 // Use a constant byte array to define the Address at compile time.
 const SENDER_ADDRESS: u64 = 0x100;
@@ -29,13 +31,14 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
-        let mut vm = init_vm(&mut db, 0, calldata.clone());
+        let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.is_success());
     }
-    let mut vm = init_vm(&mut db, 0, calldata.clone());
+    let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
     let tx_report = black_box(vm.stateless_execute().unwrap());
-    assert!(tx_report.is_success());
+
+    assert!(tx_report.is_success(), "{:?}", tx_report.result);
 
     match tx_report.result {
         TxResult::Success => {
@@ -52,21 +55,21 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
-    let cache = HashMap::from([
+    let cache = BTreeMap::from([
         (
             Address::from_low_u64_be(CONTRACT_ADDRESS),
-            Account::new(U256::MAX, bytecode.clone(), 0, HashMap::new()),
+            Account::new(U256::MAX, bytecode.clone(), 0, BTreeMap::new()),
         ),
         (
             Address::from_low_u64_be(SENDER_ADDRESS),
-            Account::new(U256::MAX, Bytes::new(), 0, HashMap::new()),
+            Account::new(U256::MAX, Bytes::new(), 0, BTreeMap::new()),
         ),
     ]);
 
-    GeneralizedDatabase::new(Arc::new(store), cache)
+    GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
 
-fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
+fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<VM, VMError> {
     let env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: nonce,
