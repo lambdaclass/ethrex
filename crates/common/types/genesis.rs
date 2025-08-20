@@ -186,6 +186,7 @@ pub struct ChainConfig {
     pub cancun_time: Option<u64>,
     pub prague_time: Option<u64>,
     pub verkle_time: Option<u64>,
+    pub osaka_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
@@ -253,6 +254,10 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
+        self.osaka_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
         self.prague_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -279,7 +284,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_osaka_activated(block_timestamp) {
+            Fork::Osaka
+        } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
         } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
