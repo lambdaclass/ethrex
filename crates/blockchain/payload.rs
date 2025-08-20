@@ -329,6 +329,7 @@ impl Blockchain {
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         let mut res= self_clone.build_payload(payload.clone()).await?;
         while  start.elapsed() < SECONDS_PER_SLOT {
+            info!("Time remaining in slot: {}secs", SECONDS_PER_SLOT.as_secs() - start.elapsed().as_secs());
             let payload = payload.clone();
             res = self_clone.build_payload(payload).await?;
         }
