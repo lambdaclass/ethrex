@@ -906,6 +906,7 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     Ok(Bytes::from(output))
 }
 
+#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
@@ -916,20 +917,18 @@ pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
-    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
 
-    let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
+    let result_of_addition = first_g1_point.add(&second_g1_point);
 
-    let result_bytes = if result_of_addition.is_identity().into() {
+    if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
-    } else {
-        result_of_addition.to_uncompressed()
-    };
+    }
 
-    let mut padded_result = Vec::new();
+    let result_bytes = G1Affine::from(result_of_addition).to_uncompressed();
+
+    let mut padded_result = Vec::with_capacity(128);
     add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
@@ -963,14 +962,17 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
         let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        let scaled_point = G1Projective::mul(point, scalar);
-        result = result.add(&scaled_point);
+        if scalar != Scalar::zero() {
+            let scaled_point: G1Projective = point * scalar;
+            result += scaled_point;
+        }
     }
     let mut output = [0u8; 128];
 
     if result.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&output));
     }
+
     let result_bytes = G1Affine::from(result).to_uncompressed();
     let (x_bytes, y_bytes) = result_bytes
         .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
@@ -981,6 +983,7 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     Ok(Bytes::copy_from_slice(&output))
 }
 
+#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
@@ -991,20 +994,18 @@ pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // slices are ok because the len has been validated
-    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let first_g2_point = parse_g2_point(&calldata[0..256], true)?;
-    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let second_g2_point = parse_g2_point(&calldata[256..512], true)?;
 
-    let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
+    let result_of_addition = first_g2_point.add(&second_g2_point);
 
-    let result_bytes = if result_of_addition.is_identity().into() {
+    if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
-    } else {
-        result_of_addition.to_uncompressed()
-    };
+    }
 
-    let mut padded_result = Vec::with_capacity(192);
+    let result_bytes = G2Affine::from(result_of_addition).to_uncompressed();
+
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
@@ -1042,8 +1043,11 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         let point = parse_g2_point(&calldata[point_offset..scalar_offset], false)?;
         let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        let scaled_point = G2Projective::mul(point, scalar);
-        result = result.add(&scaled_point);
+        // skip zero scalars
+        if scalar != Scalar::zero() {
+            let scaled_point: G2Projective = point * scalar;
+            result += scaled_point;
+        }
     }
 
     let result_bytes = if result.is_identity().into() {
@@ -1052,7 +1056,7 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         G2Affine::from(result).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
