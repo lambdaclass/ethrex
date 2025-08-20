@@ -1,0 +1,25 @@
+[package]
+name = "ethrex_rlpx_console"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { version = "1.41.1" , features = ["full"] }
+ethrex-p2p.workspace = true
+ethrex.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
+thiserror.workspace = true
+rustc-hex.workspace = true
+spawned-concurrency.workspace = true
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-blockchain.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio-util.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+clap.workspace = true
+hex.workspace = true
