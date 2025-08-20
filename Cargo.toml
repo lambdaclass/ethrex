@@ -2,6 +2,7 @@
 members = [
   "cmd/ef_tests/blockchain",
   "cmd/ef_tests/state",
+  "cmd/ef_tests/state_v2",
   "cmd/ethrex",
   "cmd/ethrex_replay",
   "crates/blockchain",

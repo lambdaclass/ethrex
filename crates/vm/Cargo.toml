@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-levm ={ path = "./levm", default-features = false}
+ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
