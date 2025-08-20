@@ -231,21 +231,24 @@ impl<'a> VM<'a> {
         )]
         let sign_bit_index = byte_size_minus_one * 8 + 7;
 
-        // sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow.
-        #[expect(clippy::arithmetic_side_effects)]
-        let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
-        #[expect(clippy::arithmetic_side_effects)]
-        let mask = (U256::one() << sign_bit_index) - U256::one();
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
+        )]
+        {
+            let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
+            let mask = (U256::one() << sign_bit_index) - U256::one();
 
-        let result = if sign_bit.is_zero() {
-            value_to_extend & mask
-        } else {
-            value_to_extend | !mask
-        };
+            let result = if sign_bit.is_zero() {
+                value_to_extend & mask
+            } else {
+                value_to_extend | !mask
+            };
 
-        current_call_frame.stack.push1(result)?;
+            current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+            Ok(OpcodeResult::Continue { pc_increment: 1 })
+        }
     }
 }
 
