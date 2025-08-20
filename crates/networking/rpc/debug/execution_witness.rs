@@ -87,9 +87,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let parent_header = block_headers
         .get(&parent_number)
         .cloned()
-        .unwrap_or_else(|| {
-            panic!("No header found for parent block ({parent_number}) in the RpcExecutionWitness")
-        });
+        .ok_or(ExecutionWitnessError::MissingParentHeader(parent_number))?;
 
     let mut witness = ExecutionWitnessResult {
         state_trie_nodes: rpc_witness.state,
