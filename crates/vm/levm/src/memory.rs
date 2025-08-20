@@ -6,6 +6,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
+use bytes::Bytes;
 use ethrex_common::{
     U256,
     utils::{u256_from_big_endian_const, u256_to_big_endian},
@@ -100,11 +101,11 @@ impl Memory {
         Ok(())
     }
 
-    /// Load `size` bytes from the given offset.
+    /// Load `size` bytes from the given offset. Returning a Bytes.
     #[inline]
-    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
+    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         if size == 0 {
-            return Ok(Vec::new());
+            return Ok(Bytes::new());
         }
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
@@ -117,9 +118,9 @@ impl Memory {
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
-            Ok(buf
-                .get_unchecked(true_offset..(true_offset.wrapping_add(size)))
-                .to_vec())
+            Ok(Bytes::copy_from_slice(buf.get_unchecked(
+                true_offset..(true_offset.wrapping_add(size)),
+            )))
         }
     }
 
