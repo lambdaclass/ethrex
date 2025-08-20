@@ -1,7 +1,6 @@
 use rkyv::rancor::Error;
 use sp1_sdk::{
-    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey,
-    SP1Stdin, SP1VerifyingKey,
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::fmt::Debug;
 use tracing::info;
@@ -50,12 +49,12 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         let client = ProverClient::builder().cuda().build();
         let now = Instant::now();
         client.execute(PROGRAM_ELF, &stdin).run()?;
-        now.elapsed();
+        now.elapsed()
     } else {
         let client = ProverClient::builder().cpu().build();
         let now = Instant::now();
         client.execute(PROGRAM_ELF, &stdin).run()?;
-        now.elapsed();
+        now.elapsed()
     };
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);

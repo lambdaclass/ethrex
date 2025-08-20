@@ -45,7 +45,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, format: ProofFormat) -> Result<Receipt, Box<dyn std::error::Error>> {
+pub fn prove(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -70,7 +73,10 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(receipt: Receipt, format: ProofFormat) -> Result<BatchProof, Box<dyn std::error::Error>> {
+pub fn to_batch_proof(
+    receipt: Receipt,
+    format: ProofFormat,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
     let batch_proof = match format {
         ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
             prover_type: ProverType::RISC0,
