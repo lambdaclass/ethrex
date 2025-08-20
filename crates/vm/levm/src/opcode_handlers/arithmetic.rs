@@ -160,7 +160,10 @@ impl<'a> VM<'a> {
             reason = "both values come from a u256, so the product can fit in a U512"
         )]
         let sum = new_augend + new_addend;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "can't overflow because non-zero modulus"
+        )]
         let sum_mod = sum % modulus;
 
         #[allow(clippy::expect_used, reason = "can't overflow")]
