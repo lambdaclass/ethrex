@@ -6,8 +6,8 @@ use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
+    utils::get_address_from_secret_key,
 };
-use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
