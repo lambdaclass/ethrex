@@ -11,9 +11,11 @@ use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use hex::ToHex;
-use secp256k1::SecretKey;
+use secp256k1::rand::Rng;
+use secp256k1::{SecretKey, rand};
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use tokio::task::JoinSet;
 
 // ERC20 compiled artifact generated from this tutorial:
@@ -82,6 +84,20 @@ struct Cli {
         help = "Wait until all transactions were included"
     )]
     wait_included: bool,
+
+    #[arg(
+        long,
+        env = "INTERVAL",
+        help = "Repeatedly execute the load test in a fixed interval of time"
+    )]
+    interval: Option<u64>,
+
+    #[arg(
+        long,
+        env = "RANDOM_AMOUNT",
+        help = "Send a random amount of transactions, with a maximum of --tx-amount"
+    )]
+    random_amount: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
@@ -383,16 +399,30 @@ async fn main() {
         }
     };
 
-    let time_now = tokio::time::Instant::now();
+    if matches!(tx_builder, TxBuilder::Noop) {
+        return;
+    }
 
-    if !matches!(tx_builder, TxBuilder::Noop) {
+    let mut interval = tokio::time::interval(Duration::from_secs(cli.interval.unwrap_or(0)));
+    loop {
+        interval.tick().await;
+
+        let accounts = accounts.clone();
+        let client = client.clone();
+        let tx_amount = if cli.random_amount {
+            let mut rng = rand::thread_rng();
+            rng.gen_range(0..=cli.tx_amount)
+        } else {
+            cli.tx_amount
+        };
+
         println!("Starting load test with {} transactions...", cli.tx_amount);
         let tx_hashes = load_test(
-            cli.tx_amount,
+            tx_amount,
             accounts.clone(),
             client.clone(),
             chain_id,
-            tx_builder,
+            tx_builder.clone(),
         )
         .await
         .expect("Failed to load test");
@@ -403,11 +433,9 @@ async fn main() {
                 .await
                 .unwrap();
         }
-    }
-    let elapsed_time = time_now.elapsed();
 
-    println!(
-        "Load test finished. Elapsed time: {} seconds",
-        elapsed_time.as_secs()
-    );
+        if cli.interval.is_none() {
+            break;
+        }
+    }
 }
