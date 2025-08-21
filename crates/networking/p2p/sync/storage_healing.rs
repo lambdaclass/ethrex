@@ -150,45 +150,6 @@ pub struct NodeRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
-pub async fn heal_storage_trie_wrap(
-    state_root: H256,
-    peers: PeerHandler,
-    store: Store,
-    membatch: OnceCell<Membatch>,
-    staleness_timestamp: u64,
-) -> bool {
-    info!("Started Storage Healing");
-    let accounts: Vec<(H256, AccountState)> = store
-        .iter_accounts(state_root)
-        .expect("We should be able to open the accoun")
-        .collect();
-
-    info!("Total accounts: {}", accounts.len());
-    let filtered_accounts: Vec<(H256, AccountState)> = accounts
-        .into_iter()
-        .filter(|(hash, state)| {
-            state.storage_root != *EMPTY_TRIE_HASH
-                && !store
-                    .contains_storage_node(*hash, state.storage_root)
-                    .expect("Store isn't responding")
-        })
-        .collect();
-    info!("Total filtered accounts: {}", filtered_accounts.len());
-    let account_path_nibbles: Vec<Nibbles> = filtered_accounts
-        .into_iter()
-        .map(|(hashed_key, _)| Nibbles::from_raw(hashed_key.as_bytes(), true))
-        .collect();
-    heal_storage_trie(
-        state_root,
-        account_path_nibbles,
-        peers.clone(),
-        store.clone(),
-        membatch.clone(),
-        staleness_timestamp,
-    )
-    .await
-}
-
 pub async fn heal_storage_trie(
     state_root: H256,
     account_paths: Vec<Nibbles>,
