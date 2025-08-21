@@ -79,8 +79,8 @@ impl EVMConfig {
     /// NOTE: This function could potentially be expanded to include
     /// other types of "default"s.
     pub fn canonical_values(fork: Fork) -> ForkBlobSchedule {
-        let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork);
-        let target: u64 = Self::get_target_blob_gas_per_block_(fork);
+        let max_blobs_per_block = Self::max_blobs_per_block(fork);
+        let target = Self::get_target_blob_gas_per_block_(fork);
         let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork);
 
         ForkBlobSchedule {
@@ -90,7 +90,7 @@ impl EVMConfig {
         }
     }
 
-    fn max_blobs_per_block(fork: Fork) -> u64 {
+    fn max_blobs_per_block(fork: Fork) -> u32 {
         if fork >= Fork::Prague {
             MAX_BLOB_COUNT_ELECTRA
         } else {
@@ -106,7 +106,7 @@ impl EVMConfig {
         }
     }
 
-    fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
+    fn get_target_blob_gas_per_block_(fork: Fork) -> u32 {
         if fork >= Fork::Prague {
             TARGET_BLOB_GAS_PER_BLOCK_PECTRA
         } else {
