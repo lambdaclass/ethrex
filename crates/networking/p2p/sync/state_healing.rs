@@ -258,25 +258,8 @@ async fn heal_state_trie(
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Finished first download, checking the cache of previous downloads");
-            let trie = store.open_state_trie(state_root).expect("Store Error");
-            paths = store
-                .get_state_heal_paths()
-                .await
-                .expect("Store Error")
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(path, _)| trie.get_node(&path.encode_compact()).is_err())
-                .map(|(path, hash)| RequestMetadata { path, hash })
-                .collect();
-            store
-                .set_state_heal_paths(Vec::new())
-                .await
-                .expect("Store Error");
-            if paths.is_empty() {
-                info!("Nothing more to heal found");
-                break;
-            }
+            info!("Nothing more to heal found");
+            break;
         }
 
         // We check with a clock if we are stale
@@ -286,35 +269,7 @@ async fn heal_state_trie(
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Caching {} paths for the next cycle", paths.len());
-            let old_paths: Vec<RequestMetadata> = store
-                .get_state_heal_paths()
-                .await
-                .expect("Store Error")
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(path, hash)| RequestMetadata { path, hash })
-                .collect();
-            info!("We had {} old paths from a previous cycle", old_paths.len());
-            let mut paths_hashmap: HashMap<Nibbles, RequestMetadata> = HashMap::from_iter(
-                old_paths
-                    .into_iter()
-                    .map(|request_metadata| (request_metadata.path.clone(), request_metadata)),
-            );
-
-            for path in paths.clone() {
-                paths_hashmap.insert(path.path.clone(), path);
-            }
-            store
-                .set_state_heal_paths(
-                    paths_hashmap
-                        .values()
-                        .map(|request_metadata| {
-                            (request_metadata.path.clone(), request_metadata.hash)
-                        })
-                        .collect(),
-                )
-                .await?;
+            info!("Finisehd inflight tasks");
             break;
         }
     }
@@ -445,20 +400,42 @@ pub fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    paths.push(RequestMetadata {
-                        hash: child.compute_hash().finalize(),
-                        path: parent_path.append_new(index as u8),
-                    });
+                if child.is_valid() {
+                    match child.get_node(trie_state)? {
+                        Some(node) => {
+                            paths.extend(node_missing_children(
+                                &node,
+                                &parent_path.append_new(index as u8),
+                                trie_state,
+                            )?);
+                        }
+                        None => {
+                            paths.push(RequestMetadata {
+                                hash: child.compute_hash().finalize(),
+                                path: parent_path.append_new(index as u8),
+                            });
+                        }
+                    }
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                paths.push(RequestMetadata {
-                    hash: node.child.compute_hash().finalize(),
-                    path: parent_path.concat(node.prefix.clone()),
-                });
+            if node.child.is_valid() {
+                match node.child.get_node(trie_state)? {
+                    Some(child) => {
+                        paths.extend(node_missing_children(
+                            &child,
+                            &parent_path.concat(node.prefix.clone()),
+                            trie_state,
+                        )?);
+                    }
+                    None => {
+                        paths.push(RequestMetadata {
+                            hash: node.child.compute_hash().finalize(),
+                            path: parent_path.concat(node.prefix.clone()),
+                        });
+                    }
+                }
             }
         }
         _ => {}
