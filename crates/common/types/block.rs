@@ -738,11 +738,11 @@ fn validate_excess_blob_gas(
 pub fn calc_excess_blob_gas(
     parent_excess_blob_gas: u64,
     parent_blob_gas_used: u64,
-    target: u64,
+    target: u32,
 ) -> u64 {
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
     let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    excess_blob_gas.saturating_sub(target_blob_gas_per_block)
+    excess_blob_gas.saturating_sub(target_blob_gas_per_block.into())
 }
 
 #[cfg(test)]
