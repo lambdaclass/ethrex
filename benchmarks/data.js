@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755788906055,
+  "lastUpdate": 1755791022632,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9475,6 +9475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166789300541,
             "range": "± 662606407",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b4e7286c2e02174ad0545cb917b89573103cdf21",
+          "message": "refactor(l1): remove unnecessary `usize`s from blockchain crate (#4110)\n\n**Motivation**\n\nThis PR does not fix any specific bug, but it reduces the usage of\n`usize` throughout the codebase, as it has caused issues when running on\n32-bit architectures.\n\n**Description**\n\n- This PR focuses on the `blockchain` crate. The rest of the changes\nwere made simply to make the code compile.\n- Some constants were changed from `u64` to `u32`, as IMO there is no\nrisk of overflow and this reduces `u64 -> usize` conversions.\n\n\nRelated to #4081",
+          "timestamp": "2025-08-21T14:52:58Z",
+          "tree_id": "2d3316a393d40f572520338cf63569750badb410",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b4e7286c2e02174ad0545cb917b89573103cdf21"
+        },
+        "date": 1755791007264,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160696535791,
+            "range": "± 301787033",
             "unit": "ns/iter"
           }
         ]
