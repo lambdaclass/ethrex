@@ -10,7 +10,8 @@ use ethrex_common::{
     H256,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
@@ -347,6 +348,19 @@ impl GenServer for RLPxConnection {
                         );
                         return CastResponse::Stop;
                     }
+                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree)) => {
+                        if established_state.blockchain.is_synced() {
+                            log_peer_error(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        } else {
+                            log_peer_debug(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        }
+                    }
                     _ => {
                         log_peer_warn(
                             &established_state.node,
@@ -467,7 +481,10 @@ where
     Ok(())
 }
 
-async fn send_new_pooled_tx_hashes(state: &mut Established, txs: Vec<MempoolTransaction>) -> Result<(), RLPxError> {
+async fn send_new_pooled_tx_hashes(
+    state: &mut Established,
+    txs: Vec<MempoolTransaction>,
+) -> Result<(), RLPxError> {
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
