@@ -1733,6 +1733,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "k256",
  "keccak-hash",
  "lambdaworks-math",
  "lazy_static",
@@ -2420,6 +2421,7 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
+ "signature",
 ]
 
 [[package]]
@@ -5150,8 +5152,8 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "rkyv",
  "hex",
+ "rkyv",
  "serde",
  "serde_json",
  "serde_with",
