@@ -12,8 +12,8 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: u64 = 16;
-const NUMBER_OF_BUCKETS: usize = 256;
-const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+const NUMBER_OF_BUCKETS: u32 = 256;
+const MAX_NUMBER_OF_REPLACEMENTS: u32 = 10;
 
 /// Maximum Peer Score to avoid overflows upon weigh calculations
 const PEER_SCORE_UPPER_BOUND: i32 = 500;
@@ -34,7 +34,7 @@ pub struct KademliaTable {
 
 impl KademliaTable {
     pub fn new(local_node_id: H256) -> Self {
-        let buckets: Vec<Bucket> = vec![Bucket::default(); NUMBER_OF_BUCKETS];
+        let buckets: Vec<Bucket> = vec![Bucket::default(); NUMBER_OF_BUCKETS as usize];
         Self {
             local_node_id,
             buckets,
@@ -129,7 +129,7 @@ impl KademliaTable {
 
     fn insert_as_replacement(&mut self, node: &PeerData, bucket_idx: usize) {
         let bucket = &mut self.buckets[bucket_idx];
-        if bucket.replacements.len() >= MAX_NUMBER_OF_REPLACEMENTS {
+        if bucket.replacements.len() >= MAX_NUMBER_OF_REPLACEMENTS as usize {
             bucket.replacements.remove(0);
         }
         bucket.replacements.push(node.clone());
@@ -676,7 +676,7 @@ mod tests {
         );
         assert_eq!(
             last.node.public_key,
-            bucket.replacements[MAX_NUMBER_OF_REPLACEMENTS - 1]
+            bucket.replacements[MAX_NUMBER_OF_REPLACEMENTS as usize - 1]
                 .node
                 .public_key
         );
