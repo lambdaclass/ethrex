@@ -1014,6 +1014,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("Starting Fast Sync");
             let membatch = OnceCell::new();
+            let mut global_state_leafs_healed: u64 = 0;
             membatch.get_or_init(HashMap::new);
             let mut healing_done = false;
             while !healing_done {
@@ -1027,6 +1028,7 @@ impl Syncer {
                     store.clone(),
                     &self.peers,
                     staleness_timestamp,
+                    &mut global_state_leafs_healed,
                 )
                 .await?;
                 if !healing_done {
