@@ -45,5 +45,5 @@ pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
         return Err(eyre::Error::msg("cache can't be empty"));
     }
     let file = BufWriter::new(File::create(file_name)?);
-    Ok(serde_json::to_writer(file, cache)?)
+    Ok(serde_json::to_writer_pretty(file, cache)?)
 }
