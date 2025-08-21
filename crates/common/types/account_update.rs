@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::{Address, H256, types::AccountInfo};
+use crate::{Address, H256, U256, types::AccountInfo};
 use bytes::Bytes;
-use ethereum_types::U256;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
