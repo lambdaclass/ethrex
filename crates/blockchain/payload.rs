@@ -497,7 +497,7 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
+            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
     }
