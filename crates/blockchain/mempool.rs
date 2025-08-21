@@ -52,19 +52,22 @@ impl Mempool {
     }
 
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
-        let txs = self.transaction_pool.read()
+        let txs = self
+            .transaction_pool
+            .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
-            .and_then(|pool| {
-                Ok(pool.iter()
+            .map(|pool| {
+                pool.iter()
                     .filter_map(|(hash, tx)| {
                         if !self.broadcast_pool.read().ok()?.contains(hash) {
                             None
                         } else {
                             Some(tx.clone())
                         }
-                    }).collect::<Vec<_>>())
+                    })
+                    .collect::<Vec<_>>()
             })?;
-            Ok(txs)
+        Ok(txs)
     }
 
     pub fn clear_broadcasted_txs(&self) {
