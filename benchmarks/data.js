@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755747405348,
+  "lastUpdate": 1755748971647,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -21993,6 +21993,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00844767088607595,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1eb58c84be6231fdac1484829bc37371f6f4a17c",
+          "message": "chore(l1): remove redb support (#4103)\n\n**Motivation**\n\n#4095\n\nCloses #4095",
+          "timestamp": "2025-08-20T18:38:24Z",
+          "tree_id": "6489ebb1356d2f1bc308f1b1d99bdc0ff2b85eb9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1eb58c84be6231fdac1484829bc37371f6f4a17c"
+        },
+        "date": 1755748970932,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0014445151515151515,
             "unit": "Mgas/s"
           }
         ]
