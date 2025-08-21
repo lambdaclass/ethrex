@@ -167,24 +167,24 @@ else
 endif
 
 build-prover-sp1:
-	cargo build --release --no-default-features --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml
+	cargo build --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml
 
 build-prover-risc0:
-	cargo build --release --no-default-features --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml;
+	cargo build --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml;
 
 build-prover-exec:
-	cargo build --release --no-default-features --features "$(GPU?)" --manifest-path ../../Cargo.toml;
+	cargo build --release --features "$(GPU?)" --manifest-path ../../Cargo.toml;
 
 init-prover-sp1:
-	cargo run --release --no-default-features --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
 	--proof-coordinator tcp://127.0.0.1:3900
 
 init-prover-risc0:
-	cargo run --release --no-default-features --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
 	--proof-coordinator tcp://127.0.0.1:3900
 
 init-prover-exec:
-	cargo run --release --no-default-features --features "$(GPU?)" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "$(GPU?)" --manifest-path ../../Cargo.toml -- \
 	--proof-coordinator tcp://127.0.0.1:3900
 
 # ==============================================================================
