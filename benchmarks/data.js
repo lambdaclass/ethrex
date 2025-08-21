@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755791022632,
+  "lastUpdate": 1755803121618,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9505,6 +9505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160696535791,
             "range": "± 301787033",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dcf547762232dae4de6ec35c3c4b1b15e94fbc3d",
+          "message": "fix(l1): removed unnecesary state clone (#4117)\n\nAfter spawned upgrade, there is no need to clone `RLPxConnection` state.\nBut we left a `clone()` in the code that was causing performance issues\non high load of peer messages.\n\nThis was discovered analyzing a flame graph by @juan518munoz :\n<img width=\"2934\" height=\"1598\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/041264cd-63c9-4855-85ad-8d277bdaac8e\"\n/>\n\n\n**Description**\n\nThis removes the cost of the inner state `clone()` showing some nice\nimprovement on a high load test (two reth and one ethrex nodes being\nspammed by about 10.000 transactions per slot)\n\nGgas/s on the ethrex node:\nAfter: (the second peak is due to peers disconnecting)\n<img width=\"410\" height=\"299\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/3ef44258-0390-4cff-8083-b96d710f7d53\"\n/>\n\nBefore: (peers remained connected through all the test)\n<img width=\"438\" height=\"300\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/eed2a1b4-3106-4498-8bbc-9d7f994b11e7\"\n/>",
+          "timestamp": "2025-08-21T18:13:04Z",
+          "tree_id": "dccf3e3a14f6edbbf75c5ec6167448cb6c3b6053",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dcf547762232dae4de6ec35c3c4b1b15e94fbc3d"
+        },
+        "date": 1755803106131,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161970478986,
+            "range": "± 705097578",
             "unit": "ns/iter"
           }
         ]
