@@ -652,7 +652,7 @@ impl Store {
     pub async fn get_transaction_by_location(
         &self,
         block_hash: BlockHash,
-        index: u64,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine
             .get_transaction_by_location(block_hash, index)
