@@ -10,7 +10,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
     payload::PayloadBundle,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, NodeHandle, NodeHash, NodeRef};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
@@ -33,9 +33,8 @@ struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    state_trie_nodes: NodeMap,
-    // A storage trie for each hashed account address
-    storage_trie_nodes: HashMap<H256, NodeMap>,
+    // Maps a state trie root hash to a handle in the BlobDbEngine
+    state_trie_roots: HashMap<H256, NodeHandle>,
     // Stores local blocks by payload id
     payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -85,32 +84,14 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
-        {
-            // store account updates
-            let mut state_trie_store = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
-            }
-        }
+        store.state_trie_roots.insert(
+            update_batch.state_trie_root_hash,
+            update_batch.state_trie_root_handle,
+        );
 
         // store code updates
         for (hashed_address, code) in update_batch.code_updates {
             store.account_codes.insert(hashed_address, code);
-        }
-
-        for (hashed_address, nodes) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
-            }
         }
 
         for block in update_batch.blocks {
@@ -411,21 +392,11 @@ impl StoreEngine for Store {
         Ok(self.inner()?.chain_data.pending_block_number)
     }
 
-    fn open_storage_trie(
+    fn get_state_trie_root_handle(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError> {
-        let mut store = self.inner()?;
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Ok(Trie::open(db, storage_root))
-    }
-
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_backend = self.inner()?.state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
-        Ok(Trie::open(db, state_root))
+        state_root: H256,
+    ) -> Result<Option<NodeHandle>, StoreError> {
+        Ok(self.inner()?.state_trie_roots.get(&state_root).copied())
     }
 
     async fn get_block_body_by_hash(
@@ -696,23 +667,24 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<NodeRef>)>,
     ) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
+        todo!()
+        // let mut store = self.inner()?;
 
-        for (hashed_address, nodes) in storage_trie_nodes {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
-            }
-        }
+        // for (hashed_address, nodes) in storage_trie_nodes {
+        //     let mut addr_store = store
+        //         .storage_trie_nodes
+        //         .entry(hashed_address)
+        //         .or_default()
+        //         .lock()
+        //         .map_err(|_| StoreError::LockError)?;
+        //     for (node_hash, node_data) in nodes {
+        //         addr_store.insert(node_hash, node_data);
+        //     }
+        // }
 
-        Ok(())
+        // Ok(())
     }
 
     async fn write_account_code_batch(

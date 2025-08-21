@@ -1,6 +1,9 @@
 use ethrex_rlp::structs::Encoder;
+use tracing::info;
 
-use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
+use crate::{
+    NodeHandle, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -13,7 +16,11 @@ pub struct BranchNode {
 }
 
 impl BranchNode {
-    const EMPTY_REF: NodeRef = NodeRef::Hash(NodeHash::Inline(([0; 31], 0)));
+    const EMPTY_REF: NodeRef = NodeRef {
+        hash: NodeHash::Inline(([0; 31], 0)),
+        value: None,
+        handle: NodeHandle(0u64),
+    };
 
     /// Empty choice array for more convenient node-building
     pub const EMPTY_CHOICES: [NodeRef; 16] = [Self::EMPTY_REF; 16];
@@ -61,14 +68,16 @@ impl BranchNode {
         db: &dyn TrieDB,
         mut path: Nibbles,
         value: ValueOrHash,
+        link: Option<NodeHandle>,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
+        // info!("INSERT TO BRANCH");
         if let Some(choice) = path.next_choice() {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
                 (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
-                    let new_leaf = LeafNode::new(path, value);
+                    let new_leaf = LeafNode::new_with_link(path, value, link);
                     *choice_ref = Node::from(new_leaf).into();
                 }
                 // Insert into existing child and then update it
@@ -77,7 +86,7 @@ impl BranchNode {
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
-                    *choice_ref = child_node.insert(db, path, value)?.into();
+                    *choice_ref = child_node.insert_with_link(db, path, value, link)?.into();
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
@@ -91,7 +100,7 @@ impl BranchNode {
                         *choice_ref = choice_ref
                             .get_node(db)?
                             .ok_or(TrieError::InconsistentTree)?
-                            .insert(db, path, value)?
+                            .insert_with_link(db, path, value, link)?
                             .into();
                     }
                 }
@@ -203,6 +212,7 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
+        // info!(node_type = "BRANCH", "COMPUTE HASH");
         NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
@@ -345,7 +355,7 @@ mod test {
         let value = vec![0x3];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into(), None)
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -366,7 +376,7 @@ mod test {
         let value = vec![0x21];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into(), None)
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -389,7 +399,7 @@ mod test {
 
         let new_node = node
             .clone()
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into(), None)
             .unwrap();
 
         let new_node = match new_node {

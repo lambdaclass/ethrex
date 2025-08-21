@@ -300,21 +300,22 @@ async fn heal_state_trie(
             }
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
+                    todo!()
                     // TODO: replace put batch with the async version
-                    let trie_db = store
-                        .open_state_trie(*EMPTY_TRIE_HASH)
-                        .expect("Store should open");
-                    let db = trie_db.db();
-                    db.put_batch(
-                        to_write
-                            .into_iter()
-                            .filter_map(|node| match node.compute_hash() {
-                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                                NodeHash::Inline(_) => None,
-                            })
-                            .collect(),
-                    )
-                    .expect("The put batch on the store failed");
+                    // let trie_db = store
+                    //     .open_state_trie(*EMPTY_TRIE_HASH)
+                    //     .expect("Store should open");
+                    // let db = trie_db.db();
+                    // db.put_batch(
+                    //     to_write
+                    //         .into_iter()
+                    //         .filter_map(|node| match node.compute_hash() {
+                    //             hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                    //             NodeHash::Inline(_) => None,
+                    //         })
+                    //         .collect(),
+                    // )
+                    // .expect("The put batch on the store failed");
                 })
             });
         }

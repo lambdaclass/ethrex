@@ -135,7 +135,7 @@ async fn get_missing_state_parents(
         let Some(parent_block) = store.get_block_by_hash(parent_hash).await? else {
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
-        if store.contains_state_node(parent_block.header.state_root)? {
+        if store.contains_state_root(parent_block.header.state_root)? {
             break;
         }
         parent_hash = parent_block.header.parent_hash;

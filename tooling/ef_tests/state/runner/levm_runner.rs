@@ -404,8 +404,7 @@ pub async fn ensure_post_state(
                     let vector_post_value = test.post.vector_post_value(vector, *fork);
 
                     // 1. Compare the post-state root hash with the expected post-state root hash
-                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
-                    {
+                    if vector_post_value.hash != post_state_root(levm_account_updates, test).await {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Post-state root mismatch. LEVM runner, line:{}", line!()),
@@ -456,8 +455,7 @@ pub async fn ensure_post_state(
                     let vector_post_value = test.post.vector_post_value(vector, *fork);
 
                     // Compare the post-state root hash with the expected post-state root hash to ensure levm state is correct (was reverted)
-                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
-                    {
+                    if vector_post_value.hash != post_state_root(levm_account_updates, test).await {
                         return Err(EFTestRunnerError::FailedToRevertLEVMState(format!(
                             "Failed to revert LEVM state. LEVM runner, line:{}",
                             line!()
@@ -474,12 +472,12 @@ pub async fn ensure_post_state(
     Ok(())
 }
 
-pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
+pub async fn post_state_root(account_updates: Vec<AccountUpdate>, test: &EFTest) -> H256 {
     let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
     let ret_account_updates_batch = store
         .apply_account_updates_batch(block_hash, account_updates)
         .await
         .unwrap()
         .unwrap();
-    ret_account_updates_batch.state_trie_hash
+    ret_account_updates_batch.state_trie_root_hash
 }

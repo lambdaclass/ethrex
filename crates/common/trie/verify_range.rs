@@ -278,12 +278,7 @@ fn visit_child_node(
     if cmp_l.is_lt() && cmp_r.is_gt() {
         return Ok(0);
     }
-    let NodeRef::Hash(hash) = child else {
-        // This is unreachable because the nodes have just been decoded, therefore only
-        // having hash references.
-        unreachable!()
-    };
-
+    let hash = child.hash;
     match proof.get_node(hash)? {
         Some(node) => {
             // Handle proofs of absences in the left bound.

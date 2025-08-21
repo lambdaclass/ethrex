@@ -20,7 +20,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::{NodeHash, NodeRef, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -466,6 +466,7 @@ async fn store_block_bodies(
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
             // Add bodies to storage
+            // FIXME: should compute the hash to make sure it matches, not blindly trusting peers!
             for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
                 store.add_block_body(hash, body).await?;
             }
@@ -1130,7 +1131,7 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<NodeRef>);
 
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots_clone: Arc<Mutex<HashMap<H256, H256>>>,

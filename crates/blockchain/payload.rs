@@ -527,11 +527,11 @@ impl Blockchain {
 
         let ret_acount_updates_list = self
             .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)
+            .apply_account_updates_batch(context.parent_hash(), account_updates.clone())
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        let state_root = ret_acount_updates_list.state_trie_hash;
+        let state_root = ret_acount_updates_list.state_trie_root_hash;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
