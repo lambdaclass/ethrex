@@ -92,14 +92,14 @@ pub fn execution_witness_from_rpc_chain_config(
         state_trie_nodes: rpc_witness.state,
         keys: rpc_witness.keys,
         codes,
-        state_trie: None,    // `None` because we'll rebuild the tries afterwards
-        storage_tries: None, // `None` because we'll rebuild the tries afterwards
+        state_trie: None, // `None` because we'll rebuild the tries afterwards
+        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
     };
 
-    witness.rebuild_tries()?;
+    witness.rebuild_state_trie()?;
 
     Ok(witness)
 }
