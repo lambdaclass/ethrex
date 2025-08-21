@@ -37,7 +37,7 @@ where
                 fetch_batch,
                 peers.clone(),
                 store.clone(),
-                batch_size as usize,
+                batch_size,
             )
             .await?;
         }
