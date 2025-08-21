@@ -305,7 +305,7 @@ impl Discv4Server {
                 }
 
                 let nodes = &neighbors_msg.nodes;
-                let total_nodes_sent = req.nodes_sent + nodes.len();
+                let total_nodes_sent = req.nodes_sent + nodes.len() as u64;
 
                 if total_nodes_sent > MAX_NODES_PER_BUCKET {
                     node.find_node_request = None;

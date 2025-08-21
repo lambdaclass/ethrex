@@ -11,7 +11,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
-pub const MAX_NODES_PER_BUCKET: usize = 16;
+pub const MAX_NODES_PER_BUCKET: u64 = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
 const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
 
@@ -117,7 +117,7 @@ impl KademliaTable {
         let peer = PeerData::new(node, NodeRecord::default(), false);
 
         // If bucket is full push to replacements. Unless forced
-        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET && !force_push {
+        if self.buckets[bucket_idx].peers.len() as u64 >= MAX_NODES_PER_BUCKET && !force_push {
             self.insert_as_replacement(&peer, bucket_idx);
             (Some(peer), false)
         } else {
@@ -153,7 +153,7 @@ impl KademliaTable {
         for bucket in &self.buckets {
             for peer in &bucket.peers {
                 let distance = bucket_number(node_id, peer.node.node_id());
-                if nodes.len() < MAX_NODES_PER_BUCKET {
+                if (nodes.len() as u64) < MAX_NODES_PER_BUCKET {
                     nodes.push((peer.node.clone(), distance));
                 } else {
                     for (i, (_, dis)) in &mut nodes.iter().enumerate() {
