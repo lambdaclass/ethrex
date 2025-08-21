@@ -12,6 +12,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::elliptic_curve::Field;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -966,14 +967,16 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         reason = "bounds checked"
     )]
     for i in 0..k {
+        // this operation can't overflow because i < k and  k * BLS12_381_G1_MSM_PAIR_LENGTH = calldata.len()
         let point_offset = i * BLS12_381_G1_MSM_PAIR_LENGTH;
         let scalar_offset = point_offset + 128;
         let pair_end = scalar_offset + 32;
 
+        // slicing is ok because pair_end = point_offset + 160 = (k-1) * 160 + 160 = k * 160 = calldata.len()
         let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
         let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        if scalar != Scalar::zero() {
+        if !bool::from(scalar.is_zero()) {
             let scaled_point: G1Projective = point * scalar;
             result += scaled_point;
         }
@@ -1044,7 +1047,7 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         reason = "bounds checked"
     )]
     for i in 0..k {
-        // No need for checked arithmetic because it wont overflow.
+        // this operation can't overflow because i < k and  k * BLS12_381_G2_MSM_PAIR_LENGTH = calldata.len()
         let point_offset = i * BLS12_381_G2_MSM_PAIR_LENGTH;
         let scalar_offset = point_offset + 256;
         let pair_end = scalar_offset + 32;
