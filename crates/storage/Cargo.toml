@@ -26,6 +26,7 @@ redb = { workspace = true, optional = true }
 # We only need the runtime for the blocking databases to spawn blocking tasks
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 bincode = "1.3.3"
+rayon.workspace = true
 
 [features]
 default = []

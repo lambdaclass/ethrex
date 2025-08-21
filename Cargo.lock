@@ -4328,6 +4328,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
+ "rayon",
  "redb",
  "serde",
  "serde_json",

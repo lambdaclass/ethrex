@@ -10,7 +10,7 @@ use ethrex_rlp::{
 /// Struct representing a list of nibbles (half-bytes)
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nibbles {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl std::hash::Hash for Nibbles {

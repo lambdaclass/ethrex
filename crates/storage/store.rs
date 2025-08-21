@@ -18,7 +18,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieDB, TrieLogger, TrieNode, TrieWitness};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sha3::{Digest as _, Keccak256};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -954,6 +955,53 @@ impl Store {
 
     // Returns an iterator across all accounts in the state trie given by the state_root
     // Does not check that the state_root is valid
+    pub fn par_iter_accounts(
+        &self,
+        state_root: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        let root_trie = self.engine.open_state_trie(state_root)?;
+
+        let tries: Vec<(u64, H256)> = match root_trie
+            .root_node()?
+            .ok_or(ethrex_trie::TrieError::InconsistentTree)?
+        {
+            ethrex_trie::Node::Branch(branch_node) => branch_node
+                .choices
+                .iter()
+                .enumerate()
+                .filter(|(index, child)| child.is_valid())
+                .map(|(index, node_ref)| (index as u64, node_ref.compute_hash().finalize()))
+                .collect(),
+            ethrex_trie::Node::Extension(_) => todo!(),
+            ethrex_trie::Node::Leaf(_) => todo!(),
+        };
+
+        Ok(tries
+            .par_iter()
+            .flat_map(|(index, state_root)| {
+                self.engine
+                    .open_state_trie(*state_root)
+                    .expect("We should be able top open the store")
+                    .into_iter()
+                    .content()
+                    .map_while(|(path, value)| {
+                        let mut nibs = Nibbles::from_raw(&[(*index << 4) as u8], false);
+                        nibs.data.pop();
+                        let mut path_nibs = Nibbles::from_raw(&path, false);
+                        path_nibs.data.pop();
+                        let nibs = nibs.concat(path_nibs);
+                        Some((
+                            H256::from_slice(&nibs.to_bytes()),
+                            AccountState::decode(&value).ok()?,
+                        ))
+                    })
+                    .collect::<Vec<(H256, AccountState)>>()
+            })
+            .collect())
+    }
+
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
     pub fn iter_storage(
         &self,
         state_root: H256,
@@ -1410,7 +1458,7 @@ mod tests {
         types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, str::FromStr};
+    use std::{fs, str::FromStr, time::Instant};
 
     use super::*;
 
@@ -1786,5 +1834,41 @@ mod tests {
                 .unwrap(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn iter_accounts_speed_benchmark() {
+        let store =
+            Store::new("store-test-db", EngineType::Libmdbx).expect("Failed to create test db");
+        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).expect("msg");
+        for _ in 0..100_000 {
+            let path = H256::random();
+            let _ = trie.insert(
+                path.as_bytes().to_vec(),
+                AccountState {
+                    balance: 1.into(),
+                    nonce: 1,
+                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: *EMPTY_KECCACK_HASH,
+                }
+                .encode_to_vec(),
+            );
+        }
+        trie.commit().unwrap();
+
+        println!("Starting test of iter accounts");
+        let start = Instant::now();
+        let val: Vec<(H256, AccountState)> = store
+            .iter_accounts(trie.root_node().unwrap().unwrap().compute_hash().finalize())
+            .unwrap()
+            .collect();
+        println!("Ending test of iter accounts {:?}", start.elapsed());
+
+        println!("Starting test of par iter accounts");
+        let start = Instant::now();
+        let val: Vec<(H256, AccountState)> = store
+            .par_iter_accounts(trie.root_node().unwrap().unwrap().compute_hash().finalize())
+            .unwrap();
+        println!("Ending test of par iter accounts {:?}", start.elapsed());
     }
 }
