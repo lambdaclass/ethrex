@@ -266,7 +266,7 @@ impl GenServer for RLPxConnection {
         message: Self::CastMsg,
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse {
-        if let InnerState::Established(mut established_state) = self.inner_state.clone() {
+        if let InnerState::Established(ref mut established_state) = self.inner_state {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::PeerMessage(message) => {
@@ -274,40 +274,40 @@ impl GenServer for RLPxConnection {
                         &established_state.node,
                         &format!("Received peer message: {message}"),
                     );
-                    handle_peer_message(&mut established_state, message).await
+                    handle_peer_message(established_state, message).await
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received backend message: {message}"),
                     );
-                    handle_backend_message(&mut established_state, message).await
+                    handle_backend_message(established_state, message).await
                 }
                 Self::CastMsg::SendPing => {
-                    send(&mut established_state, Message::Ping(PingMessage {})).await
+                    send(established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
-                    send_new_pooled_tx_hashes(&mut established_state).await
+                    send_new_pooled_tx_hashes(established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
-                    handle_broadcast(&mut established_state, (id, msg)).await
+                    handle_broadcast(established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
                     log_peer_debug(&established_state.node, "Block Range Update");
-                    handle_block_range_update(&mut established_state).await
+                    handle_block_range_update(established_state).await
                 }
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(&mut established_state).await
+                            l2_connection::send_sealed_batch(established_state).await
                         }
                         L2Cast::BlockBroadcast => {
-                            l2::l2_connection::send_new_block(&mut established_state).await
+                            l2::l2_connection::send_new_block(established_state).await
                         }
                     }
                 }
@@ -345,15 +345,11 @@ impl GenServer for RLPxConnection {
                     }
                 }
             }
-
-            // Update the state
-            self.inner_state = InnerState::Established(established_state);
-            CastResponse::NoReply
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply
         }
+        CastResponse::NoReply
     }
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
