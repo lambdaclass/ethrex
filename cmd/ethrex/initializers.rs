@@ -191,7 +191,7 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
-        blockchain,
+        blockchain.clone(),
         get_client_version(),
         based_context,
     );
@@ -200,7 +200,10 @@ pub async fn init_network(
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats());
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+        blockchain,
+        peer_table.peers.clone(),
+    ));
 }
 
 #[cfg(feature = "dev")]
