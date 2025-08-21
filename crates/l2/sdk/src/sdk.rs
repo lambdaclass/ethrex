@@ -28,11 +28,14 @@ use tracing::warn;
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
 
+pub use calldata::from_hex_string_to_u256;
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
 // Reexport the contracts module
 #[doc(inline)]
 pub use ethrex_sdk_contract_utils::*;
+
+use calldata::from_hex_string_to_h256_array;
 
 // 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -414,7 +417,6 @@ pub async fn create2_deploy_from_path(
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
-/// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
 pub async fn create2_deploy_from_bytecode(
     constructor_args: &[u8],
     bytecode: &[u8],
@@ -955,40 +957,6 @@ pub async fn get_pending_privileged_transactions(
     from_hex_string_to_h256_array(&response)
 }
 
-#[allow(clippy::indexing_slicing)]
-pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
-    let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
-        .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
-
-    // The ABI encoding for dynamic arrays is:
-    // 1. Offset to data (32 bytes)
-    // 2. Length of array (32 bytes)
-    // 3. Array elements (each 32 bytes)
-    if bytes.len() < 64 {
-        return Err(EthClientError::Custom("Response too short".to_owned()));
-    }
-
-    // Get the offset (should be 0x20 for simple arrays)
-    let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
-
-    // Get the length of the array
-    let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
-
-    // Calculate the start of the array data
-    let data_start = offset + 32;
-    let data_end = data_start + (length * 32);
-
-    if data_end > bytes.len() {
-        return Err(EthClientError::Custom("Invalid array length".to_owned()));
-    }
-
-    // Convert the slice directly to H256 array
-    bytes[data_start..data_end]
-        .chunks_exact(32)
-        .map(|chunk| Ok(H256::from_slice(chunk)))
-        .collect()
-}
-
 async fn _generic_call(
     client: &EthClient,
     selector: &[u8],
@@ -1064,23 +1032,4 @@ async fn _call_bytes32_variable(
         .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
 
     Ok(arr)
-}
-
-pub fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
-    let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
-        "Couldn't strip prefix from request.".to_owned(),
-    ))?;
-
-    if hex_string.is_empty() {
-        return Err(EthClientError::Custom(
-            "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
-        ));
-    }
-
-    let value = U256::from_str_radix(hex_string, 16).map_err(|_| {
-        EthClientError::Custom(
-            "Failed to parse after call, U256::from_str_radix failed.".to_owned(),
-        )
-    })?;
-    Ok(value)
 }
