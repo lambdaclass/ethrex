@@ -317,7 +317,8 @@ impl Blockchain {
             .enumerate()
             .find(|(_, (id, _))| id == &payload_id)
             .ok_or(ChainError::UnknownPayload)?;
-        payloads[idx] = (payload_id, payloads.remove(idx).1.to_payload().await?);
+        let elem = (payload_id, payloads.remove(idx).1.to_payload().await?);
+        payloads.insert(idx, elem);
         match &payloads[idx].1 {
             PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
             _ => unreachable!(),
