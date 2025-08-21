@@ -579,9 +579,6 @@ impl Blockchain {
         };
         if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
             // This error will only be used for debug tracing
-            for blob_hash in blobs_bundle.generate_versioned_hashes() {
-                info!("Could not add blob: {blob_hash} to payload due to limit maxed");
-            }
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction

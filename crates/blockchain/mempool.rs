@@ -16,7 +16,6 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
-use tracing::info;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
@@ -53,9 +52,6 @@ impl Mempool {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        for blob_hash in blobs_bundle.generate_versioned_hashes() {
-            info!("Adding blob: {blob_hash} to mempool");
-        }
         self.blobs_bundle_pool
             .lock()
             .map_err(|error| StoreError::Custom(error.to_string()))?
@@ -81,16 +77,10 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
-                if let Some(removed) = self
-                    .blobs_bundle_pool
+                self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(hash)
-                {
-                    for blob_hash in removed.generate_versioned_hashes() {
-                        info!("Removing blob: {blob_hash} from mempool");
-                    }
-                }
+                    .remove(hash);
             }
 
             self.txs_by_sender_nonce
