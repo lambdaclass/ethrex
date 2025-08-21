@@ -3283,6 +3283,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ef_tests-statev2"
+version = "0.1.0"
+dependencies = [
+ "alloy-rlp",
+ "bytes",
+ "clap 4.5.40",
+ "clap_complete",
+ "colored",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-levm",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-vm",
+ "hex",
+ "keccak-hash",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3867,6 +3890,7 @@ dependencies = [
  "directories",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
@@ -3888,7 +3912,6 @@ dependencies = [
  "lazy_static",
  "local-ip-address",
  "rand 0.8.5",
- "redb",
  "reqwest 0.12.20",
  "secp256k1",
  "serde",
@@ -3952,6 +3975,17 @@ dependencies = [
  "tinyvec",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ethrex-config"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-p2p",
+ "hex",
+ "keccak-hash",
+ "serde_json",
 ]
 
 [[package]]
@@ -4098,6 +4132,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
@@ -4212,12 +4247,14 @@ dependencies = [
  "charming",
  "clap 4.5.40",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rpc",
  "ethrex-vm",
  "eyre",
  "hex",
+ "jemallocator",
  "reqwest 0.12.20",
  "serde",
  "serde_json",
@@ -4259,6 +4296,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -4328,7 +4366,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
- "redb",
  "serde",
  "serde_json",
  "sha3",
@@ -6047,6 +6084,26 @@ name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+
+[[package]]
+name = "jemalloc-sys"
+version = "0.5.4+5.3.0-patched"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac6c1946e1cea1788cbfde01c993b52a10e2da07f4bac608228d1bed20bfebf2"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "jemallocator"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0de374a9f8e63150e6f5e8a60cc14c668226d7a347d8aee1a45766e3c4dd3bc"
+dependencies = [
+ "jemalloc-sys",
+ "libc",
+]
 
 [[package]]
 name = "jiff"
@@ -8858,15 +8915,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 dependencies = [
  "rand_core 0.3.1",
-]
-
-[[package]]
-name = "redb"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0a72cd7140de9fc3e318823b883abf819c20d478ec89ce880466dc2ef263c6"
-dependencies = [
- "libc",
 ]
 
 [[package]]
