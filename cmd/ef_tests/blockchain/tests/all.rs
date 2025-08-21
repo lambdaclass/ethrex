@@ -19,13 +19,6 @@ fn parse_and_execute_stateless_runner(path: &Path) -> datatest_stable::Result<()
     parse_and_execute(path, EvmEngine::LEVM, None, true)
 }
 #[cfg(feature = "levm")]
-datatest_stable::harness!(
-    parse_and_execute_runner,
-    TEST_FOLDER,
-    r".*",
-    parse_and_execute_stateless_runner,
-    TEST_FOLDER,
-    r".*"
-);
+datatest_stable::harness!(parse_and_execute_stateless_runner, TEST_FOLDER, r".*");
 #[cfg(not(feature = "levm"))]
 datatest_stable::harness!(parse_and_execute_runner, TEST_FOLDER, r".*",);

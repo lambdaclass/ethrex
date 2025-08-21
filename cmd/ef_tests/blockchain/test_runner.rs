@@ -423,9 +423,12 @@ async fn re_run_stateless(
         ..Default::default()
     };
 
-    if let Err(e) =
-        ethrex_prover_lib::execute(ethrex_prover_lib::backends::Backend::Exec, program_input)
-    {
+    #[cfg(feature = "sp1")]
+    let backend = ethrex_prover_lib::backends::Backend::SP1;
+    #[cfg(not(feature = "sp1"))]
+    let backend = ethrex_prover_lib::backends::Backend::Exec;
+
+    if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
         if !test_should_fail {
             return Err(format!(
                 "Expected test: {test_key} to succeed but failed with {e}"
