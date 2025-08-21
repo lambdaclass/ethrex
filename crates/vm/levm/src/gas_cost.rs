@@ -775,6 +775,8 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
+/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
+/// https://eips.ethereum.org/EIPS/eip-4844#helpers
 pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
     if denominator == 0 {
         return Err(InternalError::DivisionByZero.into());
@@ -784,7 +786,6 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Resu
         return Ok(factor);
     }
 
-    let mut i: u64 = 1;
     let mut output: U256 = U256::zero();
     let denominator_u256: U256 = denominator.into();
 
@@ -793,9 +794,11 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Resu
         .checked_mul(denominator_u256)
         .ok_or(InternalError::Overflow)?;
 
+    let mut denominator_by_i = denominator_u256;
+
     #[expect(
         clippy::arithmetic_side_effects,
-        reason = "division can't overflow since denominator is not 0 and i is never 0"
+        reason = "division can't overflow since denominator is not 0"
     )]
     {
         while !numerator_accum.is_zero() {
@@ -808,10 +811,10 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Resu
             numerator_accum = numerator_accum
                 .checked_mul(numerator)
                 .ok_or(InternalError::Overflow)?
-                / denominator.checked_mul(i).ok_or(InternalError::Overflow)?;
+                / denominator_by_i;
 
-            // i will never realistically overflow before the other variables do
-            i = i.wrapping_add(1);
+            // denominator comes from a u64 value, will never overflow before other variables.
+            denominator_by_i += denominator_u256;
         }
 
         Ok(output / denominator)
