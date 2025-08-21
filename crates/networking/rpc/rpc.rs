@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -10,7 +11,6 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
-use crate::eth::block::ExecutionWitness;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -344,7 +344,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
-        "debug_executionWitness" => ExecutionWitness::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),

@@ -22,18 +22,29 @@ jobs:
           - ubuntu-22.04
           - ubuntu-24.04-arm
           - macos-latest
+        gpu:
+          - true
+          - false
         include:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-            prover_features: sp1,risc0,gpu
+            prover_features: sp1,risc0
+            cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
           - platform: ubuntu-24.04-arm
             os: linux
             arch: aarch64
-            prover_features: sp1,gpu
+            prover_features: sp1
           - platform: macos-latest
             os: macos
             arch: aarch64
+          - gpu: true
+            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
+            gpu_feature: ",gpu"
+            gpu_suffix: "-gpu"
+        exclude:
+          - platform: macos-latest
+            gpu: true
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -51,7 +62,7 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-      - name: Install SP1
+      - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
         env:
           SHELL: /bin/bash
@@ -60,13 +71,13 @@ jobs:
           curl -L https://sp1up.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
 
-      - name: Set up QEMU
+      - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
 
-      - name: Install RISC0
+      - name: Install RISC0 (only Linux x86)
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,8 +86,9 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
-      - uses: Jimver/cuda-toolkit@v0.2.24
-        if: ${{ matrix.platform == 'ubuntu-22.04' }}
+      - name: Install CUDA (only Linux x86 GPU)
+        uses: Jimver/cuda-toolkit@v0.2.24
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
@@ -96,18 +108,13 @@ jobs:
           sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
           sudo chmod +x /usr/local/bin/solc
 
-      - name: Set compiler envs
-        if: ${{ matrix.os == 'linux' }}
-        run: |
-          echo COMPILE_FLAGS="RUSTFLAGS='-C target-cpu=native' NVCC_PREPEND_FLAGS='-arch=sm_70'" >> $GITHUB_ENV
-
       - name: Build ethrex
         run: |
-          COMPILE_CONTRACTS=true ${{ env.COMPILE_FLAGS }} cargo build --release --features "${{ matrix.prover_features }}" --bin ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
+          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.prover_features }}${{ matrix.gpu_feature }}" --bin ethrex
+          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Copy verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
         run: |
           mkdir -p ./verification_keys
           mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
@@ -116,11 +123,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
+          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
         uses: actions/upload-artifact@v4
         with:
           name: verification_keys
@@ -229,4 +236,7 @@ jobs:
           prerelease: false
           tag_name: ${{ github.ref_name }}
           name: "ethrex: ${{ github.ref_name }}"
-          body: ${{ steps.changelog.outputs.changes }}
+          body: >
+            Installation and running instructions can be found in [our docs](https://docs.ethrex.xyz/)
+
+            ${{ steps.changelog.outputs.changes }}

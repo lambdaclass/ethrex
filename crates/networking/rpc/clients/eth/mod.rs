@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::{
     clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
+    debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -19,10 +20,7 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{
-        BlobsBundle, Block, GenericTransaction, TxKind, TxType,
-        block_execution_witness::ExecutionWitnessResult,
-    },
+    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -660,7 +658,7 @@ impl EthClient {
         &self,
         from: BlockIdentifier,
         to: Option<BlockIdentifier>,
-    ) -> Result<ExecutionWitnessResult, EthClientError> {
+    ) -> Result<RpcExecutionWitness, EthClientError> {
         let params = if let Some(to_block) = to {
             Some(vec![from.into(), to_block.into()])
         } else {
