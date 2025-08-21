@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [profile.dev]
-debug = true
+debug = 2
 
 [profile.release]
-debug = true
+debug = 2
 
 [dependencies]
 ethrex-config.workspace = true
