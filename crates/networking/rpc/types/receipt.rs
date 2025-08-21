@@ -187,7 +187,7 @@ impl RpcReceiptTxInfo {
         let (blob_gas_price, blob_gas_used) = match &transaction {
             Transaction::EIP4844Transaction(tx) => (
                 Some(block_blob_gas_price),
-                Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB),
+                Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB as u64),
             ),
             _ => (None, None),
         };
