@@ -35,11 +35,10 @@ pub async fn run_tx(
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let prover_db = cache.pre_execution_state;
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
-    match prover_db {
+    match cache.pre_execution_state {
         PreExecutionState::Witness(mut witness) => {
-            witness.rebuild_tries()?;
+            witness.rebuild_state_trie()?;
             let mut wrapped_db = ExecutionWitnessWrapper::new(*witness);
 
             let changes = {
