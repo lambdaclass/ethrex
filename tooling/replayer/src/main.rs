@@ -321,8 +321,13 @@ async fn replay_latest_block(
         panic!("SystemTime::elapsed failed: {e}");
     });
 
-    let block_run_report =
-        BlockRunReport::new_for(block, network.clone(), run_result, replayer_mode, elapsed);
+    let block_run_report = BlockRunReport::new_for(
+        block,
+        network.clone(),
+        run_result,
+        replayer_mode.clone(),
+        elapsed,
+    );
 
     if block_run_report.run_result.is_err() {
         tracing::error!("{block_run_report}");
@@ -330,11 +335,16 @@ async fn replay_latest_block(
         tracing::info!("{block_run_report}");
     }
 
-    try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to post to Slack webhook: {e}");
-        });
+    match replayer_mode {
+        ReplayerMode::Prove | ReplayerMode::Execute if block_run_report.run_result.is_err() => {
+            try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to post to Slack webhook: {e}");
+                })
+        }
+        _ => {}
+    }
 
     Ok(elapsed)
 }
