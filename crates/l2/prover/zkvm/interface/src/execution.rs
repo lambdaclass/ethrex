@@ -146,9 +146,11 @@ pub fn stateless_validation_l1(
         non_privileged_count,
         ..
     } = match pre_execution_state {
-        PreExecutionState::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        PreExecutionState::Witness(db) => {
+            execute_stateless_with_witness(blocks, db, elasticity_multiplier)?
+        }
         PreExecutionState::DB(db) => {
-            execute_stateless_prover_db(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_prover_db(blocks, db, elasticity_multiplier)?
         }
     };
 
@@ -199,9 +201,11 @@ pub fn stateless_validation_l2(
         last_block_hash,
         non_privileged_count,
     } = match pre_execution_state {
-        PreExecutionState::Witness(db) => execute_stateless(blocks, db, elasticity_multiplier)?,
+        PreExecutionState::Witness(db) => {
+            execute_stateless_with_witness(blocks, db, elasticity_multiplier)?
+        }
         PreExecutionState::DB(db) => {
-            execute_stateless_prover_db(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_prover_db(blocks, db, elasticity_multiplier)?
         }
     };
 
@@ -270,7 +274,7 @@ struct StatelessResult {
     non_privileged_count: U256,
 }
 
-fn execute_stateless(
+fn execute_stateless_with_witness(
     blocks: &[Block],
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
@@ -399,7 +403,7 @@ fn execute_stateless(
     })
 }
 
-fn execute_stateless_prover_db(
+fn execute_stateless_with_prover_db(
     blocks: &[Block],
     mut prover_db: ProverDB,
     elasticity_multiplier: u64,
