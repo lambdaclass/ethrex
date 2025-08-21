@@ -4,6 +4,7 @@ use crate::{
     clients::eth::errors::{
         CallError, GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
     },
+    debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -23,7 +24,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccessListEntry, BlobsBundle, Block, BlockHash, GenericTransaction, TxKind, TxType,
-        batch::Batch, block_execution_witness::ExecutionWitnessResult,
+        batch::Batch,
     },
     utils::decode_hex,
 };
@@ -992,7 +993,7 @@ impl EthClient {
         &self,
         from: BlockIdentifier,
         to: Option<BlockIdentifier>,
-    ) -> Result<ExecutionWitnessResult, EthClientError> {
+    ) -> Result<RpcExecutionWitness, EthClientError> {
         let params = if let Some(to_block) = to {
             Some(vec![from.into(), to_block.into()])
         } else {
