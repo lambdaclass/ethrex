@@ -34,4 +34,6 @@ pub enum StoreError {
     LockError,
     #[error("Incompatible chain configuration")]
     IncompatibleChainConfig,
+    #[error("Failed to convert index: {0}")]
+    TryInto(#[from] std::num::TryFromIntError),
 }
