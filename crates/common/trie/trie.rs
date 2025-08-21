@@ -55,12 +55,6 @@ pub struct Trie {
     root: NodeRef,
 }
 
-impl Default for Trie {
-    fn default() -> Self {
-        Self::new_temp()
-    }
-}
-
 impl Trie {
     /// Creates a new Trie from a clean DB
     pub fn new(db: Box<dyn TrieDB>) -> Self {
