@@ -416,18 +416,6 @@ impl Trie {
         }
         self.root.get_node(self.db.as_ref())
     }
-
-    /// Creates a new Trie based on a temporary InMemory DB
-    fn new_temp() -> Self {
-        use std::collections::HashMap;
-        use std::sync::Arc;
-        use std::sync::Mutex;
-
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
-        let map = Arc::new(Mutex::new(hmap));
-        let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
-    }
 }
 
 impl IntoIterator for Trie {
@@ -489,9 +477,21 @@ mod test {
         proptest,
     };
 
+    /// Creates a new Trie based on a temporary InMemory DB
+    fn new_trie_temp() -> Trie {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::Mutex;
+
+        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let map = Arc::new(Mutex::new(hmap));
+        let db = InMemoryTrieDB::new(map);
+        Trie::new(Box::new(db))
+    }
+
     #[test]
     fn compute_hash() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(b"first".to_vec(), b"value".to_vec()).unwrap();
         trie.insert(b"second".to_vec(), b"value".to_vec()).unwrap();
 
@@ -503,7 +503,7 @@ mod test {
 
     #[test]
     fn compute_hash_long() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(b"first".to_vec(), b"value".to_vec()).unwrap();
         trie.insert(b"second".to_vec(), b"value".to_vec()).unwrap();
         trie.insert(b"third".to_vec(), b"value".to_vec()).unwrap();
@@ -517,7 +517,7 @@ mod test {
 
     #[test]
     fn get_insert_words() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         let first_path = b"first".to_vec();
         let first_value = b"value_a".to_vec();
         let second_path = b"second".to_vec();
@@ -537,7 +537,7 @@ mod test {
 
     #[test]
     fn get_insert_zero() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![0x0], b"value".to_vec()).unwrap();
         let first = trie.get(&[0x0][..].to_vec()).unwrap();
         assert_eq!(first, Some(b"value".to_vec()));
@@ -545,7 +545,7 @@ mod test {
 
     #[test]
     fn get_insert_a() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![16], vec![0]).unwrap();
         trie.insert(vec![16, 0], vec![0]).unwrap();
 
@@ -558,7 +558,7 @@ mod test {
 
     #[test]
     fn get_insert_b() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![0, 0], vec![0, 0]).unwrap();
         trie.insert(vec![1, 0], vec![1, 0]).unwrap();
 
@@ -571,7 +571,7 @@ mod test {
 
     #[test]
     fn get_insert_c() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         let vecs = vec![
             vec![26, 192, 44, 251],
             vec![195, 132, 220, 124, 112, 201, 70, 128, 235],
@@ -590,7 +590,7 @@ mod test {
 
     #[test]
     fn get_insert_d() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         let vecs = vec![
             vec![52, 53, 143, 52, 206, 112],
             vec![14, 183, 34, 39, 113],
@@ -613,7 +613,7 @@ mod test {
 
     #[test]
     fn get_insert_e() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![0x00], vec![0x00]).unwrap();
         trie.insert(vec![0xC8], vec![0xC8]).unwrap();
         trie.insert(vec![0xC8, 0x00], vec![0xC8, 0x00]).unwrap();
@@ -625,7 +625,7 @@ mod test {
 
     #[test]
     fn get_insert_f() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![0x00], vec![0x00]).unwrap();
         trie.insert(vec![0x01], vec![0x01]).unwrap();
         trie.insert(vec![0x10], vec![0x10]).unwrap();
@@ -643,7 +643,7 @@ mod test {
 
     #[test]
     fn get_insert_remove_a() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(b"do".to_vec(), b"verb".to_vec()).unwrap();
         trie.insert(b"horse".to_vec(), b"stallion".to_vec())
             .unwrap();
@@ -655,7 +655,7 @@ mod test {
 
     #[test]
     fn get_insert_remove_b() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(vec![185], vec![185]).unwrap();
         trie.insert(vec![185, 0], vec![185, 0]).unwrap();
         trie.insert(vec![185, 1], vec![185, 1]).unwrap();
@@ -667,7 +667,7 @@ mod test {
 
     #[test]
     fn compute_hash_a() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(b"do".to_vec(), b"verb".to_vec()).unwrap();
         trie.insert(b"horse".to_vec(), b"stallion".to_vec())
             .unwrap();
@@ -682,7 +682,7 @@ mod test {
 
     #[test]
     fn compute_hash_b() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         assert_eq!(
             trie.hash().unwrap().0.as_slice(),
             hex!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").as_slice(),
@@ -691,7 +691,7 @@ mod test {
 
     #[test]
     fn compute_hash_c() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         let data = [
             (
                 hex!("0000000000000000000000000000000000000000000000000000000000000045").to_vec(),
@@ -743,7 +743,7 @@ mod test {
 
     #[test]
     fn compute_hash_d() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
 
         let data = [
             (
@@ -775,7 +775,7 @@ mod test {
 
     #[test]
     fn compute_hash_e() {
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         trie.insert(b"abc".to_vec(), b"123".to_vec()).unwrap();
         trie.insert(b"abcd".to_vec(), b"abcd".to_vec()).unwrap();
         trie.insert(b"abc".to_vec(), b"abc".to_vec()).unwrap();
@@ -790,7 +790,7 @@ mod test {
     proptest! {
         #[test]
         fn proptest_get_insert(data in btree_set(vec(any::<u8>(), 1..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
 
             for val in data.iter(){
                 trie.insert(val.clone(), val.clone()).unwrap();
@@ -805,7 +805,7 @@ mod test {
 
         #[test]
         fn proptest_get_insert_with_removals(mut data in vec((vec(any::<u8>(), 5..100), any::<bool>()), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             // Remove duplicate values with different expected status
             data.sort_by_key(|(val, _)| val.clone());
             data.dedup_by_key(|(val, _)| val.clone());
@@ -835,7 +835,7 @@ mod test {
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
         // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_get_insert_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             // Remove all values that have an odd first value
             let remove = |value: &Vec<u8>| -> bool {
                 value.first().is_some_and(|v| v % 2 != 0)
@@ -864,7 +864,7 @@ mod test {
 
         #[test]
         fn proptest_compare_hash(data in btree_set(vec(any::<u8>(), 1..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
 
             for val in data.iter(){
@@ -879,7 +879,7 @@ mod test {
 
         #[test]
         fn proptest_compare_hash_with_removals(mut data in vec((vec(any::<u8>(), 5..100), any::<bool>()), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
             // Remove duplicate values with different expected status
             data.sort_by_key(|(val, _)| val.clone());
@@ -906,7 +906,7 @@ mod test {
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
         // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_compare_hash_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
             // Remove all values that have an odd first value
             let remove = |value: &Vec<u8>| -> bool {
@@ -932,7 +932,7 @@ mod test {
 
         #[test]
         fn proptest_compare_hash_between_inserts(data in btree_set(vec(any::<u8>(), 1..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
 
             for val in data.iter(){
@@ -947,7 +947,7 @@ mod test {
 
         #[test]
         fn proptest_compare_proof(data in btree_set(vec(any::<u8>(), 1..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
 
             for val in data.iter(){
@@ -964,7 +964,7 @@ mod test {
 
         #[test]
         fn proptest_compare_proof_with_removals(mut data in vec((vec(any::<u8>(), 5..100), any::<bool>()), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
             // Remove duplicate values with different expected status
             data.sort_by_key(|(val, _)| val.clone());
@@ -994,7 +994,7 @@ mod test {
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
         // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_compare_proof_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
-            let mut trie = Trie::new_temp();
+            let mut trie = new_trie_temp();
             let mut cita_trie = cita_trie();
             // Remove all values that have an odd first value
             let remove = |value: &Vec<u8>| -> bool {
@@ -1034,7 +1034,7 @@ mod test {
     fn get_proof_one_leaf() {
         // Trie -> Leaf["duck"]
         let mut cita_trie = cita_trie();
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         cita_trie
             .insert(b"duck".to_vec(), b"duckling".to_vec())
             .unwrap();
@@ -1048,7 +1048,7 @@ mod test {
     fn get_proof_two_leaves() {
         // Trie -> Extension[Branch[Leaf["duck"] Leaf["goose"]]]
         let mut cita_trie = cita_trie();
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         cita_trie
             .insert(b"duck".to_vec(), b"duck".to_vec())
             .unwrap();
@@ -1068,7 +1068,7 @@ mod test {
         // Trie -> Leaf[[0,0,0,0,0,0,0,0,0,0,0,0,0,0]]
         let val = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let mut cita_trie = cita_trie();
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         cita_trie.insert(val.clone(), val.clone()).unwrap();
         trie.insert(val.clone(), val.clone()).unwrap();
         let _ = cita_trie.root();
@@ -1081,7 +1081,7 @@ mod test {
     fn get_proof_path_in_branch() {
         // Trie -> Extension[Branch[ [Leaf[[183,0,0,0,0,0]]], [183]]]
         let mut cita_trie = cita_trie();
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         cita_trie.insert(vec![183], vec![183]).unwrap();
         cita_trie
             .insert(vec![183, 0, 0, 0, 0, 0], vec![183, 0, 0, 0, 0, 0])
@@ -1100,7 +1100,7 @@ mod test {
         let a = vec![5, 0, 0, 0, 0];
         let b = vec![6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let mut cita_trie = cita_trie();
-        let mut trie = Trie::new_temp();
+        let mut trie = new_trie_temp();
         cita_trie.insert(a.clone(), a.clone()).unwrap();
         cita_trie.insert(b.clone(), b.clone()).unwrap();
         trie.insert(a.clone(), a.clone()).unwrap();
