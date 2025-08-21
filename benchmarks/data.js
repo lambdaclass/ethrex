@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755748971647,
+  "lastUpdate": 1755788906055,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9445,6 +9445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161729362661,
             "range": "± 660701855",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ab56bc031af906e9b32ad97b9a1fe5d4ded98bc",
+          "message": "fix(levm): fix problems related to 32 bit architecture (#4104)\n\n**Motivation**\n\n- Find errors on 32 bit architecture\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- `u256_to_usize` now halts if the number doesn't fit in 32 bits instead\nof 64.\n- Memory size cost is computed using u64 instead of usize. The previous\nimplementation overflowed on 32 bit architectures in some edge cases.\nAlso I made it prettier :D\n\n\nHow this was tested: Adapting ethrex to run on 32 bit x86 in branch\n[replay_32_bit_x86_testing](https://github.com/lambdaclass/ethrex/tree/replay_32_bit_x86_testing)\nand running EFTests, both state and blockchain. After these changes they\nall pass.\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nMakes progress towards #4081",
+          "timestamp": "2025-08-21T14:07:32Z",
+          "tree_id": "e62be3934be14887e4c1679fc262710e40ecd40d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8ab56bc031af906e9b32ad97b9a1fe5d4ded98bc"
+        },
+        "date": 1755788889901,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166789300541,
+            "range": "± 662606407",
             "unit": "ns/iter"
           }
         ]
