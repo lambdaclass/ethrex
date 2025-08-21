@@ -1231,9 +1231,13 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    coordinate_raw_bytes[16..64]
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError.into())
+    #[expect(
+        unsafe_code,
+        reason = "The bounds are confirmed to be correct due to the previous checks."
+    )]
+    unsafe {
+        Ok(coordinate_raw_bytes[16..64].try_into().unwrap_unchecked())
+    }
 }
 
 /// point_bytes must have atleast 128 bytes.
@@ -1307,10 +1311,11 @@ fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, V
         } else {
             // The crate serialize the coordinates in a reverse order
             // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-            let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
-                .concat()
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
+            let mut g2_bytes: [u8; 192] = [0; 192];
+            g2_bytes[0..48].copy_from_slice(&x_1);
+            g2_bytes[48..96].copy_from_slice(&x_0);
+            g2_bytes[96..144].copy_from_slice(&y_1);
+            g2_bytes[144..192].copy_from_slice(&y_0);
 
             if unchecked {
                 // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
@@ -1352,28 +1357,53 @@ fn add_padded_coordinate(result: &mut Vec<u8>, coordinate_raw_bytes: &[u8]) {
     result.extend_from_slice(coordinate_raw_bytes);
 }
 
+#[allow(clippy::indexing_slicing, reason = "bounds checked at start")]
 #[inline]
-fn parse_scalar(scalar_raw_bytes: &[u8]) -> Result<Scalar, VMError> {
-    if scalar_raw_bytes.len() != 32 {
+fn parse_scalar(scalar_bytes: &[u8]) -> Result<Scalar, VMError> {
+    if scalar_bytes.len() != 32 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let bytes: [u8; 32] = scalar_raw_bytes
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
     let scalar_le = [
         u64::from_be_bytes([
-            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
+            scalar_bytes[24],
+            scalar_bytes[25],
+            scalar_bytes[26],
+            scalar_bytes[27],
+            scalar_bytes[28],
+            scalar_bytes[29],
+            scalar_bytes[30],
+            scalar_bytes[31],
         ]),
         u64::from_be_bytes([
-            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+            scalar_bytes[16],
+            scalar_bytes[17],
+            scalar_bytes[18],
+            scalar_bytes[19],
+            scalar_bytes[20],
+            scalar_bytes[21],
+            scalar_bytes[22],
+            scalar_bytes[23],
         ]),
         u64::from_be_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+            scalar_bytes[8],
+            scalar_bytes[9],
+            scalar_bytes[10],
+            scalar_bytes[11],
+            scalar_bytes[12],
+            scalar_bytes[13],
+            scalar_bytes[14],
+            scalar_bytes[15],
         ]),
         u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            scalar_bytes[0],
+            scalar_bytes[1],
+            scalar_bytes[2],
+            scalar_bytes[3],
+            scalar_bytes[4],
+            scalar_bytes[5],
+            scalar_bytes[6],
+            scalar_bytes[7],
         ]),
     ];
     Ok(Scalar::from_raw(scalar_le))
