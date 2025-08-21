@@ -180,7 +180,7 @@ pub async fn heal_storage_trie_wrap(
         .map(|(hashed_key, account_state)| {
             (
                 Nibbles::from_raw(hashed_key.as_bytes(), true),
-                account_state.code_hash,
+                account_state.storage_root,
             )
         })
         .collect();
