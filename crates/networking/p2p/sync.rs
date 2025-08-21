@@ -1052,8 +1052,9 @@ impl Syncer {
         }
 
         let mut bytecode_hashes: Vec<H256> = store
-            .iter_accounts(pivot_header.state_root)
+            .par_iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
+            .into_iter()
             .map(|(_, state)| state.code_hash)
             .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
             .collect();
@@ -1301,8 +1302,9 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     let computed_state_root = tokio::task::spawn_blocking(move || {
         Trie::compute_hash_from_unsorted_iter(
             store
-                .iter_accounts(state_root)
+                .par_iter_accounts(state_root)
                 .expect("we couldn't iterate over accounts")
+                .iter()
                 .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
         )
     })
@@ -1324,9 +1326,9 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
     info!("Starting validate_storage_root");
     store
         .clone()
-        .iter_accounts(state_root)
+        .par_iter_accounts(state_root)
         .expect("We should be able to open the store")
-        .par_bridge()
+        .into_par_iter()
         .for_each(|(hashed_address, account_state)|
     {
         let store_clone = store.clone();

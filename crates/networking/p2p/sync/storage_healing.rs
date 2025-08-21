@@ -159,9 +159,8 @@ pub async fn heal_storage_trie_wrap(
 ) -> bool {
     info!("Started Storage Healing");
     let accounts: Vec<(H256, AccountState)> = store
-        .iter_accounts(state_root)
-        .expect("We should be able to open the accoun")
-        .collect();
+        .par_iter_accounts(state_root)
+        .expect("We should be able to open the accoun");
 
     info!("Total accounts: {}", accounts.len());
     let filtered_accounts: Vec<(H256, AccountState)> = accounts
