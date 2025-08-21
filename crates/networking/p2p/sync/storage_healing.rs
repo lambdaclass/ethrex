@@ -15,6 +15,7 @@ use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
+use keccak_hash::keccak256;
 use rand::random;
 use std::{
     collections::{HashMap, VecDeque},
@@ -136,8 +137,8 @@ pub struct NodeRequest {
     storage_path: Nibbles,
     /// What node needs this node
     parent: Nibbles,
-    // /// What hash was requested. We can use this for validation
-    // hash: H256 // this is a potential optimization, we ignore for now
+    /// What hash was requested. We can use this for validation
+    hash: H256,
 }
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
@@ -174,9 +175,14 @@ pub async fn heal_storage_trie_wrap(
         })
         .collect();
     info!("Total filtered accounts: {}", filtered_accounts.len());
-    let account_path_nibbles: Vec<Nibbles> = filtered_accounts
+    let account_path_nibbles: Vec<(Nibbles, H256)> = filtered_accounts
         .into_iter()
-        .map(|(hashed_key, _)| Nibbles::from_raw(hashed_key.as_bytes(), true))
+        .map(|(hashed_key, account_state)| {
+            (
+                Nibbles::from_raw(hashed_key.as_bytes(), true),
+                account_state.code_hash,
+            )
+        })
         .collect();
     heal_storage_trie(
         state_root,
@@ -191,7 +197,7 @@ pub async fn heal_storage_trie_wrap(
 
 pub async fn heal_storage_trie(
     state_root: H256,
-    account_paths: Vec<Nibbles>,
+    account_paths: Vec<(Nibbles, H256)>,
     peers: PeerHandler,
     store: Store,
     membatch: OnceCell<Membatch>,
@@ -530,11 +536,16 @@ fn zip_requeue_node_responses_score_peer(
         .iter()
         .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
+            let node = Node::decode_raw(&node_bytes).inspect_err(|err|{
+                    info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
+                })?;
+            if node_request.hash != node.compute_hash().finalize() {
+                error!("The peer responded with a wrong node to our data");
+                return Err(RLPDecodeError::MalformedData); // TODO: Change to proper err
+            }
             Ok(NodeResponse {
                 node_request: node_request.clone(),
-                node: Node::decode_raw(&node_bytes).inspect_err(|err|{
-                    info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
-                })?,
+                node
             })
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
@@ -558,6 +569,7 @@ fn zip_requeue_node_responses_score_peer(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
@@ -615,14 +627,15 @@ fn process_node_responses(
     Ok(())
 }
 
-fn get_initial_downloads(account_paths: &[Nibbles]) -> VecDeque<NodeRequest> {
+fn get_initial_downloads(account_paths: &Vec<(Nibbles, H256)>) -> VecDeque<NodeRequest> {
     account_paths
         .iter()
-        .map(|acc_path| {
+        .map(|(acc_path, hash)| {
             NodeRequest {
                 acc_path: acc_path.clone(),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                 parent: Nibbles::default(),
+                hash: *hash,
             }
         })
         .collect()
@@ -668,6 +681,7 @@ pub fn determine_missing_children(
                                 .storage_path
                                 .append_new(index as u8),
                             parent: node_response.node_request.storage_path.clone(),
+                            hash: child.compute_hash().finalize(),
                         },
                         &child.compute_hash(),
                         membatch,
@@ -695,6 +709,7 @@ pub fn determine_missing_children(
                             .storage_path
                             .concat(node.prefix.clone()),
                         parent: node_response.node_request.storage_path.clone(),
+                        hash: node_response.node.compute_hash().finalize(),
                     },
                     &node.child.compute_hash(),
                     membatch,
