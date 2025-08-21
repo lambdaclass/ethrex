@@ -1121,8 +1121,7 @@
                 "value": 85
               }
             ]
-          },
-          "unit": "percentunit"
+          }
         },
         "overrides": []
       },
@@ -1134,9 +1133,11 @@
       },
       "id": 32,
       "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -1144,9 +1145,9 @@
           "fields": "",
           "values": false
         },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
       },
       "pluginVersion": "12.2.0",
       "targets": [
@@ -1156,14 +1157,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "(process_open_fds{job=\"$job\"} / process_max_fds{job=\"$job\"}) * 100",
+          "expr": "process_open_fds{job=\"$job\"}",
           "legendFormat": "FDs used %",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Open FDs %",
-      "type": "gauge"
+      "title": "Open FDs",
+      "type": "stat"
     },
     {
       "datasource": {
