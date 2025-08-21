@@ -15,7 +15,7 @@ pub const EMPTY_CODE_HASH: H256 = H256([
     0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
 ]);
 
-pub const MEMORY_EXPANSION_QUOTIENT: usize = 512;
+pub const MEMORY_EXPANSION_QUOTIENT: u64 = 512;
 
 // Dedicated gas limit for system calls according to EIPs 2935, 4788, 7002 and 7251
 pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
