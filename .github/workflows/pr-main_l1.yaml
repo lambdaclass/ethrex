@@ -80,6 +80,9 @@ jobs:
       - id: docker
         name: Setup Docker
         uses: ./.github/actions/setup-docker
+        with:
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   setup-hive-fork:
     name: "Setup Hive"
