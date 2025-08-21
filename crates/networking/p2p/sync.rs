@@ -38,9 +38,9 @@ use trie_rebuild::TrieRebuilder;
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: u32 = 64;
 /// Max size of batch to start a bytecode fetch request in queues
-const BYTECODE_BATCH_SIZE: u32 = 70;
+const BYTECODE_BATCH_SIZE: usize = 70;
 /// Max size of a batch to start a storage fetch request in queues
-const STORAGE_BATCH_SIZE: u32 = 300;
+const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a batch to start a node fetch request in queues
 const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue

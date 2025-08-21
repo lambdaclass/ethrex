@@ -15,7 +15,7 @@ pub(crate) async fn run_queue<T, F, Fut>(
     fetch_batch: &F,
     peers: PeerHandler,
     store: Store,
-    batch_size: u32,
+    batch_size: usize,
 ) -> Result<(), SyncError>
 where
     T: Send + 'static,
