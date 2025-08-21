@@ -161,7 +161,7 @@ impl<'a> VM<'a> {
         let sum = new_augend + new_addend;
         #[allow(
             clippy::arithmetic_side_effects,
-            reason = "can't overflow because non-zero modulus"
+            reason = "can't trap because non-zero modulus"
         )]
         let sum_mod = sum % modulus;
 
