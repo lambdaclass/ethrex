@@ -322,8 +322,7 @@ impl Blockchain {
             .iter()
             .position(|(id, _)| id == &payload_id)
             .ok_or(ChainError::UnknownPayload)?;
-        let finished_payload: (u64, PayloadOrTask) =
-            (payload_id, payloads.remove(idx).1.to_payload().await?);
+        let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
         payloads.insert(idx, finished_payload);
         // Return the held payload
         match &payloads[idx].1 {
