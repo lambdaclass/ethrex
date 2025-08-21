@@ -4,6 +4,7 @@ use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
     ExecuteSP1,
