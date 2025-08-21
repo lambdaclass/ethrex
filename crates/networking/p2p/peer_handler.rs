@@ -33,7 +33,10 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    utils::{current_unix_time, dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file, SendMessageError},
+    utils::{
+        SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
+        get_account_storages_snapshot_file,
+    },
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
