@@ -305,21 +305,23 @@ pub async fn heal_storage_trie(
             return true;
         }
 
-        if is_stale {
+        if is_stale || requests_task_joinset.is_empty() {
             db_joinset.join_all().await;
             return false;
         }
 
-        ask_peers_for_nodes(
-            &mut state.download_queue,
-            &mut state.requests,
-            &mut requests_task_joinset,
-            &state.peer_handler,
-            state.state_root,
-            &mut state.scored_peers,
-            &task_sender,
-        )
-        .await;
+        if !is_stale {
+            ask_peers_for_nodes(
+                &mut state.download_queue,
+                &mut state.requests,
+                &mut requests_task_joinset,
+                &state.peer_handler,
+                state.state_root,
+                &mut state.scored_peers,
+                &task_sender,
+            )
+            .await;
+        }
 
         let result = requests_task_joinset.try_join_next();
         if let Some(res) = result {
