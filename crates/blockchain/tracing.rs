@@ -15,7 +15,7 @@ impl Blockchain {
     pub async fn trace_transaction_calls(
         &self,
         tx_hash: H256,
-        reexec: usize,
+        reexec: u32,
         timeout: Duration,
         only_top_call: bool,
         with_log: bool,
@@ -50,7 +50,7 @@ impl Blockchain {
         &self,
         // We receive the block instead of its hash/number to support multiple potential endpoints
         block: Block,
-        reexec: usize,
+        reexec: u32,
         timeout: Duration,
         only_top_call: bool,
         with_log: bool,
@@ -87,7 +87,7 @@ impl Blockchain {
     async fn rebuild_parent_state(
         &self,
         parent_hash: H256,
-        reexec: usize,
+        reexec: u32,
     ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
@@ -123,11 +123,11 @@ impl Blockchain {
 async fn get_missing_state_parents(
     mut parent_hash: H256,
     store: &Store,
-    reexec: usize,
+    reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {
     let mut missing_state_parents = Vec::new();
     loop {
-        if missing_state_parents.len() > reexec {
+        if missing_state_parents.len() > reexec as usize {
             return Err(ChainError::Custom(
                 "Exceeded max amount of blocks to re-execute for tracing".to_string(),
             ));
