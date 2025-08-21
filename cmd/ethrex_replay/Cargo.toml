@@ -3,6 +3,12 @@ name = "ethrex-replay"
 version = "0.1.0"
 edition = "2024"
 
+[profile.dev]
+debug = true
+
+[profile.release]
+debug = true
+
 [dependencies]
 ethrex-config.workspace = true
 ethrex-common.workspace = true
