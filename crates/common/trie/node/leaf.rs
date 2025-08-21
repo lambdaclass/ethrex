@@ -1,6 +1,8 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
+use crate::{
+    NodeHandle, ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
@@ -9,12 +11,17 @@ use super::{ExtensionNode, Node, ValueOrHash};
 pub struct LeafNode {
     pub partial: Nibbles,
     pub value: ValueRLP,
+    pub link: Option<NodeHandle>,
 }
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
     pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
-        Self { partial, value }
+        Self {
+            partial,
+            value,
+            link: None,
+        }
     }
 
     /// Returns the stored value if the given path matches the stored path

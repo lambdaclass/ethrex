@@ -32,7 +32,7 @@ dependencies = [
  "cpp_demangle",
  "fallible-iterator 0.3.0",
  "gimli 0.29.0",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
  "object 0.35.0",
  "rustc-demangle",
  "smallvec",
@@ -4363,6 +4363,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
+ "memmap2 0.9.7",
  "serde",
  "serde_json",
  "sha3",
@@ -4403,6 +4404,7 @@ dependencies = [
  "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-rlp",
+ "ethrex-storage",
  "hasher",
  "hex",
  "hex-literal",
@@ -5090,7 +5092,7 @@ dependencies = [
  "grep-matcher",
  "log",
  "memchr",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
 ]
 
 [[package]]
@@ -6939,9 +6941,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.9.5"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
+checksum = "483758ad303d734cec05e5c12b41d7e93e6a6390c5e9dae6bdeb7c1259012d28"
 dependencies = [
  "libc",
 ]

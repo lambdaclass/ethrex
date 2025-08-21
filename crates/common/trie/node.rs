@@ -2,105 +2,155 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::{array, sync::Arc};
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
     error::RLPDecodeError,
     structs::Decoder,
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{EMPTY_TRIE_HASH, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeHandle(pub u64);
+#[derive(Clone, Copy, Debug)]
+pub struct CodeHandle(pub u64);
+
+// FIXME: can't use hash invalidation to mark dirtiness due to inline nodes,
+// inserting an inline node and then overwriting the hash that contains it
+// would break. Just use the high bit of the handle instead.
 /// A reference to a node.
 #[derive(Clone, Debug)]
-pub enum NodeRef {
-    /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
-    /// The node is in the database, referenced by its hash.
-    Hash(NodeHash),
+pub struct NodeRef {
+    pub value: Option<Arc<Node>>,
+    pub hash: NodeHash,
+    pub handle: NodeHandle,
 }
 
 impl NodeRef {
+    pub fn is_dirty(&self) -> bool {
+        let NodeHandle(bits) = self.handle;
+        (bits & (1 << 63)) != 0
+    }
+
+    pub fn set_dirty(&mut self) {
+        let NodeHandle(bits) = self.handle;
+        self.handle = NodeHandle(bits | (1 << 63));
+    }
+
+    pub fn clear_dirty(&mut self) {
+        let NodeHandle(bits) = self.handle;
+        self.handle = NodeHandle(bits & !(1 << 63));
+    }
+
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
-        match *self {
-            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
-            }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(hash)?
-                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-                .transpose(),
+        if !self.hash.is_valid() {
+            return Ok(None);
         }
+        if let Some(ref node) = self.value {
+            return Ok(Some(node.as_ref().clone()));
+        };
+        if let NodeHash::Inline((rlp, len)) = self.hash {
+            return <Node as RLPDecode>::decode(&rlp[..len as usize])
+                .map_err(TrieError::RLPDecode)
+                .map(Some);
+        }
+        db.get(self.handle)
     }
 
     pub fn is_valid(&self) -> bool {
-        match self {
-            NodeRef::Node(_, _) => true,
-            NodeRef::Hash(hash) => hash.is_valid(),
+        match self.value {
+            Some(_) => true,
+            None => self.hash.is_valid(),
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
-        match *self {
-            NodeRef::Node(ref mut node, ref mut hash) => {
-                match Arc::make_mut(node) {
-                    Node::Branch(node) => {
-                        for node in &mut node.choices {
-                            node.commit(acc);
-                        }
-                    }
-                    Node::Extension(node) => {
-                        node.child.commit(acc);
-                    }
-                    Node::Leaf(_) => {}
-                }
-
-                let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
-
-                let hash = *hash;
-                *self = hash.into();
-
-                hash
-            }
-            NodeRef::Hash(hash) => hash,
+    pub fn commit(&mut self, acc: &mut Vec<NodeRef>) -> NodeHash {
+        if !self.is_dirty() {
+            return self.hash;
         }
+        let Some(node) = &mut self.value else {
+            // Dirty but no node
+            return NodeHash::Hashed(*EMPTY_TRIE_HASH);
+        };
+        match Arc::make_mut(node) {
+            Node::Branch(node) => {
+                for node in &mut node.choices {
+                    node.commit(acc);
+                }
+            }
+            Node::Extension(node) => {
+                // If this extension comes from splitting an older one
+                // the child might actually be clean.
+                node.child.commit(acc);
+            }
+            Node::Leaf(_) => {}
+        }
+
+        // Since the node was dirty, the hash is guaranteed to be stale.
+        let hash = node.compute_hash();
+        // FIXME: need some kind of shallow clone actually.
+        // Also need it to use the new indices for dirty children.
+        acc.push(self.clone());
+
+        self.hash = hash;
+        // Node is committed, clear dirty flag.
+        self.clear_dirty();
+
+        hash
     }
 
     pub fn compute_hash(&self) -> NodeHash {
-        match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+        // Three cases:
+        // 1. Hash already computed and node unmodified since (self.hash.is_valid());
+        // 2. Absent node with empty hash => no node;
+        // 3. Node exists but hash is empty => signals dirty, compute.
+        let current_hash = self.hash;
+        if current_hash.is_valid() {
+            return current_hash;
         }
+        let Some(ref node) = self.value else {
+            return NodeHash::Hashed(*EMPTY_TRIE_HASH);
+        };
+        // FIXME: should update the cache but then I have to deal with mutex
+        // or use OnceLock
+        node.compute_hash()
     }
 }
 
 impl Default for NodeRef {
     fn default() -> Self {
-        Self::Hash(NodeHash::default())
+        Self {
+            hash: NodeHash::default(),
+            value: None,
+            handle: NodeHandle(1 << 63), // New nodes are always marked dirty
+        }
     }
 }
 
 impl From<Node> for NodeRef {
     fn from(value: Node) -> Self {
-        Self::Node(Arc::new(value), OnceLock::new())
+        Self {
+            hash: NodeHash::default(),
+            value: Some(Arc::new(value)),
+            handle: NodeHandle(1 << 63), // New nodes are always marked dirty
+        }
     }
 }
 
 impl From<NodeHash> for NodeRef {
     fn from(value: NodeHash) -> Self {
-        Self::Hash(value)
+        Self {
+            hash: value,
+            value: None,
+            handle: NodeHandle(1 << 63), // New nodes are always marked dirty
+        }
     }
 }
 
@@ -248,6 +298,7 @@ impl Node {
                     LeafNode {
                         partial: path,
                         value: value.to_vec(),
+                        link: None,
                     }
                     .into()
                 } else {

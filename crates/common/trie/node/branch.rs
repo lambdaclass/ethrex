@@ -1,6 +1,8 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
+use crate::{
+    NodeHandle, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -13,7 +15,11 @@ pub struct BranchNode {
 }
 
 impl BranchNode {
-    const EMPTY_REF: NodeRef = NodeRef::Hash(NodeHash::Inline(([0; 31], 0)));
+    const EMPTY_REF: NodeRef = NodeRef {
+        hash: NodeHash::Inline(([0; 31], 0)),
+        value: None,
+        handle: NodeHandle(0u64),
+    };
 
     /// Empty choice array for more convenient node-building
     pub const EMPTY_CHOICES: [NodeRef; 16] = [Self::EMPTY_REF; 16];

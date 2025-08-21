@@ -8,7 +8,7 @@ use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHandle};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -226,19 +226,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain pending block number
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Obtain a storage trie from the given address and storage_root
-    /// Doesn't check if the account is stored
-    /// Used for internal store operations
-    fn open_storage_trie(
+    fn get_state_trie_root_handle(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError>;
-
-    /// Obtain a state trie from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
+        state_root: H256,
+    ) -> Result<Option<NodeHandle>, StoreError>;
 
     async fn forkchoice_update(
         &self,

@@ -11,7 +11,7 @@ use hasher::HasherKeccak;
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
-use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
+use ethrex_storage::store_db::blob::BlobRoTx as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
 #[allow(clippy::unit_arg)]
