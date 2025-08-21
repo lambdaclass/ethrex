@@ -4,10 +4,16 @@ use tracing_subscriber::filter::Directive;
 mod bench;
 mod cache;
 mod cli;
-mod constants;
 mod fetcher;
 mod plot_composition;
 mod run;
+
+#[cfg(feature = "jemalloc")]
+use jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[tokio::main]
 async fn main() {

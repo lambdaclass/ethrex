@@ -159,7 +159,3 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
-
-## New EF state tests runner
-run-new-runner:
-	cargo test --package ef_tests-state --test new_runner --release -- $(flags)
