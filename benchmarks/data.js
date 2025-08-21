@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755719442706,
+  "lastUpdate": 1755739541283,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9415,6 +9415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 157942216563,
             "range": "± 337289051",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96d1b074b21d5055135dedb1e2f638b21f0eed9e",
+          "message": "fix(l1): `ethrex_replay` reduce cases were OOM happen with SP1 (#4076)\n\n**Motivation**\n\nSome of the blocks execution with `ethrex_replay` ans SP1 where failing\ndue to Out Of Memory. We fix some of them here\n\n**Description**\n\n- Remove unnecessary clones and variables from the `from_nodes(..)`\nfunction\n- Change the behavior of the `storage_tries`, we build them on demand\nand store them in a hash map indexed by the address\n\n**How to Test**\n\nRunning this with an url for a Hoodi client (using a cache for the block\nis faster):\n```\ncargo run --release --features sp1 -- execute block 989143 --rpc-url <RPC_URL> --network hoodi\n```\n\nThis block now succeeds when in the base branch it doesn't.\n\n**What's next**\n\nThis could be more optimized following this\n[issue](https://github.com/lambdaclass/ethrex/issues/4094)\n\nAdvances #4089\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-08-21T00:33:39Z",
+          "tree_id": "cc23934df637604cefe850592fcd7dcac26a99ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/96d1b074b21d5055135dedb1e2f638b21f0eed9e"
+        },
+        "date": 1755739525519,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161729362661,
+            "range": "± 660701855",
             "unit": "ns/iter"
           }
         ]
