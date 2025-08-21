@@ -5,10 +5,6 @@ use ethrex::{
     utils::{NodeConfigFile, store_node_config_file},
 };
 use ethrex_p2p::{kademlia::Kademlia, types::NodeRecord};
-#[cfg(feature = "sync-test")]
-use ethrex_storage::Store;
-#[cfg(feature = "sync-test")]
-use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},

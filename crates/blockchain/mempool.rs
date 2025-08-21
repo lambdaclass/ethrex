@@ -56,9 +56,8 @@ impl Mempool {
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
-            .and_then(|pool| {
-                Ok(pool
-                    .iter()
+            .map(|pool| {
+                pool.iter()
                     .filter_map(|(hash, tx)| {
                         if !self.broadcast_pool.read().ok()?.contains(hash) {
                             None
@@ -66,7 +65,7 @@ impl Mempool {
                             Some(tx.clone())
                         }
                     })
-                    .collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
             })?;
         Ok(txs)
     }

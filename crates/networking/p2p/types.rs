@@ -557,8 +557,6 @@ mod tests {
             .await
             .expect("Failed to build test genesis");
 
-        let fork_id = storage.get_fork_id().await.unwrap();
-
         let node = Node::new(
             addr.ip(),
             addr.port(),
