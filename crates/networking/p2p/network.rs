@@ -445,7 +445,6 @@ pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H
     loop {
         // clone peers to keep the lock short
         let peers: Vec<PeerData> = peers.lock().await.values().cloned().collect();
-        let total_peers = peers.len();
         let active_peers = peers
             .iter()
             .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
@@ -460,7 +459,7 @@ pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H
             })
             .count();
         info!(
-            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
+            "Snap Peers: {snap_active_peers} / Total Peers: {active_peers}"
         );
         interval.tick().await;
     }
