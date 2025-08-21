@@ -43,6 +43,11 @@ impl Iterator for TrieIterator {
             .inspect_err(|err| {
                 println!("ERROR trie_iter error {err:?}. Path={path:?}. NextRef={next_node_ref:?}. State root={:x}", self.root)
             })
+            .inspect(|node| {
+                if node.is_none() {
+                    println!("ERROR trie_iter is_none. Path={path:?}. NextRef={next_node_ref:?}. State root={:x}", self.root)
+                }
+            })
             .ok()
             .flatten()?;
         match &next_node {
