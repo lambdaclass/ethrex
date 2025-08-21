@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755804917998,
+  "lastUpdate": 1755810167894,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22142,6 +22142,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0014445151515151515,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5677a0d7ca9945eea7e7f08268928fc82021381c",
+          "message": "fix(l1): subtract DB read times from block execution. (#4051)\n\n**Motivation**\nBe able to get the _net_ block execution, substracting the DB reads in\nGrafana.\n\n**Description**\nThis is how it looks:\n<img width=\"577\" height=\"297\" alt=\"Screenshot 2025-08-14 at 13 24 56\"\nsrc=\"https://github.com/user-attachments/assets/feb5d9fd-3dce-426e-8705-4049e5c2b98e\"\n/>",
+          "timestamp": "2025-08-20T14:21:44Z",
+          "tree_id": "2f07cdfd14cac1e33afdda2196da6f590af74562",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5677a0d7ca9945eea7e7f08268928fc82021381c"
+        },
+        "date": 1755810156090,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00855597435897436,
             "unit": "Mgas/s"
           }
         ]
