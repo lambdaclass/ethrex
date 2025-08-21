@@ -17,8 +17,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
-use prometheus::core::AtomicU64;
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, TrieDB, TrieError};
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
 
@@ -56,6 +55,7 @@ pub async fn heal_state_trie_wrap(
     store: Store,
     peers: &PeerHandler,
     staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -65,6 +65,7 @@ pub async fn heal_state_trie_wrap(
             store.clone(),
             peers.clone(),
             staleness_timestamp,
+            global_leafs_healed,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -85,6 +86,7 @@ async fn heal_state_trie(
     store: Store,
     peers: PeerHandler,
     staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -142,16 +144,18 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
                     peers_table_2.len(),
+                    global_leafs_healed,
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
                     peers_table_2.len(),
+                    global_leafs_healed,
                     paths.len()
                 );
             }
@@ -179,6 +183,10 @@ async fn heal_state_trie(
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(leaf_node)))
                         .count();
+                    *global_leafs_healed += nodes
+                        .iter()
+                        .filter(|node| matches!(node, Node::Leaf(leaf_node)))
+                        .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
                     scores.entry(peer_id).and_modify(|score| {
