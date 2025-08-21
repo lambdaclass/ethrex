@@ -111,12 +111,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blob_proof,
     } = input;
 
-    let chain_id = match db {
-        PreExecutionState::DB(ref prover_db) => prover_db.chain_config.chain_id,
-        PreExecutionState::Witness(ref execution_witness_result) => {
-            execution_witness_result.chain_config.chain_id
-        }
-    };
+    let chain_id = db.chain_id();
 
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]

@@ -24,6 +24,15 @@ pub enum PreExecutionState {
     Witness(Box<ExecutionWitnessResult>),
 }
 
+impl PreExecutionState {
+    pub fn chain_id(&self) -> u64 {
+        match self {
+            PreExecutionState::DB(db) => db.chain_config.chain_id,
+            PreExecutionState::Witness(witness) => witness.chain_config.chain_id,
+        }
+    }
+}
+
 /// In-memory EVM database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
