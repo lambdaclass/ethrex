@@ -18,11 +18,10 @@ use ethrex_common::rkyv_utils::{
 };
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 
-#[expect(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub enum PreExecutionState {
-    DB(ProverDB),
-    Witness(ExecutionWitnessResult),
+    DB(Box<ProverDB>),
+    Witness(Box<ExecutionWitnessResult>),
 }
 
 /// In-memory EVM database for single batch execution data.

@@ -147,10 +147,10 @@ pub fn stateless_validation_l1(
         ..
     } = match pre_execution_state {
         PreExecutionState::Witness(db) => {
-            execute_stateless_with_witness(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_witness(blocks, *db, elasticity_multiplier)?
         }
         PreExecutionState::DB(db) => {
-            execute_stateless_with_prover_db(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_prover_db(blocks, *db, elasticity_multiplier)?
         }
     };
 
@@ -179,17 +179,19 @@ pub fn stateless_validation_l2(
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let initial_db = match pre_execution_state {
-        PreExecutionState::Witness(ref db) => PreExecutionState::Witness(ExecutionWitnessResult {
-            block_headers: db.block_headers.clone(),
-            chain_config: db.chain_config,
-            codes: db.codes.clone(),
-            keys: db.keys.clone(),
-            state_trie: None,
-            storage_tries: None,
-            state_trie_nodes: db.state_trie_nodes.clone(),
-            parent_block_header: db.parent_block_header.clone(),
-        }),
-        PreExecutionState::DB(ref db) => PreExecutionState::DB(db.clone()),
+        PreExecutionState::Witness(ref db) => {
+            PreExecutionState::Witness(Box::new(ExecutionWitnessResult {
+                block_headers: db.block_headers.clone(),
+                chain_config: db.chain_config,
+                codes: db.codes.clone(),
+                keys: db.keys.clone(),
+                state_trie: None,
+                storage_tries: None,
+                state_trie_nodes: db.state_trie_nodes.clone(),
+                parent_block_header: db.parent_block_header.clone(),
+            }))
+        }
+        PreExecutionState::DB(ref db) => PreExecutionState::DB(Box::new(*db.clone())),
     };
 
     let StatelessResult {
@@ -202,10 +204,10 @@ pub fn stateless_validation_l2(
         non_privileged_count,
     } = match pre_execution_state {
         PreExecutionState::Witness(db) => {
-            execute_stateless_with_witness(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_witness(blocks, *db, elasticity_multiplier)?
         }
         PreExecutionState::DB(db) => {
-            execute_stateless_with_prover_db(blocks, db, elasticity_multiplier)?
+            execute_stateless_with_prover_db(blocks, *db, elasticity_multiplier)?
         }
     };
 
@@ -227,7 +229,7 @@ pub fn stateless_validation_l2(
                 initial_db
                     .rebuild_tries()
                     .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
-                let wrapped_db = ExecutionWitnessWrapper::new(initial_db);
+                let wrapped_db = ExecutionWitnessWrapper::new(*initial_db);
                 let state_diff = prepare_state_diff(
                     last_block_header,
                     &wrapped_db,
@@ -240,7 +242,7 @@ pub fn stateless_validation_l2(
             PreExecutionState::DB(initial_db) => {
                 let state_diff = prepare_state_diff(
                     last_block_header,
-                    &initial_db,
+                    &*initial_db,
                     &l1messages,
                     &privileged_transactions,
                     account_updates.values().cloned().collect(),

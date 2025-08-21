@@ -28,7 +28,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
-                    pre_execution_state: PreExecutionState::Witness(input.db),
+                    pre_execution_state: PreExecutionState::Witness(Box::new(input.db)),
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,

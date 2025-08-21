@@ -1,5 +1,5 @@
 use ethrex_common::{H256, U256, types::Block};
-use ethrex_vm::{ProverDB, prover_db::PreExecutionState};
+use ethrex_vm::prover_db::PreExecutionState;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
@@ -38,7 +38,7 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            pre_execution_state: PreExecutionState::DB(ProverDB::default()),
+            pre_execution_state: PreExecutionState::DB(Box::default()),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
