@@ -272,7 +272,7 @@ pub fn check_accounts_state(
                                 H256::from(k.to_big_endian()),
                                 LevmStorageSlot {
                                     current_value: *v,
-                                    previous_value: *v,
+                                    previous_value: None,
                                 },
                             )
                         })

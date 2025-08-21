@@ -246,7 +246,7 @@ fn compare_initial_and_current_accounts(
             }
 
             for (slot, value) in &acc.storage {
-                let prev_value = value.previous_value;
+                let prev_value = value.previous_value.unwrap_or(U256::default());
                 let current_value = value.current_value;
                 if prev_value != current_value {
                     info!(
