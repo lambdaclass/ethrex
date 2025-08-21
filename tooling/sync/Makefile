@@ -186,3 +186,39 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
     		--evm $(EVM)
+
+SERVER_SYNC_BRANCH ?= snap_sync
+SERVER_SYNC_NETWORK ?= hoodi
+
+ifeq ($(SERVER_SYNC_NETWORK),hoodi)
+CHECKPOINT_URL = https://hoodi-checkpoint-sync.attestant.io/
+else ifeq ($(SERVER_SYNC_NETWORK),sepolia)
+CHECKPOINT_URL = https://checkpoint-sync.sepolia.ethpandaops.io
+else ifeq ($(SERVER_SYNC_NETWORK),mainnet)
+CHECKPOINT_URL = https://mainnet-checkpoint-sync.attestant.io
+else
+$(error Unknown network $(SERVER_SYNC_NETWORK))
+endif
+
+LOGS_FILE ?= output.log
+
+# Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 SNAP=1
+# SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, SNAP enables snap sync mode.
+server-sync:
+	git fetch --all
+
+	git checkout $(SERVER_SYNC_BRANCH)
+
+	git pull
+
+	tmux kill-server || true
+
+	sleep 5
+
+	tmux new-session -d -s sync -n htop "htop"
+
+	tmux new-window -t sync:1 -n lighthouse "cd ../.. &&  ./lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --purge-db-force "
+
+	sleep 0.2
+
+	tmux new-window -t sync:2 -n ethrex "cd ../.. && ulimit -n 65000 && rm -rf ../.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,ethrex_p2p::discv4=off,spawned_concurrency::tasks::gen_server=off $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
