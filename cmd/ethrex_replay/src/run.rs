@@ -7,7 +7,10 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
-use std::{sync::Arc, panic::{AssertUnwindSafe, catch_unwind}};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::Arc,
+};
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
