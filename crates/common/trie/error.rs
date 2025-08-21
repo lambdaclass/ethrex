@@ -13,4 +13,6 @@ pub enum TrieError {
     LockError,
     #[error("Database error: {0}")]
     DbError(anyhow::Error),
+    #[error("Wrong Node path")]
+    WrongNodePath,
 }

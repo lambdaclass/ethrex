@@ -380,10 +380,10 @@ impl Trie {
                                 child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                             get_node_inner(db, child_node, partial_path)
                         } else {
-                            Ok(vec![])
+                            Err(TrieError::WrongNodePath)
                         }
                     }
-                    _ => Ok(vec![]),
+                    _ => Err(TrieError::WrongNodePath),
                 },
                 Node::Extension(extension_node) => {
                     if partial_path.skip_prefix(&extension_node.prefix)
@@ -395,10 +395,10 @@ impl Trie {
                             .ok_or(TrieError::InconsistentTree)?;
                         get_node_inner(db, child_node, partial_path)
                     } else {
-                        Ok(vec![])
+                        Err(TrieError::WrongNodePath)
                     }
                 }
-                Node::Leaf(_) => Ok(vec![]),
+                Node::Leaf(_) => Err(TrieError::WrongNodePath),
             }
         }
 
