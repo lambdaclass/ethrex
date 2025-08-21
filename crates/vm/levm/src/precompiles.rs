@@ -235,13 +235,15 @@ pub fn execute_precompile(
         precompiles
     };
 
-    let index = address.0[19] as usize;
-
-    if index >= PRECOMPILES.len() {
+    if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
+    let index = u16::from_be_bytes([address[18], address[19]]) as usize;
 
-    let precompile = PRECOMPILES[address.0[19] as usize]
+    let precompile = PRECOMPILES
+        .get(index)
+        .copied()
+        .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
     precompile(calldata, gas_remaining)
