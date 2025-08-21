@@ -994,13 +994,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "rate(process_cpu_seconds_total{job=\"$job\",instance=~\"$instance\"}[1m])",
+          "expr": "rate(process_cpu_seconds_total{job=\"$job\"}[1m])",
           "legendFormat": "CPU cores used",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "� CPU (cores used)",
+      "title": "CPU (cores used)",
       "type": "timeseries"
     },
     {
@@ -1038,7 +1038,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "process_resident_memory_bytes{job=\"$job\",instance=~\"$instance\"}",
+          "expr": "process_resident_memory_bytes{job=\"$job\"}",
           "legendFormat": "RSS",
           "range": true,
           "refId": "A"
@@ -1046,13 +1046,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "process_virtual_memory_bytes{job=\"$job\",instance=~\"$instance\"}",
+          "expr": "process_virtual_memory_bytes{job=\"$job\"}",
           "legendFormat": "VSZ",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "� Memory (RSS & VSZ)",
+      "title": "Memory (RSS & VSZ)",
       "type": "timeseries"
     },
     {
@@ -1086,13 +1086,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "(process_open_fds{job=\"$job\",instance=~\"$instance\"} / process_max_fds{job=\"$job\",instance=~\"$instance\"}) * 100",
+          "expr": "(process_open_fds{job=\"$job\"} / process_max_fds{job=\"$job\"}) * 100",
           "legendFormat": "FDs used %",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "� Open FDs %",
+      "title": "Open FDs %",
       "type": "gauge"
     },
     {
@@ -1122,13 +1122,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "process_threads{job=\"$job\",instance=~\"$instance\"}",
+          "expr": "process_threads{job=\"$job\"}",
           "legendFormat": "threads",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "� Threads",
+      "title": "Threads",
       "type": "stat"
     },
     {
@@ -1158,13 +1158,13 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "time() - process_start_time_seconds{job=\"$job\",instance=~\"$instance\"}",
+          "expr": "time() - process_start_time_seconds{job=\"$job\"}",
           "legendFormat": "uptime_s",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "� Uptime (seconds)",
+      "title": "Uptime (seconds)",
       "type": "stat"
     }
   ],
