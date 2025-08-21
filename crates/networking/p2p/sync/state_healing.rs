@@ -64,6 +64,7 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    dirty_accounts: &mut HashMap<H256, H256>,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -75,6 +76,7 @@ pub async fn heal_state_trie_wrap(
             staleness_timestamp,
             global_leafs_healed,
             membatch,
+            dirty_accounts,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -98,6 +100,7 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    dirty_accounts: &mut HashMap<H256, H256>,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -195,6 +198,21 @@ async fn heal_state_trie(
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
+                    for (node, meta) in nodes.iter().zip(batch.iter()) {
+                        match node {
+                            Node::Leaf(node) => {
+                                let account =
+                                    AccountState::decode(&node.value).expect("decode failed");
+                                let account_hash = H256::from_slice(
+                                    &meta.path.concat(node.partial.clone()).to_bytes(),
+                                );
+                                if account.storage_root != *EMPTY_TRIE_HASH {
+                                    dirty_accounts.insert(account_hash, account.storage_root);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     leafs_healed += nodes
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(leaf_node)))
