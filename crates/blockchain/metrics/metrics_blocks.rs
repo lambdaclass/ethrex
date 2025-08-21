@@ -1,5 +1,4 @@
-use prometheus::{Encoder, Gauge, IntGauge, TextEncoder};
-use crate::metrics_registry::registry_with_prefix;
+use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -64,7 +63,7 @@ impl MetricsBlocks {
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
-        let r = registry_with_prefix()?;
+        let r = Registry::new();
 
         r.register(Box::new(self.gas_limit.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
