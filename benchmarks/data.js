@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755803121618,
+  "lastUpdate": 1755804917998,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9535,6 +9535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161970478986,
             "range": "± 705097578",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "885ddaf8a8557d458f38bf6629d7f9314553b66f",
+          "message": "feat(l1, l2): setup `ethrex-replay` for memory profiling (#4121)\n\n**Motivation**\n\nWe now have `ethrex-replay` reliable enough to start debugging ethrex\nperformance. We currently have memory usage issues related to:\n- The program we execute inside the zkVMs.\n- Excessive memory usage of `ethrex-replay` when replaying large blocks.\n\n**Description**\n\nThis PR aims to set up the tool for memory profiling.\n[Jemalloc](https://github.com/jemalloc/jemalloc) goes well with\nBytehound and Heaptrack (tools we'll use).\n\nThis PR:\n- Sets `profile.dev` and `profile.release` in `ethrex-replay`'s\n`Cargo.toml`\n- Sets the usage of Jemalloc's allocator when compiling the tool under\nthe `jemalloc` feature flag.\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-08-21T18:38:55Z",
+          "tree_id": "9eaa92d0189e14af4428d6290a6616b350dcbc67",
+          "url": "https://github.com/lambdaclass/ethrex/commit/885ddaf8a8557d458f38bf6629d7f9314553b66f"
+        },
+        "date": 1755804902302,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161850645630,
+            "range": "± 340143462",
             "unit": "ns/iter"
           }
         ]
