@@ -132,26 +132,27 @@ impl Deposit {
             return None;
         }
 
-        //Encoding scheme:
+        // Encoding scheme:
         //
-        //positional arguments -> 5 parameters with uint256 positional value for each -> 160b
-        //pub_key: 32b of len + 48b padded to 64b
-        //withdrawal_credentials: 32b of len + 32b
-        //amount: 32b of len + 8b padded to 32b
-        //signature: 32b of len + 96b
-        //index: 32b of len + 8b padded to 32b
+        // positional arguments -> 5 parameters with uint256 positional value for each -> 160b
+        // pub_key: 32b of len + 48b padded to 64b
+        // withdrawal_credentials: 32b of len + 32b
+        // amount: 32b of len + 8b padded to 32b
+        // signature: 32b of len + 96b
+        // index: 32b of len + 8b padded to 32b
         //
-        //-> Total len: 576 bytes
+        // -> Total len: 576 bytes
 
-        const OFFSET_LEN: usize = 32;
+        const WORD: usize = 32;
+        const U32_TAIL: usize = WORD - 4;
 
-        const PUB_KEY_OFFSET: usize = 160;
-        const WITHDRAWAL_CREDENTIALS_OFFSET: usize = 256;
-        const AMOUNT_OFFSET: usize = 320;
-        const SIGNATURE_OFFSET: usize = 384;
-        const INDEX_OFFSET: usize = 512;
+        const PUB_KEY_OFFSET: u32 = 160;
+        const WITHDRAWAL_CREDENTIALS_OFFSET: u32 = 256;
+        const AMOUNT_OFFSET: u32 = 320;
+        const SIGNATURE_OFFSET: u32 = 384;
+        const INDEX_OFFSET: u32 = 512;
 
-        const OFFSETS: [usize; 5] = [
+        const OFFSETS: [u32; 5] = [
             PUB_KEY_OFFSET,
             WITHDRAWAL_CREDENTIALS_OFFSET,
             AMOUNT_OFFSET,
@@ -159,15 +160,13 @@ impl Deposit {
             INDEX_OFFSET,
         ];
 
-        const SIZE_LEN: usize = 32;
+        const PUB_KEY_SIZE: u32 = 48;
+        const WITHDRAWAL_CREDENTIALS_SIZE: u32 = 32;
+        const AMOUNT_SIZE: u32 = 8;
+        const SIGNATURE_SIZE: u32 = 96;
+        const INDEX_SIZE: u32 = 8;
 
-        const PUB_KEY_SIZE: usize = 48;
-        const WITHDRAWAL_CREDENTIALS_SIZE: usize = 32;
-        const AMOUNT_SIZE: usize = 8;
-        const SIGNATURE_SIZE: usize = 96;
-        const INDEX_SIZE: usize = 8;
-
-        const SIZES: [usize; 5] = [
+        const SIZES: [u32; 5] = [
             PUB_KEY_SIZE,
             WITHDRAWAL_CREDENTIALS_SIZE,
             AMOUNT_SIZE,
@@ -175,33 +174,37 @@ impl Deposit {
             INDEX_SIZE,
         ];
 
-        // Compare two numbers with different byte count without padding
-        let is_eq = |bytes: [u8; 32], u: usize| -> bool {
-            bytes[..24] == [0; 24] && bytes[24..] == u.to_be_bytes()
-        };
-
         // Validate Offsets & Sizes
         for (i, (expected_offset, expected_size)) in
             OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
         {
-            let offset = fixed_bytes::<OFFSET_LEN>(data, i * OFFSET_LEN)?;
-            let size = fixed_bytes::<SIZE_LEN>(data, expected_offset)?;
-            if !is_eq(offset, expected_offset) || !is_eq(size, expected_size) {
+            let offset = fixed_bytes::<WORD>(data, i * WORD)?;
+            let size = fixed_bytes::<WORD>(data, expected_offset as usize)?;
+            if offset[U32_TAIL..] != expected_offset.to_be_bytes()
+                || size[U32_TAIL..] != expected_size.to_be_bytes()
+            {
                 return None;
             }
         }
 
         // Extract Data
-        let pub_key: Bytes48 = fixed_bytes::<PUB_KEY_SIZE>(data, PUB_KEY_OFFSET + SIZE_LEN)?;
-        let withdrawal_credentials: Bytes32 = fixed_bytes::<WITHDRAWAL_CREDENTIALS_SIZE>(
+        let pub_key: Bytes48 =
+            fixed_bytes::<{ PUB_KEY_SIZE as usize }>(data, PUB_KEY_OFFSET as usize + WORD)?;
+        let withdrawal_credentials: Bytes32 =
+            fixed_bytes::<{ WITHDRAWAL_CREDENTIALS_SIZE as usize }>(
+                data,
+                WITHDRAWAL_CREDENTIALS_OFFSET as usize + WORD,
+            )?;
+        let amount: u64 = u64::from_le_bytes(fixed_bytes::<{ AMOUNT_SIZE as usize }>(
             data,
-            WITHDRAWAL_CREDENTIALS_OFFSET + SIZE_LEN,
-        )?;
-        let amount: u64 =
-            u64::from_le_bytes(fixed_bytes::<AMOUNT_SIZE>(data, AMOUNT_OFFSET + SIZE_LEN)?);
-        let signature: Bytes96 = fixed_bytes::<SIGNATURE_SIZE>(data, SIGNATURE_OFFSET + SIZE_LEN)?;
-        let index: u64 =
-            u64::from_le_bytes(fixed_bytes::<INDEX_SIZE>(data, INDEX_OFFSET + SIZE_LEN)?);
+            AMOUNT_OFFSET as usize + WORD,
+        )?);
+        let signature: Bytes96 =
+            fixed_bytes::<{ SIGNATURE_SIZE as usize }>(data, SIGNATURE_OFFSET as usize + WORD)?;
+        let index: u64 = u64::from_le_bytes(fixed_bytes::<{ INDEX_SIZE as usize }>(
+            data,
+            INDEX_OFFSET as usize + WORD,
+        )?);
 
         Some(Deposit {
             pub_key,
