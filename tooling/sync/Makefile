@@ -202,6 +202,8 @@ endif
 
 LOGS_FILE ?= output.log
 
+# Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 SNAP=1
+# SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, SNAP enables snap sync mode.
 server-sync:
 	git fetch --all
 
