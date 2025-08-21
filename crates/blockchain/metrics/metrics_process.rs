@@ -29,7 +29,7 @@ impl MetricsProcess {
         {
             use prometheus::process_collector::ProcessCollector;
             r.register(Box::new(ProcessCollector::for_self()))
-                .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+                .map_err(|e| MetricsError::PrometheusErr(format!("Failed to register process collector: {}", e)))?;
         }
 
         let encoder = TextEncoder::new();
