@@ -15,7 +15,7 @@ pub(crate) async fn run_queue<T, F, Fut>(
     fetch_batch: &F,
     peers: PeerHandler,
     store: Store,
-    batch_size: usize,
+    batch_size: u32,
 ) -> Result<(), SyncError>
 where
     T: Send + 'static,
@@ -37,7 +37,7 @@ where
                 fetch_batch,
                 peers.clone(),
                 store.clone(),
-                batch_size,
+                batch_size as usize,
             )
             .await?;
         }

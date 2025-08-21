@@ -381,9 +381,9 @@ fn encrypt_message(
     remote_static_pubkey: &PublicKey,
     mut encoded_msg: Vec<u8>,
 ) -> Result<Vec<u8>, RLPxError> {
-    const SIGNATURE_SIZE: usize = 65;
-    const IV_SIZE: usize = 16;
-    const MAC_FOOTER_SIZE: usize = 32;
+    const SIGNATURE_SIZE: u16 = 65;
+    const IV_SIZE: u16 = 16;
+    const MAC_FOOTER_SIZE: u16 = 32;
 
     let mut rng = rand::thread_rng();
 
@@ -394,9 +394,11 @@ fn encrypt_message(
 
     // Precompute the size of the message. This is needed for computing the MAC.
     let ecies_overhead = SIGNATURE_SIZE + IV_SIZE + MAC_FOOTER_SIZE;
-    let auth_size: u16 = (encoded_msg.len() + ecies_overhead)
+    let encoded_msg_len: u16 = encoded_msg
+        .len()
         .try_into()
         .map_err(|_| RLPxError::CryptographyError("Invalid message length".to_owned()))?;
+    let auth_size = ecies_overhead + encoded_msg_len;
     let auth_size_bytes = auth_size.to_be_bytes();
 
     // Generate a keypair just for this message.
