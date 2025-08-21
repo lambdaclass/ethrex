@@ -1,7 +1,8 @@
 use ethrex_common::types::TxType;
 use prometheus::{
-    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, TextEncoder,
 };
+use crate::metrics_registry::registry_with_prefix;
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -118,7 +119,7 @@ impl MetricsTx {
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
-        let r = Registry::new();
+        let r = registry_with_prefix()?;
 
         r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
