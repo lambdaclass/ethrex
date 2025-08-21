@@ -40,7 +40,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -55,6 +55,7 @@ pub enum PayloadOrTask {
 }
 
 impl PayloadBuildTask {
+    /// Finishes the current payload build process and returns its result
     pub async fn finish(self) -> Result<PayloadBuildResult, ChainError> {
         self.cancel.cancel();
         self.task
@@ -64,6 +65,8 @@ impl PayloadBuildTask {
 }
 
 impl PayloadOrTask {
+    /// Converts self into a `PayloadOrTask::Payload` by finishing the current build task
+    /// If self is already a `PayloadOrTask::Payload` this is a NoOp
     pub async fn to_payload(self) -> Result<Self, ChainError> {
         Ok(match self {
             PayloadOrTask::Payload(_) => self,
@@ -310,21 +313,28 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 }
 
 impl Blockchain {
+    /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
+    /// Fails if there is no payload or active payload build task for the given id.
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
         let mut payloads = self.payloads.lock().await;
-        let (idx, _) = payloads
+        // Find the given payload and finish the active build process if needed
+        let idx = payloads
             .iter()
-            .enumerate()
-            .find(|(_, (id, _))| id == &payload_id)
+            .position(|(id, _)| id == &payload_id)
             .ok_or(ChainError::UnknownPayload)?;
-        let elem = (payload_id, payloads.remove(idx).1.to_payload().await?);
-        payloads.insert(idx, elem);
+        let finished_payload: (u64, PayloadOrTask) =
+            (payload_id, payloads.remove(idx).1.to_payload().await?);
+        payloads.insert(idx, finished_payload);
+        // Return the held payload
         match &payloads[idx].1 {
             PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
+            // We already converted the payload into a finished version
             _ => unreachable!(),
         }
     }
 
+    /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
+    /// The build process will run for the full block building timeslot or until `get_payload` is called
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
@@ -348,6 +358,8 @@ impl Blockchain {
         ));
     }
 
+    /// Build the given payload and keep on rebuilding it until either the time slot
+    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
@@ -359,10 +371,6 @@ impl Blockchain {
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         let mut res = self_clone.build_payload(payload.clone()).await?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
-            info!(
-                "Time remaining in slot: {}secs",
-                SECONDS_PER_SLOT.as_secs() - start.elapsed().as_secs()
-            );
             let payload = payload.clone();
             res = self_clone.build_payload(payload).await?;
         }
