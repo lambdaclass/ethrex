@@ -63,6 +63,10 @@ impl MetricsBlocks {
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
+        if self.block_number.get() <= 0 {
+            return Ok(String::new());
+        }
+
         let r = Registry::new();
 
         r.register(Box::new(self.gas_limit.clone()))
