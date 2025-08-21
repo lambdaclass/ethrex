@@ -2,14 +2,13 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, serde_utils,
+    serde_utils,
     types::{
         BlockHeader, ChainConfig,
-        block_execution_witness::{self, ExecutionWitnessError, ExecutionWitnessResult},
+        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -60,6 +59,7 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
 pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
+    first_block_number: u64,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
     let codes = rpc_witness
         .codes
@@ -78,54 +78,30 @@ pub fn execution_witness_from_rpc_chain_config(
         .map(|header| (header.number, header.clone()))
         .collect::<HashMap<_, _>>();
 
-    let parent_block_number = block_headers
-        .keys()
-        .max()
-        .expect("No block headers found in the RpcExecutionWitness");
+    let parent_number = first_block_number
+        .checked_sub(1)
+        .ok_or(ExecutionWitnessError::Custom(
+            "First block number cannot be zero".to_string(),
+        ))?;
 
-    let parent_header = block_headers
-            .get(parent_block_number)
-            .cloned()
-            .unwrap_or_else(|| panic!("No parent block header found for block {parent_block_number} in the RpcExecutionWitness"));
+    let parent_header = block_headers.get(&parent_number).cloned().ok_or(
+        ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
+    )?;
 
-    let state_trie =
-        block_execution_witness::rebuild_trie(parent_header.state_root, &rpc_witness.state)?;
-
-    // Keys can either be account addresses or storage slots. They have different sizes,
-    // so we filter them by size. The from_slice method panics if the input has the wrong size.
-    let addresses: Vec<Address> = rpc_witness
-        .keys
-        .iter()
-        .filter(|k| k.len() == Address::len_bytes())
-        .map(|k| Address::from_slice(k))
-        .collect();
-
-    let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-        addresses
-            .iter()
-            .filter_map(|addr| {
-                Some((
-                    *addr,
-                    block_execution_witness::rebuild_storage_trie(
-                        addr,
-                        &state_trie,
-                        &rpc_witness.state,
-                    )?,
-                ))
-            })
-            .collect::<Vec<(Address, Trie)>>(),
-    );
-
-    Ok(ExecutionWitnessResult {
+    let mut witness = ExecutionWitnessResult {
         state_trie_nodes: rpc_witness.state,
         keys: rpc_witness.keys,
         codes,
-        state_trie: Some(state_trie),
-        storage_tries: Some(storage_tries),
+        state_trie: None, // `None` because we'll rebuild the tries afterwards
+        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
-    })
+    };
+
+    witness.rebuild_state_trie()?;
+
+    Ok(witness)
 }
 
 pub struct ExecutionWitnessRequest {

@@ -13,30 +13,31 @@ use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
 
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    // TODO: `keys` and `state_trie_nodes` are redundant if `state_trie` and `storage_tries` exist, but these are not directly serializable. (#4023)
-    // Ideally we implement serialization for these and stop needing the first 2 attributes.
     #[serde(
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
+    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
     pub keys: Vec<Bytes>,
     // Rlp encoded state trie nodes
     #[serde(
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
+    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
     pub state_trie_nodes: Vec<Bytes>,
     // Indexed by code hash
     // Used evm bytecodes
@@ -44,14 +45,16 @@ pub struct ExecutionWitnessResult {
         serialize_with = "serialize_code",
         deserialize_with = "deserialize_code"
     )]
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
     pub codes: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub state_trie: Option<Trie>,
-    // Indexed by account
-    // Pruned storage MPT
+    // Storage tries accessed by account address
     #[serde(skip)]
-    pub storage_tries: Option<HashMap<Address, Trie>>,
+    #[rkyv(with = rkyv::with::Skip)]
+    pub storage_tries: HashMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -70,45 +73,28 @@ pub enum ExecutionWitnessError {
     Database(String),
     #[error("No block headers stored, should at least store parent header")]
     NoBlockHeaders,
-    #[error("Parent block header not found for block number {0}")]
-    MissingParentHeader(u64),
+    #[error("Parent block header of block {0} was not found")]
+    MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+    /// Use the state nodes to build the state trie and store them in `self.state_trie`
+    /// This function will fail if the state trie cannot be rebuilt.
+    pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
         let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
-
-        // Keys can either be account addresses or storage slots. They have different sizes,
-        // so we filter them by size. The from_slice method panics if the input has the wrong size.
-        let addresses: Vec<Address> = self
-            .keys
-            .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
-            .collect();
-
-        let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-            addresses
-                .iter()
-                .filter_map(|addr| {
-                    Some((
-                        *addr,
-                        Self::rebuild_storage_trie(addr, &state_trie, &self.state_trie_nodes)?,
-                    ))
-                })
-                .collect::<Vec<(Address, Trie)>>(),
-        );
-
         self.state_trie = Some(state_trie);
-        self.storage_tries = Some(storage_tries);
 
         Ok(())
     }
 
+    /// Helper function to rebuild the storage trie for a given account address
+    /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
         let account_state_rlp = trie.get(&hash_address(address)).ok()??;
@@ -122,12 +108,14 @@ impl ExecutionWitnessResult {
         rebuild_trie(account_state.storage_root, state).ok()
     }
 
+    /// Helper function to apply account updates to the execution witness
+    /// It updates the state trie and storage tries with the given account updates
+    /// Returns an error if the updates cannot be applied
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ExecutionWitnessError> {
-        let (Some(state_trie), Some(storage_tries_map)) =
-            (self.state_trie.as_mut(), self.storage_tries.as_mut())
+        let (Some(state_trie), storage_tries) = (self.state_trie.as_mut(), &mut self.storage_tries)
         else {
             return Err(ExecutionWitnessError::ApplyAccountUpdates(
                 "Tried to apply account updates before rebuilding the tries".to_string(),
@@ -163,10 +151,9 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie =
-                        storage_tries_map.entry(update.address).or_insert_with(|| {
-                            Trie::from_nodes(None, &[]).expect("failed to create empty trie")
-                        });
+                    let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
+                        Trie::from_nodes(None, &[]).expect("failed to create empty trie")
+                    });
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -201,6 +188,8 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
+    /// Returns the root hash of the state trie
+    /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
         let state_trie = self
             .state_trie
@@ -248,15 +237,19 @@ impl ExecutionWitnessResult {
         Ok(None)
     }
 
+    /// Retrieves the parent block header for the specified block number
+    /// Searches within `self.block_headers`
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
     ) -> Result<&BlockHeader, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number.saturating_sub(1))
-            .ok_or(ExecutionWitnessError::MissingParentHeader(block_number))
+            .ok_or(ExecutionWitnessError::MissingParentHeaderOf(block_number))
     }
 
+    /// Retrieves the account info based on what is stored in the state trie.
+    /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
     pub fn get_account_info(
         &self,
         address: Address,
@@ -283,6 +276,8 @@ impl ExecutionWitnessResult {
         }))
     }
 
+    /// Fetches the block hash for a specific block number.
+    /// Looks up `self.block_headers` and computes the hash if it is not already computed.
     pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number)
@@ -294,21 +289,31 @@ impl ExecutionWitnessResult {
             })
     }
 
+    /// Retrieves a storage slot value for an account in its storage trie.
+    ///
+    /// Lazily builds the storage trie for the address if not already available.
+    /// This lazy loading approach minimizes memory usage by only building tries when needed.
     pub fn get_storage_slot(
-        &self,
+        &mut self,
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
-        let storage_tries_map =
-            self.storage_tries
-                .as_ref()
-                .ok_or(ExecutionWitnessError::Database(
-                    "ExecutionWitness: Tried to get storage slot before rebuilding tries"
+        let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
+            storage_trie
+        } else {
+            let Some(state_trie) = self.state_trie.as_ref() else {
+                return Err(ExecutionWitnessError::Database(
+                    "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
                         .to_string(),
-                ))?;
+                ));
+            };
+            let Some(storage_trie) =
+                Self::rebuild_storage_trie(&address, state_trie, &self.state_trie_nodes)
+            else {
+                return Ok(None);
+            };
 
-        let Some(storage_trie) = storage_tries_map.get(&address) else {
-            return Ok(None);
+            self.storage_tries.entry(address).or_insert(storage_trie)
         };
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
@@ -325,10 +330,13 @@ impl ExecutionWitnessResult {
         }
     }
 
+    /// Retrieves the chain configuration for the execution witness.
     pub fn get_chain_config(&self) -> Result<ChainConfig, ExecutionWitnessError> {
         Ok(self.chain_config)
     }
 
+    /// Retrieves the account code for a specific account.
+    /// Returns an Err if the code is not found.
     pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
@@ -357,71 +365,6 @@ where
         seq_serializer.serialize_element(&obj)?;
     }
     seq_serializer.end()
-}
-
-pub fn serialize_storage_tries<S>(
-    map: &Option<HashMap<H160, Vec<Vec<u8>>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(map) = map else {
-        return Err(ser::Error::custom("Storage trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-
-    for (address, keys) in map {
-        let address_hex = format!("0x{}", hex::encode(address));
-        let values_hex: Vec<String> = keys
-            .iter()
-            .map(|v| format!("0x{}", hex::encode(v)))
-            .collect();
-
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            address_hex,
-            serde_json::Value::Array(
-                values_hex
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-
-        seq_serializer.serialize_element(&obj)?;
-    }
-
-    seq_serializer.end()
-}
-
-pub fn deserialize_state<'de, D>(deserializer: D) -> Result<Option<Vec<Vec<u8>>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct HexVecVisitor;
-
-    impl<'de> Visitor<'de> for HexVecVisitor {
-        type Value = Option<Vec<Vec<u8>>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a list of hex-encoded strings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut out = Vec::new();
-            while let Some(s) = seq.next_element::<String>()? {
-                let bytes = decode_hex(&s).map_err(de::Error::custom)?;
-                out.push(bytes);
-            }
-            Ok(Some(out))
-        }
-    }
-
-    deserializer.deserialize_seq(HexVecVisitor)
 }
 
 pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
@@ -470,23 +413,6 @@ where
     deserializer.deserialize_seq(BytesVecVisitor)
 }
 
-pub fn serialize_proofs<S>(
-    state_trie_nodes: &Option<Vec<Vec<u8>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(state_trie_nodes) = state_trie_nodes else {
-        return Err(ser::Error::custom("State trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(state_trie_nodes.len()))?;
-    for encoded_node in state_trie_nodes {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
-    }
-    seq_serializer.end()
-}
-
 fn hash_address(address: &Address) -> Vec<u8> {
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
@@ -522,17 +448,4 @@ pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, Execut
         &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
-}
-
-// This function is an option because we expect it to fail sometimes, and we just want to filter it
-pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
-    let account_state_rlp = trie.get(&hash_address(address)).ok()??;
-
-    let account_state = AccountState::decode(&account_state_rlp).ok()?;
-
-    if account_state.storage_root == *EMPTY_TRIE_HASH {
-        return None;
-    }
-
-    rebuild_trie(account_state.storage_root, state).ok()
 }

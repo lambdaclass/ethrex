@@ -56,7 +56,7 @@ impl RpcBlock {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
-                transactions: body.transactions.iter().map(|t| t.compute_hash()).collect(),
+                transactions: body.transactions.iter().map(|t| t.hash()).collect(),
                 uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
                 withdrawals: body.withdrawals.unwrap_or_default(),
             })
@@ -181,6 +181,7 @@ mod test {
                 ),
                 vec![],
             )],
+            ..Default::default()
         };
 
         let block_body = BlockBody {

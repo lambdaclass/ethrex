@@ -80,7 +80,7 @@ impl Mempool {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                    .remove(hash);
             }
 
             self.txs_by_sender_nonce
@@ -232,6 +232,15 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns all blobs bundles currently in the pool
+    pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
+        let blobs_bundle_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<usize, MempoolError> {
@@ -283,7 +292,7 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.compute_hash())? else {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
 
@@ -321,7 +330,7 @@ impl Mempool {
             return Err(MempoolError::NonceTooLow);
         }
 
-        Ok(Some(tx_in_pool.compute_hash()))
+        Ok(Some(tx_in_pool.hash()))
     }
 }
 
@@ -768,8 +777,8 @@ mod tests {
         let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
         let blob_tx_sender = blob_tx_decoded.sender().unwrap();
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-        let plain_tx_hash = plain_tx.compute_hash();
-        let blob_tx_hash = blob_tx.compute_hash();
+        let plain_tx_hash = plain_tx.hash();
+        let blob_tx_hash = blob_tx.hash();
         let mempool = Mempool::new();
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };

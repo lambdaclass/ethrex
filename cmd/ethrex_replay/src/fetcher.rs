@@ -22,13 +22,13 @@ pub async fn get_blockdata(
     block_number: BlockIdentifier,
     cache_data: bool,
 ) -> eyre::Result<Cache> {
+    let latest_block_number = eth_client.get_block_number().await?.as_u64();
+
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
-        BlockIdentifier::Tag(BlockTag::Latest) => eth_client.get_block_number().await?.as_u64(),
+        BlockIdentifier::Tag(BlockTag::Latest) => latest_block_number,
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
     };
-
-    let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
     info!(
         "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
@@ -216,7 +216,7 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config)
+    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from as u64)
         .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time

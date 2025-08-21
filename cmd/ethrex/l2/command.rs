@@ -284,19 +284,15 @@ impl Command {
                 cfg_if::cfg_if! {
                     if #[cfg(feature = "libmdbx")] {
                         let store_type = EngineType::Libmdbx;
-                    } else if #[cfg(feature = "redb")] {
-                        let store_type = EngineType::RedB;
                     } else {
-                        eyre::bail!("Expected one of libmdbx or redb store engine");
+                        eyre::bail!("Expected libmdbx store engine");
                     }
                 };
                 cfg_if::cfg_if! {
-                    if #[cfg(feature = "rollup_storage_libmdbx")] {
-                        let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::Libmdbx;
-                    } else if #[cfg(feature = "rollup_storage_sql")] {
+                    if #[cfg(feature = "rollup_storage_sql")] {
                         let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
                     } else {
-                        eyre::bail!("Expected one of libmdbx or sql rollup store engine");
+                        eyre::bail!("Expected sql rollup store engine");
                     }
                 };
 
