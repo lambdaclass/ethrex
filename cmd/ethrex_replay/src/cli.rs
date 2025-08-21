@@ -521,9 +521,9 @@ enum SubcommandCache {
     #[command(about = "Proves a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
-        start: u64,
+        start: usize,
         #[arg(help = "Ending block. (Inclusive)")]
-        end: u64,
+        end: usize,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
         #[arg(
@@ -577,14 +577,7 @@ impl SubcommandCache {
                 network,
             } => {
                 let eth_client = EthClient::new(&rpc_url.to_string())?;
-                for block_number in start..=end {
-                    let _ = get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        BlockIdentifier::Number(block_number),
-                    )
-                    .await?;
-                }
+                let _ = get_rangedata(eth_client, network, start, end).await?;
                 info!("Block from {start} to {end} data cached successfully.");
             }
         }
