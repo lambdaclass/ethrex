@@ -124,7 +124,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough space for the StateDiff to run more transactions
         if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
-            > SAFE_BYTES_PER_BLOB
+            > SAFE_BYTES_PER_BLOB as u64
         {
             debug!("No more StateDiff space to run transactions");
             break;
@@ -213,7 +213,7 @@ pub async fn fill_transactions(
         )?;
 
         if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
-            > SAFE_BYTES_PER_BLOB
+            > SAFE_BYTES_PER_BLOB as u64
         {
             debug!(
                 "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
@@ -408,9 +408,9 @@ fn calculate_tx_diff_size(
     merged_diffs: &HashMap<Address, AccountStateDiff>,
     head_tx: &HeadTransaction,
     receipt: &Receipt,
-    privileged_tx_log_len: usize,
-    messages_log_len: usize,
-) -> Result<(usize, usize), BlockProducerError> {
+    privileged_tx_log_len: u64,
+    messages_log_len: u64,
+) -> Result<(u64, u64), BlockProducerError> {
     let mut tx_state_diff_size = 0;
     let mut new_accounts_diff_size = 0;
 
@@ -426,13 +426,13 @@ fn calculate_tx_diff_size(
                 return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
             }
         };
-        new_accounts_diff_size += encoded.len();
+        new_accounts_diff_size += encoded.len() as u64;
     }
 
     if is_privileged_tx(head_tx) {
         tx_state_diff_size += privileged_tx_log_len;
     }
-    tx_state_diff_size += get_block_l1_messages(&[receipt.clone()]).len() * messages_log_len;
+    tx_state_diff_size += get_block_l1_messages(&[receipt.clone()]).len() as u64 * messages_log_len;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))
 }

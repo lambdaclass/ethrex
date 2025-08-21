@@ -18,18 +18,18 @@ use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransacti
 
 lazy_static! {
     /// The serialized length of a default l1message log
-    pub static ref L1MESSAGE_LOG_LEN: usize = L1Message::default().encode().len();
+    pub static ref L1MESSAGE_LOG_LEN: u64 = L1Message::default().encode().len() as u64;
 
     /// The serialized length of a default privileged transaction log
-    pub static ref PRIVILEGED_TX_LOG_LEN: usize = PrivilegedTransactionLog::default().encode().len();
+    pub static ref PRIVILEGED_TX_LOG_LEN: u64 = PrivilegedTransactionLog::default().encode().len() as u64;
 
     /// The serialized lenght of a default block header
-    pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
+    pub static ref BLOCK_HEADER_LEN: u64 = encode_block_header(&BlockHeader::default()).len() as u64;
 }
 
 // State diff size for a simple transfer.
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
-pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
+pub const SIMPLE_TX_STATE_DIFF_SIZE: u64 = 116;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateDiffError {
