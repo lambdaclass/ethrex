@@ -345,7 +345,7 @@ impl Trie {
 
     /// Obtain the encoded node given its path.
     /// Allows usage of full paths (byte slice of 32 bytes) or compact-encoded nibble slices (with length lower than 32)
-    pub fn get_node(&self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
+    pub fn get_node(&self, partial_path: &PathRLP) -> Result<Node, TrieError> {
         // Convert compact-encoded nibbles into a byte slice if necessary
         let partial_path = match partial_path.len() {
             // Compact-encoded nibbles
@@ -353,17 +353,17 @@ impl Trie {
             // Full path (No conversion needed)
             32 => Nibbles::from_bytes(partial_path),
             // We won't handle paths with length over 32
-            _ => return Ok(vec![]),
+            _ => return Err(TrieError::PathTooLong),
         };
 
         fn get_node_inner(
             db: &dyn TrieDB,
             node: Node,
             mut partial_path: Nibbles,
-        ) -> Result<Vec<u8>, TrieError> {
+        ) -> Result<Node, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
-                return Ok(node.encode_raw());
+                return Ok(node);
             }
             match node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
@@ -406,7 +406,7 @@ impl Trie {
                 partial_path,
             )
         } else {
-            Ok(Vec::new())
+            Err(TrieError::InconsistentTree)
         }
     }
 
@@ -463,6 +463,19 @@ impl From<Trie> for ProofTrie {
 }
 
 #[cfg(test)]
+/// Creates a new Trie based on a temporary InMemory DB
+fn new_trie_temp() -> Trie {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+    let map = Arc::new(Mutex::new(hmap));
+    let db = InMemoryTrieDB::new(map);
+    Trie::new(Box::new(db))
+}
+
+#[cfg(test)]
 mod test {
     use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
     use std::sync::Arc;
@@ -476,18 +489,6 @@ mod test {
         prelude::*,
         proptest,
     };
-
-    /// Creates a new Trie based on a temporary InMemory DB
-    fn new_trie_temp() -> Trie {
-        use std::collections::HashMap;
-        use std::sync::Arc;
-        use std::sync::Mutex;
-
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
-        let map = Arc::new(Mutex::new(hmap));
-        let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
-    }
 
     #[test]
     fn compute_hash() {

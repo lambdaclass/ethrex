@@ -72,8 +72,6 @@ impl TrieIterator {
 
 #[cfg(test)]
 mod tests {
-
-    use super::*;
     use proptest::{
         collection::{btree_map, vec},
         prelude::any,
@@ -87,7 +85,7 @@ mod tests {
             (vec![1, 2], vec![5, 6]),
             (vec![2, 7], vec![7, 8]),
         ];
-        let mut trie = Trie::new_temp();
+        let mut trie = crate::new_trie_temp();
         for (path, value) in expected_content.clone() {
             trie.insert(path, value).unwrap()
         }
@@ -99,7 +97,7 @@ mod tests {
         #[test]
         fn proptest_trie_iter_content(data in btree_map(vec(any::<u8>(), 5..100), vec(any::<u8>(), 5..100), 5..100)) {
             let expected_content = data.clone().into_iter().collect::<Vec<_>>();
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for (path, value) in data.into_iter() {
                 trie.insert(path, value).unwrap()
             }

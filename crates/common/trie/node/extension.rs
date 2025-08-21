@@ -185,7 +185,7 @@ impl ExtensionNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Trie, node::LeafNode, pmt_node};
+    use crate::{node::LeafNode, pmt_node};
 
     #[test]
     fn new() {
@@ -197,7 +197,7 @@ mod test {
 
     #[test]
     fn get_some() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -219,7 +219,7 @@ mod test {
 
     #[test]
     fn get_none() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -236,7 +236,7 @@ mod test {
 
     #[test]
     fn insert_passthrough() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -260,7 +260,7 @@ mod test {
 
     #[test]
     fn insert_branch() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -288,7 +288,7 @@ mod test {
 
     #[test]
     fn insert_branch_extension() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -316,7 +316,7 @@ mod test {
 
     #[test]
     fn insert_extension_branch() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -337,7 +337,7 @@ mod test {
 
     #[test]
     fn insert_extension_branch_extension() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
                 0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -358,7 +358,7 @@ mod test {
 
     #[test]
     fn remove_none() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x00] },
@@ -376,7 +376,7 @@ mod test {
 
     #[test]
     fn remove_into_leaf() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x00] },
@@ -394,7 +394,7 @@ mod test {
 
     #[test]
     fn remove_into_extension() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
                 0 => leaf { vec![16] => vec![0x00] },

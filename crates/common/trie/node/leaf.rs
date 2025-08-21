@@ -140,7 +140,7 @@ impl LeafNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Trie, pmt_node};
+    use crate::pmt_node;
 
     #[test]
     fn new() {
@@ -188,7 +188,7 @@ mod test {
 
     #[test]
     fn insert_branch() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -204,7 +204,7 @@ mod test {
 
     #[test]
     fn insert_extension_branch() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -220,7 +220,7 @@ mod test {
 
     #[test]
     fn insert_extension_branch_value_self() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -236,7 +236,7 @@ mod test {
 
     #[test]
     fn insert_extension_branch_value_other() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1, 2, 3, 4, 16] => vec![0x12, 0x34, 0x56, 0x78] }
         };

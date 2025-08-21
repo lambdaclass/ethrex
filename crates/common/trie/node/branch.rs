@@ -257,7 +257,7 @@ mod test {
 
     use super::*;
 
-    use crate::{Trie, pmt_node};
+    use crate::pmt_node;
 
     #[test]
     fn new() {
@@ -295,7 +295,7 @@ mod test {
 
     #[test]
     fn get_some() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -317,7 +317,7 @@ mod test {
 
     #[test]
     fn get_none() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -334,7 +334,7 @@ mod test {
 
     #[test]
     fn insert_self() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -354,7 +354,7 @@ mod test {
 
     #[test]
     fn insert_choice() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -375,7 +375,7 @@ mod test {
 
     #[test]
     fn insert_passthrough() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -403,7 +403,7 @@ mod test {
 
     #[test]
     fn remove_choice_into_inner() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -421,7 +421,7 @@ mod test {
 
     #[test]
     fn remove_choice() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -440,7 +440,7 @@ mod test {
 
     #[test]
     fn remove_choice_into_value() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -457,7 +457,7 @@ mod test {
 
     #[test]
     fn remove_value_into_inner() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -474,7 +474,7 @@ mod test {
 
     #[test]
     fn remove_value() {
-        let trie = Trie::new_temp();
+        let trie = crate::new_trie_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },

@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn verify_range_proof_of_absence() {
-        let mut trie = Trie::new_temp();
+        let mut trie = crate::new_trie_temp();
         trie.insert(vec![0x00, 0x01], vec![0x00]).unwrap();
         trie.insert(vec![0x00, 0x02], vec![0x00]).unwrap();
         trie.insert(vec![0x01; 32], vec![0x00]).unwrap();
@@ -370,7 +370,7 @@ mod tests {
         // The trie will have keys and values ranging from 25-100
         // We will prove the range from 50-75
         // Note values are written as hashes in the form i -> [i;32]
-        let mut trie = Trie::new_temp();
+        let mut trie = crate::new_trie_temp();
         for k in 25..100_u8 {
             trie.insert([k; 32].to_vec(), [k; 32].to_vec()).unwrap()
         }
@@ -430,7 +430,7 @@ mod tests {
             .iter()
             .map(|v| v.0.to_vec())
             .collect::<Vec<_>>();
-        let mut trie = Trie::new_temp();
+        let mut trie = crate::new_trie_temp();
         for val in trie_values.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
@@ -489,7 +489,7 @@ mod tests {
         // Regular Case: Two Edge Proofs, both keys exist
         fn proptest_verify_range_regular_case(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -516,7 +516,7 @@ mod tests {
         fn proptest_verify_range_nonexistant_edge_keys(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize) {
             let data = data.into_iter().collect::<Vec<_>>();
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -554,7 +554,7 @@ mod tests {
         fn proptest_verify_range_one_key_doesnt_exist(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize, first_key_exists in bool::ANY) {
             let data = data.into_iter().collect::<Vec<_>>();
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -594,7 +594,7 @@ mod tests {
         // Special Case: Range contains all the leafs in the trie, no proofs
         fn proptest_verify_range_full_leafset(data in btree_set(vec(any::<u8>(), 32), 100..200)) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -616,7 +616,7 @@ mod tests {
             // Remove the last element so we can use it as key for the proof of non-existance
             let last_element = data.pop_last().unwrap();
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -637,7 +637,7 @@ mod tests {
         // Special Case: One element range
         fn proptest_verify_range_one_element(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -664,7 +664,7 @@ mod tests {
         // Regular Case: Only one edge proof, both keys exist
         fn proptest_verify_range_regular_case_only_one_edge_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -682,7 +682,7 @@ mod tests {
         // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
         fn proptest_verify_range_regular_case_gap_in_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -703,7 +703,7 @@ mod tests {
         // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
         fn proptest_verify_range_regular_case_gap_in_middle_of_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -729,7 +729,7 @@ mod tests {
         // Regular Case: No proofs both keys exist
         fn proptest_verify_range_regular_case_no_proofs(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -749,7 +749,7 @@ mod tests {
             // Fetch the last element so we can use it as key for the proof
             let last_element = data.last().unwrap();
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }
@@ -768,7 +768,7 @@ mod tests {
         // Special Case: One element range (but the proof is of nonexistance)
         fn proptest_verify_range_one_element_bad_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
             // Build trie
-            let mut trie = Trie::new_temp();
+            let mut trie = crate::new_trie_temp();
             for val in data.iter() {
                 trie.insert(val.clone(), val.clone()).unwrap()
             }

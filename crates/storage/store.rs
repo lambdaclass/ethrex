@@ -1020,7 +1020,7 @@ impl Store {
         if paths.len() == 1 {
             // Fetch state trie node
             let node = state_trie.get_node(account_path)?;
-            return Ok(vec![node]);
+            return Ok(vec![node.encode_raw()]);
         }
         // Storage Trie Nodes Request
         let Some(account_state) = state_trie
@@ -1044,7 +1044,7 @@ impl Store {
             if bytes_used >= byte_limit {
                 break;
             }
-            let node = storage_trie.get_node(path)?;
+            let node = storage_trie.get_node(path)?.encode_raw();
             bytes_used += node.len() as u64;
             nodes.push(node);
         }

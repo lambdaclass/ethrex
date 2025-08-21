@@ -15,4 +15,6 @@ pub enum TrieError {
     DbError(anyhow::Error),
     #[error("Wrong Node path")]
     WrongNodePath,
+    #[error("Path too long")]
+    PathTooLong,
 }
