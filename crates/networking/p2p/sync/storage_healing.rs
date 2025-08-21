@@ -284,18 +284,42 @@ pub async fn heal_storage_trie(
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
-        if !is_stale {
-            ask_peers_for_nodes(
-                &mut state.download_queue,
-                &mut state.requests,
-                &mut requests_task_joinset,
-                &state.peer_handler,
-                state.state_root,
-                &mut state.scored_peers,
-                &task_sender,
-            )
-            .await;
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
+            let to_write = nodes_to_write.drain().collect();
+            let store = state.store.clone();
+            if db_joinset.len() > 3 {
+                db_joinset.join_next().await;
+            }
+            db_joinset.spawn_blocking(|| {
+                spawned_rt::tasks::block_on(async move {
+                    store
+                        .write_storage_trie_nodes_batch(to_write)
+                        .await
+                        .expect("db write failed");
+                })
+            });
         }
+
+        if is_done {
+            db_joinset.join_all().await;
+            return true;
+        }
+
+        if is_stale {
+            db_joinset.join_all().await;
+            return false;
+        }
+
+        ask_peers_for_nodes(
+            &mut state.download_queue,
+            &mut state.requests,
+            &mut requests_task_joinset,
+            &state.peer_handler,
+            state.state_root,
+            &mut state.scored_peers,
+            &task_sender,
+        )
+        .await;
 
         let result = requests_task_joinset.try_join_next();
         if let Some(res) = result {
@@ -318,33 +342,36 @@ pub async fn heal_storage_trie(
 
         match trie_nodes_result {
             Ok(trie_nodes) => {
-                if let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
+                let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
                     &mut state.requests,
                     &mut state.scored_peers,
                     &mut state.download_queue,
                     trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
-                ) {
-                    process_node_responses(
-                        &mut nodes_from_peer,
-                        &mut state.download_queue,
-                        state.store.clone(),
-                        state
-                            .membatch
-                            .get_mut()
-                            .expect("We launched the storage healer without a membatch"),
-                        &mut state.leafs_healed,
-                        &mut state.roots_healed,
-                        &mut state.maximum_length_seen,
-                        &mut nodes_to_write,
-                    )
-                    .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
-                } else if state.download_queue.len() < 350 {
-                    info!(
-                        "We received none from zip_requeue_node_responses_score_peer while low download value {trie_nodes:?}"
-                    )
+                ) else {
+                    if state.download_queue.len() < 350 {
+                        info!(
+                            "We received none from zip_requeue_node_responses_score_peer while low download value {trie_nodes:?}"
+                        )
+                    }
+                    continue;
                 };
+
+                process_node_responses(
+                    &mut nodes_from_peer,
+                    &mut state.download_queue,
+                    state.store.clone(),
+                    state
+                        .membatch
+                        .get_mut()
+                        .expect("We launched the storage healer without a membatch"),
+                    &mut state.leafs_healed,
+                    &mut state.roots_healed,
+                    &mut state.maximum_length_seen,
+                    &mut nodes_to_write,
+                )
+                .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
@@ -363,32 +390,6 @@ pub async fn heal_storage_trie(
                         entry.score -= 1;
                     });
             }
-        }
-
-        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
-            let to_write = nodes_to_write.drain().collect();
-            let store = state.store.clone();
-            if db_joinset.len() > 3 {
-                db_joinset.join_next().await;
-            }
-            db_joinset.spawn_blocking(|| {
-                spawned_rt::tasks::block_on(async move {
-                    store
-                        .write_storage_trie_nodes_batch(to_write)
-                        .await
-                        .expect("db write failed");
-                })
-            });
-        }
-
-        if is_done {
-            db_joinset.join_all().await;
-            return true;
-        }
-
-        if is_stale && requests_task_joinset.is_empty() {
-            db_joinset.join_all().await;
-            return false;
         }
     }
 }
