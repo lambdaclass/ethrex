@@ -214,38 +214,3 @@ docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
-
-
-BRANCH ?= snap_sync
-NETWORK ?= hoodi
-
-ifeq ($(NETWORK),hoodi)
-CHECKPOINT_URL = https://hoodi-checkpoint-sync.attestant.io/
-else ifeq ($(NETWORK),sepolia)
-CHECKPOINT_URL = https://checkpoint-sync.sepolia.ethpandaops.io
-else ifeq ($(NETWORK),mainnet)
-CHECKPOINT_URL = https://mainnet-checkpoint-sync.attestant.io
-else
-$(error Unknown network $(NETWORK))
-endif
-
-LOGS_FILE ?= output.log
-
-sync:
-	git fetch --all
-
-	git checkout $(BRANCH)
-
-	git pull
-
-	tmux kill-server || true
-
-	sleep 5
-
-	tmux new-session -d -s sync -n htop "htop"
-
-	tmux new-window -t sync:1 -n lighthouse "echo confirm |  ./lighthouse bn --network $(NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --purge-db "
-
-	sleep 0.2
-
-	tmux new-window -t sync:2 -n ethrex "ulimit -n 65000 && rm -rf ../.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,ethrex_p2p::discv4=off,spawned_concurrency::tasks::gen_server=off $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network $(NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
