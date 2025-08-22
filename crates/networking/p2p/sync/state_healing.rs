@@ -297,7 +297,7 @@ async fn heal_state_trie(
                 .expect("Store Error")
                 .unwrap_or_default();
             println!(
-                "(SUPERLOG) UNFPOPCACHE unfilted_paths {:?}",
+                "(SUPERLOG) UNFPOPCACHE state_root {state_root:?} unfilted_paths {:?}",
                 unfilted_paths
                     .iter()
                     .map(|(path, _)| path)
@@ -411,6 +411,13 @@ async fn heal_state_batch(
         );
         for node in nodes.iter() {
             let path = batch.remove(0);
+            println!(
+                "(SUPERLOG) WRITETODB path {:?}, path.hash {:?}, node.hash {:?}, node {:?}",
+                path.path,
+                path.hash,
+                node.compute_hash().finalize(),
+                node
+            );
             batch.extend(node_missing_children(node, &path.path, trie.db())?);
         }
         println!(
@@ -421,7 +428,7 @@ async fn heal_state_batch(
                 .map(|request_metadata| &request_metadata.path)
                 .collect::<Vec<&Nibbles>>()
         );
-        println!("(SUPERLOG) WRITEDB nodes {:?}", nodes.len());
+        println!("(SUPERLOG) WRITEDB nodes {:?},", nodes.len());
         // Write nodes to trie
         trie.db().put_batch(
             nodes
