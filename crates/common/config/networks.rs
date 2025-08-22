@@ -1,22 +1,28 @@
-use std::{fmt, path::PathBuf};
+use ethrex_p2p::types::Node;
+use std::{
+    fmt::{self},
+    path::PathBuf,
+};
 
 use ethrex_common::types::{Genesis, GenesisError};
-use ethrex_p2p::types::Node;
 
-pub const HOLESKY_GENESIS_CONTENTS: &str = include_str!("networks/holesky/genesis.json");
-const HOLESKY_BOOTNODES: &str = include_str!("networks/holesky/bootnodes.json");
+//TODO: Look for a better place to move these files
+const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
+const HOLESKY_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/holesky/bootnodes.json");
+const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
+const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
 
-pub const SEPOLIA_GENESIS_CONTENTS: &str = include_str!("networks/sepolia/genesis.json");
-const SEPOLIA_BOOTNODES: &str = include_str!("networks/sepolia/bootnodes.json");
-
-pub const HOODI_GENESIS_CONTENTS: &str = include_str!("networks/hoodi/genesis.json");
-const HOODI_BOOTNODES: &str = include_str!("networks/hoodi/bootnodes.json");
-
-pub const MAINNET_GENESIS_CONTENTS: &str = include_str!("networks/mainnet/genesis.json");
-const MAINNET_BOOTNODES: &str = include_str!("networks/mainnet/bootnodes.json");
-
-pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l1-dev.json");
-pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../fixtures/genesis/l2.json");
+pub const MAINNET_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
+pub const HOLESKY_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
+pub const HOODI_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
+pub const SEPOLIA_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str =
+    include_str!("../../../fixtures/genesis/l1-dev.json");
+pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
 #[derive(Debug, Clone)]
 pub enum Network {

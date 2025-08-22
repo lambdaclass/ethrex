@@ -20,6 +20,7 @@ ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true

@@ -493,10 +493,10 @@ impl GenServer for ProofCoordinator {
     type Error = ProofCoordinatorError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ProofCordInMessage::Listen { listener } => {
                 self.handle_listens(listener).await;
@@ -611,10 +611,10 @@ impl GenServer for ConnectionHandler {
     type Error = ProofCoordinatorError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ConnInMessage::Connection { stream, addr } => {
                 if let Err(err) = self.handle_connection(stream).await {

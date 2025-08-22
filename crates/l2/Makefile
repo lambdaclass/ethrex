@@ -16,6 +16,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 init: init-l1-docker deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
+	@echo "✅ localnet successfully stopped"
+
 
 restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts the localnet
 
@@ -30,13 +32,13 @@ ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
-CI_ETHREX_WORKDIR := /usr/local/bin
+DOCKER_ETHREX_WORKDIR := /usr/local/bin
 
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
-ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
-ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
+ethrex_L2_DEV_DB?=dev_ethrex_l2
+ethrex_L1_DEV_DB=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
@@ -57,9 +59,11 @@ PROVER_SRC_FILES := $(shell find prover/src -type f)
 # ==============================================================================
 
 init-l1-docker: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
+	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	docker compose up -d ethrex_l1
 
 down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
+	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	docker compose down ethrex_l1
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -71,10 +75,10 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--http.addr ${L1_RPC_ADDRESS} \
 	--authrpc.port ${L1_AUTH_PORT} \
 	--dev \
-	--datadir ${ethrex_L1_DEV_LIBMDBX}
+	--datadir ${ethrex_L1_DEV_DB}
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
@@ -124,7 +128,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
-	--datadir ${ethrex_L2_DEV_LIBMDBX} \
+	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
@@ -139,9 +143,11 @@ init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	l2 --dev
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
+	L1_RPC_URL=${L1_RPC_URL} \
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
 
 down-metrics: ## 🛑 Shuts down the metrics' containers
+	L1_RPC_URL=${L1_RPC_URL} \
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
@@ -150,7 +156,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -x ethrex || exit 0
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
@@ -213,7 +219,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	# does not exist, the container fails to write to it.
 	touch .env
 	docker compose down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
@@ -227,7 +233,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	# does not exists, the container fails to write to it.
 	touch .env
 	docker compose down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	docker compose up --detach --build
 
@@ -244,7 +250,7 @@ state-diff-test:
 	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 
