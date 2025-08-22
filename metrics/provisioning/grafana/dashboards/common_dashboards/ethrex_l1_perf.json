@@ -455,20 +455,7 @@
           },
           "unit": "Ggas/s"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "gigagas"
-            },
-            "properties": [
-              {
-                "id": "custom.axisSoftMax",
-                "value": 0.5
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -707,20 +694,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Gigagas/s"
+              "options": "Block Time"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "Ggas/s"
-              },
-              {
-                "id": "custom.axisSoftMin",
-                "value": 0
-              },
-              {
-                "id": "custom.axisSoftMax",
-                "value": 0.7
+                "value": "s"
               }
             ]
           }
@@ -758,7 +737,7 @@
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "Gigagas/s"
+                "options": "Gas Used %"
               }
             }
           },
@@ -778,7 +757,7 @@
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "Gas Used %"
+                "options": "Block Time"
               }
             }
           }
@@ -858,7 +837,7 @@
           "useBackend": false
         }
       ],
-      "title": "Gigas/s & Gas Used % by Block",
+      "title": "Block time & Gas Used ",
       "transformations": [
         {
           "id": "calculateField",
@@ -876,6 +855,60 @@
                 "matcher": {
                   "id": "byName",
                   "options": "Gas Limit"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Gas/s",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gigagas/s"
+                }
+              },
+              "operator": "*",
+              "right": {
+                "fixed": "1000000000"
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "include": ["Gigagas/s"],
+              "reducer": "sum"
+            },
+            "window": {
+              "reducer": "mean",
+              "windowAlignment": "trailing",
+              "windowSize": 0.1,
+              "windowSizeMode": "percentage"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Block Time",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gas Used"
+                }
+              },
+              "operator": "/",
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gas/s"
                 }
               }
             },
