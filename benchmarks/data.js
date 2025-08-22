@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755871961364,
+  "lastUpdate": 1755873947317,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9625,6 +9625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162326020745,
             "range": "± 651803446",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f631ce36f9741b3a1fa41d2b38bf353f2a8f74f7",
+          "message": "fix(l1): use proper docker image to spin up localnets. (#4131)\n\n**Motivation**\nWe were using the stable ethrex docker images instead of the one build\nlocally\n\n**Description**\n- Use the local image of ethrex\n- Merge many localnet makefile commands into one\n- Fix passing of `el_extra_params`",
+          "timestamp": "2025-08-22T13:54:07Z",
+          "tree_id": "a30a4d20dab513a3c61ead48faffb10f2315ed74",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f631ce36f9741b3a1fa41d2b38bf353f2a8f74f7"
+        },
+        "date": 1755873931127,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162891630202,
+            "range": "± 404040297",
             "unit": "ns/iter"
           }
         ]
