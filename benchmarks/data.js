@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755896680394,
+  "lastUpdate": 1755899105200,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9835,6 +9835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160918114174,
             "range": "± 455846939",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "be59021bcd607683fccc5b3747ff16f1e53465fc",
+          "message": "chore(l1): add hoodi kurtosis network configuration. (#4031)\n\n**Motivation**\nBeing able to easily spin up a ethrex client that syncs with Hoodi\n\n**Description**\n- Adds network configuration for hoodi\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-08-22T20:55:08Z",
+          "tree_id": "fcf520fe8de13a1734af734e43c38f73b4976427",
+          "url": "https://github.com/lambdaclass/ethrex/commit/be59021bcd607683fccc5b3747ff16f1e53465fc"
+        },
+        "date": 1755899088699,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161726682041,
+            "range": "± 237511714",
             "unit": "ns/iter"
           }
         ]
