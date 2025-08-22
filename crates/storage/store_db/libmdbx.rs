@@ -324,26 +324,39 @@ impl StoreEngine for Store {
 
     async fn purge_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let txn = self
-        .db
-        .begin_readwrite()
-        .map_err(StoreError::LibmdbxError)?;
-        let Some(block_hash) = txn.get::<CanonicalBlockHashes>(block_number).map_err(StoreError::LibmdbxError)? else {
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let Some(block_hash) = txn
+            .get::<CanonicalBlockHashes>(block_number)
+            .map_err(StoreError::LibmdbxError)?
+        else {
             // Block must have been already purged
             txn.commit().map_err(StoreError::LibmdbxError)?;
-            return Ok(())
+            return Ok(());
         };
         let block_hash = block_hash.to()?;
         // Obtain block hash & block body so we can use it to remove receipts & transactions
-        if let Some(block_body) = txn.get::<Bodies>(block_hash.into()).map_err(StoreError::LibmdbxError)? {
+        if let Some(block_body) = txn
+            .get::<Bodies>(block_hash.into())
+            .map_err(StoreError::LibmdbxError)?
+        {
             let block_body = block_body.to()?;
             // Remove transaction location and receipts. Note that if the block was obtained via snap sync these are not guaranteed to exist
-            for (idx, tx_hash) in block_body.transactions.iter().map(|tx| tx.hash()).enumerate() {
-                txn.delete::<TransactionLocations>(tx_hash.into(), None).map_err(StoreError::LibmdbxError)?;
-                txn.delete::<Receipts>((block_hash, idx as u64).into(), None).map_err(StoreError::LibmdbxError)?;
+            for (idx, tx_hash) in block_body
+                .transactions
+                .iter()
+                .map(|tx| tx.hash())
+                .enumerate()
+            {
+                txn.delete::<TransactionLocations>(tx_hash.into(), None)
+                    .map_err(StoreError::LibmdbxError)?;
+                txn.delete::<Receipts>((block_hash, idx as u64).into(), None)
+                    .map_err(StoreError::LibmdbxError)?;
             }
             // Remove body
             txn.delete::<Bodies>(block_hash.into(), None)
-            .map_err(StoreError::LibmdbxError)?;
+                .map_err(StoreError::LibmdbxError)?;
         }
         // Remove block header, hash & number
         txn.delete::<CanonicalBlockHashes>(block_number, None)
@@ -352,7 +365,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         txn.delete::<BlockNumbers>(block_hash.into(), None)
             .map_err(StoreError::LibmdbxError)?;
-        
+
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 

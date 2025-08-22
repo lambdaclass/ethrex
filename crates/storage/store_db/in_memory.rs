@@ -179,9 +179,9 @@ impl StoreEngine for Store {
 
     async fn purge_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let mut store = self.inner()?;
-        let Some(block_hash) = store.canonical_hashes.remove(&block_number)else {
+        let Some(block_hash) = store.canonical_hashes.remove(&block_number) else {
             // Block must have been already purged
-            return Ok(())
+            return Ok(());
         };
         // Obtain block hash & block body so we can use it to remove receipts & transactions
         if let Some(block_body) = store.bodies.remove(&block_hash) {

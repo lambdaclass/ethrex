@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use ethrex::{initializers::load_store, utils::{default_datadir, init_datadir}};
+use ethrex::{
+    initializers::load_store,
+    utils::{default_datadir, init_datadir},
+};
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
@@ -57,17 +60,17 @@ pub async fn main() -> eyre::Result<()> {
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
     if args.blocks_to_keep < MIN_BLOCKS_TO_KEEP {
-        return Err(eyre::ErrReport::msg(
-            format!("Must keep at least {MIN_BLOCKS_TO_KEEP} in store"),
-        ));
+        return Err(eyre::ErrReport::msg(format!(
+            "Must keep at least {MIN_BLOCKS_TO_KEEP} in store"
+        )));
     }
     let data_dir = init_datadir(&args.datadir);
     let store = load_store(&data_dir).await;
     let latest_number = store.get_latest_block_number().await?;
     if latest_number <= args.blocks_to_keep {
-        return Err(eyre::ErrReport::msg(
-            format!("Only have {latest_number} blocks in store, cannot prune"),
-        ));
+        return Err(eyre::ErrReport::msg(format!(
+            "Only have {latest_number} blocks in store, cannot prune"
+        )));
     }
     let last_block_to_prune = latest_number - args.blocks_to_keep;
     let prune_start = Instant::now();
@@ -76,10 +79,16 @@ pub async fn main() -> eyre::Result<()> {
     for block_number in 0..last_block_to_prune {
         if last_show_progress.elapsed() > SHOW_PROGRESS_INTERVAL {
             last_show_progress = Instant::now();
-            info!("Pruned {block_number} blocks, {}% done", (block_number * 100) / last_block_to_prune)
+            info!(
+                "Pruned {block_number} blocks, {}% done",
+                (block_number * 100) / last_block_to_prune
+            )
         }
         store.purge_block(block_number).await?;
     }
-    info!("Succesfully purged {last_block_to_prune} blocks in {}", mseconds_to_readable(prune_start.elapsed().as_millis()));
+    info!(
+        "Succesfully purged {last_block_to_prune} blocks in {}",
+        mseconds_to_readable(prune_start.elapsed().as_millis())
+    );
     Ok(())
 }
