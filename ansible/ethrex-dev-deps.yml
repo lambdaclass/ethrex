@@ -1,0 +1,108 @@
+- name: Ethrex Dev Deps
+  hosts: l1
+  vars:
+    ansible_ssh_user: admin
+    rust_version: "1.88.0"
+    lighthouse_version: "7.0.1"
+
+  tasks:
+    - name: Install Clang and related tools
+      become: true
+      apt:
+        name:
+          - libclang-dev
+          - clang
+          - tmux
+          - rsync
+          - linux-perf
+          - git
+          - pkg-config
+        state: present
+        update_cache: yes
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_architecture }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse
+      become: true
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.config/systemd/user"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Get architecture
+      set_fact:
+        architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+
+    - name: Remove downloads on /tmp
+      file:
+        path: "/tmp/{{ item }}"
+        state: absent
+      loop:
+        - lighthouse
+        - lighthouse-{{ lighthouse_version }}.tar.gz
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.local/share/{{ network  }}_data/"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      vars:
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
+
+    - name: Generate secrets directory
+      file:
+        path: /home/{{ ansible_user }}/secrets
+        state: directory
+        mode: '0755'
+
+
+    - name: Generate JWT secret
+      shell: "openssl rand -hex 32 | tr -d '\n' | tee {{ jwt_path }}"
+      vars:
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
+        jwt_path: "/home/{{ ansible_user }}/secrets/jwt.hex"
+      args:
+        creates: "{{ jwt_path }}"
+
+    - name: Install Rust and Cargo via rustup
+      ansible.builtin.shell: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      args:
+        creates: "/home/{{ ansible_user }}/.cargo/bin/cargo"
+
+    - name: Ensure cargo is in PATH
+      ansible.builtin.shell: |
+        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+      args:
+        creates: "/home/{{ ansible_user }}/.cargo/bin"
+
+    - name: Clone ethrex repository
+      ansible.builtin.git:
+        repo: "https://github.com/lambdaclass/ethrex.git"
+        dest: "/home/{{ ansible_user }}/ethrex"
+        version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"

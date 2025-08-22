@@ -63,6 +63,10 @@ ethrex-l1: ## Installs Ethrex L1
 	BOOTNODES=$(BOOTNODES)
 	ansible-playbook -i inventory.ini ethrex-l1.yml
 
+ethrex-dev-deps: ## Installs Ethrex Dependencies
+	BRANCH=$(BRANCH)
+	ansible-playbook -i inventory.ini ethrex-dev-deps.yml
+
 ethrex-l2: ## Installs Ethrex L2
 	GENESIS_JSON_FILE=$(GENESIS_JSON_FILE)
 	COMMON_BRIDGE_ADDRESS=$(COMMON_BRIDGE_ADDRESS)
