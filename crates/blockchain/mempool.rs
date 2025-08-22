@@ -200,7 +200,7 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
-    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+    pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = self
                 .transaction_pool
@@ -216,7 +216,7 @@ impl Mempool {
             pool_lock.len()
         };
 
-        Ok((txs_size, blobs_size))
+        Ok((txs_size as u64, blobs_size as u64))
     }
 
     /// Returns all transactions currently in the pool
@@ -243,13 +243,13 @@ impl Mempool {
 
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
-    pub fn status(&self) -> Result<usize, MempoolError> {
+    pub fn status(&self) -> Result<u64, MempoolError> {
         let pool_lock = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        Ok(pool_lock.len())
+        Ok(pool_lock.len() as u64)
     }
 
     pub fn contains_sender_nonce(
@@ -646,10 +646,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 99_000_000,
-            to: TxKind::Create,                                  // Create tx
-            value: U256::zero(),                                 // Value zero
-            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE + 1]), // Large init code
-            access_list: Default::default(),                     // No access list
+            to: TxKind::Create,  // Create tx
+            value: U256::zero(), // Value zero
+            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE as usize + 1]), // Large init code
+            access_list: Default::default(), // No access list
             ..Default::default()
         };
 
