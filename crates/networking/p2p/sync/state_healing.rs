@@ -296,8 +296,6 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let mut hashed_addresses = vec![];
-    let mut code_hashes = vec![];
     // For each node:
     // - Add its children to the queue (if we don't have them already)
     // - If it is a leaf, request its bytecode & storage
@@ -307,27 +305,6 @@ async fn heal_state_batch(
         for node in nodes.iter() {
             let path = batch.remove(0);
             batch.extend(node_missing_children(node, &path.path, trie.db())?);
-            if let Node::Leaf(node) = &node {
-                // Fetch bytecode & storage
-                let account = AccountState::decode(&node.value)?;
-                // By now we should have the full path = account hash
-                let path = &path.path.concat(node.partial.clone()).to_bytes();
-                if path.len() != 32 {
-                    // Something went wrong
-                    return Err(SyncError::CorruptPath);
-                }
-                let account_hash = H256::from_slice(path);
-                if account.storage_root != *EMPTY_TRIE_HASH
-                    && !store.contains_storage_node(account_hash, account.storage_root)?
-                {
-                    hashed_addresses.push(account_hash);
-                }
-                if account.code_hash != *EMPTY_KECCACK_HASH
-                    && store.get_account_code(account.code_hash)?.is_none()
-                {
-                    code_hashes.push(account.code_hash);
-                }
-            }
         }
         // Write nodes to trie
         trie.db().put_batch(
@@ -339,20 +316,6 @@ async fn heal_state_batch(
                 })
                 .collect(),
         )?;
-    }
-    // Send storage & bytecode requests
-    if !hashed_addresses.is_empty() {
-        store
-            .set_storage_heal_paths(
-                hashed_addresses
-                    .into_iter()
-                    .map(|hash| (hash, vec![Nibbles::default()]))
-                    .collect(),
-            )
-            .await?;
-    }
-    if !code_hashes.is_empty() {
-        //bytecode_sender.send(code_hashes).await?;
     }
     Ok(batch)
 }
