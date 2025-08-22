@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-20
+
+- Improve blobbasefee opcode [#4092](https://github.com/lambdaclass/ethrex/pull/4092)
+
 ### 2025-08-19
 
 - Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
