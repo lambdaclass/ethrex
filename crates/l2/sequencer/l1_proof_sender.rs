@@ -13,11 +13,11 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use super::{
     configs::AlignedConfig,
-    utils::{get_latest_sent_batch, random_duration, send_verify_tx},
+    utils::{random_duration, send_verify_tx},
 };
 
 use crate::{
@@ -55,7 +55,7 @@ pub struct L1ProofSender {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
-    aligned_sp1_elf_path: String,
+    aligned_mode: bool,
 }
 
 impl L1ProofSender {
@@ -73,7 +73,6 @@ impl L1ProofSender {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
-        let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 
         Ok(Self {
             eth_client,
@@ -86,7 +85,7 @@ impl L1ProofSender {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
-            aligned_sp1_elf_path,
+            aligned_mode: aligned_cfg.aligned_mode,
         })
     }
 
@@ -113,18 +112,17 @@ impl L1ProofSender {
             .map_err(ProofSenderError::GenServerError)
     }
 
-    async fn verify_and_send_proof(&mut self) -> Result<(), ProofSenderError> {
-        let batch_to_send = 1 + get_latest_sent_batch(
-            self.needed_proof_types.clone(),
-            &self.rollup_store,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await
-        .map_err(|err| {
-            error!("Failed to get next batch to send: {err}");
-            ProofSenderError::InternalError(err.to_string())
-        })?;
+    async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
+        let last_verified_batch = self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
+        let batch_to_send = if self.aligned_mode {
+            let last_sent_batch = self.rollup_store.get_latest_sent_batch_proof().await?;
+            std::cmp::max(last_sent_batch, last_verified_batch) + 1
+        } else {
+            last_verified_batch + 1
+        };
 
         let last_committed_batch = self
             .eth_client
@@ -151,16 +149,14 @@ impl L1ProofSender {
         }
 
         if missing_proof_types.is_empty() {
-            // TODO: we should put in code that if the prover is running with Aligned, then there
-            // shouldn't be any other required types.
-            if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
-                self.send_proof_to_aligned(batch_to_send, aligned_proof)
+            if self.aligned_mode {
+                self.send_proof_to_aligned(batch_to_send, proofs.values())
                     .await?;
             } else {
                 self.send_proof_to_contract(batch_to_send, proofs).await?;
             }
             self.rollup_store
-                .set_lastest_sent_batch_proof(batch_to_send)
+                .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
@@ -168,8 +164,9 @@ impl L1ProofSender {
                 .map(|proof_type| format!("{proof_type:?}"))
                 .collect();
             info!(
-                "Missing {} batch proof(s), will not send",
-                missing_proof_types.join(", ")
+                ?missing_proof_types,
+                ?batch_to_send,
+                "Missing batch proof(s), will not send",
             );
         }
 
@@ -177,30 +174,20 @@ impl L1ProofSender {
     }
 
     async fn send_proof_to_aligned(
-        &mut self,
+        &self,
         batch_number: u64,
-        aligned_proof: BatchProof,
+        batch_proofs: impl IntoIterator<Item = &BatchProof>,
     ) -> Result<(), ProofSenderError> {
-        let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
-            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
-        })?;
+        info!(?batch_number, "Sending batch proof(s) to Aligned Layer");
 
-        let verification_data = VerificationData {
-            proving_system: ProvingSystemId::SP1,
-            proof: aligned_proof.proof(),
-            proof_generator_addr: self.signer.address().0.into(),
-            vm_program_code: Some(elf),
-            verification_key: None,
-            pub_input: None,
-        };
+        let fee_estimation = Self::estimate_fee(self).await?;
 
-        let fee_estimation = self.estimate_fee().await?;
-
-        let nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
-            .await
-            .map_err(|err| {
-                ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
-            })?;
+        let mut nonce =
+            get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
+                .await
+                .map_err(|err| {
+                    ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
+                })?;
 
         let Signer::Local(local_signer) = &self.signer else {
             return Err(ProofSenderError::InternalError(
@@ -213,27 +200,64 @@ impl L1ProofSender {
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
 
-        debug!("Sending proof to Aligned");
+        for batch_proof in batch_proofs {
+            let prover_type = batch_proof.prover_type();
+            let proving_system = match prover_type {
+                ProverType::RISC0 => ProvingSystemId::Risc0,
+                ProverType::SP1 => ProvingSystemId::SP1,
+                _ => continue,
+            };
 
-        submit(
-            self.network.clone(),
-            &verification_data,
-            fee_estimation,
-            wallet,
-            nonce,
-        )
-        .await
-        .map_err(|err| {
-            ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
-        })?;
+            info!(?prover_type, ?batch_number, "Submitting proof to Aligned");
 
-        info!("Proof for batch {batch_number} sent to Aligned");
+            let Some(proof) = batch_proof.compressed() else {
+                return Err(ProofSenderError::AlignedWrongProofFormat);
+            };
+
+            let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
+                return Err(ProofSenderError::InternalError(format!(
+                    "no vm_program_code for {prover_type}"
+                )));
+            };
+
+            let pub_input = match prover_type {
+                ProverType::RISC0 => Some(batch_proof.public_values()),
+                ProverType::SP1 => None, // SP1 pub inputs are embedded in the proof
+                _ => continue,
+            };
+
+            let verification_data = VerificationData {
+                proving_system,
+                proof,
+                proof_generator_addr: self.signer.address().0.into(),
+                vm_program_code: Some(vm_program_code),
+                verification_key: None,
+                pub_input,
+            };
+
+            submit(
+                self.network.clone(),
+                &verification_data,
+                fee_estimation,
+                wallet.clone(),
+                nonce,
+            )
+            .await?;
+
+            nonce = nonce
+                .checked_add(1.into())
+                .ok_or(ProofSenderError::InternalError(
+                    "aligned batcher nonce overflow".to_string(),
+                ))?;
+
+            info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
+        }
 
         Ok(())
     }
 
     /// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
-    async fn estimate_fee(&mut self) -> Result<ethers::types::U256, ProofSenderError> {
+    async fn estimate_fee(&self) -> Result<ethers::types::U256, ProofSenderError> {
         for rpc_url in &self.eth_client.urls {
             if let Ok(estimation) =
                 aligned_estimate_fee(rpc_url.as_str(), self.fee_estimate.clone()).await
@@ -247,7 +271,7 @@ impl L1ProofSender {
     }
 
     pub async fn send_proof_to_contract(
-        &mut self,
+        &self,
         batch_number: u64,
         proofs: HashMap<ProverType, BatchProof>,
     ) -> Result<(), ProofSenderError> {
