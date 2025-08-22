@@ -99,12 +99,11 @@ TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
-# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
-# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
-# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
+# Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
+# The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
+# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber, you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
-# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+# The simulation log level can be set using SIM_LOG_LEVEL (from 1 up to 4).
 
 HIVE_CLIENT_FILE := ../fixtures/hive/clients.yml
 
