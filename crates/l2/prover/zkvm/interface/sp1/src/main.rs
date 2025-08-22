@@ -6,8 +6,6 @@ use zkvm_interface::{execution::execution_program, io::ProgramInput};
 sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
-    let start = SystemTime::now();
-
     let input = sp1_zkvm::io::read_vec();
 
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
