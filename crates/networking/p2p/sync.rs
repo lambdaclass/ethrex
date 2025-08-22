@@ -263,7 +263,7 @@ impl Syncer {
                                 self.peers.clone(),
                                 self.cancel_token.clone(),
                             )
-                            .await?
+                            .await?;
                     }
                     BlockSyncState::Snap(ref mut state) => {
                         state.process_incoming_headers(block_headers).await?
@@ -390,15 +390,19 @@ impl Syncer {
             // Discard the first header as we already have it
             block_headers.remove(0);
             if !block_headers.is_empty() {
-                block_sync_state
-                    .process_incoming_headers(
-                        block_headers,
-                        sync_head_found,
-                        self.blockchain.clone(),
-                        self.peers.clone(),
-                        self.cancel_token.clone(),
-                    )
-                    .await?;
+                let mut finished = false;
+                while !finished {
+                    finished = block_sync_state
+                        .process_incoming_headers(
+                            block_headers.clone(),
+                            sync_head_found,
+                            self.blockchain.clone(),
+                            self.peers.clone(),
+                            self.cancel_token.clone(),
+                        )
+                        .await?;
+                    block_headers.clear();
+                }
             }
 
             if sync_head_found {
@@ -575,9 +579,10 @@ impl FullBlockSyncState {
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
-    ) -> Result<(), SyncError> {
+    ) -> Result<bool, SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
+        let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
         //     return Ok(());
@@ -686,7 +691,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        Ok(())
+        Ok(finished)
     }
 }
 

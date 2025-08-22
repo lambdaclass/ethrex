@@ -2,6 +2,7 @@
 members = [
   "cmd/ef_tests/blockchain",
   "cmd/ef_tests/state",
+  "cmd/ef_tests/state_v2",
   "cmd/ethrex",
   "cmd/ethrex_replay",
   "crates/blockchain",
@@ -30,6 +31,7 @@ members = [
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
+  "crates/common/config",
 ]
 resolver = "2"
 
@@ -51,6 +53,7 @@ debug = 2
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-common = { path = "./crates/common" }
+ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }
@@ -90,7 +93,6 @@ jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 cfg-if = "1.0.0"
 reqwest = { version = "0.12.7", features = ["json"] }
-redb = "=2.4.0"
 snap = "1.1.1"
 secp256k1 = { version = "0.29.1", default-features = false, features = [
   "global-context",

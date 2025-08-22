@@ -29,15 +29,11 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
+            AccountRangeUnit, ByteCodes, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::encodable_to_proof,
-    snap_sync::downloader::{
-        Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
-    },
-    utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
+    snap::encodable_to_proof, snap_sync::downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest}, utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -902,6 +898,7 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
+
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });

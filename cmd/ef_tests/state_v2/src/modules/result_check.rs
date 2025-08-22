@@ -15,7 +15,7 @@ use ethrex_storage::Store;
 use ethrex_vm::backends;
 use keccak_hash::{H256, keccak};
 
-use crate::runner_v2::{
+use crate::modules::{
     error::RunnerError,
     types::{AccountState, TestCase, TransactionExpectedException},
 };

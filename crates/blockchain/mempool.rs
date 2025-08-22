@@ -52,19 +52,22 @@ impl Mempool {
     }
 
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
-        let txs = self.transaction_pool.read()
+        let txs = self
+            .transaction_pool
+            .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
-            .and_then(|pool| {
-                Ok(pool.iter()
+            .map(|pool| {
+                pool.iter()
                     .filter_map(|(hash, tx)| {
                         if !self.broadcast_pool.read().ok()?.contains(hash) {
                             None
                         } else {
                             Some(tx.clone())
                         }
-                    }).collect::<Vec<_>>())
+                    })
+                    .collect::<Vec<_>>()
             })?;
-            Ok(txs)
+        Ok(txs)
     }
 
     pub fn clear_broadcasted_txs(&self) {
@@ -234,7 +237,7 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
-    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+    pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = self
                 .transaction_pool
@@ -250,7 +253,7 @@ impl Mempool {
             pool_lock.len()
         };
 
-        Ok((txs_size, blobs_size))
+        Ok((txs_size as u64, blobs_size as u64))
     }
 
     /// Returns all transactions currently in the pool
@@ -266,15 +269,24 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns all blobs bundles currently in the pool
+    pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
+        let blobs_bundle_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
-    pub fn status(&self) -> Result<usize, MempoolError> {
+    pub fn status(&self) -> Result<u64, MempoolError> {
         let pool_lock = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        Ok(pool_lock.len())
+        Ok(pool_lock.len() as u64)
     }
 
     pub fn contains_sender_nonce(
@@ -671,10 +683,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 99_000_000,
-            to: TxKind::Create,                                  // Create tx
-            value: U256::zero(),                                 // Value zero
-            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE + 1]), // Large init code
-            access_list: Default::default(),                     // No access list
+            to: TxKind::Create,  // Create tx
+            value: U256::zero(), // Value zero
+            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE as usize + 1]), // Large init code
+            access_list: Default::default(), // No access list
             ..Default::default()
         };
 

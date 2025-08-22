@@ -2,17 +2,25 @@ use crate::{
     discv4::{
         server::{DiscoveryServer, DiscoveryServerError},
         side_car::{DiscoverySideCar, DiscoverySideCarError},
-    }, kademlia::Kademlia, metrics::METRICS, rlpx::{
+    },
+    kademlia::{Kademlia, PeerData},
+    metrics::METRICS,
+    rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
         l2::l2_connection::P2PBasedContext,
         message::Message,
-    }, tx_broadcaster::{TxBroadcaster, TxBroadcasterError}, types::{Node, NodeRecord}
+        p2p::SUPPORTED_SNAP_CAPABILITIES,
+    },
+    tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
+    types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use std::{
+    collections::BTreeMap,
     io,
     net::SocketAddr,
     sync::Arc,
@@ -170,9 +178,20 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub async fn periodically_show_peer_stats() {
+pub async fn periodically_show_peer_stats(
+    blockchain: Arc<Blockchain>,
+    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+) {
+    periodically_show_peer_stats_during_syncing(blockchain).await;
+    periodically_show_peer_stats_after_sync(peers).await;
+}
+
+pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockchain>) {
     let start = std::time::Instant::now();
     loop {
+        if blockchain.is_synced() {
+            return;
+        }
         let metrics_enabled = *METRICS.enabled.lock().await;
         // Show the metrics only when these are enabled
         if !metrics_enabled {
@@ -416,6 +435,31 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
         );
 
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
+pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H256, PeerData>>>) {
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
+    let mut interval = tokio::time::interval(INTERVAL_DURATION);
+    loop {
+        // clone peers to keep the lock short
+        let peers: Vec<PeerData> = peers.lock().await.values().cloned().collect();
+        let active_peers = peers
+            .iter()
+            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .count();
+        let snap_active_peers = peers
+            .iter()
+            .filter(|peer| -> bool {
+                peer.channels.as_ref().is_some()
+                    && SUPPORTED_SNAP_CAPABILITIES
+                        .iter()
+                        .any(|cap| peer.supported_capabilities.contains(cap))
+            })
+            .count();
+        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        interval.tick().await;
     }
 }
 
