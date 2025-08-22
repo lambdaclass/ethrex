@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755899105200,
+  "lastUpdate": 1755899535269,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9865,6 +9865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161726682041,
             "range": "± 237511714",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64f9d2108006d4d9618dd9bb681237fc7e7ab26f",
+          "message": "ci(l1,l2): fix main_prover_l1 block cache (#4129)\n\n**Motivation**\n\nThe block was not updated with the changes in #3992\n\n**Description**\n\n- update with a new cache file for block\nhttps://hoodi.etherscan.io/block/974567\n\nCloses #4124",
+          "timestamp": "2025-08-22T21:01:38Z",
+          "tree_id": "454a8dbd04618e7df27e231e4d092fe5a2b9ae4f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/64f9d2108006d4d9618dd9bb681237fc7e7ab26f"
+        },
+        "date": 1755899519073,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160587351505,
+            "range": "± 446983880",
             "unit": "ns/iter"
           }
         ]
