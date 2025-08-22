@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755873993521,
+  "lastUpdate": 1755875871705,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9685,6 +9685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162805368767,
             "range": "± 1454466129",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "989f52a638c901029aa26fcda849a6e59c3da054",
+          "message": "chore(l1): metric improvements. (#4118)\n\n**Description**\n- Do not send metrics on initialization since it will show incorrect\nnumbers (block number 0, gas 0, etc..)\n- Filter out profiling metrics that don't come from ethrex (like tokio\nones)\n- Filter profiling metrics to current job",
+          "timestamp": "2025-08-22T14:26:37Z",
+          "tree_id": "c103d4aae7b77172f5988185e93a7d113d1a4abc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/989f52a638c901029aa26fcda849a6e59c3da054"
+        },
+        "date": 1755875855983,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162616001670,
+            "range": "± 442546868",
             "unit": "ns/iter"
           }
         ]
