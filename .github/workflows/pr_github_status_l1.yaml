@@ -1,4 +1,3 @@
-# .github/workflows/set-pr-status.yml
 name: PR Status
 
 on:
@@ -20,7 +19,7 @@ jobs:
     name: Update PR status for ethrex_l1 project
     runs-on: ubuntu-latest
     # sadly pull_request_review doesn't have direct access to labels information so we'll have to check this later.
-    if: github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1')
+    if: github.event.repository.fork == false && (github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1'))
     permissions:
       contents: read
       pull-requests: write
