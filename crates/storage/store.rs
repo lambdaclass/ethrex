@@ -3,8 +3,6 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
-#[cfg(feature = "redb")]
-use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -49,8 +47,6 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
     Libmdbx,
-    #[cfg(feature = "redb")]
-    RedB,
 }
 
 pub struct UpdateBatch {
@@ -76,7 +72,6 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
@@ -92,12 +87,6 @@ impl Store {
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -681,7 +670,7 @@ impl Store {
     pub async fn get_transaction_by_location(
         &self,
         block_hash: BlockHash,
-        index: u64,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine
             .get_transaction_by_location(block_hash, index)
@@ -1471,12 +1460,6 @@ mod tests {
     #[tokio::test]
     async fn test_libmdbx_store() {
         test_store_suite(EngineType::Libmdbx).await;
-    }
-
-    #[cfg(feature = "redb")]
-    #[tokio::test]
-    async fn test_redb_store() {
-        test_store_suite(EngineType::RedB).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)

@@ -17,8 +17,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
-use prometheus::core::AtomicU64;
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, TrieDB, TrieError};
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
 
@@ -56,6 +55,7 @@ pub async fn heal_state_trie_wrap(
     store: Store,
     peers: &PeerHandler,
     staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -65,6 +65,7 @@ pub async fn heal_state_trie_wrap(
             store.clone(),
             peers.clone(),
             staleness_timestamp,
+            global_leafs_healed,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -85,6 +86,7 @@ async fn heal_state_trie(
     store: Store,
     peers: PeerHandler,
     staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -142,16 +144,18 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
                     peers_table_2.len(),
+                    global_leafs_healed,
                     paths.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
                     peers_table.len(),
                     peers_table_2.len(),
+                    global_leafs_healed,
                     paths.len()
                 );
             }
@@ -179,6 +183,10 @@ async fn heal_state_trie(
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(leaf_node)))
                         .count();
+                    *global_leafs_healed += nodes
+                        .iter()
+                        .filter(|node| matches!(node, Node::Leaf(leaf_node)))
+                        .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
                     scores.entry(peer_id).and_modify(|score| {
@@ -258,25 +266,8 @@ async fn heal_state_trie(
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Finished first download, checking the cache of previous downloads");
-            let trie = store.open_state_trie(state_root).expect("Store Error");
-            paths = store
-                .get_state_heal_paths()
-                .await
-                .expect("Store Error")
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(path, _)| trie.get_node(&path.encode_compact()).is_err())
-                .map(|(path, hash)| RequestMetadata { path, hash })
-                .collect();
-            store
-                .set_state_heal_paths(Vec::new())
-                .await
-                .expect("Store Error");
-            if paths.is_empty() {
-                info!("Nothing more to heal found");
-                break;
-            }
+            info!("Nothing more to heal found");
+            break;
         }
 
         // We check with a clock if we are stale
@@ -286,35 +277,7 @@ async fn heal_state_trie(
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Caching {} paths for the next cycle", paths.len());
-            let old_paths: Vec<RequestMetadata> = store
-                .get_state_heal_paths()
-                .await
-                .expect("Store Error")
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(path, hash)| RequestMetadata { path, hash })
-                .collect();
-            info!("We had {} old paths from a previous cycle", old_paths.len());
-            let mut paths_hashmap: HashMap<Nibbles, RequestMetadata> = HashMap::from_iter(
-                old_paths
-                    .into_iter()
-                    .map(|request_metadata| (request_metadata.path.clone(), request_metadata)),
-            );
-
-            for path in paths.clone() {
-                paths_hashmap.insert(path.path.clone(), path);
-            }
-            store
-                .set_state_heal_paths(
-                    paths_hashmap
-                        .values()
-                        .map(|request_metadata| {
-                            (request_metadata.path.clone(), request_metadata.hash)
-                        })
-                        .collect(),
-                )
-                .await?;
+            info!("Finisehd inflight tasks");
             break;
         }
     }
@@ -445,20 +408,42 @@ pub fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    paths.push(RequestMetadata {
-                        hash: child.compute_hash().finalize(),
-                        path: parent_path.append_new(index as u8),
-                    });
+                if child.is_valid() {
+                    match child.get_node(trie_state)? {
+                        Some(node) => {
+                            paths.extend(node_missing_children(
+                                &node,
+                                &parent_path.append_new(index as u8),
+                                trie_state,
+                            )?);
+                        }
+                        None => {
+                            paths.push(RequestMetadata {
+                                hash: child.compute_hash().finalize(),
+                                path: parent_path.append_new(index as u8),
+                            });
+                        }
+                    }
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                paths.push(RequestMetadata {
-                    hash: node.child.compute_hash().finalize(),
-                    path: parent_path.concat(node.prefix.clone()),
-                });
+            if node.child.is_valid() {
+                match node.child.get_node(trie_state)? {
+                    Some(child) => {
+                        paths.extend(node_missing_children(
+                            &child,
+                            &parent_path.concat(node.prefix.clone()),
+                            trie_state,
+                        )?);
+                    }
+                    None => {
+                        paths.push(RequestMetadata {
+                            hash: node.child.compute_hash().finalize(),
+                            path: parent_path.concat(node.prefix.clone()),
+                        });
+                    }
+                }
             }
         }
         _ => {}

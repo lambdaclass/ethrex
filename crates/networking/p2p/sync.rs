@@ -269,7 +269,7 @@ impl Syncer {
                                 self.peers.clone(),
                                 self.cancel_token.clone(),
                             )
-                            .await?
+                            .await?;
                     }
                     BlockSyncState::Snap(ref mut state) => {
                         state.process_incoming_headers(block_headers).await?
@@ -396,15 +396,19 @@ impl Syncer {
             // Discard the first header as we already have it
             block_headers.remove(0);
             if !block_headers.is_empty() {
-                block_sync_state
-                    .process_incoming_headers(
-                        block_headers,
-                        sync_head_found,
-                        self.blockchain.clone(),
-                        self.peers.clone(),
-                        self.cancel_token.clone(),
-                    )
-                    .await?;
+                let mut finished = false;
+                while !finished {
+                    finished = block_sync_state
+                        .process_incoming_headers(
+                            block_headers.clone(),
+                            sync_head_found,
+                            self.blockchain.clone(),
+                            self.peers.clone(),
+                            self.cancel_token.clone(),
+                        )
+                        .await?;
+                    block_headers.clear();
+                }
             }
 
             if sync_head_found {
@@ -581,9 +585,10 @@ impl FullBlockSyncState {
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
-    ) -> Result<(), SyncError> {
+    ) -> Result<bool, SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
+        let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
         //     return Ok(());
@@ -692,7 +697,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        Ok(())
+        Ok(finished)
     }
 }
 
@@ -777,10 +782,10 @@ impl Syncer {
             (pivot_header, staleness_timestamp) =
                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
         }
-
-        let pivot_number = pivot_header.number;
-        let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        debug!(
+            "Selected block {} as pivot for snap sync",
+            pivot_header.number
+        );
 
         let state_root = pivot_header.state_root;
         let account_state_snapshots_dir =
@@ -960,6 +965,7 @@ impl Syncer {
                 let maybe_big_account_storage_state_roots_clone =
                     maybe_big_account_storage_state_roots.clone();
                 let store_clone = store.clone();
+                let pivot_hash_moved = pivot_header.hash();
                 let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                     let store: Store = store_clone;
 
@@ -974,7 +980,7 @@ impl Syncer {
                                 store.clone(),
                                 account_hash,
                                 key_value_pairs,
-                                pivot_hash,
+                                pivot_hash_moved,
                             )
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
@@ -992,8 +998,8 @@ impl Syncer {
                 .iter()
             {
                 let account_state = store
-                    .get_account_state_by_acc_hash(pivot_hash, *account_hash)?
-                    .ok_or(SyncError::AccountState(pivot_hash, *account_hash))?;
+                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
+                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
 
                 if *computed_storage_root != account_state.storage_root {
                     return Err(SyncError::DifferentStateRoots(
@@ -1018,6 +1024,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("Starting Fast Sync");
             let membatch = OnceCell::new();
+            let mut global_state_leafs_healed: u64 = 0;
             membatch.get_or_init(HashMap::new);
             let mut healing_done = false;
             while !healing_done {
@@ -1031,11 +1038,14 @@ impl Syncer {
                     store.clone(),
                     &self.peers,
                     staleness_timestamp,
+                    &mut global_state_leafs_healed,
                 )
                 .await?;
                 if !healing_done {
                     continue;
                 }
+                // Moved temporarily here for testing
+                validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     self.peers.clone(),
@@ -1046,7 +1056,6 @@ impl Syncer {
                 .await;
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
-            validate_state_root(store.clone(), pivot_header.state_root).await;
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
@@ -1077,10 +1086,10 @@ impl Syncer {
             .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
             .await?;
 
-        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
-            .get_block_by_hash(pivot_hash)
+            .get_block_by_hash(pivot_header.hash())
             .await?
             .ok_or(SyncError::CorruptDB)?;
 
@@ -1092,14 +1101,14 @@ impl Syncer {
             .into_iter()
             .rev()
             .enumerate()
-            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
             .collect::<Vec<_>>();
 
         store
             .forkchoice_update(
                 Some(numbers_and_hashes),
-                pivot_number,
-                pivot_hash,
+                pivot_header.number,
+                pivot_header.hash(),
                 None,
                 None,
             )

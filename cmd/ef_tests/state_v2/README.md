@@ -27,7 +27,7 @@ make run-new-runner
 
 This will parse and execute everything in the `./vectors` directory by default.
 
-> You can also run `cargo test --package ef_tests-state --test new_runner --release`
+> You can also run `cargo run --package ef_tests-statev2 --release`
 
 ## Execution options
 In case you do not want to parse and execute everything in the `vectors/` directory there are three flags that can be used to specify files to be run:
@@ -64,9 +64,9 @@ make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"
 
 ## Reports
 For tests that succeded, a report can be found at:
-`cmd/ef_tests/state/runner_v2/success_report.txt`
+`cmd/ef_tests/state_v2/success_report.txt`
 
 For tests that failed, a report can be found at:
-`cmd/ef_tests/state/runner_v2/failure_report.txt`
+`cmd/ef_tests/state_v2/failure_report.txt`
 
 If none of the tests failed the report will not get generated at all. In case any of the tests did fail, the report will show the differences with the expected post state for each failing test case.

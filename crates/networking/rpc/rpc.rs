@@ -1,6 +1,8 @@
 use crate::authentication::authenticate;
+use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
+    blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -9,7 +11,6 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
-use crate::eth::block::ExecutionWitness;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -343,7 +344,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
-        "debug_executionWitness" => ExecutionWitness::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -376,6 +377,7 @@ pub async fn map_engine_requests(
         "engine_getPayloadBodiesByRangeV1" => {
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
+        "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
@@ -509,6 +511,7 @@ mod tests {
                         "cancunTime": 0,
                         "pragueTime": 1718232101,
                         "verkleTime": null,
+                        "osakaTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,

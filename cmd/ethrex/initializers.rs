@@ -1,6 +1,5 @@
 use crate::{
     cli::Options,
-    networks::Network,
     utils::{
         get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
         read_node_config_file,
@@ -8,6 +7,8 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
+
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
     kademlia::Kademlia,
@@ -101,10 +102,8 @@ pub fn open_store(data_dir: &str) -> Store {
         cfg_if::cfg_if! {
             if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
-            } else if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
             } else {
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
         }
@@ -191,7 +190,7 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
-        blockchain,
+        blockchain.clone(),
         get_client_version(),
         based_context,
     );
@@ -200,7 +199,10 @@ pub async fn init_network(
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats());
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+        blockchain,
+        peer_table.peers.clone(),
+    ));
 }
 
 #[cfg(feature = "dev")]

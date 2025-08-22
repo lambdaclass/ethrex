@@ -10,7 +10,8 @@ use ethrex_common::{
     H256,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
@@ -69,7 +70,6 @@ use crate::{
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(20000);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
@@ -78,8 +78,6 @@ pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
-
-pub struct RLPxConnectionState(InnerState);
 
 #[derive(Clone, Debug)]
 pub struct Initiator {
@@ -147,23 +145,6 @@ pub enum InnerState {
     Initiator(Initiator),
     Receiver(Receiver),
     Established(Established),
-}
-
-impl RLPxConnectionState {
-    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Self {
-        Self(InnerState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream: Arc::new(stream),
-        }))
-    }
-
-    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        Self(InnerState::Initiator(Initiator {
-            context,
-            node: node.clone(),
-        }))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -276,7 +257,7 @@ impl GenServer for RLPxConnection {
         message: Self::CastMsg,
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse {
-        if let InnerState::Established(mut established_state) = self.inner_state.clone() {
+        if let InnerState::Established(ref mut established_state) = self.inner_state {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::PeerMessage(message) => {
@@ -284,40 +265,40 @@ impl GenServer for RLPxConnection {
                         &established_state.node,
                         &format!("Received peer message: {message}"),
                     );
-                    handle_peer_message(&mut established_state, message).await
+                    handle_peer_message(established_state, message).await
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received backend message: {message}"),
                     );
-                    handle_backend_message(&mut established_state, message).await
+                    handle_backend_message(established_state, message).await
                 }
                 Self::CastMsg::SendPing => {
-                    send(&mut established_state, Message::Ping(PingMessage {})).await
+                    send(established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes(txs) => {
-                    send_new_pooled_tx_hashes(&mut established_state, txs).await
+                    send_new_pooled_tx_hashes(established_state, txs).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
-                    handle_broadcast(&mut established_state, (id, msg)).await
+                    handle_broadcast(established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
                     log_peer_debug(&established_state.node, "Block Range Update");
-                    handle_block_range_update(&mut established_state).await
+                    handle_block_range_update(established_state).await
                 }
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(&mut established_state).await
+                            l2_connection::send_sealed_batch(established_state).await
                         }
                         L2Cast::BlockBroadcast => {
-                            l2::l2_connection::send_new_block(&mut established_state).await
+                            l2::l2_connection::send_new_block(established_state).await
                         }
                     }
                 }
@@ -347,6 +328,19 @@ impl GenServer for RLPxConnection {
                         );
                         return CastResponse::Stop;
                     }
+                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree)) => {
+                        if established_state.blockchain.is_synced() {
+                            log_peer_error(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        } else {
+                            log_peer_debug(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        }
+                    }
                     _ => {
                         log_peer_warn(
                             &established_state.node,
@@ -355,15 +349,11 @@ impl GenServer for RLPxConnection {
                     }
                 }
             }
-
-            // Update the state
-            self.inner_state = InnerState::Established(established_state);
-            CastResponse::NoReply
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply
         }
+        CastResponse::NoReply
     }
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
@@ -412,20 +402,13 @@ where
 
     state
         .table
-        .set_connected_peer(state.node.clone(), peer_channels)
+        .set_connected_peer(state.node.clone(), peer_channels, state.capabilities.clone())
         .await;
 
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
     send_all_pooled_tx_hashes(state).await?;
-
-    // Periodic broadcast check repeated events.
-    /*send_interval(
-        TX_BROADCAST_INTERVAL,
-        handle.clone(),
-        CastMessage::SendNewPooledTxHashes,
-    );*/
 
     // Periodic Pings repeated events.
     send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
@@ -474,29 +457,28 @@ async fn send_new_pooled_tx_hashes(
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
+        && !txs.is_empty()
     {
-        if !txs.is_empty() {
-            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
-                for tx in tx_chunk {
-                    txs_to_send.push((**tx).clone());
-                    state.broadcasted_txs.insert(tx.hash());
-                }
-
-                send(
-                    state,
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        txs_to_send,
-                        &state.blockchain,
-                    )?),
-                )
-                .await?;
-                log_peer_debug(
-                    &state.node,
-                    &format!("Sent {tx_count} transaction hashes to peer"),
-                );
+        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+            let tx_count = tx_chunk.len();
+            let mut txs_to_send = Vec::with_capacity(tx_count);
+            for tx in tx_chunk {
+                txs_to_send.push((**tx).clone());
+                state.broadcasted_txs.insert(tx.hash());
             }
+
+            send(
+                state,
+                Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                    txs_to_send,
+                    &state.blockchain,
+                )?),
+            )
+            .await?;
+            log_peer_debug(
+                &state.node,
+                &format!("Sent {tx_count} transaction hashes to peer"),
+            );
         }
     }
     Ok(())

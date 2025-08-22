@@ -35,8 +35,7 @@ use crate::{
     snap::encodable_to_proof,
     utils::{
         SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
-        get_account_state_snapshots_dir, get_account_storages_snapshot_file,
-        get_account_storages_snapshots_dir,
+        get_account_storages_snapshot_file,
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -891,6 +890,10 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
+
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -922,10 +925,6 @@ impl PeerHandler {
                         .iter()
                         .map(|unit| AccountState::from(unit.account.clone())),
                 );
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
             }
 
             // Check if any dump account task finished
@@ -1256,6 +1255,11 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
+
                 if remaining_start < remaining_end {
                     tasks_queue_not_started.push_back((remaining_start, remaining_end));
                 } else {
@@ -1279,10 +1283,6 @@ impl PeerHandler {
                 for (i, bytecode) in bytecodes.into_iter().enumerate() {
                     all_bytecodes[start_index + i] = bytecode;
                 }
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
             }
 
             let peer_channels = self
@@ -2072,16 +2072,6 @@ impl PeerHandler {
                 .map_err(RequestStateTrieNodesError::SendMessageError)?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
-            return Err(RequestStateTrieNodesError::InvalidData);
-        }
-
-        // TODO: this scenario respect the spec, and state healing supports receiving partial lists.
-        // Consider removing this block and returning the partial list nodes
-        if nodes.len() < expected_nodes {
-            error!(
-                "A peer is sending less data than we asked for when doing GTN {:?}",
-                nodes.len()
-            );
             return Err(RequestStateTrieNodesError::InvalidData);
         }
 

@@ -37,7 +37,7 @@ impl TxBroadcaster {
             blockchain,
         };
 
-        let mut server = state.clone().start();
+        let server = state.clone().start();
 
         send_interval(
             Duration::from_secs(1),
@@ -76,13 +76,15 @@ impl GenServer for TxBroadcaster {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
+        _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
             Self::CastMsg::BroadcastTxs => {
                 debug!(received = "BroadcastTxs");
 
-                self.broadcast_txs().await;
+                let _ = self.broadcast_txs().await.inspect_err(|_| {
+                    error!("Failed to broadcast transactions");
+                });
 
                 CastResponse::NoReply
             }
