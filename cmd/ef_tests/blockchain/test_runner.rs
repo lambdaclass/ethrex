@@ -91,7 +91,7 @@ pub async fn run_ef_test(
     run(test_key, test, &blockchain, &store).await?;
 
     // Run stateless if backend was specified for this.
-    // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now.
+    // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
         re_run_stateless(blockchain, test, test_key, backend).await?;
     };
@@ -436,7 +436,7 @@ async fn re_run_stateless(
 
     let witness = blockchain.generate_witness_for_blocks(&blocks).await;
     if test_should_fail && witness.is_err() {
-        //TODO: Support generating witness for test that should fail (?) Maybe we don't want to though
+        // We can't generate witness for a test that should fail.
         return Ok(());
     } else if !test_should_fail && witness.is_err() {
         return Err("Failed to create witness for a test that should not fail".into());
