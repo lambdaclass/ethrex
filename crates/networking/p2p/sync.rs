@@ -782,10 +782,10 @@ impl Syncer {
             (pivot_header, staleness_timestamp) =
                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
         }
-
-        let pivot_number = pivot_header.number;
-        let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        debug!(
+            "Selected block {} as pivot for snap sync",
+            pivot_header.number
+        );
 
         let state_root = pivot_header.state_root;
         let account_state_snapshots_dir =
@@ -965,6 +965,7 @@ impl Syncer {
                 let maybe_big_account_storage_state_roots_clone =
                     maybe_big_account_storage_state_roots.clone();
                 let store_clone = store.clone();
+                let pivot_hash_moved = pivot_header.hash();
                 let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                     let store: Store = store_clone;
 
@@ -979,7 +980,7 @@ impl Syncer {
                                 store.clone(),
                                 account_hash,
                                 key_value_pairs,
-                                pivot_hash,
+                                pivot_hash_moved,
                             )
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
@@ -997,8 +998,8 @@ impl Syncer {
                 .iter()
             {
                 let account_state = store
-                    .get_account_state_by_acc_hash(pivot_hash, *account_hash)?
-                    .ok_or(SyncError::AccountState(pivot_hash, *account_hash))?;
+                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
+                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
 
                 if *computed_storage_root != account_state.storage_root {
                     return Err(SyncError::DifferentStateRoots(
@@ -1084,10 +1085,10 @@ impl Syncer {
             .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
             .await?;
 
-        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
-            .get_block_by_hash(pivot_hash)
+            .get_block_by_hash(pivot_header.hash())
             .await?
             .ok_or(SyncError::CorruptDB)?;
 
@@ -1099,14 +1100,14 @@ impl Syncer {
             .into_iter()
             .rev()
             .enumerate()
-            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
             .collect::<Vec<_>>();
 
         store
             .forkchoice_update(
                 Some(numbers_and_hashes),
-                pivot_number,
-                pivot_hash,
+                pivot_header.number,
+                pivot_header.hash(),
                 None,
                 None,
             )
