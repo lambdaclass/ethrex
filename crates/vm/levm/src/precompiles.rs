@@ -12,6 +12,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::elliptic_curve::Field;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -606,9 +607,10 @@ type FirstPointCoordinates = (
 );
 
 /// Parses first point coordinates and makes verification of invalid infinite
-fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
+#[inline]
+fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
+    let first_point_x = &input_data[..32];
+    let first_point_y = &input_data[32..64];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(first_point_x) == U256::zero())
@@ -626,8 +628,10 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
 }
 
 /// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
+///
+/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
 fn parse_second_point_coordinates(
-    input_data: &[u8],
+    input_data: &[u8; 192],
 ) -> Result<
     (
         FieldElement<Degree2ExtensionField>,
@@ -635,8 +639,8 @@ fn parse_second_point_coordinates(
     ),
     VMError,
 > {
-    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::Slicing)?;
-    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
+    let second_point_x_first_part = &input_data[96..128];
+    let second_point_x_second_part = &input_data[64..96];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
@@ -645,8 +649,8 @@ fn parse_second_point_coordinates(
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
-    let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
+    let second_point_y_first_part = &input_data[160..192];
+    let second_point_y_second_part = &input_data[128..160];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
@@ -676,16 +680,23 @@ fn parse_second_point_coordinates(
 }
 
 /// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// continues, verifies errors on the other point or calculates the pairing
-fn handle_pairing_from_coordinates(
+/// verifies errors on the other point returning None or returns the pairing
+#[inline(always)] // called only from one place, so inlining always wont increase code size.
+#[expect(clippy::type_complexity)]
+fn validate_pairing(
     first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
     first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
     second_point_x: FieldElement<Degree2ExtensionField>,
     second_point_y: FieldElement<Degree2ExtensionField>,
-    mul: &mut FieldElement<Degree12ExtensionField>,
-) -> Result<bool, VMError> {
-    let zero_element = BN254FieldElement::from(0);
-    let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+) -> Result<
+    Option<(
+        ShortWeierstrassProjectivePoint<BN254Curve>,
+        ShortWeierstrassProjectivePoint<BN254TwistCurve>,
+    )>,
+    VMError,
+> {
+    let zero_element = BN254FieldElement::zero();
+    let twcurve_zero_element = BN254TwistCurveFieldElement::zero();
     let first_point_is_infinity =
         first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
     let second_point_is_infinity =
@@ -694,26 +705,23 @@ fn handle_pairing_from_coordinates(
     match (first_point_is_infinity, second_point_is_infinity) {
         (true, true) => {
             // If both points are infinity, then continue to the next input
-            Ok(true)
+            Ok(None)
         }
         (true, false) => {
             // If the first point is infinity, then do the checks for the second
-            let p2 = BN254TwistCurve::create_point_from_affine(
-                second_point_x.clone(),
-                second_point_y.clone(),
-            )
-            .map_err(|_| PrecompileError::InvalidPoint)?;
+            let p2 = BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
 
             if !p2.is_in_subgroup() {
                 return Err(PrecompileError::PointNotInSubgroup.into());
             }
-            Ok(true)
+            Ok(None)
         }
         (false, true) => {
             // If the second point is infinity, then do the checks for the first
-            BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+            BN254Curve::create_point_from_affine(first_point_x, first_point_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(true)
+            Ok(None)
         }
         (false, false) => {
             // Define the pairing points
@@ -726,10 +734,7 @@ fn handle_pairing_from_coordinates(
             if !second_point.is_in_subgroup() {
                 return Err(PrecompileError::PointNotInSubgroup.into());
             }
-
-            // Get the result of the pairing and affect the mul value with it
-            update_pairing_result(mul, first_point, second_point)?;
-            Ok(false)
+            Ok(Some((first_point, second_point)))
         }
     }
 }
@@ -747,33 +752,33 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
+    let mut valid_pairs = Vec::new();
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-    for input_index in 0..inputs_amount {
-        // Define the input indexes and slice calldata to get the input data
-        let input_start = input_index
-            .checked_mul(192)
-            .ok_or(InternalError::Overflow)?;
-        let input_end = input_start
-            .checked_add(192)
-            .ok_or(InternalError::Overflow)?;
 
-        let input_data = calldata
-            .get(input_start..input_end)
-            .ok_or(InternalError::Slicing)?;
+    for input in calldata.chunks_exact(192) {
+        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
+        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
 
-        let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
+        let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
 
-        let (second_point_x, second_point_y) = parse_second_point_coordinates(input_data)?;
+        let (second_point_x, second_point_y) = parse_second_point_coordinates(&input)?;
 
-        if handle_pairing_from_coordinates(
-            first_point_x,
-            first_point_y,
-            second_point_x,
-            second_point_y,
-            &mut mul,
-        )? {
-            continue;
+        if let Some(pair) =
+            validate_pairing(first_point_x, first_point_y, second_point_x, second_point_y)?
+        {
+            valid_pairs.push(pair);
         }
+    }
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "library will not panic on mul overflow"
+    )]
+    if !valid_pairs.is_empty() {
+        let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
+        let pairing_result = BN254AtePairing::compute_batch(&batch)
+            .map_err(|_| PrecompileError::BN254AtePairingError)?;
+        mul *= pairing_result;
     }
 
     // Generate the result from the variable mul
@@ -781,22 +786,6 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let mut result = [0; 32];
     result[31] = u8::from(success);
     Ok(Bytes::from(result.to_vec()))
-}
-
-/// Updates the success variable with the pairing result. I allow this clippy alert because lib handles
-/// mul for the type and will not panic in case of overflow
-#[allow(clippy::arithmetic_side_effects)]
-fn update_pairing_result(
-    mul: &mut FieldElement<Degree12ExtensionField>,
-    first_point: ShortWeierstrassProjectivePoint<BN254Curve>,
-    second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
-) -> Result<(), VMError> {
-    let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-        .map_err(|_| PrecompileError::BN254AtePairingError)?;
-
-    *mul *= pairing_result;
-
-    Ok(())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
@@ -917,6 +906,7 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     Ok(Bytes::from(output))
 }
 
+#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
@@ -927,20 +917,20 @@ pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
-    let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
+    let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
+    let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
 
-    let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
+    let result_of_addition = first_g1_point.add(&second_g1_point);
 
-    let result_bytes = if result_of_addition.is_identity().into() {
+    if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
-    } else {
-        result_of_addition.to_uncompressed()
-    };
+    }
 
-    let mut padded_result = Vec::new();
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    let result_bytes = G1Affine::from(result_of_addition).to_uncompressed();
+
+    let mut padded_result = Vec::with_capacity(128);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -959,28 +949,32 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     // Where:
     // s_i are scalars (numbers)
     // P_i are points in the group (in this case, points in G1)
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing,
+        reason = "bounds checked"
+    )]
     for i in 0..k {
-        let point_offset = i
-            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let scalar_offset = point_offset
-            .checked_add(128)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = scalar_offset
-            .checked_add(32)
-            .ok_or(InternalError::Overflow)?;
+        // this operation can't overflow because i < k and  k * BLS12_381_G1_MSM_PAIR_LENGTH = calldata.len()
+        let point_offset = i * BLS12_381_G1_MSM_PAIR_LENGTH;
+        let scalar_offset = point_offset + 128;
+        let pair_end = scalar_offset + 32;
 
-        let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
-        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+        // slicing is ok because pair_end = point_offset + 160 = (k-1) * 160 + 160 = k * 160 = calldata.len()
+        let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
+        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        let scaled_point = G1Projective::mul(point, scalar);
-        result = result.add(&scaled_point);
+        if !bool::from(scalar.is_zero()) {
+            let scaled_point: G1Projective = point * scalar;
+            result += scaled_point;
+        }
     }
     let mut output = [0u8; 128];
 
     if result.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&output));
     }
+
     let result_bytes = G1Affine::from(result).to_uncompressed();
     let (x_bytes, y_bytes) = result_bytes
         .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
@@ -991,6 +985,7 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     Ok(Bytes::copy_from_slice(&output))
 }
 
+#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1000,24 +995,25 @@ pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
-    let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
+    // slices are ok because the len has been validated
+    let first_g2_point = parse_g2_point(&calldata[0..256], true)?;
+    let second_g2_point = parse_g2_point(&calldata[256..512], true)?;
 
-    let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
+    let result_of_addition = first_g2_point.add(&second_g2_point);
 
-    let result_bytes = if result_of_addition.is_identity().into() {
+    if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
-    } else {
-        result_of_addition.to_uncompressed()
-    };
+    }
 
-    let mut padded_result = Vec::new();
+    let result_bytes = G2Affine::from(result_of_addition).to_uncompressed();
+
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1032,22 +1028,28 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
     let mut result = G2Projective::identity();
+
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "bounds checked"
+    )]
     for i in 0..k {
-        let point_offset = i
-            .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let scalar_offset = point_offset
-            .checked_add(256)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = scalar_offset
-            .checked_add(32)
-            .ok_or(InternalError::Overflow)?;
+        // this operation can't overflow because i < k and  k * BLS12_381_G2_MSM_PAIR_LENGTH = calldata.len()
+        let point_offset = i * BLS12_381_G2_MSM_PAIR_LENGTH;
+        let scalar_offset = point_offset + 256;
+        let pair_end = scalar_offset + 32;
 
-        let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
-        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+        // slicing is ok because at the max value of i,
+        // (k-1) * BLS12_381_G2_MSM_PAIR_LENGTH + 256 ≤ k * BLS12_381_G2_MSM_PAIR_LENGTH
+        let point = parse_g2_point(&calldata[point_offset..scalar_offset], false)?;
+        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        let scaled_point = G2Projective::mul(point, scalar);
-        result = result.add(&scaled_point);
+        // skip zero scalars
+        if scalar != Scalar::zero() {
+            let scaled_point: G2Projective = point * scalar;
+            result += scaled_point;
+        }
     }
 
     let result_bytes = if result.is_identity().into() {
@@ -1056,13 +1058,13 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
         G2Affine::from(result).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1078,27 +1080,23 @@ pub fn bls12_pairing_check(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "bounds checked"
+    )]
     for i in 0..k {
-        let g1_point_offset = i
-            .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
-            .ok_or(InternalError::Overflow)?;
-        let g2_point_offset = g1_point_offset
-            .checked_add(128)
-            .ok_or(InternalError::Overflow)?;
-        let pair_end = g2_point_offset
-            .checked_add(256)
-            .ok_or(InternalError::Overflow)?;
+        let g1_point_offset = i * BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
+        let g2_point_offset = g1_point_offset + 128;
+        let pair_end = g2_point_offset + 256;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
         let g1 = G1Affine::from(parse_g1_point(
-            calldata.get(g1_point_offset..g2_point_offset),
+            &calldata[g1_point_offset..g2_point_offset],
             false,
         )?);
-        let g2 = G2Affine::from(parse_g2_point(
-            calldata.get(g2_point_offset..pair_end),
-            false,
-        )?);
+        let g2 = G2Affine::from(parse_g2_point(&calldata[g2_point_offset..pair_end], false)?);
         points.push((g1, G2Prepared::from(g2)));
     }
 
@@ -1127,7 +1125,9 @@ pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<B
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP_TO_G1_COST, gas_remaining)?;
 
-    let coordinate_bytes = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    // PADDED_FIELD_ELEMENT_SIZE_IN_BYTES == BLS12_381_FP_VALID_INPUT_LENGTH, so this slice is ok.
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let coordinate_bytes = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
     let fp = Fp::from_bytes(&coordinate_bytes)
         .into_option()
         .ok_or(ExceptionalHalt::Precompile(
@@ -1145,9 +1145,9 @@ pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<B
         G1Affine::from(point).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    let mut padded_result = Vec::with_capacity(128);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1160,10 +1160,13 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP2_TO_G2_COST, gas_remaining)?;
 
+    // slices are ok because of the previous len check.
     // Parse the input to two Fp and create a Fp2
-    let c0 = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let c0 = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
     let c1 = parse_coordinate(
-        calldata.get(PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH),
+        &calldata[PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH],
     )?;
     let fp_0 = Fp::from_bytes(&c0)
         .into_option()
@@ -1191,46 +1194,54 @@ pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<
         G2Affine::from(point).to_uncompressed()
     };
 
-    let mut padded_result = Vec::new();
+    let mut padded_result = Vec::with_capacity(256);
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
-    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
+    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
 
     Ok(Bytes::from(padded_result))
 }
 
-fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    let padded_coordinate = coordinate_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
-    if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
+/// coordinate raw bytes should have a len of 64
+#[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
+#[inline]
+fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
+    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
+
+    if coordinate_raw_bytes.len() != 64 {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    let unpadded_coordinate = padded_coordinate
-        .get(16..64)
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    unpadded_coordinate
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError.into())
+
+    if coordinate_raw_bytes[0..16] != SIXTEEN_ZEROES {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    #[expect(
+        unsafe_code,
+        reason = "The bounds are confirmed to be correct due to the previous checks."
+    )]
+    unsafe {
+        Ok(coordinate_raw_bytes[16..64].try_into().unwrap_unchecked())
+    }
 }
-fn parse_g1_point(
-    point_raw_bytes: Option<&[u8]>,
-    unchecked: bool,
-) -> Result<G1Projective, VMError> {
-    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
-    let x = parse_coordinate(point_bytes.get(0..64))?;
-    let y = parse_coordinate(point_bytes.get(64..128))?;
+
+/// point_bytes must have atleast 128 bytes.
+#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
+fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
+    if point_bytes.len() != 128 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    let x = parse_coordinate(&point_bytes[0..64])?;
+    let y = parse_coordinate(&point_bytes[64..128])?;
+
+    const ALL_ZERO: [u8; 48] = [0; 48];
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
+    let g1_point: G1Projective = if x == ALL_ZERO && y == ALL_ZERO {
         G1Projective::identity()
     } else {
         let g1_bytes: [u8; 96] = [x, y]
@@ -1267,91 +1278,121 @@ fn parse_g1_point(
     Ok(g1_point)
 }
 
-fn parse_g2_point(
-    point_raw_bytes: Option<&[u8]>,
-    unchecked: bool,
-) -> Result<G2Projective, VMError> {
-    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
-        PrecompileError::ParsingInputError,
-    ))?;
-    let x_0 = parse_coordinate(point_bytes.get(0..64))?;
-    let x_1 = parse_coordinate(point_bytes.get(64..128))?;
-    let y_0 = parse_coordinate(point_bytes.get(128..192))?;
-    let y_1 = parse_coordinate(point_bytes.get(192..256))?;
+/// point_bytes always has atleast 256 bytes
+#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
+fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, VMError> {
+    if point_bytes.len() != 256 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    const ALL_ZERO: [u8; 48] = [0; 48];
+
+    let x_0 = parse_coordinate(&point_bytes[0..64])?;
+    let x_1 = parse_coordinate(&point_bytes[64..128])?;
+    let y_0 = parse_coordinate(&point_bytes[128..192])?;
+    let y_1 = parse_coordinate(&point_bytes[192..256])?;
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g2_point: G2Projective = if x_0.iter().all(|e| *e == 0)
-        && x_1.iter().all(|e| *e == 0)
-        && y_0.iter().all(|e| *e == 0)
-        && y_1.iter().all(|e| *e == 0)
-    {
-        G2Projective::identity()
-    } else {
-        // The crate serialize the coordinates in a reverse order
-        // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-        let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
-            .concat()
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
-        if unchecked {
-            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-            // note that there is no subgroup check for the G1 addition precompile
-            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-                .into_option()
-                .ok_or(ExceptionalHalt::Precompile(
-                    PrecompileError::ParsingInputError,
-                ))?;
-
-            // We still need to check if the point is on the curve
-            if !bool::from(g2_affine.is_on_curve()) {
-                return Err(ExceptionalHalt::Precompile(
-                    PrecompileError::BLS12381G2PointNotInCurve,
-                )
-                .into());
-            }
-
-            G2Projective::from(g2_affine)
+    let g2_point: G2Projective =
+        if x_0 == ALL_ZERO && x_1 == ALL_ZERO && y_0 == ALL_ZERO && y_1 == ALL_ZERO {
+            G2Projective::identity()
         } else {
-            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
-                .into_option()
-                .ok_or(PrecompileError::ParsingInputError)?;
+            // The crate serialize the coordinates in a reverse order
+            // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
+            let mut g2_bytes: [u8; 192] = [0; 192];
+            g2_bytes[0..48].copy_from_slice(&x_1);
+            g2_bytes[48..96].copy_from_slice(&x_0);
+            g2_bytes[96..144].copy_from_slice(&y_1);
+            g2_bytes[144..192].copy_from_slice(&y_0);
 
-            G2Projective::from(g2_affine)
-        }
-    };
+            if unchecked {
+                // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+                // note that there is no subgroup check for the G1 addition precompile
+                let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
+                    .into_option()
+                    .ok_or(ExceptionalHalt::Precompile(
+                        PrecompileError::ParsingInputError,
+                    ))?;
+
+                // We still need to check if the point is on the curve
+                if !bool::from(g2_affine.is_on_curve()) {
+                    return Err(ExceptionalHalt::Precompile(
+                        PrecompileError::BLS12381G2PointNotInCurve,
+                    )
+                    .into());
+                }
+
+                G2Projective::from(g2_affine)
+            } else {
+                let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                    .into_option()
+                    .ok_or(PrecompileError::ParsingInputError)?;
+
+                G2Projective::from(g2_affine)
+            }
+        };
     Ok(g2_point)
 }
 
-fn add_padded_coordinate(
-    result: &mut Vec<u8>,
-    coordinate_raw_bytes: Option<&[u8]>,
-) -> Result<(), VMError> {
+// coordinate_raw_bytes usually has 48 bytes
+#[inline]
+fn add_padded_coordinate(result: &mut Vec<u8>, coordinate_raw_bytes: &[u8]) {
     // add the padding to satisfy the convention of encoding
     // https://eips.ethereum.org/EIPS/eip-2537
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    result.extend_from_slice(&sixteen_zeroes);
-    result.extend_from_slice(coordinate_raw_bytes.ok_or(InternalError::Slicing)?);
-    Ok(())
+    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
+    result.reserve(16 + 48);
+    result.extend_from_slice(&SIXTEEN_ZEROES);
+    result.extend_from_slice(coordinate_raw_bytes);
 }
 
-fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
-    let scalar_bytes: [u8; 32] = scalar_raw_bytes
-        .ok_or(InternalError::Slicing)?
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let mut scalar_le = [0u64; 4];
-    for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
-        let bytes: [u8; 8] = chunk
-            .try_into()
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        if let Some(value) = scalar_le.get_mut(j) {
-            *value = u64::from_be_bytes(bytes);
-        } else {
-            return Err(InternalError::Slicing.into());
-        }
+#[allow(clippy::indexing_slicing, reason = "bounds checked at start")]
+#[inline]
+fn parse_scalar(scalar_bytes: &[u8]) -> Result<Scalar, VMError> {
+    if scalar_bytes.len() != 32 {
+        return Err(PrecompileError::ParsingInputError.into());
     }
-    scalar_le.reverse();
+
+    let scalar_le = [
+        u64::from_be_bytes([
+            scalar_bytes[24],
+            scalar_bytes[25],
+            scalar_bytes[26],
+            scalar_bytes[27],
+            scalar_bytes[28],
+            scalar_bytes[29],
+            scalar_bytes[30],
+            scalar_bytes[31],
+        ]),
+        u64::from_be_bytes([
+            scalar_bytes[16],
+            scalar_bytes[17],
+            scalar_bytes[18],
+            scalar_bytes[19],
+            scalar_bytes[20],
+            scalar_bytes[21],
+            scalar_bytes[22],
+            scalar_bytes[23],
+        ]),
+        u64::from_be_bytes([
+            scalar_bytes[8],
+            scalar_bytes[9],
+            scalar_bytes[10],
+            scalar_bytes[11],
+            scalar_bytes[12],
+            scalar_bytes[13],
+            scalar_bytes[14],
+            scalar_bytes[15],
+        ]),
+        u64::from_be_bytes([
+            scalar_bytes[0],
+            scalar_bytes[1],
+            scalar_bytes[2],
+            scalar_bytes[3],
+            scalar_bytes[4],
+            scalar_bytes[5],
+            scalar_bytes[6],
+            scalar_bytes[7],
+        ]),
+    ];
     Ok(Scalar::from_raw(scalar_le))
 }
