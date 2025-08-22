@@ -2262,6 +2262,8 @@ pub enum PeerHandlerError {
 pub struct RequestMetadata {
     pub hash: H256,
     pub path: Nibbles,
+    /// What node is the parent of this node
+    pub parent_path: Nibbles,
 }
 
 #[derive(Debug, thiserror::Error)]

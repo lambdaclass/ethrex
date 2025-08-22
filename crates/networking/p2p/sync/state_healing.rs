@@ -50,12 +50,19 @@ const MAX_SCORE: i64 = 10;
 
 use super::SyncError;
 
+pub struct MembatchEntryValue {
+    node: Node,
+    children_not_in_storage_count: u64,
+    parent_path: Nibbles,
+}
+
 pub async fn heal_state_trie_wrap(
     state_root: H256,
     store: Store,
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -66,6 +73,7 @@ pub async fn heal_state_trie_wrap(
             peers.clone(),
             staleness_timestamp,
             global_leafs_healed,
+            membatch,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -87,6 +95,7 @@ async fn heal_state_trie(
     peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -99,7 +108,8 @@ async fn heal_state_trie(
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
         hash: state_root,
-        path: Nibbles::default(),
+        path: Nibbles::default(), // We need to be careful, the root parent is a special case
+        parent_path: Nibbles::default(),
     }];
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
@@ -108,6 +118,7 @@ async fn heal_state_trie(
     let mut downloads_success = 0;
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
+    let mut nodes_to_write: Vec<Node> = Vec::new();
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -256,12 +267,15 @@ async fn heal_state_trie(
 
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
-            match heal_state_batch(batch, nodes, store.clone()).await {
-                Ok(return_paths) => paths.extend(return_paths),
-                Err(err) => {
-                    error!("We have found a sync error while trying to write to DB a batch: {err}");
-                }
-            }
+            let return_paths =
+                heal_state_batch(batch, nodes, store.clone(), membatch, &mut nodes_to_write)
+                    .await
+                    .inspect_err(|err| {
+                        error!(
+                            "We have found a sync error while trying to write to DB a batch: {err}"
+                        )
+                    })?;
+            paths.extend(return_paths);
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
@@ -295,29 +309,57 @@ async fn heal_state_batch(
     mut batch: Vec<RequestMetadata>,
     nodes: Vec<Node>,
     store: Store,
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    nodes_to_write: &mut Vec<Node>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    // For each node:
-    // - Add its children to the queue (if we don't have them already)
-    // - If it is a leaf, request its bytecode & storage
-    // - If it is a leaf, add its path & value to the trie
-    {
-        let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
-        for node in nodes.iter() {
-            let path = batch.remove(0);
-            batch.extend(node_missing_children(node, &path.path, trie.db())?);
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    for node in nodes.into_iter() {
+        let path = batch.remove(0);
+        let (missing_children_count, missing_children) =
+            node_missing_children(&node, &path.path, &membatch, trie.db())?;
+        batch.extend(missing_children);
+        if missing_children_count == 0 {
+            commit_node(
+                node,
+                &path.path,
+                &path.parent_path,
+                membatch,
+                nodes_to_write,
+            );
         }
-        // Write nodes to trie
-        trie.db().put_batch(
-            nodes
-                .into_iter()
-                .filter_map(|node| match node.compute_hash() {
-                    hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                    NodeHash::Inline(_) => None,
-                })
-                .collect(),
-        )?;
     }
     Ok(batch)
+}
+
+fn commit_node(
+    node: Node,
+    path: &Nibbles,
+    parent_path: &Nibbles,
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    nodes_to_write: &mut Vec<Node>,
+) {
+    nodes_to_write.push(node);
+
+    if parent_path == path {
+        return; // Case where we're saving the root
+    }
+
+    let mut membatch_entry = membatch
+        .remove(parent_path)
+        .expect("The parent should exist");
+
+    membatch_entry.children_not_in_storage_count -= 1;
+    if membatch_entry.children_not_in_storage_count == 0 {
+        commit_node(
+            membatch_entry.node,
+            parent_path,
+            &membatch_entry.parent_path,
+            membatch,
+            nodes_to_write,
+        );
+    } else {
+        membatch.insert(parent_path.clone(), membatch_entry);
+    }
 }
 
 async fn get_peer_with_highest_score_and_mark_it_as_occupied(
@@ -364,52 +406,66 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
 /// Returns the partial paths to the node's children if they are not already part of the trie state
 pub fn node_missing_children(
     node: &Node,
-    parent_path: &Nibbles,
+    path: &Nibbles,
+    membatch: &HashMap<Nibbles, MembatchEntryValue>,
     trie_state: &dyn TrieDB,
-) -> Result<Vec<RequestMetadata>, TrieError> {
+) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
+    let mut missing_children_count = 0_u64;
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() {
-                    match child.get_node(trie_state)? {
-                        Some(node) => {
-                            paths.extend(node_missing_children(
-                                &node,
-                                &parent_path.append_new(index as u8),
-                                trie_state,
-                            )?);
-                        }
-                        None => {
-                            paths.push(RequestMetadata {
-                                hash: child.compute_hash().finalize(),
-                                path: parent_path.append_new(index as u8),
-                            });
-                        }
-                    }
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                    missing_children_count += 1;
+                    paths.extend(membatch_node_missing_children(
+                        RequestMetadata {
+                            hash: child.compute_hash().finalize(),
+                            path: path.clone().append_new(index as u8),
+                            parent_path: path.clone(),
+                        },
+                        membatch,
+                        trie_state,
+                    )?);
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() {
-                match node.child.get_node(trie_state)? {
-                    Some(child) => {
-                        paths.extend(node_missing_children(
-                            &child,
-                            &parent_path.concat(node.prefix.clone()),
-                            trie_state,
-                        )?);
-                    }
-                    None => {
-                        paths.push(RequestMetadata {
-                            hash: node.child.compute_hash().finalize(),
-                            path: parent_path.concat(node.prefix.clone()),
-                        });
-                    }
-                }
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+                paths.extend(membatch_node_missing_children(
+                    RequestMetadata {
+                        hash: node.child.compute_hash().finalize(),
+                        path: path.concat(node.prefix.clone()),
+                        parent_path: path.clone(),
+                    },
+                    membatch,
+                    trie_state,
+                )?);
             }
         }
         _ => {}
     }
-    Ok(paths)
+    Ok((missing_children_count, paths))
+}
+
+// This function searches for the nodes we have to download that are childs from the membatch
+fn membatch_node_missing_children(
+    node_request: RequestMetadata,
+    membatch: &HashMap<Nibbles, MembatchEntryValue>,
+    trie_state: &dyn TrieDB,
+) -> Result<Vec<RequestMetadata>, TrieError> {
+    if let Some(membatch_entry) = membatch.get(&node_request.path) {
+        if membatch_entry.node.compute_hash().finalize() == node_request.hash {
+            node_missing_children(
+                &membatch_entry.node,
+                &node_request.path,
+                membatch,
+                trie_state,
+            )
+            .map(|(counts, paths)| paths)
+        } else {
+            Ok(vec![node_request])
+        }
+    } else {
+        Ok(vec![node_request])
+    }
 }
