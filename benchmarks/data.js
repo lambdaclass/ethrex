@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755895954084,
+  "lastUpdate": 1755896541065,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9775,6 +9775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183875712288,
             "range": "± 1333767945",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "187a9d806d16b54d822036aa79d4bb6d05dfc62d",
+          "message": "refactor(l2): change usize state diff constants (#4128)\n\n**Motivation**\n\nTo continue enforcing the use of `usize` only when strictly necessary.\n\n**Description**\n\nRefactors the `StateDiff` size calculation to use `u64` constants.\nReplaces `lazy_static` pointers with `u64` constants and adds tests to\nensure the constant is updated with future changes to the `StateDiff`.\n\n\n\nRelated to #4081",
+          "timestamp": "2025-08-22T20:09:25Z",
+          "tree_id": "ace7c4a435142a24f0e0e8dbe968a2ef40893453",
+          "url": "https://github.com/lambdaclass/ethrex/commit/187a9d806d16b54d822036aa79d4bb6d05dfc62d"
+        },
+        "date": 1755896525907,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161424392347,
+            "range": "± 477742334",
             "unit": "ns/iter"
           }
         ]
