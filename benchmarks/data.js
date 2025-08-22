@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755869779512,
+  "lastUpdate": 1755871961364,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9595,6 +9595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161244009700,
             "range": "± 291607957",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27e3bb6b9d9dfd475d7bc52bbcd2aac5150000fa",
+          "message": "ci(l1): skip some internal jobs for external contributions. (#4102)\n\n**Motivation**\nExternal contributors don't have permissions for some things and the\naction fails\n\nCloses #3925",
+          "timestamp": "2025-08-22T13:20:28Z",
+          "tree_id": "ba007736720bb7d2b0168c2545042b7e4b1c1890",
+          "url": "https://github.com/lambdaclass/ethrex/commit/27e3bb6b9d9dfd475d7bc52bbcd2aac5150000fa"
+        },
+        "date": 1755871945480,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162326020745,
+            "range": "± 651803446",
             "unit": "ns/iter"
           }
         ]
