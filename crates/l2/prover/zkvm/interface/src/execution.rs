@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
 
 #[cfg(feature = "l2")]
 use ethrex_common::{
@@ -234,13 +235,34 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    let start = SystemTime::now();
+
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
+    let rebuild_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    println!(
+        "Rebuilt state trie in {}",
+        format_duration(rebuild_duration)
+    );
+
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
+
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
+
+    let chain_config_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    println!(
+        "Got chain config in {}",
+        format_duration(chain_config_duration - rebuild_duration)
+    );
 
     // Validate block hashes, except parent block hash (latest block hash)
     if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
@@ -259,10 +281,21 @@ fn execute_stateless(
                 .number,
         )
         .map_err(StatelessExecutionError::ExecutionWitness)?;
+
+    let parent_block_header_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    println!(
+        "Got parent block header in {}",
+        format_duration(parent_block_header_duration - chain_config_duration)
+    );
+
     let first_block_header = &blocks
         .first()
         .ok_or(StatelessExecutionError::EmptyBatchError)?
         .header;
+
     if parent_block_header.hash() != first_block_header.parent_hash {
         return Err(StatelessExecutionError::InvalidParentBlockHeader);
     }
@@ -271,6 +304,16 @@ fn execute_stateless(
     let initial_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;
+
+    let initial_state_hash_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    println!(
+        "Got initial state trie root hash: {}",
+        format_duration(parent_block_header_duration - initial_state_hash_duration)
+    );
+
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
@@ -290,23 +333,67 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
+        let validate_block_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Validated block {} in {}",
+            block.header.number,
+            format_duration(validate_block_duration - initial_state_hash_duration) // TODO: This is right only for the first block
+        );
+
         // Execute block
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
+
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
+
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
+
+        let execution_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Executed block {} in {}",
+            block.header.number,
+            format_duration(execution_duration - validate_block_duration)
+        );
+
         let receipts = result.receipts;
+
         let account_updates = vm
             .get_state_transitions()
             .map_err(StatelessExecutionError::EvmError)?;
+
+        let account_updates_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Got account updates for block {} in {}",
+            block.header.number,
+            format_duration(account_updates_duration - execution_duration)
+        );
 
         // Update db for the next block
         wrapped_db
             .apply_account_updates(&account_updates)
             .map_err(StatelessExecutionError::ExecutionWitness)?;
+
+        let apply_updates_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Applied account updates for block {} in {}",
+            block.header.number,
+            format_duration(apply_updates_duration - account_updates_duration)
+        );
 
         // Update acc_account_updates
         for account in account_updates {
@@ -318,30 +405,90 @@ fn execute_stateless(
             }
         }
 
+        let merge_updates_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Merged account updates for block {} in {}",
+            block.header.number,
+            format_duration(merge_updates_duration - apply_updates_duration)
+        );
+
         non_privileged_count += block.body.transactions.len()
             - get_block_privileged_transactions(&block.body.transactions).len();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
+
+        let validate_gas_used_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Validated gas used for block {} in {}",
+            block.header.number,
+            format_duration(validate_gas_used_duration - merge_updates_duration)
+        );
+
         validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+
+        let validate_receipts_root_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Validated receipts root for block {} in {}",
+            block.header.number,
+            format_duration(validate_receipts_root_duration - validate_gas_used_duration)
+        );
+
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
         validate_requests_hash(&block.header, &chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
+
+        let validate_requests_root_duration = start.elapsed().unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+        println!(
+            "Validated requests root for block {} in {}",
+            block.header.number,
+            format_duration(validate_requests_root_duration - validate_receipts_root_duration)
+        );
+
         parent_block_header = &block.header;
+
         acc_receipts.push(receipts);
     }
+
+    let validate_blocks_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
 
     // Calculate final state root hash and check
     let last_block = blocks
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
+
     let last_block_state_root = last_block.header.state_root;
 
     let last_block_hash = last_block.header.hash();
+
     let final_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;
+
+    let final_state_hash_duration = start.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    println!(
+        "Got final state trie root hash: {}",
+        format_duration(final_state_hash_duration - validate_blocks_duration)
+    );
+
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
@@ -412,4 +559,17 @@ fn verify_blob(
     }
 
     Ok(kzg_commitment_to_versioned_hash(&commitment))
+}
+
+pub fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }
