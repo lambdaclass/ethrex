@@ -38,7 +38,7 @@ use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
-use std::{cell::OnceCell, ops::Mul};
+use std::ops::Mul;
 
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
@@ -681,6 +681,7 @@ fn parse_second_point_coordinates(
 /// Handles pairing given a certain elements, and depending on if elements represent infinity, then
 /// verifies errors on the other point returning None or returns the pairing
 #[inline(always)] // called only from one place, so inlining always wont increase code size.
+#[expect(clippy::type_complexity)]
 fn validate_pairing(
     first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
     first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
@@ -754,10 +755,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
 
     for input in calldata.chunks_exact(192) {
-        #[expect(
-            unsafe_code,
-            reason = "chunks_exact ensures the conversion is valid"
-        )]
+        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
 
         let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
