@@ -79,22 +79,42 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain_type = BlockchainType::L1;
+    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1);
 
-    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
+    // Run stateless if backend was specified for this.
+    if let Some(backend) = stateless_backend {
+        run_stateless(blockchain, test, test_key, backend).await
+    } else {
+        run(test_key, test, &blockchain, &store).await
+    }
+}
+
+// Helper: run the EF test blocks and verify poststate
+async fn run(
+    test_key: &str,
+    test: &TestUnit,
+    blockchain: &Blockchain,
+    store: &Store,
+) -> Result<(), String> {
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
+
         if exception_in_rlp_decoding(block_fixture) {
+            // This mirrors the original early return behavior.
             return Ok(());
         }
 
         // Won't panic because test has been validated
-        let block: &CoreBlock = &block_fixture.block().unwrap().clone().into();
-        let hash = block.hash();
+        // Hold an owned CoreBlock to avoid borrowing a temporary across .await
+        let block_owned: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let block_ref: &CoreBlock = &block_owned;
+
+        let hash = block_ref.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block).await;
+        let chain_result = blockchain.add_block(block_ref).await;
+
         match chain_result {
             Err(error) => {
                 if !expects_exception {
@@ -108,6 +128,7 @@ pub async fn run_ef_test(
                         "Returned exception {error:?} does not match expected {expected_exception:?}",
                     ));
                 }
+                // Expected exception matched — stop processing further blocks of this test.
                 break;
             }
             Ok(_) => {
@@ -117,16 +138,14 @@ pub async fn run_ef_test(
                         block_fixture.expect_exception.clone()
                     ));
                 }
+                // Advance fork choice to the new head
                 apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
+
+    // Final post-state verification
     check_poststate_against_db(test_key, test, &store).await;
-    if let Some(backend) = stateless_backend {
-        if evm == EvmEngine::LEVM {
-            re_run_stateless(blockchain, test, test_key, backend).await?;
-        }
-    };
     Ok(())
 }
 
@@ -396,7 +415,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     // State root was alredy validated by `add_block``
 }
 
-async fn re_run_stateless(
+async fn run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
