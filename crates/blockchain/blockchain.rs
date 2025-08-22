@@ -73,9 +73,9 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 
-fn log_batch_progress(batch_size: usize, current_block: usize) {
+fn log_batch_progress(batch_size: u32, current_block: u32) {
     let progress_needed = batch_size > 10;
-    const PERCENT_MARKS: [usize; 4] = [20, 40, 60, 80];
+    const PERCENT_MARKS: [u32; 4] = [20, 40, 60, 80];
     if progress_needed {
         PERCENT_MARKS.iter().for_each(|mark| {
             if (batch_size * mark) / 100 == current_block {
@@ -529,7 +529,8 @@ impl Blockchain {
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
 
-            log_batch_progress(blocks_len, i);
+            // Conversion is safe because EXECUTE_BATCH_SIZE=1024
+            log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;
         }
 
@@ -719,12 +720,12 @@ impl Blockchain {
         // Check init code size
         if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
-            && tx.data().len() > MAX_INITCODE_SIZE
+            && tx.data().len() > MAX_INITCODE_SIZE as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE as usize {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
@@ -993,8 +994,8 @@ pub fn validate_gas_used(
 // Perform validations over the block's blob gas usage.
 // Must be called only if the block has cancun activated
 fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
-    let mut blob_gas_used = 0_u64;
-    let mut blobs_in_block = 0_u64;
+    let mut blob_gas_used = 0_u32;
+    let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
         .get_fork_blob_schedule(block.header.timestamp)
         .map(|schedule| schedule.max)
@@ -1004,7 +1005,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u64;
+            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
         }
     }
     if blob_gas_used > max_blob_gas_per_block {
@@ -1020,7 +1021,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     if block
         .header
         .blob_gas_used
-        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used)
+        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used as u64)
     {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::BlobGasUsedMismatch,
@@ -1030,8 +1031,8 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 }
 
 /// Calculates the blob gas required by a transaction
-fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
-    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
+fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
+    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex:unstable .
+	docker build -t ethrex .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -62,34 +62,16 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
+LOCALNET_CONFIG_FILE ?= ./fixtures/network/network_params.yaml
+
+hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex exchanges with the consensus client
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
-	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
-
-localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
-
-localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_ethrex_only.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
-
-localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_multiple_cl.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
-
-localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 stop-localnet: ## 🛑 Stop local network
