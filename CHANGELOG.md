@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-22
+
+- Improve ecpairing (bn128) precompile [#4130](https://github.com/lambdaclass/ethrex/pull/4130)
+
 ### 2025-08-19
 
 - Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
