@@ -135,7 +135,7 @@ impl Syncer {
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
@@ -516,12 +516,13 @@ impl FullBlockSyncState {
     /// An incomplete batch may be executed if the sync_head was already found
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        mut block_headers: Vec<BlockHeader>,
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
+        let sync_head_header = block_headers.pop().unwrap();
         self.current_headers.extend(block_headers);
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
@@ -546,6 +547,12 @@ impl FullBlockSyncState {
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
+        self.current_blocks.push(
+            self.store
+                .get_pending_block(sync_head_header.hash())
+                .await?
+                .unwrap(),
+        );
         // Execute full blocks
         while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
             || (!self.current_blocks.is_empty() && sync_head_found)
@@ -572,7 +579,7 @@ impl FullBlockSyncState {
             // Run the batch
             if let Err((err, batch_failure)) = Syncer::add_blocks(
                 blockchain.clone(),
-                block_batch,
+                block_batch.clone(),
                 sync_head_found,
                 cancel_token.clone(),
             )
@@ -580,6 +587,25 @@ impl FullBlockSyncState {
             {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
+                    let blocks_with_invalid_ancestor: Vec<Block> = block_batch[block_batch
+                        .iter()
+                        .position(|x| x.hash() == batch_failure.failed_block_hash)
+                        .unwrap()
+                        as usize..]
+                        .to_vec();
+
+                    for block in blocks_with_invalid_ancestor {
+                        self.store
+                            .set_latest_valid_ancestor(block.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
+
+                    for header in self.current_headers.clone() {
+                        self.store
+                            .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
+
                     self.store
                         .set_latest_valid_ancestor(
                             batch_failure.failed_block_hash,
