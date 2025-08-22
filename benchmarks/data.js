@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755884766568,
+  "lastUpdate": 1755886670901,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9715,6 +9715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162616001670,
             "range": "± 442546868",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "618c6d78af24c595a2fa264473147a0cb5bed3d0",
+          "message": "feat(l1,l2): add new commands to execution witness (#4107)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Add a new command to run multiple blocks, they don't necessarily need\nto be one after the other. They can be arbitrary blocks like\n`23213112,23214317,23121300`\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-08-22T17:22:43Z",
+          "tree_id": "fd7ba42234b6a6d8b0b5389fb633e00ae8ca24d4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/618c6d78af24c595a2fa264473147a0cb5bed3d0"
+        },
+        "date": 1755886655665,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162284574374,
+            "range": "± 312434796",
             "unit": "ns/iter"
           }
         ]
