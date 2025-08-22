@@ -1,6 +1,21 @@
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
+mod bench;
+mod cache;
+mod cli;
+mod fetcher;
+mod plot_composition;
+mod rpc;
+mod run;
+
+#[cfg(feature = "jemalloc")]
+use jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 #[tokio::main]
 async fn main() {
     let log_filter = tracing_subscriber::EnvFilter::builder()

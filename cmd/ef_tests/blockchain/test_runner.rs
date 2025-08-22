@@ -418,7 +418,7 @@ async fn re_run_stateless(
 
     let program_input = ProgramInput {
         blocks,
-        db: witness,
+        pre_execution_state: ethrex_vm::prover_db::PreExecutionState::Witness(Box::new(witness)),
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };

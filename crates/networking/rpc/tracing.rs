@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::{rpc::RpcHandler, utils::RpcErr};
 
 /// Default max amount of blocks to re-excute if it is not given
-const DEFAULT_REEXEC: usize = 128;
+const DEFAULT_REEXEC: u32 = 128;
 /// Default max amount of time to spend tracing a transaction (doesn't take into account state rebuild time)
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -33,7 +33,7 @@ struct TraceConfig {
     #[serde(default, with = "serde_utils::duration::opt")]
     timeout: Option<Duration>,
     #[serde(default)]
-    reexec: Option<usize>,
+    reexec: Option<u32>,
 }
 
 #[derive(Default, Deserialize)]

@@ -31,6 +31,7 @@ cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
 sha3.workspace = true
+rkyv.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"

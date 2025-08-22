@@ -1,21 +1,28 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
+use ethrex_config::networks::Network;
+use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
+    clients::{EthClientError, eth::errors::GetWitnessError},
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
+use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
-use crate::cache::{Cache, L2Fields, load_cache, write_cache};
-use ethrex_config::networks::Network;
+use crate::{
+    cache::{Cache, L2Fields, load_cache, write_cache},
+    rpc::db::RpcDB,
+};
 
 pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    l2: bool,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
@@ -49,32 +56,6 @@ pub async fn get_blockdata(
         ));
     }
 
-    info!("Getting execution witness from RPC for block {requested_block_number}");
-
-    let execution_witness_retrieval_start_time = SystemTime::now();
-
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => {
-            execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
-                .expect("Failed to convert witness")
-        }
-        Err(e) => {
-            error!("{e}");
-            todo!("Retry with eth_getProofs")
-        }
-    };
-
-    let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
-        .elapsed()
-        .unwrap_or_else(|e| {
-            panic!("SystemTime::elapsed failed: {e}");
-        });
-
-    info!(
-        "Got execution witness for block {requested_block_number} in {}",
-        format_duration(execution_witness_retrieval_duration)
-    );
-
     info!("Getting block data from RPC for block {requested_block_number}");
 
     let block_retrieval_start_time = SystemTime::now();
@@ -92,11 +73,81 @@ pub async fn get_blockdata(
         format_duration(block_retrieval_duration)
     );
 
+    info!("Getting execution witness from RPC for block {requested_block_number}");
+
+    let execution_witness_retrieval_start_time = SystemTime::now();
+
+    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+        Ok(witness) => {
+            execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
+                .expect("Failed to convert witness")
+        }
+        Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
+            warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
+
+            let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+
+            let rpc_db = RpcDB::with_cache(
+                eth_client.urls.first().unwrap().as_str(),
+                chain_config,
+                (requested_block_number - 1).try_into()?,
+                &block,
+                vm_type,
+            )
+            .await
+            .wrap_err("failed to create rpc db")?;
+            let db = rpc_db
+                .to_prover_db(&block)
+                .wrap_err("failed to build execution db")?;
+            let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+                .elapsed()
+                .unwrap_or_else(|e| {
+                    panic!("SystemTime::elapsed failed: {e}");
+                });
+
+            info!(
+                "Got execution witness for block {requested_block_number} in {}",
+                format_duration(execution_witness_retrieval_duration)
+            );
+
+            info!("Caching block {requested_block_number}");
+
+            let block_cache_start_time = SystemTime::now();
+
+            let cache = Cache::new(vec![block], PreExecutionState::DB(Box::new(db)));
+
+            write_cache(&cache, &file_name).expect("failed to write cache");
+
+            let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
+                panic!("SystemTime::elapsed failed: {e}");
+            });
+
+            info!(
+                "Cached block {requested_block_number} in {}",
+                format_duration(block_cache_duration)
+            );
+
+            return Ok(cache);
+        }
+        Err(e) => panic!("Unexpected response from get_witness: {e}"),
+    };
+
+    let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+        .elapsed()
+        .unwrap_or_else(|e| {
+            panic!("SystemTime::elapsed failed: {e}");
+        });
+
+    info!(
+        "Got execution witness for block {requested_block_number} in {}",
+        format_duration(execution_witness_retrieval_duration)
+    );
+
     info!("Caching block {requested_block_number}");
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], witness);
+    let cache = Cache::new(vec![block], PreExecutionState::Witness(Box::new(witness)));
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -181,7 +232,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, witness);
+    let cache = Cache::new(blocks, PreExecutionState::Witness(Box::new(witness)));
 
     Ok(cache)
 }
