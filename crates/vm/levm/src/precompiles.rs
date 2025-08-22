@@ -756,7 +756,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     for input in calldata.chunks_exact(192) {
         #[expect(
             unsafe_code,
-            reason = "chunks_exact by ensures the conversion is valid"
+            reason = "chunks_exact ensures the conversion is valid"
         )]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
 
