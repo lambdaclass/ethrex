@@ -177,6 +177,26 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    async fn purge_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        let Some(block_hash) = store.canonical_hashes.remove(&block_number)else {
+            // Block must have been already purged
+            return Ok(())
+        };
+        // Obtain block hash & block body so we can use it to remove receipts & transactions
+        if let Some(block_body) = store.bodies.remove(&block_hash) {
+            // Remove transaction location and receipts. Note that if the block was obtained via snap sync these are not guaranteed to exist
+            for tx_hash in block_body.transactions.iter().map(|tx| tx.hash()) {
+                store.transaction_locations.remove(&tx_hash);
+            }
+            store.receipts.remove(&block_hash);
+        }
+        // Remove block header & number
+        store.headers.remove(&block_hash);
+        store.block_numbers.remove(&block_hash);
+        Ok(())
+    }
+
     async fn get_block_bodies(
         &self,
         from: BlockNumber,

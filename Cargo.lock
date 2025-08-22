@@ -8565,6 +8565,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
 
 [[package]]
+name = "prune-blocks"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.40",
+ "clap_complete",
+ "ethrex",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "eyre",
+ "hex",
+ "keccak-hash",
+ "lazy_static",
+ "reqwest 0.12.20",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "ptr_meta"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

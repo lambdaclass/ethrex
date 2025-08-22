@@ -1,0 +1,23 @@
+[package]
+name = "prune-blocks"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lazy_static.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethrex-rpc.workspace = true
+keccak-hash.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+clap = { workspace = true, features = ["string"] }
+clap_complete.workspace = true
+eyre.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+ethrex.workspace = true

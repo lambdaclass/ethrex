@@ -53,6 +53,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Remove canonical block
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
+    /// Removes Block and all asociated data (receipts, transaction locations, etc)
+    /// Doesn't fail if the block doesn't exist or has missing data
+    async fn purge_block(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+
     /// Obtain canonical block bodies in from..=to
     async fn get_block_bodies(
         &self,
