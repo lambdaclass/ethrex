@@ -23,6 +23,7 @@ use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::cell::OnceCell;
+use std::process::exit;
 use std::{
     array,
     cmp::min,
@@ -1032,6 +1033,8 @@ impl Syncer {
                 if !healing_done {
                     continue;
                 }
+                validate_state_root(store.clone(), pivot_header.state_root).await;
+                exit(0);
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     self.peers.clone(),
@@ -1042,7 +1045,6 @@ impl Syncer {
                 .await;
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
-            validate_state_root(store.clone(), pivot_header.state_root).await;
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }

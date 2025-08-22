@@ -176,8 +176,9 @@ async fn heal_state_trie(
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     println!(
-                        "(SUPERLOG) DOWNLOADED batch of len {} and paths: {:?}",
+                        "(SUPERLOG) DOWNLOADED batch of len {} when asked for {} and paths: {:?}",
                         nodes.len(),
+                        batch.len(),
                         batch
                             .iter()
                             .map(|request_metadata| &request_metadata.path)
@@ -383,7 +384,7 @@ async fn heal_state_trie(
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
-    println!("(SUPERLOG) ENDED paths {paths:?}");
+    println!("(SUPERLOG) ENDED paths {:?}", paths.len());
     Ok(paths.is_empty())
 }
 
@@ -401,7 +402,8 @@ async fn heal_state_batch(
     {
         let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
         println!(
-            "(SUPERLOG) PRE_NMC batch {:?}",
+            "(SUPERLOG) PRE_NMC batch len {}, paths {:?}",
+            batch.len(),
             batch
                 .iter()
                 .map(|request_metadata| &request_metadata.path)
@@ -412,7 +414,8 @@ async fn heal_state_batch(
             batch.extend(node_missing_children(node, &path.path, trie.db())?);
         }
         println!(
-            "(SUPERLOG) POST_NMC batch {:?}",
+            "(SUPERLOG) POST_NMC batch len {}, paths {:?}",
+            batch.len(),
             batch
                 .iter()
                 .map(|request_metadata| &request_metadata.path)
