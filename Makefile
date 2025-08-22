@@ -64,6 +64,11 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 ENCLAVE ?= lambdanet
 LOCALNET_CONFIG_FILE ?= ./fixtures/network/network_params.yaml
 
+hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
