@@ -315,8 +315,9 @@ impl Syncer {
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
                     self.blockchain.add_block(&block).await?;
-                    store.set_canonical_block(block_number, *hash).await?;
-                    store.update_latest_block_number(block_number).await?;
+                    store
+                        .forkchoice_update(None, block_number, *hash, None, None)
+                        .await?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
@@ -557,13 +558,12 @@ impl FullBlockSyncState {
                 .collect();
             // Copy some values for later
             let blocks_len = block_batch.len();
-            let numbers_and_hashes = block_batch
+            let mut numbers_and_hashes = block_batch
                 .iter()
                 .map(|b| (b.header.number, b.hash()))
                 .collect::<Vec<_>>();
             let (last_block_number, last_block_hash) = numbers_and_hashes
-                .last()
-                .cloned()
+                .pop()
                 .ok_or(SyncError::InvalidRangeReceived)?;
             let (first_block_number, first_block_hash) = numbers_and_hashes
                 .first()
@@ -591,10 +591,13 @@ impl FullBlockSyncState {
             }
             // Mark chain as canonical & last block as latest
             self.store
-                .mark_chain_as_canonical(&numbers_and_hashes)
-                .await?;
-            self.store
-                .update_latest_block_number(last_block_number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    last_block_number,
+                    last_block_hash,
+                    None,
+                    None,
+                )
                 .await?;
 
             let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;

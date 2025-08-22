@@ -14,7 +14,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError,
+        InvalidBlockHeaderError, block_execution_witness::ExecutionWitnessResult,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -27,6 +27,7 @@ pub fn parse_and_execute(
     path: &Path,
     evm: EvmEngine,
     skipped_tests: Option<&[&str]>,
+    re_run_stateless: bool,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
@@ -43,7 +44,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm));
+        let result = rt.block_on(run_ef_test(&test_key, &test, evm, re_run_stateless));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -59,7 +60,12 @@ pub fn parse_and_execute(
     }
 }
 
-pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Result<(), String> {
+pub async fn run_ef_test(
+    test_key: &str,
+    test: &TestUnit,
+    evm: EvmEngine,
+    run_stateless: bool,
+) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
@@ -115,8 +121,8 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
         }
     }
     check_poststate_against_db(test_key, test, &store).await;
-    if evm == EvmEngine::LEVM {
-        re_run_stateless(blockchain, test, test_key).await;
+    if evm == EvmEngine::LEVM && run_stateless {
+        re_run_stateless(blockchain, test, test_key).await?;
     }
     Ok(())
 }
@@ -387,7 +393,11 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     // State root was alredy validated by `add_block``
 }
 
-async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &str) {
+async fn re_run_stateless(
+    blockchain: Blockchain,
+    test: &TestUnit,
+    test_key: &str,
+) -> Result<(), String> {
     let blocks = test
         .blocks
         .iter()
@@ -396,21 +406,15 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
 
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
-    let witness = blockchain
-        .generate_witness_for_blocks(&blocks)
-        .await
-        .unwrap_or_else(|_| {
-            use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-            if test_should_fail {
-                ExecutionWitnessResult {
-                    state_trie_nodes: Some(Vec::new()),
-                    storage_trie_nodes: Some(HashMap::new()),
-                    ..Default::default()
-                }
-            } else {
-                panic!("Failed to create witness for a test that should not fail")
-            }
-        });
+    let mut witness = blockchain.generate_witness_for_blocks(&blocks).await;
+    // Set a default witness if execution should fail as db will not have the required data to generate the witness
+    if test_should_fail && witness.is_err() {
+        witness = Ok(ExecutionWitnessResult::default())
+    } else if !test_should_fail && witness.is_err() {
+        return Err("Failed to create witness for a test that should not fail".into());
+    }
+    // At this point witness is guaranteed to be Ok
+    let witness = witness.unwrap();
 
     let program_input = ProgramInput {
         blocks,
@@ -419,15 +423,16 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
         ..Default::default()
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(program_input) {
-        assert!(
-            test_should_fail,
-            "Expected test: {test_key} to succeed but failed with {e}"
-        )
-    } else {
-        assert!(
-            !test_should_fail,
-            "Expected test: {test_key} to fail but succeeded"
-        )
+    if let Err(e) =
+        ethrex_prover_lib::execute(ethrex_prover_lib::backends::Backend::Exec, program_input)
+    {
+        if !test_should_fail {
+            return Err(format!(
+                "Expected test: {test_key} to succeed but failed with {e}"
+            ));
+        }
+    } else if test_should_fail {
+        return Err(format!("Expected test: {test_key} to fail but succeeded"));
     }
+    Ok(())
 }

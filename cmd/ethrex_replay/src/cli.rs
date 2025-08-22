@@ -3,18 +3,26 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
 };
+use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 
-use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
+
+#[cfg(feature = "sp1")]
+const BACKEND: Backend = Backend::SP1;
+#[cfg(feature = "risc0")]
+const BACKEND: Backend = Backend::RISC0;
+#[cfg(not(any(feature = "risc0", feature = "sp1")))]
+const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name=BINARY_NAME, author, version=VERSION_STRING, about, long_about = None)]
@@ -33,12 +41,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -52,12 +59,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -69,12 +75,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         l2: bool,
     },
@@ -86,11 +91,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            env = "NETWORK",
-            required = true,
-            help = "ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -105,13 +110,12 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -128,12 +132,11 @@ impl SubcommandExecute {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -144,7 +147,6 @@ impl SubcommandExecute {
                 network,
                 l2,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 // Get the block number of the transaction
@@ -156,7 +158,7 @@ impl SubcommandExecute {
 
                 let cache = get_blockdata(
                     eth_client,
-                    chain_config,
+                    network,
                     BlockIdentifier::Number(block_number.as_u64()),
                 )
                 .await?;
@@ -173,12 +175,19 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                // Note: I think this condition is not sufficient to determine if the network is an L2 network.
+                // Take this into account if you are fixing this command.
+                if let Network::PublicNetwork(_) = network {
+                    return Err(eyre::Error::msg(
+                        "Batch execution is only supported on L2 networks.",
+                    ));
+                }
+                let chain_config = network.get_genesis()?.config;
+                let rollup_client = EthClient::new(rpc_url.as_str())?;
+                let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(cache).await?;
+                    exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -198,12 +207,11 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -217,12 +225,11 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            long_help = "Name or ChainID of the network to use. The networks currently supported include holesky, sepolia, hoodi and mainnet."
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -234,11 +241,11 @@ enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            env = "NETWORK",
-            required = true,
-            help = "ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -253,13 +260,12 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -276,12 +282,11 @@ impl SubcommandProve {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -292,12 +297,12 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
+                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    prove(cache).await?;
+                    prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
@@ -329,12 +334,11 @@ enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
     },
 }
 
@@ -355,9 +359,8 @@ pub async fn start() -> eyre::Result<()> {
                     "starting point can't be greater than ending point",
                 ));
             }
-            let chain_config = get_chain_config(&network)?;
             let eth_client = EthClient::new(&rpc_url)?;
-            let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+            let cache = get_rangedata(eth_client, network, start, end).await?;
             plot(cache).await?;
         }
     };

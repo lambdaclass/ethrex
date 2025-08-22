@@ -25,6 +25,19 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install RISC0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
+          ~/.risc0/bin/rzup install rust
+
+      - name: Create placeholder SP1 ELF
+        run: |
+          mkdir -p crates/l2/prover/zkvm/interface/sp1/out
+          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -32,7 +45,7 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
+          make lint
 
       - name: Run cargo fmt
         run: |
@@ -62,7 +75,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for Docker Hub credentials
+        shell: bash
+        env:
+          DOCKER_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
+            echo "DOCKER_CREDS_EXISTS=false" >> $GITHUB_ENV
+            echo "No credentials provided. Skipping DockerHub login..."
+          else
+            echo "DOCKER_CREDS_EXISTS=true" >> $GITHUB_ENV
+            echo "Credentials were provided!"
+          fi
+
       - name: Login to Docker Hub
+        if: env.DOCKER_CREDS_EXISTS == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -92,12 +120,12 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 8e8c83f5c5a06561407a6a7848f5a4b32a10a467 # commit from our fork
+      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
         run: |
-          git clone --single-branch --branch master https://github.com/lambdaclass/hive
+          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
@@ -111,12 +139,14 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 276ca9deaee8e5831b11fa6e884a9479ee8ca140
+      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
+        # TODO: Change repo back to https://github.com/ethereum/hive when
+        # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
-          git clone --single-branch --branch master https://github.com/ethereum/hive
+          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .

@@ -2,11 +2,30 @@
 
 ## Perf
 
+### 2025-08-20
+
+- Improve blobbasefee opcode [#4092](https://github.com/lambdaclass/ethrex/pull/4092)
+
+### 2025-08-19
+
+- Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
+
+- Improve performance of calldataload, calldatacopy, extcodecopy, codecopy, returndatacopy [#4070](https://github.com/lambdaclass/ethrex/pull/4070)
+
+
+### 2025-08-14
+
+- Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
+
 ### 2025-07-31
 
+- Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
+
 - Batching of transaction hashes sent in a single NewPooledTransactionHashes message [#3912](https://github.com/lambdaclass/ethrex/pull/3912)
+
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
 - Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
+
 
 ### 2025-07-30
 

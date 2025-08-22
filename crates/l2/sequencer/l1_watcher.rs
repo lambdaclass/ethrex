@@ -5,18 +5,20 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::PrivilegedL2Transaction;
+use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{EthClient, eth_sender::Overrides},
+    clients::eth::{EthClient, Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::tasks::{
+    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -32,7 +34,6 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Clone)]
 pub struct L1Watcher {
     pub store: Store,
     pub blockchain: Arc<Blockchain>,
@@ -205,7 +206,7 @@ impl L1Watcher {
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
 
             if self
-                .privileged_transaction_already_processed(tx.compute_hash())
+                .privileged_transaction_already_processed(tx.hash())
                 .await?
             {
                 warn!(
@@ -271,21 +272,21 @@ impl GenServer for L1Watcher {
     type OutMsg = OutMessage;
     type Error = L1WatcherError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Perform the check and suscribe a periodic Watch.
         handle
             .clone()
             .cast(Self::CastMsg::Watch)
             .await
             .map_err(Self::Error::GenServerError)?;
-        Ok(self)
+        Ok(Success(self))
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Watch => {
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
@@ -293,7 +294,7 @@ impl GenServer for L1Watcher {
                 }
                 let check_interval = random_duration(self.check_interval);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }
@@ -392,8 +393,9 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        eth_client
-            .build_privileged_transaction(
+        let generic_tx = eth_client
+            .build_generic_tx(
+                TxType::Privileged,
                 self.to_address,
                 self.from,
                 Bytes::copy_from_slice(&self.calldata),
@@ -413,6 +415,7 @@ impl PrivilegedTransactionData {
                     ..Default::default()
                 },
             )
-            .await
+            .await?;
+        Ok(generic_tx.try_into()?)
     }
 }

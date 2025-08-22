@@ -1,6 +1,7 @@
 # ethrex-replay
 
 A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by [starknet-replay](https://github.com/lambdaclass/starknet-replay).
+Currently ethrex replay only works against ethrex nodes with the `debug_executionWitness` RPC endpoint.
 
 ## Getting Started
 

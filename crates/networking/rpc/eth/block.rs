@@ -1,7 +1,7 @@
 use ethrex_blockchain::find_parent_header;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -51,11 +51,6 @@ pub struct GetRawReceipts {
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
-pub struct ExecutionWitness {
-    pub from: BlockIdentifier,
-    pub to: Option<BlockIdentifier>,
-}
-
 impl RpcHandler for GetBlockByNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockByNumberRequest, RpcErr> {
         let params = params
@@ -71,7 +66,7 @@ impl RpcHandler for GetBlockByNumberRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!("Requested block with number: {}", self.block);
+        debug!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
@@ -105,7 +100,7 @@ impl RpcHandler for GetBlockByHashRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!("Requested block with hash: {:#x}", self.block);
+        debug!("Requested block with hash: {:#x}", self.block);
         let block_number = match storage.get_block_number(self.block).await? {
             Some(number) => number,
             _ => return Ok(Value::Null),
@@ -137,7 +132,7 @@ impl RpcHandler for GetBlockTransactionCountRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested transaction count for block with number: {}",
             self.block
         );
@@ -171,7 +166,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!("Requested receipts for block with number: {}", self.block);
+        debug!("Requested receipts for block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
@@ -203,7 +198,7 @@ impl RpcHandler for GetRawHeaderRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested raw header for block with identifier: {}",
             self.block
         );
@@ -236,7 +231,7 @@ impl RpcHandler for GetRawBlockRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested raw block: {}", self.block);
+        debug!("Requested raw block: {}", self.block);
         let block_number = match self.block.resolve_block_number(&context.storage).await? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
@@ -295,7 +290,7 @@ impl RpcHandler for BlockNumberRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested latest block number");
+        debug!("Requested latest block number");
         serde_json::to_value(format!(
             "{:#x}",
             context.storage.get_latest_block_number().await?
@@ -310,7 +305,7 @@ impl RpcHandler for GetBlobBaseFee {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested blob gas price");
+        debug!("Requested blob gas price");
         let block_number = context.storage.get_latest_block_number().await?;
         let header = match context.storage.get_block_header(block_number)? {
             Some(header) => header,
@@ -332,92 +327,6 @@ impl RpcHandler for GetBlobBaseFee {
 
         serde_json::to_value(format!("{blob_base_fee:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
-    }
-}
-
-impl RpcHandler for ExecutionWitness {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() > 2 {
-            return Err(RpcErr::BadParams(format!(
-                "Expected one or two params and {} were provided",
-                params.len()
-            )));
-        }
-
-        let from = BlockIdentifier::parse(params[0].clone(), 0)?;
-        let to = if let Some(param) = params.get(1) {
-            Some(BlockIdentifier::parse(param.clone(), 1)?)
-        } else {
-            None
-        };
-
-        Ok(ExecutionWitness { from, to })
-    }
-
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let from_block_number = self
-            .from
-            .resolve_block_number(&context.storage)
-            .await?
-            .ok_or(RpcErr::Internal(
-                "Failed to resolve block number".to_string(),
-            ))?;
-        let to_block_number = self
-            .to
-            .as_ref()
-            .unwrap_or(&self.from)
-            .resolve_block_number(&context.storage)
-            .await?
-            .ok_or(RpcErr::Internal(
-                "Failed to resolve block number".to_string(),
-            ))?;
-
-        if from_block_number > to_block_number {
-            return Err(RpcErr::BadParams(
-                "From block number is greater than To block number".to_string(),
-            ));
-        }
-
-        if self.to.is_some() {
-            info!(
-                "Requested execution witness from block: {from_block_number} to {to_block_number}",
-            );
-        } else {
-            info!("Requested execution witness for block: {from_block_number}",);
-        }
-
-        let mut blocks = Vec::new();
-        let mut block_headers = Vec::new();
-        for block_number in from_block_number..=to_block_number {
-            let header = context
-                .storage
-                .get_block_header(block_number)?
-                .ok_or(RpcErr::Internal("Could not get block header".to_string()))?;
-            let parent_header = context
-                .storage
-                .get_block_header_by_hash(header.parent_hash)?
-                .ok_or(RpcErr::Internal(
-                    "Could not get parent block header".to_string(),
-                ))?;
-            block_headers.push(parent_header);
-            let block = context
-                .storage
-                .get_block_by_hash(header.hash())
-                .await?
-                .ok_or(RpcErr::Internal("Could not get block body".to_string()))?;
-            blocks.push(block);
-        }
-
-        let execution_witness = context
-            .blockchain
-            .generate_witness_for_blocks(&blocks)
-            .await
-            .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
-
-        serde_json::to_value(execution_witness).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 

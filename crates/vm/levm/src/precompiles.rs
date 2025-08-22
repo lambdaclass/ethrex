@@ -1,14 +1,17 @@
+use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
+use ark_ec::CurveGroup;
+use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 use bls12_381::{
     Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
-
 use bytes::{Buf, Bytes};
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::blake2f::blake2b_f;
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -31,17 +34,9 @@ use lambdaworks_math::{
     },
     traits::ByteConversion,
 };
-
-use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
-use ark_ec::CurveGroup;
-use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
-
-use num_bigint::BigUint;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
-
+use malachite::base::num::arithmetic::traits::ModPow as _;
+use malachite::base::num::basic::traits::Zero as _;
+use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
 use std::ops::Mul;
 
@@ -256,56 +251,74 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-/// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
-/// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
+/// ## ECRECOVER precompile.
+/// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
+///
+/// Input is 128 bytes (padded with zeros if shorter):
+///   [0..32)  : keccak-256 hash (message digest)
+///   [32..64) : v (27 or 28)
+///   [64..128): r||s (64 bytes)
+///
+/// Returns the recovered address.
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
-    let gas_cost = ECRECOVER_COST;
+    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+    const INPUT_LEN: usize = 128;
+    const WORD: usize = 32;
 
-    // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 128);
+    let input = fill_with_zeros(calldata, INPUT_LEN);
 
-    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
-    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let Ok(message) = Message::from_digest_slice(hash) else {
-        return Ok(Bytes::new());
+    let (raw_hash, tail) = input.split_at(WORD);
+    let (raw_v, raw_sig) = tail.split_at(WORD);
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let v = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(v @ (27 | 28)) => v,
+        _ => return Ok(Bytes::new()),
     };
 
-    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    #[allow(clippy::arithmetic_side_effects, reason = "v ∈ {27, 28}")]
+    let mut recid_byte = v - 27;
 
-    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
-    if !(v == U256::from(27) || v == U256::from(28)) {
-        return Ok(Bytes::new());
+    // Parse signature (r||s). If malformed → empty return.
+    let mut sig = match Signature::from_slice(raw_sig) {
+        Ok(s) => s,
+        Err(_) => return Ok(Bytes::new()),
+    };
+
+    // k256 enforces canonical low-S for recovery.
+    // If S is high, normalize s := n - s and flip the recovery parity bit.
+    if let Some(low_s) = sig.normalize_s() {
+        sig = low_s;
+        recid_byte ^= 1;
     }
 
-    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
-    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
-    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
-        return Ok(Bytes::new());
+    // Recovery id from the adjusted byte.
+    let recid = match RecoveryId::from_byte(recid_byte) {
+        Some(id) => id,
+        None => return Ok(Bytes::new()),
     };
 
-    // signature is made up of the parameters r and s
-    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
-    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
-        return Ok(Bytes::new());
+    // Recover the verifying key from the prehash (32-byte digest).
+    let vk = match VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) {
+        Ok(k) => k,
+        Err(_) => return Ok(Bytes::new()),
     };
 
-    // Recover the address using secp256k1
-    let Ok(public_key) = signature.recover(&message) else {
-        return Ok(Bytes::new());
-    };
+    // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
+    let uncompressed = vk.to_encoded_point(false);
+    #[allow(clippy::indexing_slicing)]
+    let mut xy = uncompressed.as_bytes()[1..65].to_vec();
 
-    let mut public_key = public_key.serialize_uncompressed();
+    // keccak256(X||Y).
+    keccak256(&mut xy);
 
-    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    keccak256(&mut public_key[1..65]);
+    // Address is the last 20 bytes of the hash.
+    let mut out = vec![0u8; 12];
+    #[allow(clippy::indexing_slicing)]
+    out.extend_from_slice(&xy[12..32]);
 
-    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
-    let mut output = vec![0u8; 12];
-    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
-
-    Ok(Bytes::from(output.to_vec()))
+    Ok(Bytes::from(out))
 }
 
 /// Returns the calldata received
@@ -378,18 +391,25 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
-    let base = BigUint::from_bytes_be(&b);
+    let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
-    let exponent = BigUint::from_bytes_be(&e);
+    let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
-    let modulus = BigUint::from_bytes_be(&m);
+    let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
 
     // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
+    let exp_first_32 = Natural::from_power_of_2_digits_desc(
+        8u64,
+        e.get(0..bytes_to_take).unwrap_or_default().iter().cloned(),
+    )
+    .ok_or(InternalError::TypeConversion)?;
 
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size)?;
 
@@ -397,7 +417,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
 
     let result = mod_exp(base, exponent, modulus);
 
-    let res_bytes = result.to_bytes_be();
+    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
     Ok(res_bytes.slice(..modulus_size))
@@ -424,16 +444,16 @@ fn get_slice_or_default(
     Ok(Default::default())
 }
 
-/// I allow this clippy alert because in the code modulus could never be
-///  zero because that case is covered in the if above that line
 #[allow(clippy::arithmetic_side_effects)]
-fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
-    if modulus == BigUint::ZERO {
-        BigUint::ZERO
-    } else if exponent == BigUint::ZERO {
-        BigUint::from(1_u8) % modulus
+#[inline(always)]
+fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
+    if modulus == Natural::ZERO {
+        Natural::ZERO
+    } else if exponent == Natural::ZERO {
+        Natural::from(1_u8) % modulus
     } else {
-        base.modpow(&exponent, &modulus)
+        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+        base_mod.mod_pow(&exponent, &modulus)
     }
 }
 

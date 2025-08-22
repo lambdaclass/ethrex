@@ -17,7 +17,10 @@ use ratatui::{
 };
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{
+        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
+        spawn_listener,
+    },
 };
 use std::io;
 use std::sync::Arc;
@@ -43,14 +46,13 @@ use tracing::{error, info};
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
 
 const SCROLLABLE_WIDGETS: usize = 5;
-#[derive(Clone)]
 pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
     pub cfg: MonitorConfig,
 
-    pub logger: Arc<TuiWidgetState>,
+    pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
@@ -78,7 +80,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct EthrexMonitor {
     widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
@@ -109,7 +110,7 @@ impl GenServer for EthrexMonitor {
     type OutMsg = OutMessage;
     type Error = MonitorError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Tick handling
         send_interval(
             Duration::from_millis(self.widget.cfg.tick_rate),
@@ -122,14 +123,14 @@ impl GenServer for EthrexMonitor {
             |event: Event| Self::CastMsg::Event(event),
             EventStream::new(),
         );
-        Ok(self)
+        Ok(Success(self))
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             // On event
             CastInMessage::Event(event) => {
@@ -156,7 +157,7 @@ impl GenServer for EthrexMonitor {
                 .widget
                 .draw(&mut *self.terminal.lock().await)
                 .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply(self)
+            CastResponse::NoReply
         } else {
             CastResponse::Stop
         }
@@ -196,9 +197,7 @@ impl EthrexMonitorWidget {
             tabs: TabsState::default(),
             cfg: cfg.monitor.clone(),
             global_chain_status: GlobalChainStatusTable::new(cfg),
-            logger: Arc::new(
-                TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            ),
+            logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.enabled),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),

@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 9,
+  "id": 3,
   "links": [],
   "panels": [
     {
@@ -36,7 +36,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -71,9 +72,13 @@
         "textMode": "name",
         "wideLayout": true
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "disableTextWrap": false,
           "editorMode": "code",
           "expr": "max by (version)(eth_exe_web3_client_version{instance=~\"$instance\"})",
@@ -82,11 +87,7 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "A",
-          "useBackend": false,
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
+          "useBackend": false
         }
       ],
       "title": "Execution Client",
@@ -107,7 +108,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -143,18 +145,18 @@
         "textMode": "name",
         "wideLayout": true
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "editorMode": "code",
           "expr": "eth_con_spec_config_name{instance=~\"$instance\"}",
           "legendFormat": "{{name}}",
           "range": true,
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
+          "refId": "A"
         }
       ],
       "title": "Consensus Config",
@@ -175,7 +177,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -210,18 +213,18 @@
         "textMode": "name",
         "wideLayout": true
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "editorMode": "code",
           "expr": "eth_con_fork_current{instance=~\"$instance\"}",
           "legendFormat": "{{fork}}",
           "range": true,
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
+          "refId": "A"
         }
       ],
       "title": "Consensus Fork",
@@ -275,7 +278,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -324,7 +328,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
           "datasource": {
@@ -440,7 +444,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -450,20 +455,7 @@
           },
           "unit": "Ggas/s"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "gigagas"
-            },
-            "properties": [
-              {
-                "id": "custom.axisSoftMax",
-                "value": 0.5
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -485,9 +477,13 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "disableTextWrap": false,
           "editorMode": "builder",
           "expr": "gigagas{job=\"$job\"}",
@@ -496,11 +492,7 @@
           "legendFormat": "Gigagas/s",
           "range": true,
           "refId": "A",
-          "useBackend": false,
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
+          "useBackend": false
         }
       ],
       "title": "Ggas/s",
@@ -554,7 +546,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -585,7 +578,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
           "datasource": {
@@ -656,7 +649,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
@@ -700,20 +694,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Gigagas/s"
+              "options": "Block Time"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "Ggas/s"
-              },
-              {
-                "id": "custom.axisSoftMin",
-                "value": 0
-              },
-              {
-                "id": "custom.axisSoftMax",
-                "value": 0.7
+                "value": "s"
               }
             ]
           }
@@ -751,7 +737,7 @@
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "Gigagas/s"
+                "options": "Gas Used %"
               }
             }
           },
@@ -771,7 +757,7 @@
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "Gas Used %"
+                "options": "Block Time"
               }
             }
           }
@@ -782,9 +768,13 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.2.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "disableTextWrap": false,
           "editorMode": "builder",
           "expr": "block_number{job=\"$job\"}",
@@ -793,11 +783,7 @@
           "legendFormat": "Block Number",
           "range": true,
           "refId": "A",
-          "useBackend": false,
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
+          "useBackend": false
         },
         {
           "datasource": {
@@ -851,7 +837,7 @@
           "useBackend": false
         }
       ],
-      "title": "Gigas/s & Gas Used % by Block",
+      "title": "Block time & Gas Used ",
       "transformations": [
         {
           "id": "calculateField",
@@ -877,11 +863,134 @@
               "reducer": "sum"
             }
           }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Gas/s",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gigagas/s"
+                }
+              },
+              "operator": "*",
+              "right": {
+                "fixed": "1000000000"
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "include": ["Gigagas/s"],
+              "reducer": "sum"
+            },
+            "window": {
+              "reducer": "mean",
+              "windowAlignment": "trailing",
+              "windowSize": 0.1,
+              "windowSizeMode": "percentage"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Block Time",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gas Used"
+                }
+              },
+              "operator": "/",
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Gas/s"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
         }
       ],
       "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
+          "fullMetaSearch": false,
+          "includeNullMetadata": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Block Execution Breakdown",
+      "type": "piechart"
     }
   ],
+  "preload": false,
   "refresh": "5s",
   "schemaVersion": 41,
   "tags": [],
@@ -889,8 +998,8 @@
     "list": [
       {
         "current": {
-          "text": "ethereum-metrics-exporter:9093",
-          "value": "ethereum-metrics-exporter:9093"
+          "text": "",
+          "value": ""
         },
         "definition": "label_values(eth_con_beacon_slot,instance)",
         "name": "instance",
@@ -906,8 +1015,8 @@
       },
       {
         "current": {
-          "text": "hoodi",
-          "value": "hoodi"
+          "text": "",
+          "value": ""
         },
         "definition": "label_values(eth_con_spec_config_name,name)",
         "name": "network",
@@ -923,8 +1032,8 @@
       },
       {
         "current": {
-          "text": "prom-001",
-          "value": "prom-001"
+          "text": "Prometheus",
+          "value": "${DS_PROMETHEUS}"
         },
         "name": "DS_PROMETHEUS",
         "options": [],
@@ -934,8 +1043,8 @@
       },
       {
         "current": {
-          "text": "el-1-ethrex-lighthouse",
-          "value": "el-1-ethrex-lighthouse"
+          "text": "ethrex L1",
+          "value": "ethrex L1"
         },
         "definition": "label_values(up, job)",
         "description": "",
@@ -954,12 +1063,12 @@
     ]
   },
   "time": {
-    "from": "now-7m",
+    "from": "now-30m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 9
+  "version": 4
 }

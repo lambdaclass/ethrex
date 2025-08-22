@@ -100,27 +100,15 @@ pub async fn apply_fork_choice(
 
     // Finished all validations.
 
-    // Make all ancestors to head canonical.
-    for (number, hash) in new_canonical_blocks {
-        store.set_canonical_block(number, hash).await?;
-    }
-
-    // Remove anything after the head from the canonical chain.
-    for number in (head.number + 1)..(latest + 1) {
-        store.unset_canonical_block(number).await?;
-    }
-
-    // Make head canonical and label all special blocks correctly.
-    store.set_canonical_block(head.number, head_hash).await?;
-    if let Some(finalized) = finalized_res {
-        store
-            .update_finalized_block_number(finalized.number)
-            .await?;
-    }
-    if let Some(safe) = safe_res {
-        store.update_safe_block_number(safe.number).await?;
-    }
-    store.update_latest_block_number(head.number).await?;
+    store
+        .forkchoice_update(
+            Some(new_canonical_blocks),
+            head.number,
+            head_hash,
+            safe_res.map(|h| h.number),
+            finalized_res.map(|h| h.number),
+        )
+        .await?;
 
     Ok(head)
 }

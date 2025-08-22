@@ -13,14 +13,19 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
+use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
+use tracing::Level;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[group(id = "L2Options")]
 pub struct Options {
     #[command(flatten)]
@@ -53,7 +58,7 @@ impl Default for Options {
     }
 }
 
-#[derive(Parser, Default)]
+#[derive(Parser, Default, Debug)]
 pub struct SequencerOptions {
     #[command(flatten)]
     pub eth_opts: EthOptions,
@@ -93,7 +98,7 @@ pub struct SequencerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_MONITOR",
-        help_heading = "Sequencer options"
+        help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
 }
@@ -122,6 +127,12 @@ pub enum SequencerOptionsError {
     RemoteUrlWithoutPubkey,
     #[error("No signer was set up for {0}")]
     NoSigner(String),
+    #[error("No coinbase address was provided")]
+    NoCoinbaseAddress,
+    #[error("No on-chain proposer address was provided")]
+    NoOnChainProposerAddress,
+    #[error("No bridge address was provided")]
+    NoBridgeAddress,
 }
 
 impl TryFrom<SequencerOptions> for SequencerConfig {
@@ -143,11 +154,17 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
         Ok(Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.block_producer_opts.block_time_ms,
-                coinbase_address: opts.block_producer_opts.coinbase_address,
+                coinbase_address: opts
+                    .block_producer_opts
+                    .coinbase_address
+                    .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
             },
             l1_committer: CommitterConfig {
-                on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
+                on_chain_proposer_address: opts
+                    .committer_opts
+                    .on_chain_proposer_address
+                    .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
@@ -165,7 +182,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .maximum_allowed_max_fee_per_blob_gas,
             },
             l1_watcher: L1WatcherConfig {
-                bridge_address: opts.watcher_opts.bridge_address,
+                bridge_address: opts
+                    .watcher_opts
+                    .bridge_address
+                    .ok_or(SequencerOptionsError::NoBridgeAddress)?,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
@@ -174,7 +194,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
-                dev_mode: opts.proof_coordinator_opts.dev_mode,
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
@@ -215,7 +234,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
@@ -280,8 +299,8 @@ impl Default for EthOptions {
     fn default() -> Self {
         Self {
             rpc_url: vec!["http://localhost:8545".to_string()],
-            maximum_allowed_max_fee_per_gas: Default::default(),
-            maximum_allowed_max_fee_per_blob_gas: Default::default(),
+            maximum_allowed_max_fee_per_gas: 10000000000,
+            maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
@@ -290,15 +309,16 @@ impl Default for EthOptions {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct WatcherOptions {
     #[arg(
         long = "l1.bridge-address",
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
-        help_heading = "L1 Watcher options"
+        help_heading = "L1 Watcher options",
+        required_unless_present = "dev"
     )]
-    pub bridge_address: Address,
+    pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
         default_value = "1000",
@@ -330,17 +350,15 @@ pub struct WatcherOptions {
 impl Default for WatcherOptions {
     fn default() -> Self {
         Self {
-            bridge_address: "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
-                .parse()
-                .unwrap(),
+            bridge_address: None,
             watch_interval_ms: 1000,
             max_block_step: 5000,
-            watcher_block_delay: 128,
+            watcher_block_delay: 0,
         }
     }
 }
 
-#[derive(Parser, Default)]
+#[derive(Parser, Debug)]
 pub struct BlockProducerOptions {
     #[arg(
         long = "block-producer.block-time",
@@ -355,9 +373,10 @@ pub struct BlockProducerOptions {
         long = "block-producer.coinbase-address",
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
-        help_heading = "Block producer options"
+        help_heading = "Block producer options",
+        required_unless_present = "dev"
     )]
-    pub coinbase_address: Address,
+    pub coinbase_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -368,7 +387,21 @@ pub struct BlockProducerOptions {
     pub elasticity_multiplier: u64,
 }
 
-#[derive(Parser)]
+impl Default for BlockProducerOptions {
+    fn default() -> Self {
+        Self {
+            block_time_ms: 5000,
+            coinbase_address: Some(
+                "0x0007a881cd95b1484fca47615b64803dad620c8d"
+                    .parse()
+                    .unwrap(),
+            ),
+            elasticity_multiplier: 2,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
 pub struct CommitterOptions {
     #[arg(
         long = "committer.l1-private-key",
@@ -379,6 +412,7 @@ pub struct CommitterOptions {
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
         conflicts_with_all = &["committer_remote_signer_url", "committer_remote_signer_public_key"],
         required_unless_present = "committer_remote_signer_url",
+        required_unless_present = "dev"
     )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -388,7 +422,8 @@ pub struct CommitterOptions {
         help_heading = "L1 Committer options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "committer_remote_signer_public_key",
-        required_unless_present = "committer_l1_private_key"
+        required_unless_present = "committer_l1_private_key",
+        required_unless_present = "dev"
     )]
     pub committer_remote_signer_url: Option<Url>,
     #[arg(
@@ -405,9 +440,10 @@ pub struct CommitterOptions {
         long = "l1.on-chain-proposer-address",
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
-        help_heading = "L1 Committer options"
+        help_heading = "L1 Committer options",
+        required_unless_present = "dev"
     )]
-    pub on_chain_proposer_address: Address,
+    pub on_chain_proposer_address: Option<Address>,
     #[arg(
         long = "committer.commit-time",
         default_value = "60000",
@@ -434,10 +470,8 @@ impl Default for CommitterOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .ok(),
-            on_chain_proposer_address: "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
-                .parse()
-                .unwrap(),
-            commit_time_ms: 1000,
+            on_chain_proposer_address: None,
+            commit_time_ms: 60000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
             committer_remote_signer_public_key: None,
@@ -445,7 +479,7 @@ impl Default for CommitterOptions {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct ProofCoordinatorOptions {
     #[arg(
         long = "proof-coordinator.l1-private-key",
@@ -456,6 +490,7 @@ pub struct ProofCoordinatorOptions {
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
         conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
         required_unless_present = "remote_signer_url",
+        required_unless_present = "dev"
     )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -466,7 +501,7 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
     )]
-    pub proof_coordinator_tdx_private_key: SecretKey,
+    pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
@@ -474,7 +509,8 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "remote_signer_public_key",
-        required_unless_present = "proof_coordinator_l1_private_key"
+        required_unless_present = "proof_coordinator_l1_private_key",
+        required_unless_present = "dev"
     )]
     pub remote_signer_url: Option<Url>,
     #[arg(
@@ -513,14 +549,6 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
-    #[arg(
-        long = "proof-coordinator.dev-mode",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
-        help_heading = "Proof coordinator options"
-    )]
-    pub dev_mode: bool,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -536,15 +564,11 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: false,
-            proof_coordinator_tdx_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .unwrap(),
+            proof_coordinator_tdx_private_key: None,
         }
     }
 }
-#[derive(Parser, Clone)]
+#[derive(Parser, Debug, Clone)]
 pub struct AlignedOptions {
     #[arg(
         long,
@@ -609,18 +633,15 @@ impl Default for AlignedOptions {
         Self {
             aligned: false,
             aligned_verifier_interval_ms: 5000,
-            beacon_url: Some(vec![Url::parse("http://127.0.0.1:58801").unwrap()]),
+            beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: Some(format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            )),
+            aligned_sp1_elf_path: None,
         }
     }
 }
 
-#[derive(Parser, Default)]
+#[derive(Parser, Default, Debug)]
 pub struct BasedOptions {
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
@@ -628,7 +649,7 @@ pub struct BasedOptions {
     pub block_fetcher: BlockFetcherOptions,
 }
 
-#[derive(Parser, Default)]
+#[derive(Parser, Debug)]
 pub struct StateUpdaterOptions {
     #[arg(
         long = "state-updater.sequencer-registry",
@@ -648,7 +669,16 @@ pub struct StateUpdaterOptions {
     pub check_interval_ms: u64,
 }
 
-#[derive(Parser, Default)]
+impl Default for StateUpdaterOptions {
+    fn default() -> Self {
+        Self {
+            sequencer_registry: None,
+            check_interval_ms: 1000,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
 pub struct BlockFetcherOptions {
     #[arg(
         long = "block-fetcher.fetch_interval_ms",
@@ -668,11 +698,99 @@ pub struct BlockFetcherOptions {
     pub fetch_block_step: u64,
 }
 
-#[derive(Parser, Default)]
+impl Default for BlockFetcherOptions {
+    fn default() -> Self {
+        Self {
+            fetch_interval_ms: 5000,
+            fetch_block_step: 5000,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
 pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
-    tick_rate: u64,
+    pub tick_rate: u64,
     #[arg(long)]
     batch_widget_height: Option<u16>,
+}
+
+impl Default for MonitorOptions {
+    fn default() -> Self {
+        Self {
+            tick_rate: 1000,
+            batch_widget_height: None,
+        }
+    }
+}
+
+#[derive(Parser)]
+pub struct ProverClientOptions {
+    #[arg(
+        long = "backend",
+        env = "PROVER_CLIENT_BACKEND",
+        default_value = "exec",
+        help_heading = "Prover client options",
+        value_enum
+    )]
+    pub backend: Backend,
+    #[arg(
+        long = "proof-coordinator",
+        value_name = "URL",
+        env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
+        help_heading = "Prover client options",
+        help = "URL of the sequencer's proof coordinator"
+    )]
+    pub proof_coordinator_endpoint: Url,
+    #[arg(
+        long = "proving-time",
+        value_name = "PROVING_TIME",
+        env = "PROVER_CLIENT_PROVING_TIME",
+        help = "Time to wait before requesting new data to prove",
+        help_heading = "Prover client options",
+        default_value_t = 5000
+    )]
+    pub proving_time_ms: u64,
+    #[arg(
+        long = "log.level",
+        default_value_t = Level::INFO,
+        value_name = "LOG_LEVEL",
+        help = "The verbosity level used for logs.",
+        long_help = "Possible values: info, debug, trace, warn, error",
+        help_heading = "Prover client options"
+    )]
+    pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        value_name = "BOOLEAN",
+        env = "PROVER_CLIENT_ALIGNED",
+        help = "Activate aligned proving system",
+        help_heading = "Prover client options"
+    )]
+    pub aligned: bool,
+}
+
+impl From<ProverClientOptions> for ProverConfig {
+    fn from(config: ProverClientOptions) -> Self {
+        Self {
+            backend: config.backend,
+            proof_coordinator: config.proof_coordinator_endpoint,
+            proving_time_ms: config.proving_time_ms,
+            aligned_mode: config.aligned,
+        }
+    }
+}
+
+impl Default for ProverClientOptions {
+    fn default() -> Self {
+        Self {
+            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            proving_time_ms: 5000,
+            log_level: Level::INFO,
+            aligned: false,
+            backend: Backend::Exec,
+        }
+    }
 }

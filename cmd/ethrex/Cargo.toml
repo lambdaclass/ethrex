@@ -7,6 +7,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-common.workspace = true
@@ -35,7 +36,6 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 local-ip-address = "0.6"
 tokio-util.workspace = true
-redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
@@ -49,6 +49,7 @@ cfg-if = "1.0.0"
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
+ethrex-prover = { workspace = true, features = ["l2"] }
 
 [[bin]]
 name = "ethrex"
@@ -60,8 +61,8 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["libmdbx", "c-kzg", "blst"]
-dev = ["dep:ethrex-dev", "debug"]
+default = ["libmdbx", "c-kzg", "blst", "rollup_storage_sql", "dev", "metrics"]
+dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",
@@ -69,13 +70,14 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
-libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup/libmdbx"]
-redb = ["dep:redb", "ethrex-storage/redb"]
+libmdbx = ["ethrex-storage/libmdbx"]
 blst = ["ethrex-vm/blst"]
-rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
-rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
+sp1 = ["ethrex-prover/sp1"]
+gpu = ["ethrex-prover/gpu"]
+risc0 = ["ethrex-prover/risc0"]
+
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [
   "html_reports",
@@ -98,3 +100,10 @@ harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+ethrex-sdk.workspace = true
+hex.workspace = true
+bytes.workspace = true
+ethrex-common.workspace = true
+serde_json.workspace = true
+genesis-tool = { path = "../../tooling/genesis" }
+thiserror.workspace = true
