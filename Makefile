@@ -105,7 +105,7 @@ SIM_PARALLELISM ?= 16
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 # The simulation log level can be set using SIM_LOG_LEVEL (from 1 up to 4).
 
-HIVE_CLIENT_FILE := ../fixtures/hive/clients.yml
+HIVE_CLIENT_FILE := ../fixtures/hive/clients.yaml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
