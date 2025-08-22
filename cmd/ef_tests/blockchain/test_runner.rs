@@ -139,13 +139,13 @@ async fn run(
                     ));
                 }
                 // Advance fork choice to the new head
-                apply_fork_choice(&store, hash, hash, hash).await.unwrap();
+                apply_fork_choice(store, hash, hash, hash).await.unwrap();
             }
         }
     }
 
     // Final post-state verification
-    check_poststate_against_db(test_key, test, &store).await;
+    check_poststate_against_db(test_key, test, store).await;
     Ok(())
 }
 
