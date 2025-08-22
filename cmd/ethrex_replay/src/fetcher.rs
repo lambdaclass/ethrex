@@ -17,11 +17,18 @@ pub async fn get_blockdata(
     network: Network,
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
+    let latest_block_number = eth_client.get_block_number().await?.as_u64();
+
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
-        BlockIdentifier::Tag(BlockTag::Latest) => eth_client.get_block_number().await?.as_u64(),
+        BlockIdentifier::Tag(BlockTag::Latest) => latest_block_number,
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
     };
+
+    info!(
+        "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
+        latest_block_number - requested_block_number
+    );
 
     let chain_config = network.get_genesis()?.config;
 
