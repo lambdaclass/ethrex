@@ -1044,8 +1044,6 @@ impl Syncer {
                 if !healing_done {
                     continue;
                 }
-                // Moved temporarily here for testing
-                validate_state_root(store.clone(), pivot_header.state_root).await;
                 healing_done = heal_storage_trie_wrap(
                     pivot_header.state_root,
                     self.peers.clone(),
@@ -1056,6 +1054,7 @@ impl Syncer {
                 .await;
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
+            validate_state_root(store.clone(), pivot_header.state_root).await;
             validate_storage_root(store.clone(), pivot_header.state_root).await;
             info!("Finished healing");
         }
