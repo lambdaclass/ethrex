@@ -68,6 +68,13 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub prove: bool,
+    #[arg(
+        long,
+        value_name = "BLOCK_NUMBER",
+        help = "Start processing from specific block number instead of latest",
+        help_heading = "Replayer options"
+    )]
+    pub start_block: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,7 +130,7 @@ async fn main() {
 
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
-                    replay_execution(network, rpc_url, slack_webhook_url).await
+                    replay_execution(network, rpc_url, slack_webhook_url, opts.start_block).await
                 });
 
                 replayers_handles.push(handle);
@@ -149,6 +156,7 @@ async fn main() {
                     ),
                 ],
                 slack_webhook_url,
+                opts.start_block,
             )
             .await
         });
@@ -213,20 +221,35 @@ async fn replay_execution(
     network: Network,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
+    from: Option<usize>,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
+    let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
+    let mut block_number = if let Some(from) = from {
+        from
+    } else {
+        eth_client
+            .get_block_number()
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to get latest block number: {e}");
+            })
+            .as_usize()
+    };
 
     let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
     loop {
-        let elapsed = replay_latest_block(
+        let elapsed = replay_block(
             ReplayerMode::Execute,
             network.clone(),
             rpc_url.clone(),
             &eth_client,
             slack_webhook_url.clone(),
+            block_number,
         )
         .await?;
+        block_number += 1;
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -237,7 +260,20 @@ async fn replay_execution(
 async fn replay_proving(
     rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
+    from: Option<usize>,
 ) -> Result<(), EthClientError> {
+    let eth_client = EthClient::new(rpc_urls[0].0.clone().unwrap().as_str()).unwrap();
+    let mut block_number = if let Some(from) = from {
+        from
+    } else {
+        eth_client
+            .get_block_number()
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to get latest block number: {e}");
+            })
+            .as_usize()
+    };
     loop {
         let start = SystemTime::now();
         for (rpc_url, network) in &rpc_urls {
@@ -248,18 +284,20 @@ async fn replay_proving(
             };
             let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
-            replay_latest_block(
+            replay_block(
                 ReplayerMode::Prove,
                 network.clone(),
                 rpc_url.clone(),
                 &eth_client,
                 slack_webhook_url.clone(),
+                block_number,
             )
             .await?;
         }
         let elapsed = start.elapsed().unwrap_or_else(|e| {
             panic!("SystemTime::elapsed failed: {e}");
         });
+        block_number += 1;
 
         // Wait at most 12 seconds for executing the next block.
         // This will only wait if the run took less than 12 seconds.
@@ -267,29 +305,22 @@ async fn replay_proving(
     }
 }
 
-async fn replay_latest_block(
+async fn replay_block(
     replayer_mode: ReplayerMode,
     network: Network,
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
+    block_number: usize,
 ) -> Result<Duration, EthClientError> {
-    let latest_block = eth_client
-        .get_block_number()
-        .await
-        .unwrap_or_else(|e| {
-            panic!("Failed to get latest block number from {rpc_url}: {e}");
-        })
-        .as_usize();
-
     if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
-        tracing::info!("Replaying block https://etherscan.io/block/{latest_block}");
+        tracing::info!("Replaying block https://etherscan.io/block/{block_number}");
     } else {
-        tracing::info!("Replaying block https://{network}.etherscan.io/block/{latest_block}",);
+        tracing::info!("Replaying block https://{network}.etherscan.io/block/{block_number}",);
     }
 
     let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(latest_block as u64))
+        .get_raw_block(BlockIdentifier::Number(block_number as u64))
         .await?;
 
     let start = SystemTime::now();
@@ -297,7 +328,7 @@ async fn replay_latest_block(
     let run_result = match replayer_mode {
         ReplayerMode::Execute => {
             SubcommandExecute::Block {
-                block: Some(latest_block),
+                block: Some(block_number),
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
@@ -307,7 +338,7 @@ async fn replay_latest_block(
         }
         ReplayerMode::Prove => {
             SubcommandProve::Block {
-                block: Some(latest_block),
+                block: Some(block_number),
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
