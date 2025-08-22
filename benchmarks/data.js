@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755883147470,
+  "lastUpdate": 1755883941967,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22345,6 +22345,31 @@ window.BENCHMARK_DATA = {
         "benches": [
           {
             "name": "Risc0, RTX A6000",
+            "value": 0,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "1d85a418ccef90f0ca718fd53e3d751ed1e54698",
+          "message": "ci(l1,l2): fix main_prover_l1 block cache",
+          "timestamp": "2025-08-22T14:42:43Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4129/commits/1d85a418ccef90f0ca718fd53e3d751ed1e54698"
+        },
+        "date": 1755883941346,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
             "value": 0,
             "unit": "Mgas/s"
           }
