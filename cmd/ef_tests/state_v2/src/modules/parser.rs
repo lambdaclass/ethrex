@@ -20,6 +20,8 @@ pub struct RunnerOptions {
     /// For skipping certain .json files
     #[arg(long, value_name = "SKIP_FILES", value_delimiter = ',')]
     pub skip_files: Vec<PathBuf>,
+    #[arg(long, value_name = "sp1")]
+    pub sp1: bool,
 }
 
 //TODO: Use this constant, improve it.
@@ -39,10 +41,8 @@ const IGNORED_TESTS: [&str; 12] = [
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.
-pub fn parse_file(path: &PathBuf, log_parse_file: bool) -> Result<Vec<Test>, RunnerError> {
-    if log_parse_file {
-        println!("Parsing file: {:?}", path);
-    }
+pub fn parse_file(path: &PathBuf) -> Result<Vec<Test>, RunnerError> {
+    println!("Parsing file: {:?}", path);
     let test_file = std::fs::File::open(path.clone()).unwrap();
     let mut tests: Tests = serde_json::from_reader(test_file).unwrap();
     for test in tests.0.iter_mut() {
@@ -56,12 +56,7 @@ pub fn parse_dir(
     path: &PathBuf,
     skipped_files: &Vec<PathBuf>,
     only_files: &Vec<PathBuf>,
-    log_parse_dir: bool,
-    log_parse_file: bool,
 ) -> Result<Vec<Test>, RunnerError> {
-    if log_parse_dir {
-        println!("Parsing test directory: {:?}", path);
-    }
     let mut tests = Vec::new();
     let dir_entries = std::fs::read_dir(path.clone()).unwrap().flatten();
 
@@ -70,13 +65,7 @@ pub fn parse_dir(
         // Check entry type
         let entry_type = entry.file_type().unwrap();
         if entry_type.is_dir() {
-            let dir_tests = parse_dir(
-                &entry.path(),
-                skipped_files,
-                only_files,
-                log_parse_dir,
-                log_parse_file,
-            )?;
+            let dir_tests = parse_dir(&entry.path(), skipped_files, only_files)?;
             tests.push(dir_tests);
         } else {
             let file_name = PathBuf::from(entry.file_name().as_os_str());
@@ -88,7 +77,7 @@ pub fn parse_dir(
             }
 
             if is_json_file && is_not_skipped {
-                let file_tests = parse_file(&entry.path(), log_parse_file)?;
+                let file_tests = parse_file(&entry.path())?;
                 tests.push(file_tests);
             }
         }
@@ -106,13 +95,13 @@ pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError
 
     // If the user selected specific `.json` files to be executed, parse only those files from the starting `path`.
     if !options.json_files.is_empty() {
-        let file_tests = parse_dir(&options.path, &skipped, &options.json_files, false, true)?;
+        let file_tests = parse_dir(&options.path, &skipped, &options.json_files)?;
         tests.push(file_tests);
     } else if options.path.ends_with(".json") {
-        let file_tests = parse_file(&options.path, true)?;
+        let file_tests = parse_file(&options.path)?;
         tests.push(file_tests);
     } else {
-        let dir_tests = parse_dir(&options.path, &skipped, &Vec::new(), true, false)?;
+        let dir_tests = parse_dir(&options.path, &skipped, &Vec::new())?;
         tests.push(dir_tests);
     }
     Ok(tests.concat())
