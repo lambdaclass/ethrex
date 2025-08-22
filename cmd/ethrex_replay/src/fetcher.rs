@@ -17,13 +17,9 @@ pub async fn get_blockdata(
     network: Network,
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
-    let latest_block_number = eth_client.get_block_number().await;
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
-        BlockIdentifier::Tag(BlockTag::Latest) => match latest_block_number {
-            Ok(latest) => latest.as_u64(),
-            Err(e) => return Err(e.into()),
-        },
+        BlockIdentifier::Tag(BlockTag::Latest) => eth_client.get_block_number().await?.as_u64(),
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
     };
 
@@ -35,11 +31,6 @@ pub async fn get_blockdata(
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
-
-    info!(
-        "Retrieving execution data for block {requested_block_number} ({} block behind latest)",
-        latest_block_number?.as_u64() - requested_block_number
-    );
 
     info!("Validating RPC chain ID");
 
