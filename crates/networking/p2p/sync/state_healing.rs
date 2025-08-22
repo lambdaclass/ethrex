@@ -175,6 +175,13 @@ async fn heal_state_trie(
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
+                    println!(
+                        "(SUPERLOG) DOWNLOADED batch {batch:?} with nodes {:?}",
+                        nodes
+                            .iter()
+                            .map(|node| hex::encode(node.encode_to_vec()))
+                            .collect::<Vec<_>>()
+                    );
                     leafs_healed += nodes
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(leaf_node)))
@@ -188,10 +195,11 @@ async fn heal_state_trie(
                     });
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
-                Err(_) => {
+                Err(err) => {
                     // TODO: Check if it's faster to reach the leafs of the trie
                     // by doing batch.extend(paths);paths = batch
                     // Or with a VecDequeue
+                    println!("(SUPERLOG) RETRYING batch {batch:?} because of {err:?}");
                     paths.extend(batch);
                     downloads_fail += 1;
                     scores.entry(peer_id).and_modify(|score| *score -= 1);
@@ -211,6 +219,7 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
+                println!("(SUPERLOG) GATHERING batch {batch:?}");
                 let Some((peer_id, mut peer_channel)) =
                     get_peer_with_highest_score_and_mark_it_as_occupied(
                         &peers,
@@ -220,6 +229,7 @@ async fn heal_state_trie(
                     .await
                 else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
+                    println!("(SUPERLOG) NOPEERS reinserting batch {batch:?}");
                     paths.extend(batch);
                     continue;
                 };
@@ -235,6 +245,7 @@ async fn heal_state_trie(
                         batch.clone(),
                     )
                     .await;
+                    println!("(SUPERLOG) RESPONSE batch {batch:?}");
                     // TODO: add error handling
                     tx.send((peer_id, response, batch))
                         .await
@@ -248,6 +259,7 @@ async fn heal_state_trie(
 
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
+            println!("(SUPERLOG) HEALING batch {batch:?}");
             match heal_state_batch(batch, nodes, store.clone()).await {
                 Ok(return_paths) => paths.extend(return_paths),
                 Err(err) => {
@@ -269,6 +281,7 @@ async fn heal_state_trie(
                 .filter(|(path, _)| trie.get_node(&path.encode_compact()).is_err())
                 .map(|(path, hash)| RequestMetadata { path, hash })
                 .collect();
+            println!("(SUPERLOG) POPCACHE paths {paths:?}");
             store
                 .set_state_heal_paths(Vec::new())
                 .await
@@ -296,6 +309,8 @@ async fn heal_state_trie(
                 .map(|(path, hash)| RequestMetadata { path, hash })
                 .collect();
             info!("We had {} old paths from a previous cycle", old_paths.len());
+            println!("(SUPERLOG) STALED paths {paths:?}");
+            println!("(SUPERLOG) STALE_MERGEWITH olds {old_paths:?}");
             let mut paths_hashmap: HashMap<Nibbles, RequestMetadata> = HashMap::from_iter(
                 old_paths
                     .into_iter()
@@ -323,6 +338,7 @@ async fn heal_state_trie(
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
+    println!("(SUPERLOG) ENDED paths {paths:?}");
     Ok(paths.is_empty())
 }
 
@@ -339,10 +355,19 @@ async fn heal_state_batch(
     // - If it is a leaf, add its path & value to the trie
     {
         let trie: ethrex_trie::Trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+        println!("(SUPERLOG) PRE_NMC batch {batch:?}");
         for node in nodes.iter() {
             let path = batch.remove(0);
             batch.extend(node_missing_children(node, &path.path, trie.db())?);
         }
+        println!("(SUPERLOG) POST_NMC batch {batch:?}");
+        println!(
+            "(SUPERLOG) WRITEDB nodes {:?}",
+            nodes
+                .iter()
+                .map(|node| hex::encode(node.encode_to_vec()))
+                .collect::<Vec<_>>()
+        );
         // Write nodes to trie
         trie.db().put_batch(
             nodes
@@ -445,5 +470,6 @@ pub fn node_missing_children(
         }
         _ => {}
     }
+    println!("(SUPERLOG) MISSINGCHILD paths {paths:?}");
     Ok(paths)
 }
