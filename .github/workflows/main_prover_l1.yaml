@@ -62,7 +62,7 @@ jobs:
         env:
           # TODO(): use RPC
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "http://dummy"
+          RPC_URL: "http://eth-testnet-rpc:8547"
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1041734.json cmd/ethrex_replay
           cd cmd/ethrex_replay
