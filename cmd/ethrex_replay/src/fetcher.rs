@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use crate::rpc::db::RpcDB;
 use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
@@ -13,10 +14,7 @@ use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
 use tracing::{info, warn};
 
-use crate::{
-    cache::{Cache, L2Fields, load_cache, write_cache},
-    rpc::db::RpcDB,
-};
+use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 
 pub async fn get_blockdata(
     eth_client: EthClient,

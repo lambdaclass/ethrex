@@ -332,6 +332,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                l2: false, // TODO: change this
             }
             .run()
             .await
@@ -342,6 +343,7 @@ async fn replay_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                l2: false, // TODO: change this
             }
             .run()
             .await
