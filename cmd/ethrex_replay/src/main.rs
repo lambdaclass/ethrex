@@ -9,6 +9,13 @@ mod fetcher;
 mod plot_composition;
 mod run;
 
+#[cfg(feature = "jemalloc")]
+use jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 #[tokio::main]
 async fn main() {
     let log_filter = tracing_subscriber::EnvFilter::builder()

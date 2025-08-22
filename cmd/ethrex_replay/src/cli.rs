@@ -156,7 +156,7 @@ impl SubcommandExecute {
                 #[cfg(feature = "sp1")]
                 let replay_mode = ReplayerMode::ExecuteSP1;
                 #[cfg(feature = "risc0")]
-                let replay_mode = ReplayerMode::ExecuteSP1;
+                let replay_mode = ReplayerMode::ExecuteRISC0;
                 #[cfg(not(any(feature = "risc0", feature = "sp1")))]
                 let replay_mode = ReplayerMode::Execute;
 

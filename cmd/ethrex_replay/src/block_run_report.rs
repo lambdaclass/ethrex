@@ -121,7 +121,7 @@ fn format_duration(duration: Duration) -> String {
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    let milliseconds = total_seconds / 1000;
+    let milliseconds = duration.subsec_millis();
 
     if hours > 0 {
         return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
