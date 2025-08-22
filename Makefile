@@ -64,6 +64,7 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 ENCLAVE ?= lambdanet
 LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
 
+# If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
