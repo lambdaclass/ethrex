@@ -145,7 +145,7 @@ impl L1Watcher {
         );
 
         if self.last_block_fetched == latest_block_to_check {
-            debug!("{:#?} ==  {:#?}", self.last_block_fetched, new_last_block);
+            debug!("{:#x} ==  {:#x}", self.last_block_fetched, new_last_block);
             return Ok(vec![]);
         }
 
