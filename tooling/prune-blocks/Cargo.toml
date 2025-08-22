@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-lazy_static.workspace = true
 ethrex-storage.workspace = true
 tokio.workspace = true
 tracing.workspace = true

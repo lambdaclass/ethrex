@@ -8572,7 +8572,6 @@ dependencies = [
  "ethrex",
  "ethrex-storage",
  "eyre",
- "lazy_static",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
