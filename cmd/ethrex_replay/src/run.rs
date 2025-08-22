@@ -15,7 +15,10 @@ use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
-    ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    }))
+    .map_err(|_e| eyre::Error::msg("SP1 panicked while executing"))??;
     Ok(())
 }
 
