@@ -185,7 +185,7 @@ pub fn restore_cache_state(
         for (key, value) in storage {
             let storage_value = LevmStorageSlot {
                 current_value: value,
-                previous_value: None,
+                previous_value: value,
             };
             account.storage.insert(key, storage_value);
         }
@@ -683,7 +683,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
                 .map(|(key, value)| {
                     let storage_value = LevmStorageSlot {
                         current_value: value,
-                        previous_value: None,
+                        previous_value: value,
                     };
                     (key, storage_value)
                 })
