@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755899535269,
+  "lastUpdate": 1755902299414,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9895,6 +9895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160587351505,
             "range": "± 446983880",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "70196c1e8ef9a8cdbde714d7fd9f9abf3befb7a4",
+          "message": "perf(levm): improve mulmod and addmod opcodes (#4072)\n\n**Motivation**\n\nImprove addmod and mulmod opcode performance by avoiding unnecesary\nchecks",
+          "timestamp": "2025-08-22T21:48:49Z",
+          "tree_id": "b9d8a541a40adb5e34304131dc96b506e5fdd455",
+          "url": "https://github.com/lambdaclass/ethrex/commit/70196c1e8ef9a8cdbde714d7fd9f9abf3befb7a4"
+        },
+        "date": 1755902282834,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160979188084,
+            "range": "± 238452804",
             "unit": "ns/iter"
           }
         ]
