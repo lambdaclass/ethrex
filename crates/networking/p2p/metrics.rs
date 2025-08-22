@@ -50,6 +50,9 @@ pub struct Metrics {
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
 
+    pub connection_attempt_failures_by_client_and_type:
+        Arc<Mutex<BTreeMap<String, BTreeMap<String, u64>>>>,
+
     /* Snap Sync */
     // Common
     pub sync_head_block: Arc<Mutex<u64>>,
@@ -100,6 +103,11 @@ pub struct Metrics {
     pub bytecode_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
+
+    // RLPxConnections
+    pub live_connx: Arc<Mutex<u64>>,
+    pub initiated_connx: Arc<Mutex<u64>>,
+    pub received_connx: Arc<Mutex<u64>>,
 
     start_time: SystemTime,
 }
@@ -198,11 +206,27 @@ impl Metrics {
             .and_modify(|count| *count -= 1);
     }
 
-    pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
+    pub async fn record_new_rlpx_conn_failure(
+        &self,
+        client_version: &str,
+        reason: RLPxError,
+    ) {
         let mut failures_grouped_by_reason = self.connection_attempt_failures.lock().await;
 
         self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
             .await;
+
+        let mut connection_attempt_failures_by_client_and_type = self
+            .connection_attempt_failures_by_client_and_type
+            .lock()
+            .await;
+
+        self.update_failures_grouped_by_client_type_and_reason(
+            &mut connection_attempt_failures_by_client_and_type,
+            &reason,
+            client_version,
+        )
+        .await;
     }
 
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
@@ -242,181 +266,73 @@ impl Metrics {
         }
     }
 
+    pub fn normalize_reason(&self, failure_reason: &RLPxError) -> String {
+        match failure_reason {
+            RLPxError::HandshakeError(reason) => format!("HandshakeError - {reason}"),
+            RLPxError::StateError(reason) => format!("StateError - {reason}"),
+            RLPxError::NoMatchingCapabilities() => "NoMatchingCapabilities".to_owned(),
+            RLPxError::Disconnected() => "Disconnected".to_owned(),
+            RLPxError::DisconnectReceived(disconnect_reason) => {
+                format!("DisconnectReceived - {disconnect_reason}")
+            }
+            RLPxError::DisconnectSent(disconnect_reason) => {
+                format!("DisconnectSent - {disconnect_reason}")
+            }
+            RLPxError::NotFound(reason) => format!("NotFound - {reason}"),
+            RLPxError::InvalidPeerId() => "InvalidPeerId".to_owned(),
+            RLPxError::InvalidRecoveryId() => "InvalidRecoveryId".to_owned(),
+            RLPxError::InvalidMessageLength() => "InvalidMessageLength".to_owned(),
+            RLPxError::MessageNotHandled(reason) => format!("MessageNotHandled - {reason}"),
+            RLPxError::BadRequest(reason) => format!("BadRequest - {reason}"),
+            RLPxError::RLPDecodeError(rlpdecode_error) => {
+                format!("RLPDecodeError - {rlpdecode_error}")
+            }
+            RLPxError::RLPEncodeError(rlpencode_error) => {
+                format!("RLPEncodeError - {rlpencode_error}")
+            }
+            RLPxError::StoreError(store_error) => format!("StoreError - {store_error}"),
+            RLPxError::CryptographyError(reason) => format!("CryptographyError - {reason}"),
+            RLPxError::BroadcastError(reason) => format!("BroadcastError - {reason}"),
+            RLPxError::RecvError(recv_error) => format!("RecvError - {recv_error}"),
+            RLPxError::SendMessage(reason) => format!("SendMessage - {reason}"),
+            RLPxError::MempoolError(mempool_error) => format!("MempoolError - {mempool_error}"),
+            RLPxError::IoError(error) => format!("IoError - {error}"),
+            RLPxError::InvalidMessageFrame(reason) => format!("InvalidMessageFrame - {reason}"),
+            RLPxError::IncompatibleProtocol => "IncompatibleProtocol".to_owned(),
+            RLPxError::InvalidBlockRange => "InvalidBlockRange".to_owned(),
+            RLPxError::RollupStoreError(error) => format!("RollupStoreError - {error}"),
+            RLPxError::BlockchainError(error) => format!("BlockchainError - {error}"),
+            RLPxError::InternalError(error) => format!("InternalError - {error}"),
+            RLPxError::L2CapabilityNotNegotiated => "L2CapabilityNotNegotiated".to_owned(),
+        }
+    }
+
     pub async fn update_failures_grouped_by_reason(
         &self,
         failures_grouped_by_reason: &mut BTreeMap<String, u64>,
         failure_reason: &RLPxError,
     ) {
-        match failure_reason {
-            RLPxError::HandshakeError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("HandshakeError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::StateError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("StateError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::NoMatchingCapabilities() => {
-                failures_grouped_by_reason
-                    .entry("NoMatchingCapabilities".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::Disconnected() => {
-                failures_grouped_by_reason
-                    .entry("Disconnected".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::DisconnectReceived(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectReceived - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::DisconnectSent(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectSent - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::NotFound(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("NotFound - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidPeerId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidPeerId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidRecoveryId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidRecoveryId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidMessageLength() => {
-                failures_grouped_by_reason
-                    .entry("InvalidMessageLength".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::MessageNotHandled(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("MessageNotHandled - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::BadRequest(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("BadRequest - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RLPDecodeError(rlpdecode_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RLPDecodeError - {rlpdecode_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RLPEncodeError(rlpencode_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RLPEncodeError - {rlpencode_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::StoreError(store_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("StoreError - {store_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::CryptographyError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("CryptographyError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::BroadcastError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("BroadcastError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RecvError(recv_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RecvError - {recv_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::SendMessage(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("SendMessage - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::MempoolError(mempool_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("MempoolError - {mempool_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::IoError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("IoError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidMessageFrame(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("InvalidMessageFrame - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::IncompatibleProtocol => {
-                failures_grouped_by_reason
-                    .entry("IncompatibleProtocol".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidBlockRange => {
-                failures_grouped_by_reason
-                    .entry("InvalidBlockRange".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RollupStoreError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RollupStoreError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::BlockchainError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("BlockchainError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InternalError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("InternalError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::L2CapabilityNotNegotiated => {
-                failures_grouped_by_reason
-                    .entry("L2CapabilityNotNegotiated".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-        }
+        failures_grouped_by_reason
+            .entry(self.normalize_reason(failure_reason))
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+    }
+
+    pub async fn update_failures_grouped_by_client_type_and_reason(
+        &self,
+        connection_attempt_failures_by_client_and_type: &mut BTreeMap<String, BTreeMap<String, u64>>,
+        failure_reason: &RLPxError,
+        client_version: &str,
+    ) {
+        let split = client_version.split('/').collect::<Vec<&str>>();
+        let client_type = split.first().expect("Split always returns 1 element");
+
+        connection_attempt_failures_by_client_and_type
+            .entry(client_type.to_string())
+            .or_insert(BTreeMap::new())
+            .entry(self.normalize_reason(failure_reason))
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
     }
 }
 
@@ -546,6 +462,8 @@ impl Default for Metrics {
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
 
+            connection_attempt_failures_by_client_and_type: Arc::new(Mutex::new(BTreeMap::new())),
+
             /* Snap Sync */
             // Common
             sync_head_block: Arc::new(Mutex::new(0)),
@@ -594,6 +512,11 @@ impl Default for Metrics {
             bytecode_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
+
+            // RLPxConnections
+            live_connx: Arc::new(Mutex::new(0)),
+            initiated_connx: Arc::new(Mutex::new(0)),
+            received_connx: Arc::new(Mutex::new(0)),
 
             start_time: SystemTime::now(),
         }

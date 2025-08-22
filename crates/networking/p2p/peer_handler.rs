@@ -105,6 +105,7 @@ async fn ask_peer_head_number(
                 );
                 Ok(sync_head_number)
             } else {
+                error!("Received unexpected response from peer {peer_id} - {id} - {request_id}");
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
             }
         }
@@ -223,7 +224,7 @@ impl PeerHandler {
 
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        info!("Retrieving sync head block number from peers");
+        info!("Retrieving sync head block number from peers {}", peers_table.len());
 
         let mut retries = 1;
 

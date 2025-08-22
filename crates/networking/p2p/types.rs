@@ -566,7 +566,7 @@ mod tests {
         let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         // Drop fork ID since the test doesn't use it
         record.pairs.retain(|(k, _)| k != "eth");
-        record.sign_record(&signer).unwrap();
+        record.update_seq(&signer).unwrap();
 
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 

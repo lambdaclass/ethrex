@@ -9,6 +9,7 @@ use super::{
     server::{Initiator, Receiver},
 };
 use crate::{
+    metrics::METRICS,
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
@@ -63,9 +64,16 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
+    *METRICS.live_connx.lock().await += 1;
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
-            let addr = SocketAddr::new(node.ip, node.tcp_port);
+            *METRICS.initiated_connx.lock().await += 1;
+            let port = if node.tcp_port == 0 {
+                node.udp_port
+            } else {
+                node.tcp_port
+            };
+            let addr = SocketAddr::new(node.ip, port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
@@ -89,6 +97,7 @@ pub(crate) async fn perform(
             peer_addr,
             stream,
         }) => {
+            *METRICS.received_connx.lock().await += 1;
             let Some(mut stream) = Arc::into_inner(stream) else {
                 return Err(RLPxError::StateError("Cannot use the stream".to_string()));
             };

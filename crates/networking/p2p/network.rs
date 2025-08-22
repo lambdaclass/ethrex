@@ -203,6 +203,8 @@ pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockch
         let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
 
         let rlpx_disconnections = METRICS.disconnections_by_client_type.lock().await;
+    
+        let connection_attempt_failures_by_client_and_type = METRICS.connection_attempt_failures_by_client_and_type.lock().await;
 
         /* Snap Sync */
 
@@ -350,6 +352,11 @@ pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockch
             (*downloaded_bytecodes as f64 / *total_bytecodes_to_download as f64) * 100.0
         };
 
+        let live_connx = METRICS.live_connx.lock().await;
+        let initiated_connx = METRICS.initiated_connx.lock().await;
+        let received_connx = METRICS.received_connx.lock().await;
+        let ended_connx = *received_connx as u64 + *initiated_connx as u64 - *live_connx as u64;
+
         info!(
             r#"
 P2P:
@@ -365,6 +372,14 @@ elapsed: {elapsed}
 {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
 {rlpx_failed_connection_attempts} failed connection attempts
 Clients diversity: {peers_by_client:#?}
+Failures: {connection_attempt_failures_by_client_and_type:#?}
+            
+RLPx:
+=====
+live connections: {live_connx}
+initiated connections: {initiated_connx}
+received connections: {received_connx}
+ended connections: {ended_connx}
 
 Snap Sync:
 ==========
@@ -392,6 +407,9 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
             peers_by_client = rlpx_connection_client_types,
+            // Disconnections: {peer_disconnections:#?}
+            // peer_disconnections = rlpx_disconnections,
+            connection_attempt_failures_by_client_and_type = connection_attempt_failures_by_client_and_type,
             headers_download_progress = format!("{current_headers_download_progress:.2}%"),
             headers_to_download = total_headers_to_download,
             downloaded_headers = downloaded_headers,
@@ -432,6 +450,10 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
                     .unwrap_or_else(|| "-".to_owned()),
             downloaded_storage_slots = *METRICS.downloaded_storage_slots.lock().await,
             storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
+            live_connx = live_connx,
+            initiated_connx = initiated_connx,
+            received_connx = received_connx,
+            ended_connx = ended_connx,
         );
 
         tokio::time::sleep(Duration::from_secs(1)).await;

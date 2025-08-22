@@ -208,6 +208,14 @@ impl GenServer for RLPxConnection {
         mut self,
         handle: &GenServerHandle<Self>,
     ) -> Result<InitResult<Self>, Self::Error> {
+        let client_version = match &self.inner_state {
+            InnerState::Initiator(initiator) => initiator
+                .node
+                .version
+                .clone()
+                .unwrap_or("Unknown - Handshake".to_string()),
+            _ => "Unknown - Receiver".to_string(),
+        };
         match handshake::perform(self.inner_state).await {
             Ok((mut established_state, stream)) => {
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
@@ -222,7 +230,16 @@ impl GenServer for RLPxConnection {
                     )
                     .await;
 
-                    METRICS.record_new_rlpx_conn_failure(reason).await;
+                    METRICS
+                        .record_new_rlpx_conn_failure(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown - Initialization".to_string()),
+                            reason,
+                        )
+                        .await;
 
                     self.inner_state = InnerState::Established(established_state);
                     Ok(NoSuccess(self))
@@ -246,6 +263,9 @@ impl GenServer for RLPxConnection {
                 // Handshake failed, just log a debug message.
                 // No connection was established so no need to perform any other action
                 debug!("Failed Handshake on RLPx connection {err}");
+                METRICS
+                    .record_new_rlpx_conn_failure(&client_version, err)
+                    .await;
                 self.inner_state = InnerState::HandshakeFailed;
                 Ok(NoSuccess(self))
             }
@@ -357,6 +377,7 @@ impl GenServer for RLPxConnection {
     }
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+        *METRICS.live_connx.lock().await -= 1;
         match self.inner_state {
             InnerState::Established(established_state) => {
                 log_peer_debug(
