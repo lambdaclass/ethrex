@@ -4,8 +4,8 @@ use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_U64, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, VMError},
 };
-use bytes::Bytes;
 use ExceptionalHalt::OutOfBounds;
+use bytes::Bytes;
 use ethrex_common::{
     U256,
     utils::{u256_from_big_endian_const, u256_to_big_endian},
