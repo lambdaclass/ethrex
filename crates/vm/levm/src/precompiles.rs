@@ -38,7 +38,7 @@ use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
-use std::ops::Mul;
+use std::{cell::OnceCell, ops::Mul};
 
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
@@ -606,9 +606,10 @@ type FirstPointCoordinates = (
 );
 
 /// Parses first point coordinates and makes verification of invalid infinite
-fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
+#[inline]
+fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
+    let first_point_x = &input_data[..32];
+    let first_point_y = &input_data[32..64];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(first_point_x) == U256::zero())
@@ -626,8 +627,10 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
 }
 
 /// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
+///
+/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
 fn parse_second_point_coordinates(
-    input_data: &[u8],
+    input_data: &[u8; 192],
 ) -> Result<
     (
         FieldElement<Degree2ExtensionField>,
@@ -635,8 +638,8 @@ fn parse_second_point_coordinates(
     ),
     VMError,
 > {
-    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::Slicing)?;
-    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
+    let second_point_x_first_part = &input_data[96..128];
+    let second_point_x_second_part = &input_data[64..96];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
@@ -645,8 +648,8 @@ fn parse_second_point_coordinates(
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
-    let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
+    let second_point_y_first_part = &input_data[160..192];
+    let second_point_y_second_part = &input_data[128..160];
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
@@ -676,16 +679,22 @@ fn parse_second_point_coordinates(
 }
 
 /// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// continues, verifies errors on the other point or calculates the pairing
-fn handle_pairing_from_coordinates(
+/// verifies errors on the other point returning None or returns the pairing
+#[inline(always)] // called only from one place, so inlining always wont increase code size.
+fn validate_pairing(
     first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
     first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
     second_point_x: FieldElement<Degree2ExtensionField>,
     second_point_y: FieldElement<Degree2ExtensionField>,
-    mul: &mut FieldElement<Degree12ExtensionField>,
-) -> Result<bool, VMError> {
-    let zero_element = BN254FieldElement::from(0);
-    let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+) -> Result<
+    Option<(
+        ShortWeierstrassProjectivePoint<BN254Curve>,
+        ShortWeierstrassProjectivePoint<BN254TwistCurve>,
+    )>,
+    VMError,
+> {
+    let zero_element = BN254FieldElement::zero();
+    let twcurve_zero_element = BN254TwistCurveFieldElement::zero();
     let first_point_is_infinity =
         first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
     let second_point_is_infinity =
@@ -694,26 +703,23 @@ fn handle_pairing_from_coordinates(
     match (first_point_is_infinity, second_point_is_infinity) {
         (true, true) => {
             // If both points are infinity, then continue to the next input
-            Ok(true)
+            Ok(None)
         }
         (true, false) => {
             // If the first point is infinity, then do the checks for the second
-            let p2 = BN254TwistCurve::create_point_from_affine(
-                second_point_x.clone(),
-                second_point_y.clone(),
-            )
-            .map_err(|_| PrecompileError::InvalidPoint)?;
+            let p2 = BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
 
             if !p2.is_in_subgroup() {
                 return Err(PrecompileError::PointNotInSubgroup.into());
             }
-            Ok(true)
+            Ok(None)
         }
         (false, true) => {
             // If the second point is infinity, then do the checks for the first
-            BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+            BN254Curve::create_point_from_affine(first_point_x, first_point_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(true)
+            Ok(None)
         }
         (false, false) => {
             // Define the pairing points
@@ -726,10 +732,7 @@ fn handle_pairing_from_coordinates(
             if !second_point.is_in_subgroup() {
                 return Err(PrecompileError::PointNotInSubgroup.into());
             }
-
-            // Get the result of the pairing and affect the mul value with it
-            update_pairing_result(mul, first_point, second_point)?;
-            Ok(false)
+            Ok(Some((first_point, second_point)))
         }
     }
 }
@@ -747,33 +750,36 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
+    let mut valid_pairs = Vec::new();
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-    for input_index in 0..inputs_amount {
-        // Define the input indexes and slice calldata to get the input data
-        let input_start = input_index
-            .checked_mul(192)
-            .ok_or(InternalError::Overflow)?;
-        let input_end = input_start
-            .checked_add(192)
-            .ok_or(InternalError::Overflow)?;
 
-        let input_data = calldata
-            .get(input_start..input_end)
-            .ok_or(InternalError::Slicing)?;
+    for input in calldata.chunks_exact(192) {
+        #[expect(
+            unsafe_code,
+            reason = "chunks_exact by ensures the conversion is valid"
+        )]
+        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
 
-        let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
+        let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
 
-        let (second_point_x, second_point_y) = parse_second_point_coordinates(input_data)?;
+        let (second_point_x, second_point_y) = parse_second_point_coordinates(&input)?;
 
-        if handle_pairing_from_coordinates(
-            first_point_x,
-            first_point_y,
-            second_point_x,
-            second_point_y,
-            &mut mul,
-        )? {
-            continue;
+        if let Some(pair) =
+            validate_pairing(first_point_x, first_point_y, second_point_x, second_point_y)?
+        {
+            valid_pairs.push(pair);
         }
+    }
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "library will not panic on mul overflow"
+    )]
+    if !valid_pairs.is_empty() {
+        let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
+        let pairing_result = BN254AtePairing::compute_batch(&batch)
+            .map_err(|_| PrecompileError::BN254AtePairingError)?;
+        mul *= pairing_result;
     }
 
     // Generate the result from the variable mul
@@ -781,22 +787,6 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
     let mut result = [0; 32];
     result[31] = u8::from(success);
     Ok(Bytes::from(result.to_vec()))
-}
-
-/// Updates the success variable with the pairing result. I allow this clippy alert because lib handles
-/// mul for the type and will not panic in case of overflow
-#[allow(clippy::arithmetic_side_effects)]
-fn update_pairing_result(
-    mul: &mut FieldElement<Degree12ExtensionField>,
-    first_point: ShortWeierstrassProjectivePoint<BN254Curve>,
-    second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
-) -> Result<(), VMError> {
-    let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-        .map_err(|_| PrecompileError::BN254AtePairingError)?;
-
-    *mul *= pairing_result;
-
-    Ok(())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
