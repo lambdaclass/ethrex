@@ -3,6 +3,12 @@ name = "ethrex-replay"
 version = "0.1.0"
 edition = "2024"
 
+[profile.dev]
+debug = 2
+
+[profile.release]
+debug = 2
+
 [dependencies]
 ethrex-config.workspace = true
 ethrex-common.workspace = true
@@ -35,6 +41,7 @@ again = "0.1.2"
 futures-util = "0.3.31"
 tokio-utils = "0.1.2"
 
+jemallocator = { version = "0.5.4", optional = true }
 
 [features]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
@@ -43,3 +50,4 @@ gpu = ["ethrex-prover/gpu"]
 l2 = ["zkvm_interface/l2", "ethrex-prover/l2", "ethrex-l2/l2"]
 profiling = ["ethrex-prover/profiling"]
 ci = []
+jemalloc = ["dep:jemallocator"]
