@@ -1,5 +1,6 @@
+use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_vm::prover_db::PreExecutionState;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -19,17 +20,17 @@ pub struct L2Fields {
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub witness: ExecutionWitnessResult,
+    pub pre_execution_state: PreExecutionState,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitnessResult) -> Self {
+    pub fn new(blocks: Vec<Block>, pre_execution_state: PreExecutionState) -> Self {
         Self {
             blocks,
-            witness,
+            pre_execution_state,
             l2_fields: None,
         }
     }

@@ -6,6 +6,7 @@ mod cache;
 mod cli;
 mod fetcher;
 mod plot_composition;
+mod rpc;
 mod run;
 
 #[cfg(feature = "jemalloc")]

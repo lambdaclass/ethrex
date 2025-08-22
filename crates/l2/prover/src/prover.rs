@@ -1,6 +1,7 @@
 use crate::{backends::Backend, config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
+use ethrex_vm::prover_db::PreExecutionState;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -108,7 +109,7 @@ impl Prover {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
-                db: input.db,
+                pre_execution_state: PreExecutionState::Witness(Box::new(input.db)),
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,
