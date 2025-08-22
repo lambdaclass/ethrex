@@ -25,7 +25,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex:local .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -62,12 +62,12 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
-LOCALNET_CONFIG_FILE ?= ./fixtures/network/network_params.yaml
+LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
@@ -105,9 +105,7 @@ SIM_PARALLELISM ?= 16
 # The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
 # The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
 
-HIVE_CLIENT_FILE := ../fixtures/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../fixtures/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../fixtures/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../fixtures/hive/clients.yml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
