@@ -17,6 +17,7 @@ use ethrex_common::{
         InvalidBlockHeaderError, block_execution_witness::ExecutionWitnessResult,
     },
 };
+use ethrex_prover_lib::backends::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
@@ -27,7 +28,7 @@ pub fn parse_and_execute(
     path: &Path,
     evm: EvmEngine,
     skipped_tests: Option<&[&str]>,
-    re_run_stateless: bool,
+    stateless_backend: Option<Backend>,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
@@ -44,7 +45,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm, re_run_stateless));
+        let result = rt.block_on(run_ef_test(&test_key, &test, evm, stateless_backend));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -64,7 +65,7 @@ pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
     evm: EvmEngine,
-    run_stateless: bool,
+    stateless_backend: Option<Backend>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
@@ -121,9 +122,11 @@ pub async fn run_ef_test(
         }
     }
     check_poststate_against_db(test_key, test, &store).await;
-    if evm == EvmEngine::LEVM && run_stateless {
-        re_run_stateless(blockchain, test, test_key).await?;
-    }
+    if let Some(backend) = stateless_backend {
+        if evm == EvmEngine::LEVM {
+            re_run_stateless(blockchain, test, test_key, backend).await?;
+        }
+    };
     Ok(())
 }
 
@@ -397,6 +400,7 @@ async fn re_run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
+    backend: Backend,
 ) -> Result<(), String> {
     let blocks = test
         .blocks
@@ -422,11 +426,6 @@ async fn re_run_stateless(
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };
-
-    #[cfg(feature = "sp1")]
-    let backend = ethrex_prover_lib::backends::Backend::SP1;
-    #[cfg(not(feature = "sp1"))]
-    let backend = ethrex_prover_lib::backends::Backend::Exec;
 
     if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
         if !test_should_fail {

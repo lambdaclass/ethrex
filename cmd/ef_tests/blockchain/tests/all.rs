@@ -11,12 +11,17 @@ fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
         EvmEngine::REVM
     };
 
-    parse_and_execute(path, engine, None, false)
+    parse_and_execute(path, engine, None, None)
 }
 
 #[cfg(feature = "levm")]
 fn parse_and_execute_stateless_runner(path: &Path) -> datatest_stable::Result<()> {
-    parse_and_execute(path, EvmEngine::LEVM, None, true)
+    parse_and_execute(
+        path,
+        EvmEngine::LEVM,
+        None,
+        Some(ethrex_prover_lib::backends::Backend::Exec),
+    )
 }
 #[cfg(feature = "levm")]
 datatest_stable::harness!(parse_and_execute_stateless_runner, TEST_FOLDER, r".*");
