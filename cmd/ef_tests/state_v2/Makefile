@@ -5,3 +5,6 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 run-tests: ## 🧪 Run all tests with optional flags. Usage: make run-tests flags="--flag1 --flag2"
 	cargo run --package ef_tests-statev2 --release -- $(flags)
+
+run-tests-debug: ## 🧪 Run all tests in debug mode with optional flags. Usage: make run-tests flags="--flag1 --flag2"
+	cargo run --package ef_tests-statev2 -- $(flags)

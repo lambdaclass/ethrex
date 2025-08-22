@@ -17,10 +17,7 @@ pub struct RunnerOptions {
     /// For running tests in specific .json files. If this is not empty, "path" flag will be ignored.
     #[arg(short, long, value_name = "JSON_FILES", value_delimiter = ',')]
     pub json_files: Vec<PathBuf>,
-    /// For skipping certain .json files
-    #[arg(long, value_name = "SKIP_FILES", value_delimiter = ',')]
-    pub skip_files: Vec<PathBuf>,
-    #[arg(long, value_name = "sp1")]
+    #[arg(long, value_name = "sp1")] //TODO: Implement integration with SP1.
     pub sp1: bool,
 }
 
@@ -54,7 +51,7 @@ pub fn parse_file(path: &PathBuf) -> Result<Vec<Test>, RunnerError> {
 /// Parse a directory of tests into a Vec<Test>.
 pub fn parse_dir(
     path: &PathBuf,
-    skipped_files: &Vec<PathBuf>,
+    skipped_files: &[PathBuf],
     only_files: &Vec<PathBuf>,
 ) -> Result<Vec<Test>, RunnerError> {
     let mut tests = Vec::new();
@@ -69,13 +66,14 @@ pub fn parse_dir(
             tests.push(dir_tests);
         } else {
             let file_name = PathBuf::from(entry.file_name().as_os_str());
-            let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
-            let is_not_skipped = !skipped_files.contains(&file_name);
             // If only certain files were supposed to be parsed make sure this file is among them.
             if !only_files.is_empty() && !only_files.contains(&file_name) {
                 continue;
             }
 
+            // Normally this would be true but it's safe to make this check.
+            let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
+            let is_not_skipped = !skipped_files.contains(&file_name);
             if is_json_file && is_not_skipped {
                 let file_tests = parse_file(&entry.path())?;
                 tests.push(file_tests);
@@ -89,20 +87,10 @@ pub fn parse_dir(
 
 /// Initiates the parser with the corresponding option flags.
 pub fn parse_tests(options: &mut RunnerOptions) -> Result<Vec<Test>, RunnerError> {
-    let mut tests = Vec::new();
-    let mut skipped: Vec<PathBuf> = IGNORED_TESTS.iter().map(PathBuf::from).collect();
-    skipped.append(&mut options.skip_files);
-
-    // If the user selected specific `.json` files to be executed, parse only those files from the starting `path`.
-    if !options.json_files.is_empty() {
-        let file_tests = parse_dir(&options.path, &skipped, &options.json_files)?;
-        tests.push(file_tests);
-    } else if options.path.ends_with(".json") {
-        let file_tests = parse_file(&options.path)?;
-        tests.push(file_tests);
+    if options.path.to_string_lossy().ends_with(".json") {
+        parse_file(&options.path)
     } else {
-        let dir_tests = parse_dir(&options.path, &skipped, &Vec::new())?;
-        tests.push(dir_tests);
+        let skipped = IGNORED_TESTS.map(PathBuf::from);
+        parse_dir(&options.path, &skipped, &options.json_files)
     }
-    Ok(tests.concat())
 }
