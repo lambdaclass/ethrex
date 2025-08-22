@@ -87,6 +87,7 @@ struct Cli {
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
 pub enum TestType {
     EthTransfers,
+    Erc20Deploy,
     Erc20DeployClaim,
     Erc20Transfers,
     Fibonacci,
@@ -183,6 +184,7 @@ enum TxBuilder {
     EthTransfer,
     Fibonacci(Address),
     IOHeavy(Address),
+    Deploy(Vec<u8>),
     Noop,
 }
 
@@ -213,6 +215,7 @@ impl TxBuilder {
                     calldata::encode_calldata("incrementNumbers()", &[]).unwrap();
                 (None, io_heavy_calldata, *contract_address)
             }
+            TxBuilder::Deploy(code) => (None, code.clone(), Address::zero()),
             TxBuilder::Noop => unreachable!(),
         }
     }
@@ -344,8 +347,12 @@ async fn main() {
     let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
 
     let tx_builder = match cli.test_type {
+        TestType::Erc20Deploy => {
+            println!("ERC20 deploy load test starting");
+            TxBuilder::Deploy(hex::decode(ERC20).expect("Failed to decode ERC20 bytecode"))
+        }
         TestType::Erc20DeployClaim => {
-            println!("ERC20 deployment & claim starting");
+            println!("ERC20 deployment & claim starting (executes once, ignores --tx-amount)");
             println!("Deploying ERC20 contract...");
             let contract_address = erc20_deploy(client.clone(), &deployer)
                 .await
