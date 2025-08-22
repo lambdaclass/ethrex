@@ -2,6 +2,8 @@ name: Replay proving
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["**"]
     paths:
       - ".github/workflows/main_prover_l1.yaml"
 
