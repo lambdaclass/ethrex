@@ -1,5 +1,7 @@
 #![no_main]
 
+use std::time::SystemTime;
+
 use rkyv::rancor::Error;
 use zkvm_interface::{
     execution::{execution_program, format_duration},
