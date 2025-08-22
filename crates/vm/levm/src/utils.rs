@@ -199,7 +199,7 @@ pub fn get_base_fee_per_blob_gas(
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         block_excess_blob_gas.unwrap_or_default(),
-        base_fee_update_fraction.into(),
+        base_fee_update_fraction,
     )
 }
 
@@ -680,10 +680,11 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     )
 }
 
-/// Converts a U256 value into usize, fails if the value is over 64 bytes
+/// Converts a U256 value into usize, returning an error if the value is over 32 bits
+/// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
     Ok(val.0[0] as usize)
