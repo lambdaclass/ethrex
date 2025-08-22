@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755886670901,
+  "lastUpdate": 1755889666683,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9745,6 +9745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162284574374,
             "range": "± 312434796",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bede38ea0b18bbe5f939d34e13063c6ee996a3db",
+          "message": "perf(levm): improve bls12 precompile (#4073)\n\n**Motivation**\n\nImproves \n\n- g1 msm from 18 mgas/s to 100\n- g2 msm from 14 mgas/s to 143\n\nCloses #issue_number",
+          "timestamp": "2025-08-22T18:10:24Z",
+          "tree_id": "3417027451f1663cc9d8d158046ecc91c882da66",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bede38ea0b18bbe5f939d34e13063c6ee996a3db"
+        },
+        "date": 1755889623461,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183875712288,
+            "range": "± 1333767945",
             "unit": "ns/iter"
           }
         ]
