@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755873947317,
+  "lastUpdate": 1755873993521,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9655,6 +9655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162891630202,
             "range": "± 404040297",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "34b27a7fcc877800c86fd7df8e4c21f4866e3fb9",
+          "message": "chore(l1): add block time to grafana dashboard. (#4112)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n<img width=\"1194\" height=\"436\" alt=\"Screenshot 2025-08-21 at 13 40 32\"\nsrc=\"https://github.com/user-attachments/assets/5987a418-d7d2-4ef2-9782-2fa78e3950f6\"\n/>",
+          "timestamp": "2025-08-22T13:54:31Z",
+          "tree_id": "c24872aea8b0c42ba05203de4f5f1f5a0fc27725",
+          "url": "https://github.com/lambdaclass/ethrex/commit/34b27a7fcc877800c86fd7df8e4c21f4866e3fb9"
+        },
+        "date": 1755873977795,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162805368767,
+            "range": "± 1454466129",
             "unit": "ns/iter"
           }
         ]
