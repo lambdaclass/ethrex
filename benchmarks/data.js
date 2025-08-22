@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755896541065,
+  "lastUpdate": 1755896680394,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9805,6 +9805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161424392347,
             "range": "± 477742334",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c673d17568fdb044dce05513ecb17ec6db431e3f",
+          "message": "perf(levm): improve ecpairing (bn128) (#4130)\n\n**Motivation**\n\na 73% improvement over ethrex main\n\nThe main change is properly batching BN254AtePairing::compute_batch\ncalls\n\n<img width=\"1337\" height=\"1108\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/626ff6ac-978a-4b69-b674-8e5692736912\"\n/>",
+          "timestamp": "2025-08-22T20:12:24Z",
+          "tree_id": "3e10c20dbddc63b630b7e694e098d5e2a12c15bc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c673d17568fdb044dce05513ecb17ec6db431e3f"
+        },
+        "date": 1755896663053,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160918114174,
+            "range": "± 455846939",
             "unit": "ns/iter"
           }
         ]
