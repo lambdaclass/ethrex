@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-22
+
+- Improve ecpairing (bn128) precompile [#4130](https://github.com/lambdaclass/ethrex/pull/4130)
+
 ### 2025-08-20
 
 - Improve BLS12 precompile [#4073](https://github.com/lambdaclass/ethrex/pull/4073)
