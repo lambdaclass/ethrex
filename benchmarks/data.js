@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755810167894,
+  "lastUpdate": 1755869779512,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9565,6 +9565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161850645630,
             "range": "± 340143462",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6e874c507f303125021e87d936fae025e9622d7f",
+          "message": "perf(levm): improve blobbasefee (#4092)\n\n**Motivation**\n\nImproves blobbasefee perfomance by avoiding unnecesary checks\n\nImproves the blobbasefee performance from 30 to 320mgas (966%)",
+          "timestamp": "2025-08-22T12:38:26Z",
+          "tree_id": "5702e5ed0f5dae9faf2c9acff5bba3918e5cd5df",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6e874c507f303125021e87d936fae025e9622d7f"
+        },
+        "date": 1755869763279,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161244009700,
+            "range": "± 291607957",
             "unit": "ns/iter"
           }
         ]
