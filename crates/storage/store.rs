@@ -38,6 +38,8 @@ pub struct Store {
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
+pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
@@ -137,6 +139,21 @@ impl Store {
             balance: account_state.balance,
             nonce: account_state.nonce,
         }))
+    }
+
+    pub fn get_account_state_by_acc_hash(
+        &self,
+        block_hash: BlockHash,
+        account_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let account_state = AccountState::decode(&encoded_state)?;
+        Ok(Some(account_state))
     }
 
     pub async fn add_block_header(
@@ -1309,6 +1326,22 @@ impl Store {
         Ok(self
             .get_canonical_block_hash_sync(block_number)?
             .is_some_and(|h| h == block_hash))
+    }
+
+    pub async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: StorageTrieNodes,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_storage_trie_nodes_batch(storage_trie_nodes)
+            .await
+    }
+
+    pub async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        self.engine.write_account_code_batch(account_codes).await
     }
 }
 

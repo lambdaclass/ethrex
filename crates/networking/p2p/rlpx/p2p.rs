@@ -111,10 +111,10 @@ impl Serialize for Capability {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<Capability>,
-    pub(crate) node_id: PublicKey,
-    pub(crate) client_id: String,
+pub struct HelloMessage {
+    pub capabilities: Vec<Capability>,
+    pub node_id: PublicKey,
+    pub client_id: String,
 }
 
 impl HelloMessage {
@@ -145,7 +145,9 @@ impl RLPxMessage for HelloMessage {
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
-        assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
+        if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
+            return Err(RLPDecodeError::IncompatibleProtocol);
+        }
 
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
@@ -244,8 +246,8 @@ impl From<DisconnectReason> for u8 {
     }
 }
 #[derive(Debug, Clone)]
-pub(crate) struct DisconnectMessage {
-    pub(crate) reason: Option<DisconnectReason>,
+pub struct DisconnectMessage {
+    pub reason: Option<DisconnectReason>,
 }
 
 impl DisconnectMessage {
@@ -302,7 +304,7 @@ impl RLPxMessage for DisconnectMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PingMessage {}
+pub struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
     const CODE: u8 = 0x02;
@@ -328,7 +330,7 @@ impl RLPxMessage for PingMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PongMessage {}
+pub struct PongMessage {}
 
 impl RLPxMessage for PongMessage {
     const CODE: u8 = 0x03;

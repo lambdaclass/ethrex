@@ -222,11 +222,18 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        let block_number = block_header.number;
+        self.add_block_number(block_hash, block_number).await?;
         self.inner()?.headers.insert(block_hash, block_header);
         Ok(())
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?.block_numbers.extend(
+            block_headers
+                .iter()
+                .map(|header| (header.hash(), header.number)),
+        );
         self.inner()?.headers.extend(
             block_headers
                 .into_iter()
@@ -259,7 +266,6 @@ impl StoreEngine for Store {
             self.add_transaction_locations(locations.collect()).await?;
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
-            self.add_block_number(hash, number).await?;
         }
 
         Ok(())
@@ -745,6 +751,40 @@ impl StoreEngine for Store {
         self.inner()?
             .invalid_ancestors
             .insert(bad_block, latest_valid);
+        Ok(())
+    }
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        for (hashed_address, nodes) in storage_trie_nodes {
+            let mut addr_store = store
+                .storage_trie_nodes
+                .entry(hashed_address)
+                .or_default()
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (node_hash, node_data) in nodes {
+                addr_store.insert(node_hash, node_data);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        for (code_hash, code) in account_codes {
+            store.account_codes.insert(code_hash, code);
+        }
+
         Ok(())
     }
 }
