@@ -119,6 +119,7 @@ async fn heal_state_trie(
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
     let mut nodes_to_write: Vec<Node> = Vec::new();
+    let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
@@ -278,9 +279,40 @@ async fn heal_state_trie(
             paths.extend(return_paths);
         }
 
+        let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
+
+        if nodes_to_write.len() > 100_000 || is_done || is_stale {
+            let to_write = nodes_to_write;
+            nodes_to_write = Vec::new();
+            let store = store.clone();
+            if db_joinset.len() > 3 {
+                db_joinset.join_next().await;
+            }
+            db_joinset.spawn_blocking(|| {
+                spawned_rt::tasks::block_on(async move {
+                    // TODO: replace put batch with the async version
+                    let trie_db = store
+                        .open_state_trie(*EMPTY_TRIE_HASH)
+                        .expect("Store should open");
+                    let db = trie_db.db();
+                    db.put_batch(
+                        to_write
+                            .into_iter()
+                            .filter_map(|node| match node.compute_hash() {
+                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                                NodeHash::Inline(_) => None,
+                            })
+                            .collect(),
+                    )
+                    .expect("The put batch on the store failed");
+                })
+            });
+        }
+
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
-        if paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0 {
+        if is_done {
             info!("Nothing more to heal found");
+            db_joinset.join_all();
             break;
         }
 
@@ -292,6 +324,7 @@ async fn heal_state_trie(
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finisehd inflight tasks");
+            db_joinset.join_all();
             break;
         }
     }
