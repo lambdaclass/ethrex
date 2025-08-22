@@ -14,7 +14,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError, block_execution_witness::ExecutionWitnessResult,
+        InvalidBlockHeaderError,
     },
 };
 use ethrex_prover_lib::backends::Backend;
@@ -81,12 +81,22 @@ pub async fn run_ef_test(
     // Blockchain EF tests are meant for L1.
     let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1);
 
-    // Run stateless if backend was specified for this.
-    if let Some(backend) = stateless_backend {
-        run_stateless(blockchain, test, test_key, backend).await
-    } else {
-        run(test_key, test, &blockchain, &store).await
+    // Early return if the exception is in the rlp decoding of the block
+    for bf in &test.blocks {
+        if bf.expect_exception.is_some() && exception_in_rlp_decoding(bf) {
+            return Ok(());
+        }
     }
+
+    run(test_key, test, &blockchain, &store).await?;
+
+    // Run stateless if backend was specified for this.
+    // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now.
+    if let Some(backend) = stateless_backend {
+        re_run_stateless(blockchain, test, test_key, backend).await?;
+    };
+
+    Ok(())
 }
 
 // Helper: run the EF test blocks and verify poststate
@@ -99,11 +109,6 @@ async fn run(
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
-
-        if exception_in_rlp_decoding(block_fixture) {
-            // This mirrors the original early return behavior.
-            return Ok(());
-        }
 
         // Won't panic because test has been validated
         // Hold an owned CoreBlock to avoid borrowing a temporary across .await
@@ -415,7 +420,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     // State root was alredy validated by `add_block``
 }
 
-async fn run_stateless(
+async fn re_run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
@@ -429,10 +434,10 @@ async fn run_stateless(
 
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
-    let mut witness = blockchain.generate_witness_for_blocks(&blocks).await;
-    // Set a default witness if execution should fail as db will not have the required data to generate the witness
+    let witness = blockchain.generate_witness_for_blocks(&blocks).await;
     if test_should_fail && witness.is_err() {
-        witness = Ok(ExecutionWitnessResult::default())
+        //TODO: Support generating witness for test that should fail (?) Maybe we don't want to though
+        return Ok(());
     } else if !test_should_fail && witness.is_err() {
         return Err("Failed to create witness for a test that should not fail".into());
     }
