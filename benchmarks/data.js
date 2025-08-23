@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755918121284,
+  "lastUpdate": 1755919121221,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22685,6 +22685,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0002505672575599583,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64f9d2108006d4d9618dd9bb681237fc7e7ab26f",
+          "message": "ci(l1,l2): fix main_prover_l1 block cache (#4129)\n\n**Motivation**\n\nThe block was not updated with the changes in #3992\n\n**Description**\n\n- update with a new cache file for block\nhttps://hoodi.etherscan.io/block/974567\n\nCloses #4124",
+          "timestamp": "2025-08-22T21:01:38Z",
+          "tree_id": "454a8dbd04618e7df27e231e4d092fe5a2b9ae4f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/64f9d2108006d4d9618dd9bb681237fc7e7ab26f"
+        },
+        "date": 1755919120609,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.001943078167115903,
             "unit": "Mgas/s"
           }
         ]
