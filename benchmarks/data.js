@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755922549142,
+  "lastUpdate": 1755923622694,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22743,6 +22743,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0002550891719745223,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "70196c1e8ef9a8cdbde714d7fd9f9abf3befb7a4",
+          "message": "perf(levm): improve mulmod and addmod opcodes (#4072)\n\n**Motivation**\n\nImprove addmod and mulmod opcode performance by avoiding unnecesary\nchecks",
+          "timestamp": "2025-08-22T21:48:49Z",
+          "tree_id": "b9d8a541a40adb5e34304131dc96b506e5fdd455",
+          "url": "https://github.com/lambdaclass/ethrex/commit/70196c1e8ef9a8cdbde714d7fd9f9abf3befb7a4"
+        },
+        "date": 1755923622091,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0019172393617021277,
             "unit": "Mgas/s"
           }
         ]
