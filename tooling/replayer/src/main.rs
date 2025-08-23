@@ -1,20 +1,16 @@
-use std::{
-    fmt::Display,
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
-use ethrex_replay::cli::{SubcommandExecute, SubcommandProve};
+use ethrex_replay::{
+    block_run_report::{BlockRunReport, ReplayerMode},
+    cli::{SubcommandExecute, SubcommandProve},
+    slack::{SlackWebHookBlock, SlackWebHookRequest},
+};
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
 use futures::future::select_all;
 use reqwest::Url;
 use tokio::task::{JoinError, JoinHandle};
-
-use crate::block_execution_report::BlockRunReport;
-
-mod block_execution_report;
-mod slack;
 
 #[derive(Parser)]
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
@@ -70,21 +66,6 @@ pub struct Options {
     pub prove: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum ReplayerMode {
-    Execute,
-    Prove,
-}
-
-impl Display for ReplayerMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReplayerMode::Execute => write!(f, "Execute"),
-            ReplayerMode::Prove => write!(f, "Prove"),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() {
     init_tracing();
@@ -121,9 +102,16 @@ async fn main() {
         ] {
             let slack_webhook_url = opts.slack_webhook_url.clone();
 
+            #[cfg(feature = "sp1")]
+            let replayer_mode = ReplayerMode::ExecuteSP1;
+            #[cfg(feature = "risc0")]
+            let replayer_mode = ReplayerMode::ExecuteRISC0;
+            #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+            let replayer_mode = ReplayerMode::Execute;
+
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
-                    replay_execution(network, rpc_url, slack_webhook_url).await
+                    replay_execution(replayer_mode, network, rpc_url, slack_webhook_url).await
                 });
 
                 replayers_handles.push(handle);
@@ -135,8 +123,16 @@ async fn main() {
         let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
         let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
 
+        #[cfg(feature = "sp1")]
+        let replayer_mode = ReplayerMode::ProveSP1;
+        #[cfg(feature = "risc0")]
+        let replayer_mode = ReplayerMode::ProveRISC0;
+        #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+        let replayer_mode = ReplayerMode::Execute;
+
         let handle = tokio::spawn(async move {
             replay_proving(
+                replayer_mode,
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (
@@ -210,6 +206,7 @@ fn init_tracing() {
 }
 
 async fn replay_execution(
+    replayer_mode: ReplayerMode,
     network: Network,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
@@ -220,7 +217,7 @@ async fn replay_execution(
 
     loop {
         let elapsed = replay_latest_block(
-            ReplayerMode::Execute,
+            replayer_mode.clone(),
             network.clone(),
             rpc_url.clone(),
             &eth_client,
@@ -235,6 +232,7 @@ async fn replay_execution(
 }
 
 async fn replay_proving(
+    replayer_mode: ReplayerMode,
     rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
 ) -> Result<(), EthClientError> {
@@ -249,7 +247,7 @@ async fn replay_proving(
             let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
 
             replay_latest_block(
-                ReplayerMode::Prove,
+                replayer_mode.clone(),
                 network.clone(),
                 rpc_url.clone(),
                 &eth_client,
@@ -295,7 +293,7 @@ async fn replay_latest_block(
     let start = SystemTime::now();
 
     let run_result = match replayer_mode {
-        ReplayerMode::Execute => {
+        ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0 => {
             SubcommandExecute::Block {
                 block: Some(latest_block),
                 rpc_url: rpc_url.clone(),
@@ -305,7 +303,7 @@ async fn replay_latest_block(
             .run()
             .await
         }
-        ReplayerMode::Prove => {
+        ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0 => {
             SubcommandProve::Block {
                 block: Some(latest_block),
                 rpc_url: rpc_url.clone(),
@@ -335,15 +333,14 @@ async fn replay_latest_block(
         tracing::info!("{block_run_report}");
     }
 
-    match replayer_mode {
-        ReplayerMode::Prove | ReplayerMode::Execute if block_run_report.run_result.is_err() => {
-            try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to post to Slack webhook: {e}");
-                })
-        }
-        _ => {}
+    if replayer_mode.is_proving_mode()
+        || (replayer_mode.is_execution_mode() && block_run_report.run_result.is_err())
+    {
+        try_send_failed_run_report_to_slack(block_run_report, slack_webhook_url.clone())
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to post to Slack webhook: {e}");
+            })
     }
 
     Ok(elapsed)
@@ -389,16 +386,16 @@ async fn try_notify_no_longer_valid_rpc_to_slack(
 
     let client = reqwest::Client::new();
 
-    let payload = slack::SlackWebHookRequest {
+    let payload = SlackWebHookRequest {
         blocks: vec![
-            slack::SlackWebHookBlock::Header {
-                text: Box::new(slack::SlackWebHookBlock::PlainText {
+            SlackWebHookBlock::Header {
+                text: Box::new(SlackWebHookBlock::PlainText {
                     text: "⚠️ RPC URL is no longer valid".to_string(),
                     emoji: true,
                 }),
             },
-            slack::SlackWebHookBlock::Section {
-                text: Box::new(slack::SlackWebHookBlock::Markdown {
+            SlackWebHookBlock::Section {
+                text: Box::new(SlackWebHookBlock::Markdown {
                     text: format!("`{network}`'s RPC URL `{rpc_url}` is no longer valid."),
                 }),
             },

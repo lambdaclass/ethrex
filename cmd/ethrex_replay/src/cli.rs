@@ -403,7 +403,7 @@ impl SubcommandProve {
                     let res = Box::pin(async {
                         SubcommandProve::Block {
                             block: Some(*block_number),
-                            rpc_url: rpc_url.as_str().to_string(),
+                            rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
                         }
