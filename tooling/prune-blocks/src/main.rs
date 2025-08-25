@@ -87,7 +87,7 @@ pub async fn main() -> eyre::Result<()> {
         store.purge_block(block_number).await?;
     }
     info!(
-        "Succesfully purged {last_block_to_prune} blocks in {}",
+        "Succesfully pruned {last_block_to_prune} blocks in {}",
         mseconds_to_readable(prune_start.elapsed().as_millis())
     );
     Ok(())
