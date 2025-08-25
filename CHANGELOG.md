@@ -2,6 +2,8 @@
 
 ## Perf
 
+### 2025-08-20
+
 ### 2025-08-22
 
 - Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
@@ -13,6 +15,8 @@
 - Improve BLS12 precompile [#4073](https://github.com/lambdaclass/ethrex/pull/4073)
 
 - Improve blobbasefee opcode [#4092](https://github.com/lambdaclass/ethrex/pull/4092)
+
+- Make precompiles use a constant table [#4097](https://github.com/lambdaclass/ethrex/pull/4097)
 
 ### 2025-08-19
 
