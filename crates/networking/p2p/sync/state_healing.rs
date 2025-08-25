@@ -156,19 +156,21 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
                     global_leafs_healed,
-                    paths.len()
+                    paths.len(),
+                    membatch.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
                     global_leafs_healed,
-                    paths.len()
+                    paths.len(),
+                    membatch.len()
                 );
             }
             downloads_success = 0;
@@ -312,7 +314,7 @@ async fn heal_state_trie(
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
             info!("Nothing more to heal found");
-            db_joinset.join_all();
+            db_joinset.join_all().await;
             break;
         }
 
@@ -324,7 +326,7 @@ async fn heal_state_trie(
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finisehd inflight tasks");
-            db_joinset.join_all();
+            db_joinset.join_all().await;
             break;
         }
     }
