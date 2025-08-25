@@ -217,7 +217,7 @@ server-sync:
 
 	tmux new-session -d -s sync -n htop "htop"
 
-	tmux new-window -t sync:1 -n lighthouse "cd ../.. &&  ./lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --purge-db-force "
+	tmux new-window -t sync:1 -n lighthouse "lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --purge-db-force "
 
 	sleep 0.2
 
