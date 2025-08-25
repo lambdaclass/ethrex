@@ -14,7 +14,7 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
+use ethrex_trie::{Nibbles, Node, NodeHash, NodeRef, EMPTY_TRIE_HASH};
 use rand::random;
 use std::{
     collections::{HashMap, VecDeque},
@@ -102,7 +102,7 @@ pub struct StorageHealer {
     /// Arc<dyn> to the db, clone freely
     store: Store,
     /// Memory of everything stored
-    membatch: OnceCell<Membatch>,
+    membatch: Membatch,
     /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
     /// We use this to track which peers are occupied, and we can't send stuff to
@@ -154,7 +154,7 @@ pub async fn heal_storage_trie_wrap(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
-    membatch: OnceCell<Membatch>,
+    membatch: Membatch,
     staleness_timestamp: u64,
 ) -> bool {
     info!("Started Storage Healing");
@@ -183,7 +183,7 @@ pub async fn heal_storage_trie_wrap(
         account_path_nibbles,
         peers.clone(),
         store.clone(),
-        membatch.clone(),
+        membatch,
         staleness_timestamp,
     )
     .await
@@ -194,7 +194,7 @@ pub async fn heal_storage_trie(
     account_paths: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    membatch: OnceCell<Membatch>,
+    membatch: Membatch,
     staleness_timestamp: u64,
 ) -> bool {
     info!(
@@ -301,6 +301,7 @@ pub async fn heal_storage_trie(
 
         if is_stale {
             db_joinset.join_all().await;
+            state.membatch = HashMap::new();
             return false;
         }
 
@@ -356,10 +357,7 @@ pub async fn heal_storage_trie(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
                     state.store.clone(),
-                    state
-                        .membatch
-                        .get_mut()
-                        .expect("We launched the storage healer without a membatch"),
+                    &mut state.membatch,
                     &mut state.leafs_healed,
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
@@ -660,7 +658,22 @@ pub fn determine_missing_children(
                 {
                     count += 1;
 
-                    paths.extend(determine_membatch_missing_children(
+                    // paths.extend(determine_membatch_missing_children(
+                    //     NodeRequest {
+                    //         acc_path: node_response.node_request.acc_path.clone(),
+                    //         storage_path: node_response
+                    //             .node_request
+                    //             .storage_path
+                    //             .append_new(index as u8),
+                    //         parent: node_response.node_request.storage_path.clone(),
+                    //     },
+                    //     &child.compute_hash(),
+                    //     membatch,
+                    //     store.clone(),
+                    //     nodes_to_write
+                    // )?);
+
+                    paths.extend(vec![
                         NodeRequest {
                             acc_path: node_response.node_request.acc_path.clone(),
                             storage_path: node_response
@@ -668,11 +681,7 @@ pub fn determine_missing_children(
                                 .storage_path
                                 .append_new(index as u8),
                             parent: node_response.node_request.storage_path.clone(),
-                        },
-                        &child.compute_hash(),
-                        membatch,
-                        store.clone(),
-                    )?);
+                        }]);
                 }
             }
         }
@@ -687,7 +696,22 @@ pub fn determine_missing_children(
                     .is_none()
             {
                 count += 1;
-                paths.extend(determine_membatch_missing_children(
+                // paths.extend(determine_membatch_missing_children(
+                //     NodeRequest {
+                //         acc_path: node_response.node_request.acc_path.clone(),
+                //         storage_path: node_response
+                //             .node_request
+                //             .storage_path
+                //             .concat(node.prefix.clone()),
+                //         parent: node_response.node_request.storage_path.clone(),
+                //     },
+                //     &node.child.compute_hash(),
+                //     membatch,
+                //     store.clone(),
+                //     nodes_to_write
+                // )?);
+
+                paths.extend(vec![
                     NodeRequest {
                         acc_path: node_response.node_request.acc_path.clone(),
                         storage_path: node_response
@@ -695,11 +719,7 @@ pub fn determine_missing_children(
                             .storage_path
                             .concat(node.prefix.clone()),
                         parent: node_response.node_request.storage_path.clone(),
-                    },
-                    &node.child.compute_hash(),
-                    membatch,
-                    store.clone(),
-                )?);
+                    }]);
             }
         }
         _ => {}
@@ -713,6 +733,7 @@ fn determine_membatch_missing_children(
     hash: &NodeHash,
     membatch: &Membatch,
     store: Store,
+    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>
 ) -> Result<Vec<NodeRequest>, StoreError> {
     if let Some(membatch_entry) = membatch.get(&(
         node_request.acc_path.clone(),
