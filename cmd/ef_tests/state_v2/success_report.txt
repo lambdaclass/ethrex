@@ -1,0 +1,7 @@
+Successful tests: 
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_Berlin-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_Cancun-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_Paris-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_London-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_Prague-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
+Test "tests/frontier/opcodes/test_call.py::test_call_large_arg_offset_size_zero[fork_Shanghai-state_test]" - Path "../state/vectors/a/call_large_arg_offset_size_zero.json"
