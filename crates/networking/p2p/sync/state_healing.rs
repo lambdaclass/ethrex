@@ -158,19 +158,21 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
                     global_leafs_healed,
-                    paths.len()
+                    paths.len(),
+                    membatch.len()
                 );
             } else {
                 info!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}",
+                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
                     global_leafs_healed,
-                    paths.len()
+                    paths.len(),
+                    membatch.len()
                 );
             }
             downloads_success = 0;
@@ -386,9 +388,9 @@ fn commit_node(
         return; // Case where we're saving the root
     }
 
-    let mut membatch_entry = membatch
-        .remove(parent_path)
-        .expect(&format!("The parent should exist. Parent: {parent_path:?}, path: {path:?}"));
+    let mut membatch_entry = membatch.remove(parent_path).expect(&format!(
+        "The parent should exist. Parent: {parent_path:?}, path: {path:?}"
+    ));
 
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
@@ -451,7 +453,7 @@ pub fn node_missing_children(
     path: &Nibbles,
     membatch: &HashMap<Nibbles, MembatchEntryValue>,
     trie_state: &dyn TrieDB,
-    nodes_to_write: &mut Vec<Node>
+    nodes_to_write: &mut Vec<Node>,
 ) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
     let mut missing_children_count = 0_u64;
@@ -470,11 +472,10 @@ pub fn node_missing_children(
                     //     trie_state,
                     //     nodes_to_write
                     // )?);
-                    paths.extend(
-                        vec![RequestMetadata {
-                            hash: child.compute_hash().finalize(),
-                            path: path.clone().append_new(index as u8),
-                            parent_path: path.clone(),
+                    paths.extend(vec![RequestMetadata {
+                        hash: child.compute_hash().finalize(),
+                        path: path.clone().append_new(index as u8),
+                        parent_path: path.clone(),
                     }]);
                 }
             }
@@ -493,12 +494,11 @@ pub fn node_missing_children(
                 //     nodes_to_write
                 // )?);
 
-                paths.extend(
-                    vec![RequestMetadata {
-                        hash: node.child.compute_hash().finalize(),
-                        path: path.concat(node.prefix.clone()),
-                        parent_path: path.clone(),
-                    }]);
+                paths.extend(vec![RequestMetadata {
+                    hash: node.child.compute_hash().finalize(),
+                    path: path.concat(node.prefix.clone()),
+                    parent_path: path.clone(),
+                }]);
             }
         }
         _ => {}
@@ -511,7 +511,7 @@ fn membatch_node_missing_children(
     node_request: RequestMetadata,
     membatch: &HashMap<Nibbles, MembatchEntryValue>,
     trie_state: &dyn TrieDB,
-    nodes_to_write: &mut Vec<Node>
+    nodes_to_write: &mut Vec<Node>,
 ) -> Result<Vec<RequestMetadata>, TrieError> {
     if let Some(membatch_entry) = membatch.get(&node_request.path) {
         if membatch_entry.node.compute_hash().finalize() == node_request.hash {
@@ -520,7 +520,7 @@ fn membatch_node_missing_children(
                 &node_request.path,
                 membatch,
                 trie_state,
-                nodes_to_write
+                nodes_to_write,
             )
             .map(|(counts, paths)| paths)
         } else {
