@@ -255,6 +255,29 @@ impl Memory {
 
         Ok(())
     }
+
+    #[inline(always)]
+    pub fn store_zeros(&mut self, offset: usize, size: usize) -> Result<(), VMError> {
+        if size == 0 {
+            return Ok(());
+        }
+
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let real_offset = self.current_base.wrapping_add(offset);
+        let mut buffer = self.buffer.borrow_mut();
+
+        // resize ensures bounds are correct
+        #[allow(unsafe_code)]
+        unsafe {
+            buffer
+                .get_unchecked_mut(real_offset..(real_offset.wrapping_add(size)))
+                .fill(0);
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for Memory {
