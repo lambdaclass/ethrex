@@ -1,7 +1,10 @@
 use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::CommitterError,
+    sequencer::{
+        errors::CommitterError,
+        utils::{self, system_now_ms},
+    },
 };
 
 use bytes::Bytes;
@@ -47,6 +50,8 @@ use spawned_concurrency::{
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+// Default wake up time for the committer to check if it should send a commit tx
+const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -72,6 +77,12 @@ pub struct L1Committer {
     signer: Signer,
     based: bool,
     sequencer_state: SequencerState,
+    /// L1 Committer time to wait before checking if it should send a new batch
+    committer_wake_up_ms: u64,
+    /// Timestamp of last successful committed batch
+    last_committed_batch_timestamp: u128,
+    /// Last succesful committed batch
+    last_committed_batch: u64,
 }
 
 impl L1Committer {
@@ -105,6 +116,11 @@ impl L1Committer {
             signer: committer_config.signer.clone(),
             based,
             sequencer_state,
+            committer_wake_up_ms: committer_config
+                .commit_time_ms
+                .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
+            last_committed_batch_timestamp: 0,
+            last_committed_batch: 0,
         })
     }
 
@@ -115,7 +131,7 @@ impl L1Committer {
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
-        let state = Self::new(
+        let mut state = Self::new(
             &cfg.l1_committer,
             &cfg.eth,
             blockchain,
@@ -124,6 +140,11 @@ impl L1Committer {
             cfg.based.enabled,
             sequencer_state,
         )?;
+        // Set the initial last committed batch
+        state.last_committed_batch = state
+            .eth_client
+            .get_last_committed_batch(state.on_chain_proposer_address)
+            .await?;
         let mut l1_committer = state.start();
         l1_committer
             .cast(InMessage::Commit)
@@ -541,19 +562,49 @@ impl GenServer for L1Committer {
 
     type Error = CommitterError;
 
+    // Right now we only have the Commit message, so we ignore the message
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .commit_next_batch_to_l1()
+            let current_last_committed_batch = self
+                .eth_client
+                .get_last_committed_batch(self.on_chain_proposer_address)
                 .await
-                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+                .unwrap_or(self.last_committed_batch);
+            let Some(current_time_ms) = utils::system_now_ms() else {
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            };
+
+            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
+            if current_last_committed_batch > self.last_committed_batch {
+                self.last_committed_batch = current_last_committed_batch;
+                self.last_committed_batch_timestamp = current_time_ms;
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            }
+
+            let commit_time_ms: u128 = self.commit_time_ms.into();
+            let should_send_commitment =
+                current_time_ms - self.last_committed_batch_timestamp > commit_time_ms;
+
+            if should_send_commitment
+                && self
+                    .commit_next_batch_to_l1()
+                    .await
+                    .inspect_err(|e| error!("L1 Committer Error: {e}"))
+                    .is_ok()
+            {
+                self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time_ms);
+                self.last_committed_batch = current_last_committed_batch + 1;
+            }
         }
-        let check_interval = random_duration(self.commit_time_ms);
+        let check_interval = random_duration(self.committer_wake_up_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
         CastResponse::NoReply
     }
