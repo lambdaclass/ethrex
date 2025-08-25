@@ -62,7 +62,7 @@ pub async fn get_blockdata(
     let block_retrieval_start_time = SystemTime::now();
 
     // LOG: 1 request to get raw block
-    // TODO: we can change it to eth-getBlockByNumber with true in the hydrated
+    // TODO: we could change this to use eth_getBlockByNumber to not use any debug endpoint
     let block = eth_client
         .get_raw_block(BlockIdentifier::Number(requested_block_number))
         .await?;

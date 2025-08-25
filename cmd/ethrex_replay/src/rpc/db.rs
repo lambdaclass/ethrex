@@ -393,7 +393,7 @@ impl RpcDB {
                 ProverDBError::Custom("failed to convert block number into usize".to_string())
             })?;
             let header = tokio::task::block_in_place(|| {
-                handle.block_on(get_block(&self.rpc_url, number_usize))
+                handle.block_on(get_block(&self.rpc_url, number_usize, false))
             })
             .map_err(|err| ProverDBError::Store(err.to_string()))?
             .header;
@@ -526,7 +526,9 @@ impl LevmDatabase for RpcDB {
         }
         let handle = tokio::runtime::Handle::current();
         let hash = tokio::task::block_in_place(|| {
-            handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
+            handle.block_on(retry(|| {
+                get_block(&self.rpc_url, block_number as usize, false)
+            }))
         })
         .map_err(|e| DatabaseError::Custom(e.to_string()))?
         .hash;

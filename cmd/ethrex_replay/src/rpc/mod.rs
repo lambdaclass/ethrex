@@ -55,13 +55,17 @@ impl Account {
     }
 }
 
-pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<RpcBlock> {
+pub async fn get_block(
+    rpc_url: &str,
+    block_number: usize,
+    hydrated: bool,
+) -> eyre::Result<RpcBlock> {
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
         "method": "eth_getBlockByNumber",
-        "params": [block_number, false]
+        "params": [block_number, hydrated]
     });
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let rpc_block: RpcBlock = get_result(response.json::<serde_json::Value>().await?)?;
