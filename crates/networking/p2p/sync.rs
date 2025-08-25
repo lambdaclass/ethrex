@@ -1044,10 +1044,7 @@ impl Syncer {
                 }
                 healing_done = heal_storage_trie(
                     pivot_header.state_root,
-                    dirty_accounts
-                        .keys()
-                        .map(|hashed_key| Nibbles::from_raw(hashed_key.as_bytes(), true))
-                        .collect(),
+                    &dirty_accounts,
                     self.peers.clone(),
                     store.clone(),
                     HashMap::new(),

@@ -135,8 +135,8 @@ pub struct NodeRequest {
     storage_path: Nibbles,
     /// What node needs this node
     parent: Nibbles,
-    // /// What hash was requested. We can use this for validation
-    // hash: H256 // this is a potential optimization, we ignore for now
+    /// What hash was requested. We use this for validation
+    hash: H256,
 }
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
@@ -151,7 +151,7 @@ pub struct NodeRequest {
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
-    account_paths: Vec<Nibbles>,
+    account_paths: &HashMap<H256, H256>,
     peers: PeerHandler,
     store: Store,
     membatch: Membatch,
@@ -488,12 +488,19 @@ fn zip_requeue_node_responses_score_peer(
         .iter()
         .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
-            Ok(NodeResponse {
-                node_request: node_request.clone(),
-                node: Node::decode_raw(&node_bytes).inspect_err(|err|{
+            let node = Node::decode_raw(&node_bytes).inspect_err(|err|{
                     info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
-                })?,
-            })
+                })?;
+
+            if node.compute_hash().finalize() != node_request.hash {
+                error!("this peer {} request {node_request:?}, sent us a valid node with the wrong hash, and the raw node was {node_bytes:?}", request.peer_id);
+                Err(RLPDecodeError::MalformedData)
+            } else {
+                Ok(NodeResponse {
+                    node_request: node_request.clone(),
+                    node
+                })
+            }
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
     {
@@ -573,14 +580,15 @@ fn process_node_responses(
     Ok(())
 }
 
-fn get_initial_downloads(account_paths: &[Nibbles]) -> VecDeque<NodeRequest> {
+fn get_initial_downloads(account_paths: &HashMap<H256, H256>) -> VecDeque<NodeRequest> {
     account_paths
         .iter()
-        .map(|acc_path| {
+        .map(|(acc_path, storage_root)| {
             NodeRequest {
-                acc_path: acc_path.clone(),
+                acc_path: Nibbles::from_bytes(&acc_path.0),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                 parent: Nibbles::default(),
+                hash: *storage_root,
             }
         })
         .collect()
@@ -640,6 +648,7 @@ pub fn determine_missing_children(
                             .storage_path
                             .append_new(index as u8),
                         parent: node_response.node_request.storage_path.clone(),
+                        hash: node.compute_hash().finalize(),
                     }]);
                 }
             }
@@ -677,6 +686,7 @@ pub fn determine_missing_children(
                         .storage_path
                         .concat(node.prefix.clone()),
                     parent: node_response.node_request.storage_path.clone(),
+                    hash: node.child.compute_hash().finalize(),
                 }]);
             }
         }
