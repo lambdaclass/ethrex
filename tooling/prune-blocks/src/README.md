@@ -6,7 +6,7 @@ This tool can be used to reduce the DB size of the node by removing old blocks a
 
 The tool takes two optional arguments:
     *`datadir`: The path to the DB location, will use the default one if not provided
-    *`blocks_to_keep`: The amount of latest blocks that will be kept in the DB. This value must be al least 128 and lower than the current amount of blocks in the chain.
+    *`blocks_to_keep`: The amount of latest blocks that will be kept in the DB. This value must be at least 128 and lower than the current amount of blocks in the chain.
 
 And should be ran like this:
 
