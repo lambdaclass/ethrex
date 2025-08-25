@@ -298,7 +298,7 @@ impl RLPDecode for FindNodeMessage {
 pub struct FindNodeRequest {
     /// the number of nodes sent
     /// we keep track of this number since we will accept neighbor messages until the max_per_bucket
-    pub nodes_sent: usize,
+    pub nodes_sent: u64,
     /// unix timestamp tracking when we have sent the request
     pub sent_at: u64,
     /// if present, server will send the nodes through this channel when receiving neighbors
