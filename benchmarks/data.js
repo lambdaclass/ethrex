@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756133667522,
+  "lastUpdate": 1756134938397,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9985,6 +9985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161099767388,
             "range": "± 285516386",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bb10d0bb3e405c36002b9cb8f951f3c528c31353",
+          "message": "chore(l1): use `local` tag for ethrex images for local hive and kurtosis (#4132)\n\n**Motivation**\nMake it explicit that we're using a locally build version of ethrex.\nDecouple CI from local use of docker images\n\n**Description**\nSince `latest` is the default tag if none is specified, we had bugs in\nthe past where we were accidentally using an old version of ethrex\ninstead of the locally build one. Lets make it explicit that we're using\na local version by using the `local` tag instead of `latest`.",
+          "timestamp": "2025-08-25T14:20:33Z",
+          "tree_id": "f0226e5383e1cb5df54a45453474dc149704ef76",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bb10d0bb3e405c36002b9cb8f951f3c528c31353"
+        },
+        "date": 1756134921980,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162346739251,
+            "range": "± 429527037",
             "unit": "ns/iter"
           }
         ]
