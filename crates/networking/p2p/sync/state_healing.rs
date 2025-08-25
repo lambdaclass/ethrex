@@ -359,6 +359,15 @@ async fn heal_state_batch(
                 membatch,
                 nodes_to_write,
             );
+        } else {
+            membatch.insert(
+                path.path.clone(),
+                MembatchEntryValue {
+                    node,
+                    children_not_in_storage_count: missing_children_count,
+                    parent_path: path.parent_path.clone(),
+                },
+            );
         }
     }
     Ok(batch)
@@ -377,22 +386,10 @@ fn commit_node(
         return; // Case where we're saving the root
     }
 
-    let mut membatch_entry = membatch
-        .remove(parent_path)
-        .expect("The parent should exist");
-
-    membatch_entry.children_not_in_storage_count -= 1;
-    if membatch_entry.children_not_in_storage_count == 0 {
-        commit_node(
-            membatch_entry.node,
-            parent_path,
-            &membatch_entry.parent_path,
-            membatch,
-            nodes_to_write,
-        );
-    } else {
-        membatch.insert(parent_path.clone(), membatch_entry);
-    }
+    membatch.retain(|_, entry| {
+        entry.children_not_in_storage_count -= 1;
+        entry.children_not_in_storage_count == 0
+    });
 }
 
 async fn get_peer_with_highest_score_and_mark_it_as_occupied(
