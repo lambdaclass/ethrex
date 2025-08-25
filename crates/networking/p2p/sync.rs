@@ -518,25 +518,25 @@ impl FullBlockSyncState {
     /// An incomplete batch may be executed if the sync_head was already found
     async fn process_incoming_headers(
         &mut self,
-        mut block_headers: Vec<BlockHeader>,
+        block_headers: Vec<BlockHeader>,
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
-        let mut sync_head_header = None;
-        if self
-            .store
-            .get_pending_block(block_headers[block_headers.len() - 1].hash())
-            .await
-            .is_ok()
-        {
-            sync_head_header = block_headers.pop();
-        }
         self.current_headers.extend(block_headers);
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
             return Ok(());
+        }
+        let mut sync_head_header = None;
+        if self
+            .store
+            .get_pending_block(self.current_headers[self.current_headers.len() - 1].hash())
+            .await
+            .is_ok()
+        {
+            sync_head_header = self.current_headers.pop();
         }
         // If we have enough headers to fill execution batches, request the matching bodies
         while self.current_headers.len() >= *EXECUTE_BATCH_SIZE
