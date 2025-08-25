@@ -101,7 +101,7 @@ async fn heal_state_trie(
         path: Nibbles::default(), // We need to be careful, the root parent is a special case
         parent_path: Nibbles::default(),
     }];
-    let mut last_update = Instant::now();
+    let mut last_update = Instant::now() - Duration::from_secs(2);
     let mut inflight_tasks: u64 = 0;
     let mut is_stale = false;
     let mut longest_path_seen = 0;
