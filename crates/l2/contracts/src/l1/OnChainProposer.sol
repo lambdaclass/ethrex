@@ -76,7 +76,7 @@ contract OnChainProposer is
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
-    /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
+    /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
@@ -255,12 +255,9 @@ contract OnChainProposer is
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
         //sp1
-        bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
@@ -291,18 +288,22 @@ contract OnChainProposer is
                 privileged_transaction_count
             );
         }
+        // Reconstruct public inputs from commitments
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, risc0Journal);
+            _verifyPublicData(batchNumber, publicInputs);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 RISC0_VERIFICATION_KEY,
-                sha256(risc0Journal)
+                sha256(publicInputs)
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
+            // SP1 public values include an 8-byte length header.
+            bytes memory sp1PublicValues = abi.encodePacked(uint64(publicInputs.length), publicInputs);
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, sp1PublicValues[8:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
@@ -314,8 +315,8 @@ contract OnChainProposer is
 
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            _verifyPublicData(batchNumber, publicInputs);
+            ITDXVerifier(TDXVERIFIER).verify(publicInputs, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -455,6 +456,70 @@ contract OnChainProposer is
         );
     }
 
+    /// @notice Constructs public inputs from committed batch data for proof verification.
+    /// @dev Public inputs structure (256 bytes total):
+    /// - bytes 0-32: Initial state root (from the last verified batch)
+    /// - bytes 32-64: Final state root (from the current batch)
+    /// - bytes 64-96: Withdrawals merkle root (from the current batch)
+    /// - bytes 96-128: Processed privileged transactions rolling hash (from the current batch)
+    /// - bytes 128-160: Blob versioned hash (from the current batch)
+    /// - bytes 160-192: Last block hash (from the current batch)
+    /// - bytes 192-224: Chain ID
+    /// - bytes 224-256: Non-privileged transactions (set to 0)
+    function _getPublicInputsFromCommitment(
+        uint256 batchNumber
+    ) internal view returns (bytes memory) {
+        BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
+        BatchCommitmentInfo memory previousBatch = batchCommitments[lastVerifiedBatch];
+
+        bytes memory publicInputs = new bytes(256);
+
+        // Initial state root
+        bytes32 initialStateRoot = previousBatch.newStateRoot;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[i] = bytes1(uint8(uint256(initialStateRoot) >> (8 * (31 - i))));
+        }
+
+        // Final state root
+        bytes32 finalStateRoot = currentBatch.newStateRoot;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[32 + i] = bytes1(uint8(uint256(finalStateRoot) >> (8 * (31 - i))));
+        }
+
+        // Withdrawals merkle root
+        bytes32 withdrawalsRoot = currentBatch.withdrawalsLogsMerkleRoot;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[64 + i] = bytes1(uint8(uint256(withdrawalsRoot) >> (8 * (31 - i))));
+        }
+
+        // Processed privileged transactions rolling hash
+        bytes32 privilegedHash = currentBatch.processedPrivilegedTransactionsRollingHash;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[96 + i] = bytes1(uint8(uint256(privilegedHash) >> (8 * (31 - i))));
+        }
+
+        // Blob versioned hash
+        bytes32 blobVersionedHash = currentBatch.stateDiffKZGVersionedHash;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[128 + i] = bytes1(uint8(uint256(blobVersionedHash) >> (8 * (31 - i))));
+        }
+
+        // Last block hash
+        bytes32 lastBlockHash = currentBatch.lastBlockHash;
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[160 + i] = bytes1(uint8(uint256(lastBlockHash) >> (8 * (31 - i))));
+        }
+
+        // Chain ID
+        bytes32 chainIdBytes = bytes32(CHAIN_ID);
+        for (uint256 i = 0; i < 32; i++) {
+            publicInputs[192 + i] = bytes1(uint8(uint256(chainIdBytes) >> (8 * (31 - i))));
+        }
+
+        // Non-privileged transactions count = 0 (bytes 224..256 already zeroed)
+
+        return publicInputs;
+    }
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber

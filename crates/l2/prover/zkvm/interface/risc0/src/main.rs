@@ -5,5 +5,6 @@ fn main() {
     let input: JSONProgramInput = env::read();
     let output = execution_program(input.0).unwrap();
 
-    env::commit_slice(&output.encode());
+    // Commit the 256-byte contract public inputs
+    env::commit_slice(&output.encode_contract_pis());
 }

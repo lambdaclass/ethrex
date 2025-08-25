@@ -40,7 +40,8 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let output = zkvm_interface::execution::execution_program(input).map_err(|e| e.to_string())?;
 
-    Ok(output.encode())
+    // Return 256-byte contract public inputs for signing
+    Ok(output.encode_contract_pis())
 }
 
 fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {

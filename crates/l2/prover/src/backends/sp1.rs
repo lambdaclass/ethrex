@@ -13,8 +13,13 @@ use ethrex_l2_common::{
 };
 use std::time::Instant;
 
+#[cfg(all(not(clippy), feature = "sp1"))]
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
+
+// When running clippy or without the sp1 feature, avoid requiring the ELF file.
+#[cfg(any(clippy, not(feature = "sp1")))]
+static PROGRAM_ELF: &[u8] = &[];
 
 struct ProverSetup {
     client: EnvProver,
@@ -113,12 +118,8 @@ pub fn to_batch_proof(
 }
 
 fn to_calldata(proof: ProveOutput) -> ProofCalldata {
-    // bytes calldata publicValues,
-    // bytes calldata proofBytes
-    let calldata = vec![
-        Value::Bytes(proof.proof.public_values.to_vec().into()),
-        Value::Bytes(proof.proof.bytes().into()),
-    ];
+    // bytes calldata sp1ProofBytes only (contract reconstructs public inputs)
+    let calldata = vec![Value::Bytes(proof.proof.bytes().into())];
 
     ProofCalldata {
         prover_type: ProverType::SP1,

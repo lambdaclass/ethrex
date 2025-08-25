@@ -114,4 +114,29 @@ impl ProgramOutput {
         ]
         .concat()
     }
+
+    /// Encode public inputs exactly as expected by the on-chain contract (256 bytes total).
+    /// Layout:
+    /// - 0..32: initial_state_hash
+    /// - 32..64: final_state_hash
+    /// - 64..96: l1messages_merkle_root (withdrawals root)
+    /// - 96..128: privileged_transactions_hash (processed privileged rolling hash)
+    /// - 128..160: blob_versioned_hash
+    /// - 160..192: last_block_hash
+    /// - 192..224: chain_id (big-endian, 32 bytes)
+    /// - 224..256: zeroes (force non-privileged count to 0)
+    #[cfg(feature = "l2")]
+    pub fn encode_contract_pis(&self) -> Vec<u8> {
+        [
+            self.initial_state_hash.to_fixed_bytes(),
+            self.final_state_hash.to_fixed_bytes(),
+            self.l1messages_merkle_root.to_fixed_bytes(),
+            self.privileged_transactions_hash.to_fixed_bytes(),
+            self.blob_versioned_hash.to_fixed_bytes(),
+            self.last_block_hash.to_fixed_bytes(),
+            self.chain_id.to_big_endian(),
+            [0u8; 32],
+        ]
+        .concat()
+    }
 }
