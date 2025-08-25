@@ -36,6 +36,7 @@ pub fn parse_and_execute(
 
     for (test_key, test) in tests {
         let should_skip_test = test.network < Network::Merge
+            || test.network > Network::Prague
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
