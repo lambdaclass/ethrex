@@ -2,13 +2,16 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    serde_utils,
+    Address, serde_utils,
     types::{
-        BlockHeader, ChainConfig,
+        AccountState, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::hash_address;
+use ethrex_trie::{NodeHash, Trie};
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -88,6 +91,43 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
+    let mut state_nodes = HashMap::new();
+    // TODO: Remove this clone and consume state. We are keeping it until we figure out how to serialize this.
+    for node in rpc_witness.state.iter() {
+        state_nodes.insert(keccak(node), node.clone().to_vec());
+    }
+
+    let state_trie = Trie::from_nodes(
+        NodeHash::Hashed(parent_header.state_root),
+        state_nodes
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (NodeHash::Hashed(k), v))
+            .collect(),
+    )
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))?;
+
+    let mut account_storage_root_hashes = HashMap::new();
+    for address in rpc_witness
+        .keys
+        .iter()
+        .filter(|key| key.len() == Address::len_bytes())
+        .map(|key| Address::from_slice(key))
+    {
+        let Ok(Some(account_state)) = state_trie.get(&hash_address(&address)) else {
+            continue;
+        };
+
+        let AccountState { storage_root, .. } =
+            AccountState::decode(&account_state).map_err(|_| {
+                ExecutionWitnessError::RebuildTrie(format!(
+                    "Invalid account state for address: {address:#x}"
+                ))
+            })?;
+
+        account_storage_root_hashes.insert(address, storage_root);
+    }
+
     let mut witness = ExecutionWitnessResult {
         state_trie_nodes: rpc_witness.state,
         keys: rpc_witness.keys,
@@ -97,6 +137,8 @@ pub fn execution_witness_from_rpc_chain_config(
         block_headers,
         chain_config,
         parent_block_header: parent_header,
+        state_nodes,
+        account_storage_root_hashes,
     };
 
     witness.rebuild_state_trie()?;
