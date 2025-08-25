@@ -503,7 +503,7 @@ async fn store_receipts(
 
 /// Persisted State during the Block Sync phase
 #[derive(Clone)]
-enum BlockSyncState {
+pub enum BlockSyncState {
     Full(FullBlockSyncState),
     Snap(SnapBlockSyncState),
 }
@@ -778,10 +778,8 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        let mut staleness_timestamp: u64 = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12);
-        while current_unix_time() > staleness_timestamp {
-            (pivot_header, staleness_timestamp) =
-                update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+        while block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
         }
         debug!(
             "Selected block {} as pivot for snap sync",
@@ -803,7 +801,7 @@ impl Syncer {
                     H256::zero(),
                     H256::repeat_byte(0xff),
                     account_state_snapshots_dir,
-                    staleness_timestamp,
+                    calculate_staleness_timestamp(pivot_header.timestamp),
                 )
                 .await;
 
@@ -854,19 +852,19 @@ impl Syncer {
                 chunk_index = self
                     .peers
                     .request_storage_ranges(
-                        state_root,
                         dirty_accounts.iter().map(|(k, v)| (*k, *v)).collect(),
                         account_storages_snapshots_dir.clone(),
                         chunk_index,
                         &mut downloaded_account_storages,
-                        staleness_timestamp,
+                        &mut pivot_header,
+                        block_sync_state,
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
                 dbg!(&downloaded_account_storages);
             }
             info!("All account storages downloaded successfully");
-            pivot_is_stale = current_unix_time() > staleness_timestamp;
+            pivot_is_stale = block_is_stale(&pivot_header);
             info!(
                 "Finished downloading account ranges, total storage slots: {}",
                 *METRICS.downloaded_storage_slots.lock().await
@@ -1027,15 +1025,15 @@ impl Syncer {
             let mut healing_done = false;
             while !healing_done {
                 // This if is an edge case for the skip snap sync scenario
-                if current_unix_time() > staleness_timestamp {
-                    (pivot_header, staleness_timestamp) =
+                if block_is_stale(&pivot_header) {
+                    pivot_header =
                         update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
                 }
                 healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
                     &self.peers,
-                    staleness_timestamp,
+                    calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut global_state_leafs_healed,
                     &mut dirty_accounts,
                 )
@@ -1049,7 +1047,7 @@ impl Syncer {
                     self.peers.clone(),
                     store.clone(),
                     HashMap::new(),
-                    staleness_timestamp,
+                    calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut global_storage_leafs_healed,
                 )
                 .await;
@@ -1207,11 +1205,11 @@ fn compute_storage_roots(
     Ok((account_hash, changes))
 }
 
-async fn update_pivot(
+pub async fn update_pivot(
     block_number: u64,
     peers: &PeerHandler,
     block_sync_state: &mut BlockSyncState,
-) -> Result<(BlockHeader, u64), SyncError> {
+) -> Result<BlockHeader, SyncError> {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
@@ -1258,12 +1256,20 @@ async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
-        return Ok((pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12)));
+        return Ok(pivot.clone());
     }
 }
 
+pub fn block_is_stale(block_header: &BlockHeader) -> bool {
+    calculate_staleness_timestamp(block_header.timestamp) < current_unix_time()
+}
+
+pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
+    timestamp + (SNAP_LIMIT as u64 * 12)
+}
+
 #[derive(thiserror::Error, Debug)]
-enum SyncError {
+pub enum SyncError {
     #[error(transparent)]
     Chain(#[from] ChainError),
     #[error(transparent)]

@@ -33,6 +33,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
+    sync::{BlockSyncState, block_is_stale, update_pivot},
     utils::{
         SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
         get_account_storages_snapshot_file,
@@ -1485,12 +1486,12 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
         account_storages_snapshots_dir: String,
         mut chunk_index: u64,
         downloaded_count: &mut u64,
-        staleness_timestamp: u64,
+        pivot_header: &mut BlockHeader,
+        block_sync_state: &mut BlockSyncState,
     ) -> Result<u64, PeerHandlerError> {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1839,14 +1840,16 @@ impl PeerHandler {
                 );
             }
 
-            if current_unix_time() > staleness_timestamp {
-                break;
+            if block_is_stale(pivot_header) {
+                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
+                    .await
+                    .expect("We should get a new block header");
             }
 
             tokio::spawn(PeerHandler::request_storage_ranges_worker(
                 task,
                 free_peer_id,
-                state_root,
+                pivot_header.state_root,
                 free_downloader_channels_clone,
                 chunk_account_hashes,
                 chunk_storage_roots,
