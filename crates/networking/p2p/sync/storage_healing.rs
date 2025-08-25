@@ -777,10 +777,6 @@ fn commit_node(
         node.node_request.parent.clone(),
     );
 
-    if !membatch.contains_key(&parent_key) {
-        return Ok(());
-    }
-
     let mut parent_entry = membatch
         .remove(&parent_key)
         .expect("We are missing the parent from the membatch!");
