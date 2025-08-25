@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756151120194,
+  "lastUpdate": 1756155423137,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23273,6 +23273,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0019483297297297297,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5bbb11fee439cdd5787bb4c509fa0d0c4faa791a",
+          "message": "fix(l2): use `spawned::start_blocking` for block_producer (#4151)\n\n**Motivation**\n\nTo prevent blocking other async tasks.\n\n**Description**\n\n- Uses\n[spawned::start_blocking](https://github.com/lambdaclass/spawned/blob/aa47f8277b058737e351cf75a0926bd580d0f4e4/concurrency/src/tasks/gen_server.rs#L146)\nfor the L2 `BlockProducer` `GenServer`.\n\nCloses None",
+          "timestamp": "2025-08-25T15:11:35Z",
+          "tree_id": "915f7a01bec31b1ab78bab1d198c3206eba81079",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5bbb11fee439cdd5787bb4c509fa0d0c4faa791a"
+        },
+        "date": 1756155404258,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.00025791842576028623,
             "unit": "Mgas/s"
           }
         ]
