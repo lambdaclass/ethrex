@@ -249,6 +249,12 @@ impl Trie {
         }
     }
 
+    pub fn empty_in_memory() -> Self {
+        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
+            HashMap::new(),
+        )))))
+    }
+
     /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
