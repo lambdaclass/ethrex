@@ -14,12 +14,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, TrieDB, TrieError};
-use tokio::sync::mpsc::{Sender, channel};
-use tracing::{debug, error, info};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
+use tracing::{error, info};
 
 use crate::{
     kademlia::PeerChannels,
@@ -28,24 +27,12 @@ use crate::{
     utils::current_unix_time,
 };
 
-/// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of bach to start a bytecode fetch request in queues
-const BYTECODE_BATCH_SIZE: usize = 70;
 /// Max size of a bach to start a storage fetch request in queues
 pub const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a node fetch request in queues
 pub const NODE_BATCH_SIZE: usize = 500;
-/// Maximum amount of concurrent paralell fetches for a queue
-const MAX_PARALLEL_FETCHES: usize = 10;
-/// Maximum amount of messages in a channel
-const MAX_CHANNEL_MESSAGES: usize = 500;
-/// Maximum amount of messages to read from a channel at once
-const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
-/// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 const MAX_SCORE: i64 = 10;
 
 use super::SyncError;
@@ -199,27 +186,23 @@ async fn heal_state_trie(
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
-                        match node {
-                            Node::Leaf(node) => {
-                                let account =
-                                    AccountState::decode(&node.value).expect("decode failed");
-                                let account_hash = H256::from_slice(
-                                    &meta.path.concat(node.partial.clone()).to_bytes(),
-                                );
-                                if account.storage_root != *EMPTY_TRIE_HASH {
-                                    dirty_accounts.insert(account_hash, account.storage_root);
-                                }
+                        if let Node::Leaf(node) = node {
+                            let account = AccountState::decode(&node.value).expect("decode failed");
+                            let account_hash = H256::from_slice(
+                                &meta.path.concat(node.partial.clone()).to_bytes(),
+                            );
+                            if account.storage_root != *EMPTY_TRIE_HASH {
+                                dirty_accounts.insert(account_hash, account.storage_root);
                             }
-                            _ => {}
                         }
                     }
                     leafs_healed += nodes
                         .iter()
-                        .filter(|node| matches!(node, Node::Leaf(leaf_node)))
+                        .filter(|node| matches!(node, Node::Leaf(_)))
                         .count();
                     *global_leafs_healed += nodes
                         .iter()
-                        .filter(|node| matches!(node, Node::Leaf(leaf_node)))
+                        .filter(|node| matches!(node, Node::Leaf(_)))
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
@@ -371,7 +354,7 @@ async fn heal_state_batch(
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =
-            node_missing_children(&node, &path.path, &membatch, trie.db(), nodes_to_write)?;
+            node_missing_children(&node, &path.path, trie.db())?;
         batch.extend(missing_children);
         if missing_children_count == 0 {
             commit_node(
@@ -433,19 +416,19 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     let free_downloaders: Vec<H256> = downloaders
         .iter()
         .filter(|(_peer_id, is_free)| **is_free)
-        .map(|(peer_id, _is_free)| peer_id.clone())
+        .map(|(peer_id, _is_free)| *peer_id)
         .collect();
 
     // Get the peer with the highest score
-    let mut peer_with_highest_score = free_downloaders.get(0)?;
+    let mut peer_with_highest_score = free_downloaders.first()?;
     let mut highest_score = i64::MIN;
     for peer_id in &free_downloaders {
-        let Some(score) = scores.get(&peer_id) else {
+        let Some(score) = scores.get(peer_id) else {
             continue;
         };
         if *score > highest_score {
             highest_score = *score;
-            peer_with_highest_score = &peer_id;
+            peer_with_highest_score = peer_id;
         }
     }
     let Some(peer_channel) = peers
@@ -469,9 +452,7 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
 pub fn node_missing_children(
     node: &Node,
     path: &Nibbles,
-    membatch: &HashMap<Nibbles, MembatchEntryValue>,
     trie_state: &dyn TrieDB,
-    nodes_to_write: &mut Vec<Node>,
 ) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
     let mut missing_children_count = 0_u64;
@@ -480,16 +461,6 @@ pub fn node_missing_children(
             for (index, child) in node.choices.iter().enumerate() {
                 if child.is_valid() && child.get_node(trie_state)?.is_none() {
                     missing_children_count += 1;
-                    // paths.extend(membatch_node_missing_children(
-                    //     RequestMetadata {
-                    //         hash: child.compute_hash().finalize(),
-                    //         path: path.clone().append_new(index as u8),
-                    //         parent_path: path.clone(),
-                    //     },
-                    //     membatch,
-                    //     trie_state,
-                    //     nodes_to_write
-                    // )?);
                     paths.extend(vec![RequestMetadata {
                         hash: child.compute_hash().finalize(),
                         path: path.clone().append_new(index as u8),
@@ -501,16 +472,6 @@ pub fn node_missing_children(
         Node::Extension(node) => {
             if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 missing_children_count += 1;
-                // paths.extend(membatch_node_missing_children(
-                //     RequestMetadata {
-                //         hash: node.child.compute_hash().finalize(),
-                //         path: path.concat(node.prefix.clone()),
-                //         parent_path: path.clone(),
-                //     },
-                //     membatch,
-                //     trie_state,
-                //     nodes_to_write
-                // )?);
 
                 paths.extend(vec![RequestMetadata {
                     hash: node.child.compute_hash().finalize(),
@@ -522,29 +483,4 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok((missing_children_count, paths))
-}
-
-// This function searches for the nodes we have to download that are childs from the membatch
-fn membatch_node_missing_children(
-    node_request: RequestMetadata,
-    membatch: &HashMap<Nibbles, MembatchEntryValue>,
-    trie_state: &dyn TrieDB,
-    nodes_to_write: &mut Vec<Node>,
-) -> Result<Vec<RequestMetadata>, TrieError> {
-    if let Some(membatch_entry) = membatch.get(&node_request.path) {
-        if membatch_entry.node.compute_hash().finalize() == node_request.hash {
-            node_missing_children(
-                &membatch_entry.node,
-                &node_request.path,
-                membatch,
-                trie_state,
-                nodes_to_write,
-            )
-            .map(|(counts, paths)| paths)
-        } else {
-            Ok(vec![node_request])
-        }
-    } else {
-        Ok(vec![node_request])
-    }
 }
