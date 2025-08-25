@@ -30,6 +30,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
+  "tooling/cache_migration",
   "tooling/archive_sync",
   "crates/common/config",
 ]

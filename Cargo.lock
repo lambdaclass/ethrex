@@ -1731,6 +1731,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cache_migration"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.40",
+ "ethrex-common",
+ "ethrex-replay",
+ "eyre",
+ "hex",
+ "reqwest 0.12.20",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "zkvm_interface",
+]
+
+[[package]]
 name = "camino"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
