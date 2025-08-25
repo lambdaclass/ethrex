@@ -1024,9 +1024,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("Starting Fast Sync");
             let mut membatch_state = HashMap::new();
-            let membatch_storage = OnceCell::new();
             let mut global_state_leafs_healed: u64 = 0;
-            membatch_storage.get_or_init(HashMap::new);
             let mut healing_done = false;
             while !healing_done {
                 // This if is an edge case for the skip snap sync scenario
@@ -1050,7 +1048,7 @@ impl Syncer {
                     pivot_header.state_root,
                     self.peers.clone(),
                     store.clone(),
-                    membatch_storage.clone(),
+                    HashMap::new(),
                     staleness_timestamp,
                 )
                 .await;
