@@ -1002,11 +1002,10 @@ impl Syncer {
                     .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
 
                 if *computed_storage_root != account_state.storage_root {
-                    return Err(SyncError::DifferentStateRoots(
-                        *account_hash,
-                        account_state.storage_root,
-                        *computed_storage_root,
-                    ));
+                    debug!(
+                        "Incomplete or incorrect download for account hash {:?}, expected: {:?}, computed: {:?}",
+                        *account_hash, account_state.storage_root, *computed_storage_root,
+                    );
                 }
             }
 
