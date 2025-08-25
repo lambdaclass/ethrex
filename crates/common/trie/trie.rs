@@ -262,18 +262,13 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
-    pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
-        let mut storage = nodes
-            .iter()
-            .map(|node| {
-                (
-                    NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
-                    node.clone(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let Some(root) = root else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
+    pub fn from_nodes(
+        root_hash: NodeHash,
+        mut state_nodes: HashMap<NodeHash, NodeRLP>,
+    ) -> Result<Self, TrieError> {
+        // TODO: Try to remove this clone.
+        let Some(root) = state_nodes.get(&root_hash).cloned() else {
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
 
@@ -314,8 +309,8 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut storage, root)?.into();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
+        let root = inner(&mut state_nodes, &root)?.into();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;
