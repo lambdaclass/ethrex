@@ -67,7 +67,7 @@ jobs:
 
       - name: Run Blockchain EF tests
         run: |
-          make -C cmd/ef_tests/blockchain test
+          make -C tooling/ef_tests/blockchain test
 
   docker_build:
     name: Build Docker
