@@ -1059,6 +1059,15 @@ impl Syncer {
             }
             if !dirty_accounts.is_empty() {
                 error!("Some ({})  accounts are still dirty.", dirty_accounts.len());
+                let trie = store.open_state_trie(pivot_header.state_root).unwrap();
+                for (account, root) in dirty_accounts {
+                    let path = Nibbles::from_bytes(&account.0).encode_compact();
+                    let state = AccountState::decode(&trie.get(&path).unwrap().unwrap()).unwrap();
+                    error!(
+                        "Remaining dirty: account {account:?} expected root {root:?} got {:?}",
+                        state.storage_root
+                    );
+                }
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
             validate_state_root(store.clone(), pivot_header.state_root).await;
