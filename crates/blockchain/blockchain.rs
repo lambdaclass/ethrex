@@ -358,6 +358,8 @@ impl Blockchain {
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
+            state_nodes: HashMap::new(), // FIXME: Complete
+            account_storage_root_hashes: HashMap::new(), // FIXME: Complete
         })
     }
 
