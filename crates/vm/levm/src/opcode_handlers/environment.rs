@@ -181,15 +181,16 @@ impl<'a> VM<'a> {
                     .memory
                     .store_data(dest_offset, src_slice)?;
             } else {
-                let mut data = Vec::with_capacity(size);
+                let mut data = vec![0u8; size];
+
+                let available_data = calldata_len - calldata_offset;
+                let copy_size = size.min(available_data);
 
                 if copy_size > 0 {
-                    data.extend_from_slice(
+                    data[..copy_size].copy_from_slice(
                         &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
                     );
                 }
-
-                data.resize(size, 0);
 
                 current_call_frame.memory.store_data(dest_offset, &data)?;
             }
