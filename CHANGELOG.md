@@ -2,8 +2,6 @@
 
 ## Perf
 
-### 2025-08-20
-
 ### 2025-08-22
 
 - Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
