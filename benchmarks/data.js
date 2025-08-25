@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756119595901,
+  "lastUpdate": 1756120763033,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22861,6 +22861,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0002608111432706223,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c59033d979b931895e2cab7c4310d9894495a4b6",
+          "message": "perf(levm): make precompiles use a constant table (#4097)\n\n**Motivation**\n\nImproves performance of precompile calls\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-08-25T08:30:22Z",
+          "tree_id": "0675e95b1ce969501c67b6424a077e0a44777f03",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c59033d979b931895e2cab7c4310d9894495a4b6"
+        },
+        "date": 1756120762388,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.001922352,
             "unit": "Mgas/s"
           }
         ]
