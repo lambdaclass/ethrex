@@ -864,7 +864,10 @@ impl Syncer {
                 dbg!(&downloaded_account_storages);
             }
             info!("All account storages downloaded successfully");
-            pivot_is_stale = block_is_stale(&pivot_header);
+            // this makes it so we always try to heal the branch at the end, because we now
+            // change the pivot header, so we don't know if we became stale during the snap ranges
+            // TODO: change for a better logic
+            pivot_is_stale = true;
             info!(
                 "Finished downloading account ranges, total storage slots: {}",
                 *METRICS.downloaded_storage_slots.lock().await
