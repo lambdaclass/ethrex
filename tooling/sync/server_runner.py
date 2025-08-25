@@ -3,6 +3,9 @@ import sys
 import argparse
 import requests
 import time
+import os
+import json
+import socket
 
 
 RPC_URL = "http://localhost:8545"
@@ -20,9 +23,24 @@ def parse_args():
 
     return parser.parse_args()
 
+def send_slack_message(message: str):
+    webhook_url = os.environ["SLACK_WEBHOOK_URL"]
+    message = {"text": message}
+
+    response = requests.post(
+        webhook_url, data=json.dumps(message),
+        headers={'Content-Type': 'application/json'}
+    )
+
+    if response.status_code != 200:
+        print(f"Failed to send Slack message: {e}", file=sys.stderr)
+
 def main():
     args = parse_args()
     variables = {}
+    hostname = socket.gethostname()
+
+    
     
     # Only include SNAP if flag is set
     if args.snap:
@@ -55,6 +73,7 @@ def main():
                     elapsed = time.time() - start_time
                     if elapsed > args.timeout * 60:
                         print(f"⚠️ Node did not sync within {args.timeout} minutes. Stopping.")
+                        send_slack_message(f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Stopping. Log File: {logs_file}_{start_time}.log")
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                         break
@@ -71,6 +90,7 @@ def main():
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the make command: {e}", file=sys.stderr)
         sys.exit(1)
+    
 
 
 if __name__ == "__main__":
