@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, U256,
     types::{AccountState, BlockHeader, Receipt},
@@ -12,7 +13,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{BlockRequestOrder, PEER_REPLY_TIMEOUT},
+    peer_handler::{BlockRequestOrder, PEER_REPLY_TIMEOUT, TaskResult},
     rlpx::{
         Message as RLPxMessage,
         connection::server::CastMessage,
@@ -20,7 +21,7 @@ use crate::{
             blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
         },
-        snap::{AccountRange, AccountRangeUnit, GetAccountRange},
+        snap::{AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes},
     },
     snap::encodable_to_proof,
 };
@@ -83,6 +84,12 @@ pub enum DownloaderCastRequest {
         root_hash: H256,
         starting_hash: H256,
         limit_hash: H256,
+    },
+    ByteCode {
+        task_sender: Sender<TaskResult>,
+        hashes_to_request: Vec<H256>,
+        chunk_start: usize,
+        chunk_end: usize,
     },
 }
 
@@ -398,6 +405,84 @@ impl GenServer for Downloader {
                 }
                 // Downloader has done its job, stop it
                 return CastResponse::Stop;
+            }
+            DownloaderCastRequest::ByteCode {
+                task_sender,
+                hashes_to_request,
+                chunk_start,
+                chunk_end,
+            } => {
+                let empty_task_result = TaskResult {
+                    start_index: chunk_start,
+                    bytecodes: vec![],
+                    peer_id: self.peer_id,
+                    remaining_start: chunk_start,
+                    remaining_end: chunk_end,
+                };
+                debug!(
+                    "Requesting bytecode from peer {}, chunk: {chunk_start:?} - {chunk_end:?}",
+                    self.peer_id
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetByteCodes(GetByteCodes {
+                    id: request_id,
+                    hashes: hashes_to_request.clone(),
+                    bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = (self.peer_channels.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    task_sender.send(empty_task_result).await.ok();
+                    return CastResponse::Stop;
+                }
+
+                if let Some(codes) = tokio::time::timeout(Duration::from_secs(2), async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
+                                if id == request_id =>
+                            {
+                                return Some(codes);
+                            }
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                {
+                    if codes.is_empty() {
+                        task_sender.send(empty_task_result).await.ok();
+                        // Too spammy
+                        // tracing::error!("Received empty account range");
+                        return CastResponse::Stop;
+                    }
+                    // Validate response by hashing bytecodes
+                    let validated_codes: Vec<Bytes> = codes
+                        .into_iter()
+                        .zip(hashes_to_request)
+                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .map(|(b, _hash)| b)
+                        .collect();
+                    let result = TaskResult {
+                        start_index: chunk_start,
+                        remaining_start: chunk_start + validated_codes.len(),
+                        bytecodes: validated_codes,
+                        peer_id: self.peer_id,
+                        remaining_end: chunk_end,
+                    };
+                    task_sender.send(result).await.ok();
+                } else {
+                    tracing::error!("Failed to get bytecode");
+                    task_sender.send(empty_task_result).await.ok();
+                }
+
+                CastResponse::Stop
             }
         }
     }
