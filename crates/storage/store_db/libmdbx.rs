@@ -594,7 +594,8 @@ impl StoreEngine for Store {
                     "Block Header: {} -> {}",
                     b.to().unwrap().number,
                     a.to().unwrap()
-                )
+                );
+                self.write::<CanonicalBlockHashes>(b.to().unwrap().number, a).await.unwrap();
             }
         }
         for i in 0..BlockNumber::MAX {
