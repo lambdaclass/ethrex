@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ethrex_common::{
     BigEndianHash, U256,
-    types::{AccountState, BlockHeader},
+    types::{AccountState, BlockHeader, Receipt},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::verify_range;
@@ -12,11 +12,14 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::BlockRequestOrder,
+    peer_handler::{BlockRequestOrder, PEER_REPLY_TIMEOUT},
     rlpx::{
         Message as RLPxMessage,
         connection::server::CastMessage,
-        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
+        eth::{
+            blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
+            receipts::GetReceipts,
+        },
         snap::{AccountRange, AccountRangeUnit, GetAccountRange},
     },
     snap::encodable_to_proof,
@@ -58,12 +61,14 @@ impl Downloader {
 #[derive(Clone)]
 pub enum DownloaderCallRequest {
     CurrentHead { sync_head: H256 },
+    Receipts { block_hashes: Vec<H256> },
 }
 
 #[derive(Clone)]
 pub enum DownloaderCallResponse {
-    NotFound,         // Whatever we were looking for was not found
-    CurrentHead(u64), // The sync head block number
+    NotFound,                            // Whatever we were looking for was not found
+    CurrentHead(u64),                    // The sync head block number
+    Receipts(Option<Vec<Vec<Receipt>>>), // Requested receipts to a given block hash
 }
 
 #[derive(Clone)]
@@ -141,6 +146,55 @@ impl GenServer for Downloader {
                 }
 
                 CallResponse::Stop(DownloaderCallResponse::NotFound)
+            }
+            DownloaderCallRequest::Receipts { block_hashes } => {
+                let block_hashes_len = block_hashes.len();
+
+                let request_id = rand::random();
+                let request = RLPxMessage::GetReceipts(GetReceipts {
+                    id: request_id,
+                    block_hashes,
+                });
+
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
+                }
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::Receipts(receipts)) => {
+                                if receipts.get_id() == request_id {
+                                    return Some(receipts.get_receipts());
+                                }
+                                return None;
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|receipts|
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
+                {
+                    return CallResponse::Stop(DownloaderCallResponse::Receipts(
+                        Some(receipts),
+                    ));
+                }
+
+                return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
             }
         }
     }
