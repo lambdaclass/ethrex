@@ -929,6 +929,11 @@ pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, V
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
+    const ZERO_BYTES: [u8; 128] = [0; 128];
+    if calldata[0..128] == ZERO_BYTES && calldata[128..256] == ZERO_BYTES {
+        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
+    }
+
     let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
     let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
 
@@ -1245,6 +1250,11 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
 fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
     if point_bytes.len() != 128 {
         return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    // check first 16 bytes for zeros, if so both points are at infinity
+    if point_bytes[0..64].iter().all(|&b| b == 0) && point_bytes[64..128].iter().all(|&b| b == 0) {
+        return Ok(G1Projective::identity());
     }
 
     let x = parse_coordinate(&point_bytes[0..64])?;
