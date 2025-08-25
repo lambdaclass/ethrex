@@ -135,7 +135,7 @@ impl Syncer {
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
@@ -518,12 +518,21 @@ impl FullBlockSyncState {
     /// An incomplete batch may be executed if the sync_head was already found
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        mut block_headers: Vec<BlockHeader>,
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
+        let mut sync_head_header = None;
+        if self
+            .store
+            .get_pending_block(block_headers[block_headers.len() - 1].hash())
+            .await
+            .is_ok()
+        {
+            sync_head_header = block_headers.pop();
+        }
         self.current_headers.extend(block_headers);
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
@@ -548,13 +557,18 @@ impl FullBlockSyncState {
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
+        if let Some(block_header) = sync_head_header {
+            if let Some(block) = self.store.get_pending_block(block_header.hash()).await? {
+                self.current_blocks.push(block);
+            }
+        }
         // Execute full blocks
         while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
             || (!self.current_blocks.is_empty() && sync_head_found)
         {
             // Now that we have a full batch, we can execute and store the blocks in batch
             let execution_start = Instant::now();
-            let block_batch: Vec<Block> = self
+            let mut block_batch: Vec<Block> = self
                 .current_blocks
                 .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
                 .collect();
@@ -574,7 +588,7 @@ impl FullBlockSyncState {
             // Run the batch
             if let Err((err, batch_failure)) = Syncer::add_blocks(
                 blockchain.clone(),
-                block_batch,
+                block_batch.clone(),
                 sync_head_found,
                 cancel_token.clone(),
             )
@@ -582,6 +596,26 @@ impl FullBlockSyncState {
             {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
+                    let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
+                    if let Some(index) = block_batch
+                        .iter()
+                        .position(|x| x.hash() == batch_failure.failed_block_hash)
+                    {
+                        blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
+                    }
+
+                    for block in blocks_with_invalid_ancestor {
+                        self.store
+                            .set_latest_valid_ancestor(block.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
+
+                    for header in self.current_headers.clone() {
+                        self.store
+                            .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
+
                     self.store
                         .set_latest_valid_ancestor(
                             batch_failure.failed_block_hash,
