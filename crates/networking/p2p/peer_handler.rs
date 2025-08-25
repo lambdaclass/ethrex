@@ -22,13 +22,13 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
+        downloader::{
+            Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
+        },
         eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
-    },
-    snap_sync::downloader::{
-        Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
     },
     utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
