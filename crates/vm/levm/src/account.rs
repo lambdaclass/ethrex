@@ -92,6 +92,20 @@ impl LevmAccount {
     pub fn is_unmodified(&self) -> bool {
         matches!(self.status, AccountStatus::Unmodified)
     }
+
+    pub fn update_storage_slot_current_value(&mut self, key: H256, value: U256) {
+        if let Some(slot) = self.storage.get_mut(&key) {
+            slot.current_value = value;
+        } else {
+            self.storage.insert(
+                key,
+                LevmStorageSlot {
+                    current_value: value,
+                    previous_value: value,
+                },
+            );
+        }
+    }
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]

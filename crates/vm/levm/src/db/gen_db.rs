@@ -449,18 +449,11 @@ impl<'a> VM<'a> {
         key: H256,
         new_value: U256,
         current_value: U256,
-        original_value: U256,
     ) -> Result<(), InternalError> {
         self.backup_storage_slot(address, key, current_value)?;
 
         let account = self.get_account_mut(address)?;
-        account.storage.insert(
-            key,
-            LevmStorageSlot {
-                current_value: new_value,
-                previous_value: original_value,
-            },
-        );
+        account.update_storage_slot_current_value(key, new_value);
 
         Ok(())
     }
