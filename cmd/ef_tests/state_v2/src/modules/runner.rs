@@ -1,4 +1,6 @@
 use colored::Colorize;
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
+use secp256k1::SecretKey;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -60,9 +62,10 @@ pub async fn run_test(
     let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
         // Setup VM for transaction.
-        let (mut db, initial_block_hash, storage, genesis) = load_initial_state(test).await;
+        let (mut db, initial_block_hash, storage, genesis) =
+            load_initial_state(test, &test_case.fork).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
-        let tx = get_tx_from_test_case(test_case)?;
+        let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
         let mut vm =
             VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
@@ -135,7 +138,7 @@ pub fn get_vm_env_for_test(
 }
 
 /// Constructs the transaction that will be executed in a specific test case.
-pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
+pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
     let value = test_case.value;
     let data = test_case.data.clone();
     let access_list = test_case
@@ -151,7 +154,7 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
     // optional blob-related VM environment variables — these are set to Some() instead of None (check `get_vm_env_for_test()`).
     // Transactions of type 4 (EIP-7702) are represented using their actual type.
     // This approach avoids the need to handle five distinct transaction types separately.
-    let tx = match &test_case.authorization_list {
+    let mut tx = match &test_case.authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_case.to {
                 TxKind::Call(to) => to,
@@ -164,6 +167,16 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
                 .iter()
                 .map(|auth_tuple| auth_tuple.clone().into_authorization_tuple())
                 .collect(),
+            chain_id: 1,
+            nonce: 0,
+            // I don't know if these 2 are correct
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .as_u64(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap_or_default().as_u64(),
+            gas_limit: test_case.gas,
+            inner_hash: Default::default(),
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -171,8 +184,22 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
             value,
             data,
             access_list,
+            chain_id: 1,
+            nonce: 0,
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .as_u64(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap_or_default().as_u64(),
+            gas_limit: test_case.gas,
+            inner_hash: Default::default(),
             ..Default::default()
         }),
     };
+    let sk = SecretKey::from_slice(test_case.secret_key.as_bytes()).unwrap();
+    let signer = Signer::Local(LocalSigner::new(sk));
+    tx.sign_inplace(&signer)
+        .await
+        .expect("Signing shouldn't fail");
     Ok(tx)
 }

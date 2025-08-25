@@ -34,43 +34,16 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     Ok(())
 }
 
-pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
-    println!("Test name: {}", test.name);
-    let test_case = &test.test_cases[0];
-    let env = get_vm_env_for_test(test.env, test_case)?;
-    let tx = get_tx_from_test_case(test_case)?;
-    let tracer = LevmCallTracer::disabled();
-
-    // Setup VM for transaction.
-    let (mut db, initial_block_hash, storage, genesis) = load_initial_state(test).await;
-    let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
-
-    // Execute transaction with VM.
-    let execution_result = vm.execute();
-
-    // Verify transaction execution results where the ones expected by the test case.
-    let checks_result = check_test_case_results(
-        &mut vm,
-        initial_block_hash,
-        storage,
-        test_case,
-        execution_result,
-        genesis,
-    )
-    .await?;
-
-    Ok(())
-}
-
 pub async fn block_run(test: &Test) -> Result<(), RunnerError> {
     println!("Test name: {}", test.name);
     let test_case = &test.test_cases[0];
     let env = get_vm_env_for_test(test.env, test_case)?;
-    let tx = get_tx_from_test_case(test_case)?;
+    let tx = get_tx_from_test_case(test_case).await?;
     let tracer = LevmCallTracer::disabled();
 
-    // Note that this db is 
-    let (mut db, initial_block_hash, store, genesis) = load_initial_state(test).await;
+    // Note that this db is
+    let (mut db, initial_block_hash, store, genesis) =
+        load_initial_state(test, &test_case.fork).await;
     // Normal run cause we want to get the execution report.
     let mut vm =
         VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
@@ -99,7 +72,7 @@ pub async fn block_run(test: &Test) -> Result<(), RunnerError> {
     };
 
     let header = BlockHeader {
-        hash: Default::default(), // I initialize it after with block.hash().
+        hash: Default::default(), // I initialize it later with block.hash().
         parent_hash: initial_block_hash,
         ommers_hash: H256::from_str(
             "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
@@ -123,7 +96,7 @@ pub async fn block_run(test: &Test) -> Result<(), RunnerError> {
             H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
                 .unwrap(),
         ),
-        blob_gas_used: env.block_blob_gas_used.map(|v| v.as_u64()),
+        blob_gas_used: Some(env.block_blob_gas_used.map(|v| v.as_u64()).unwrap_or(0)), //TODO: Blob gas used should only be post Cancun
         excess_blob_gas: env.block_excess_blob_gas.map(|v| v.as_u64()),
         parent_beacon_block_root: Some(H256::zero()),
         requests_hash: Some(*DEFAULT_REQUESTS_HASH),

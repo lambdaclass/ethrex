@@ -10,7 +10,9 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
+ethrex-l2-rpc.workspace = true
 
+secp256k1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
