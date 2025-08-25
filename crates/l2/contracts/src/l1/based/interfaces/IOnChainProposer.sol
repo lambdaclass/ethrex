@@ -88,4 +88,10 @@ interface IOnChainProposer {
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
     ) external;
+
+    /// @notice Allows the owner to pause the contract
+    function pause() external;
+
+    /// @notice Allows the owner to unpause the contract
+    function unpause() external;
 }
