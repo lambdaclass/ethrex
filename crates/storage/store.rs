@@ -579,6 +579,15 @@ impl Store {
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
+        info!("");
+        info!("{}", "-".repeat(153));
+
+        for line in genesis.config.display_config().lines() {
+            info!("{}", line);
+        }
+
+        info!("{}", "-".repeat(153));
+        info!("");
 
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
