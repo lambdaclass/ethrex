@@ -58,10 +58,9 @@ pub struct ProofCoordinatorConfig {
     pub listen_ip: IpAddr,
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
-    pub dev_mode: bool,
     pub signer: Signer,
     pub validium: bool,
-    pub tdx_private_key: SecretKey,
+    pub tdx_private_key: Option<SecretKey>,
 }
 
 #[derive(Clone, Debug)]

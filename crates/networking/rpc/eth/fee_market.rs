@@ -190,7 +190,7 @@ impl RpcHandler for FeeHistoryRequest {
 fn project_next_block_base_fee_values(
     header: &BlockHeader,
     base_fee_update_fraction: u64,
-    blob_target: u64,
+    blob_target: u32,
 ) -> (u64, u64) {
     // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
     // will have the London update active, so the base fee calculation makes sense

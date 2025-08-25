@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
@@ -52,7 +52,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct StateUpdater {
     on_chain_proposer_address: Address,
     sequencer_registry_address: Address,
@@ -232,16 +231,15 @@ impl StateUpdater {
             "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
         );
         self.store
-            .update_latest_block_number(*last_l2_committed_block_number)
+            .forkchoice_update(
+                None,
+                *last_l2_committed_block_number,
+                last_l2_committed_batch_block_hash,
+                None,
+                None,
+            )
             .await?;
-        let _ = apply_fork_choice(
-            &self.store,
-            last_l2_committed_batch_block_hash,
-            last_l2_committed_batch_block_hash,
-            last_l2_committed_batch_block_hash,
-        )
-        .await
-        .map_err(StateUpdaterError::InvalidForkChoice)?;
+
         Ok(())
     }
 }
@@ -253,10 +251,10 @@ impl GenServer for StateUpdater {
     type Error = StateUpdaterError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         let _ = self
             .update_state()
             .await
@@ -266,7 +264,7 @@ impl GenServer for StateUpdater {
             handle.clone(),
             Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 

@@ -2,6 +2,32 @@
 
 ## Perf
 
+### 2025-08-22
+
+- Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
+
+- Improve ecpairing (bn128) precompile [#4130](https://github.com/lambdaclass/ethrex/pull/4130)
+
+### 2025-08-20
+
+- Improve BLS12 precompile [#4073](https://github.com/lambdaclass/ethrex/pull/4073)
+
+- Improve blobbasefee opcode [#4092](https://github.com/lambdaclass/ethrex/pull/4092)
+
+- Make precompiles use a constant table [#4097](https://github.com/lambdaclass/ethrex/pull/4097)
+
+### 2025-08-19
+
+- Improve addmod and mulmod opcode performance [#4072](https://github.com/lambdaclass/ethrex/pull/4072)
+
+- Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
+
+- Improve performance of calldataload, calldatacopy, extcodecopy, codecopy, returndatacopy [#4070](https://github.com/lambdaclass/ethrex/pull/4070)
+
+### 2025-08-14
+
+- Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
+
 ### 2025-07-31
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)

@@ -1,13 +1,16 @@
 use crate::{
     cli::Options,
-    networks::{self, Network, PublicNetwork},
     utils::{
-        get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
-        set_datadir,
+        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
+
+use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, peer_table, public_key_from_signing_key},
@@ -33,15 +36,24 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
+        .from_env_lossy()
+        .add_directive(Directive::from(opts.log_level));
+
+    let fmt_layer = fmt::layer().with_filter(log_filter);
+    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
+        let profiling_layer = FunctionProfilingLayer::default();
+        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+    } else {
+        Box::new(Registry::default().with(fmt_layer))
+    };
+
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
@@ -55,10 +67,13 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
+
+    initialize_block_processing_profile();
+
     tracker.spawn(metrics_api);
 }
 
-/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     store
@@ -68,7 +83,17 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     store
 }
 
-/// Opens a Pre-exsisting Store or creates a new one
+/// Initializes a pre-existing Store
+pub async fn load_store(data_dir: &str) -> Store {
+    let store = open_store(data_dir);
+    store
+        .load_initial_state()
+        .await
+        .expect("Failed to load store");
+    store
+}
+
+/// Opens a pre-existing Store or creates a new one
 pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
     if path.ends_with("memory") {
@@ -77,10 +102,8 @@ pub fn open_store(data_dir: &str) -> Store {
         cfg_if::cfg_if! {
             if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
-            } else if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
             } else {
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
         }
@@ -183,35 +206,33 @@ pub async fn init_network(
 
 #[cfg(feature = "dev")]
 pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
-    if opts.dev {
-        info!("Running in DEV_MODE");
+    info!("Running in DEV_MODE");
 
-        let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().await.unwrap();
-            store
-                .get_canonical_block_hash(current_block_number)
-                .await
-                .unwrap()
-                .unwrap()
-        };
+    let head_block_hash = {
+        let current_block_number = store.get_latest_block_number().await.unwrap();
+        store
+            .get_canonical_block_hash(current_block_number)
+            .await
+            .unwrap()
+            .unwrap()
+    };
 
-        let max_tries = 3;
+    let max_tries = 3;
 
-        let url = format!(
-            "http://{authrpc_socket_addr}",
-            authrpc_socket_addr = get_authrpc_socket_addr(opts)
-        );
+    let url = format!(
+        "http://{authrpc_socket_addr}",
+        authrpc_socket_addr = get_authrpc_socket_addr(opts)
+    );
 
-        let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-            url,
-            read_jwtsecret_file(&opts.authrpc_jwtsecret),
-            head_block_hash,
-            max_tries,
-            1000,
-            ethrex_common::Address::default(),
-        );
-        tracker.spawn(block_producer_engine);
-    }
+    let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+        url,
+        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        head_block_hash,
+        max_tries,
+        1000,
+        ethrex_common::Address::default(),
+    );
+    tracker.spawn(block_producer_engine);
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -227,25 +248,7 @@ pub fn get_network(opts: &Options) -> Network {
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    match network {
-        Network::PublicNetwork(PublicNetwork::Holesky) => {
-            info!("Adding holesky preset bootnodes");
-            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Hoodi) => {
-            info!("Addig hoodi preset bootnodes");
-            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Mainnet) => {
-            info!("Adding mainnet preset bootnodes");
-            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Sepolia) => {
-            info!("Adding sepolia preset bootnodes");
-            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-        }
-        _ => {}
-    }
+    bootnodes.extend(network.get_bootnodes());
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
@@ -360,13 +363,9 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .update_latest_block_number(block_number)
+            .forkchoice_update(None, block_number, block_hash, None, None)
             .await
-            .expect("Failed to update latest block number");
-        store
-            .set_canonical_block(block_number, block_hash)
-            .await
-            .expect("Failed to set latest canonical block");
+            .expect("Could not set sync block");
     }
 }
 
@@ -378,7 +377,7 @@ pub async fn init_l1(
     Arc<Mutex<KademliaTable>>,
     Arc<Mutex<NodeRecord>>,
 )> {
-    let data_dir = set_datadir(&opts.datadir);
+    let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
 
@@ -423,29 +422,27 @@ pub async fn init_l1(
         init_metrics(&opts, tracker.clone());
     }
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "dev")] {
-            init_dev_network(&opts, &store, tracker.clone()).await;
-        } else {
-            if opts.p2p_enabled {
-                init_network(
-                    &opts,
-                    &network,
-                    &data_dir,
-                    local_p2p_node,
-                    local_node_record.clone(),
-                    signer,
-                    peer_table.clone(),
-                    store.clone(),
-                    tracker.clone(),
-                    blockchain.clone(),
-                    None
-                )
-                .await;
-            } else {
-                info!("P2P is disabled");
-            }
-        }
+    if opts.dev {
+        #[cfg(feature = "dev")]
+        init_dev_network(&opts, &store, tracker.clone()).await;
+    } else if opts.p2p_enabled {
+        init_network(
+            &opts,
+            &network,
+            &data_dir,
+            local_p2p_node,
+            local_node_record.clone(),
+            signer,
+            peer_table.clone(),
+            store.clone(),
+            tracker.clone(),
+            blockchain.clone(),
+            None,
+        )
+        .await;
+    } else {
+        info!("P2P is disabled");
     }
+
     Ok((data_dir, cancel_token, peer_table, local_node_record))
 }

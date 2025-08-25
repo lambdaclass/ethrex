@@ -409,11 +409,7 @@ async fn re_run_stateless(
     let mut witness = blockchain.generate_witness_for_blocks(&blocks).await;
     // Set a default witness if execution should fail as db will not have the required data to generate the witness
     if test_should_fail && witness.is_err() {
-        witness = Ok(ExecutionWitnessResult {
-            state_trie_nodes: Some(Vec::new()),
-            storage_trie_nodes: Some(HashMap::new()),
-            ..Default::default()
-        })
+        witness = Ok(ExecutionWitnessResult::default())
     } else if !test_should_fail && witness.is_err() {
         return Err("Failed to create witness for a test that should not fail".into());
     }
@@ -427,7 +423,9 @@ async fn re_run_stateless(
         ..Default::default()
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(program_input) {
+    if let Err(e) =
+        ethrex_prover_lib::execute(ethrex_prover_lib::backends::Backend::Exec, program_input)
+    {
         if !test_should_fail {
             return Err(format!(
                 "Expected test: {test_key} to succeed but failed with {e}"

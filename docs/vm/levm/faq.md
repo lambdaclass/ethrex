@@ -73,3 +73,12 @@ These are the kinds of errors:
 - `TxValidation`: These are thrown if the transaction doesn't pass the required validations, like the sender having enough value to pay for the transaction gas fees, or that the transaction nonce should match with sender's nonce. These errors **INVALIDATE** the transaction, they shouldn't make any changes to the state.
 - `ExceptionalHalt`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert** consuming all context gas left. Some examples include a Stack Overflow and when bytecode contains an Invalid Opcode.
 - `RevertOpcode`: Triggered by Revert Opcode, it behaves like an `ExceptionalHalt` except this one doesn't consume the gas left.
+
+## LevmAccount vs Account
+Why not use the same Account struct that the L1 uses? Because it's pretty limited and we wanted a little bit more flexibility in LEVM. We wanted to have an `AccountStatus` so that the VM knows the status of an account at any given moment and also we don't need the account to have code, as the code will be stored in the database directly and we can access it via `code_hash`.
+Advantages: 
+- We'll fetch the code only if we need to, this means less accesses to the database. 
+- If there is duplicate code between accounts (which is pretty common) we'll store it in memory only once. 
+- We'll be able to make better decisions without relying on external structures, based on the current status of an Account. e.g. If it was untouched we skip processing it when calculating Account Updates, or if the account has been destroyed and re-created with same address we know that the storage on the Database is not valid and we shouldn't access it, etc.
+
+What do we sacrifice? Just having to switch types when interacting with LEVM, but this is straightforward and is worth the benefits.

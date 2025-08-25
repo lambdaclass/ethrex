@@ -17,8 +17,10 @@ thiserror.workspace = true
 clap.workspace = true
 kzg-rs.workspace = true
 cfg-if.workspace = true
+rkyv.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
+url.workspace = true
 
 # ethrex
 ethrex-common.workspace = true
@@ -47,10 +49,6 @@ ethrex-storage.workspace = true
 name = "ethrex_prover_lib"
 path = "src/lib.rs"
 
-[[bin]]
-name = "ethrex_prover"
-path = "src/main.rs"
-
 [features]
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
 default = ["l2"]
@@ -61,8 +59,8 @@ profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
-  "zkvm_interface/l2",
-  "ethrex-l2/l2",
+    "zkvm_interface/l2",
+    "ethrex-l2/l2",
 ] # the prover can work with either l1 or l2 blocks
 
 [lints.clippy]

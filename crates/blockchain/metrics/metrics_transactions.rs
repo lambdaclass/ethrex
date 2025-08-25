@@ -100,7 +100,7 @@ impl MetricsTx {
         Ok(())
     }
 
-    pub fn set_mempool_tx_count(&self, count: usize, is_blob: bool) -> Result<(), MetricsError> {
+    pub fn set_mempool_tx_count(&self, count: u64, is_blob: bool) -> Result<(), MetricsError> {
         let label = if is_blob { "blob" } else { "regular" };
 
         let builder = self

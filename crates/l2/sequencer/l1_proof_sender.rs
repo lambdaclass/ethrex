@@ -44,7 +44,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
@@ -75,22 +74,6 @@ impl L1ProofSender {
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
-
-        if cfg.dev_mode {
-            return Ok(Self {
-                eth_client,
-                signer: cfg.signer.clone(),
-                on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
-                needed_proof_types: vec![ProverType::Exec],
-                proof_send_interval_ms: cfg.proof_send_interval_ms,
-                sequencer_state,
-                rollup_store,
-                l1_chain_id,
-                network: aligned_cfg.network.clone(),
-                fee_estimate,
-                aligned_sp1_elf_path,
-            });
-        }
 
         Ok(Self {
             eth_client,
@@ -325,10 +308,10 @@ impl GenServer for L1ProofSender {
     type Error = ProofSenderError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
@@ -338,7 +321,7 @@ impl GenServer for L1ProofSender {
         }
         let check_interval = random_duration(self.proof_send_interval_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Send);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 
