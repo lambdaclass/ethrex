@@ -7,6 +7,7 @@ mod node_hash;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
+use bytes::{Buf, Bytes, BytesMut};
 mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
@@ -253,7 +254,7 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
-    pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
+    pub fn from_nodes(_root: Option<&NodeRLP>, _nodes: &[NodeRLP]) -> Result<Self, TrieError> {
         todo!()
         // let mut storage = nodes
         //     .iter()

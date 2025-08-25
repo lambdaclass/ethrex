@@ -97,6 +97,8 @@ impl NodeRef {
         let hash = node.compute_hash();
         // FIXME: need some kind of shallow clone actually.
         // Also need it to use the new indices for dirty children.
+        let temporary_handle = 1u64 << 63 + acc.len() as u64;
+        self.handle = NodeHandle(temporary_handle);
         acc.push(self.clone());
 
         self.hash = hash;
