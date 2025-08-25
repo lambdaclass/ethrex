@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use again::{RetryPolicy, Task};
@@ -73,6 +74,7 @@ pub async fn get_account(
     block_number: usize,
     address: &Address,
     storage_keys: &[H256],
+    codes: &Arc<Mutex<HashMap<H256, Bytes>>>,
 ) -> eyre::Result<Account> {
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
@@ -158,9 +160,15 @@ pub async fn get_account(
         code_hash: code_hash.parse()?,
     };
 
-    // TODO: we could ask the self.codes to provide the code. Or separate the code from the account info requests. Make them lazy
     let code = if account_state.code_hash != *EMPTY_KECCACK_HASH {
-        Some(get_code(rpc_url, block_number, address).await?)
+        if let Some(cached_code) = codes.lock().unwrap().get(&account_state.code_hash) {
+            Some(cached_code.clone())
+        } else {
+            let fetched_code = get_code(rpc_url, block_number, address).await?;
+            let mut codes_lock = codes.lock().unwrap();
+            codes_lock.insert(account_state.code_hash, fetched_code.clone());
+            Some(fetched_code)
+        }
     } else {
         None
     };

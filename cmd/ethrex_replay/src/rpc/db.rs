@@ -122,8 +122,16 @@ impl RpcDB {
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    retry(|| get_account(&self.rpc_url, block_number, address, storage_keys))
-                        .await?,
+                    retry(|| {
+                        get_account(
+                            &self.rpc_url,
+                            block_number,
+                            address,
+                            storage_keys,
+                            &self.codes,
+                        )
+                    })
+                    .await?,
                 ))
             });
 
@@ -453,13 +461,15 @@ impl LevmDatabase for RpcDB {
             account
         } else {
             drop(cache);
-            self.fetch_accounts_blocking(&[(address, vec![])], false)
+            let account = self
+                .fetch_accounts_blocking(&[(address, vec![])], false)
                 .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
                 .get(&address)
                 .unwrap()
-                .clone()
+                .clone();
+            self.cache.lock().unwrap().insert(address, account.clone());
+            account
         };
-        // TODO: here we have to cache the account EVEN if it is default
         if let Account::Existing {
             account_state,
             code,
@@ -468,7 +478,9 @@ impl LevmDatabase for RpcDB {
         {
             if let Some(code) = code {
                 let mut codes = self.codes.lock().unwrap();
-                codes.insert(code_hash(&code), code.clone());
+                codes
+                    .entry(code_hash(&code))
+                    .or_insert_with(|| code.clone());
             }
             Ok(AccountInfo {
                 code_hash: account_state.code_hash,
