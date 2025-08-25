@@ -8,13 +8,12 @@ use crate::{
     sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     utils::current_unix_time,
 };
-use std::cell::OnceCell;
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, NodeHash, NodeRef, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
 use rand::random;
 use std::{
     collections::{HashMap, VecDeque},
@@ -634,15 +633,14 @@ pub fn determine_missing_children(
                     //     nodes_to_write
                     // )?);
 
-                    paths.extend(vec![
-                        NodeRequest {
-                            acc_path: node_response.node_request.acc_path.clone(),
-                            storage_path: node_response
-                                .node_request
-                                .storage_path
-                                .append_new(index as u8),
-                            parent: node_response.node_request.storage_path.clone(),
-                        }]);
+                    paths.extend(vec![NodeRequest {
+                        acc_path: node_response.node_request.acc_path.clone(),
+                        storage_path: node_response
+                            .node_request
+                            .storage_path
+                            .append_new(index as u8),
+                        parent: node_response.node_request.storage_path.clone(),
+                    }]);
                 }
             }
         }
@@ -672,15 +670,14 @@ pub fn determine_missing_children(
                 //     nodes_to_write
                 // )?);
 
-                paths.extend(vec![
-                    NodeRequest {
-                        acc_path: node_response.node_request.acc_path.clone(),
-                        storage_path: node_response
-                            .node_request
-                            .storage_path
-                            .concat(node.prefix.clone()),
-                        parent: node_response.node_request.storage_path.clone(),
-                    }]);
+                paths.extend(vec![NodeRequest {
+                    acc_path: node_response.node_request.acc_path.clone(),
+                    storage_path: node_response
+                        .node_request
+                        .storage_path
+                        .concat(node.prefix.clone()),
+                    parent: node_response.node_request.storage_path.clone(),
+                }]);
             }
         }
         _ => {}
@@ -694,7 +691,7 @@ fn determine_membatch_missing_children(
     hash: &NodeHash,
     membatch: &Membatch,
     store: Store,
-    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>
+    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
 ) -> Result<Vec<NodeRequest>, StoreError> {
     if let Some(membatch_entry) = membatch.get(&(
         node_request.acc_path.clone(),

@@ -1022,7 +1022,6 @@ impl Syncer {
 
         if pivot_is_stale {
             info!("Starting Fast Sync");
-            let mut membatch_state = HashMap::new();
             let mut global_state_leafs_healed: u64 = 0;
             let mut healing_done = false;
             while !healing_done {
@@ -1037,7 +1036,6 @@ impl Syncer {
                     &self.peers,
                     staleness_timestamp,
                     &mut global_state_leafs_healed,
-                    &mut membatch_state,
                     &mut dirty_accounts,
                 )
                 .await?;

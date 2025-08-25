@@ -50,7 +50,6 @@ pub async fn heal_state_trie_wrap(
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     dirty_accounts: &mut HashMap<H256, H256>,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
@@ -62,13 +61,12 @@ pub async fn heal_state_trie_wrap(
             peers.clone(),
             staleness_timestamp,
             global_leafs_healed,
-            membatch,
+            HashMap::new(),
             dirty_accounts,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
             info!("Stopped state healing due to staleness");
-            *membatch = HashMap::new();
             break;
         }
     }
@@ -86,7 +84,7 @@ async fn heal_state_trie(
     peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     dirty_accounts: &mut HashMap<H256, H256>,
 ) -> Result<bool, SyncError> {
     // TODO:
@@ -273,14 +271,17 @@ async fn heal_state_trie(
 
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
-            let return_paths =
-                heal_state_batch(batch, nodes, store.clone(), membatch, &mut nodes_to_write)
-                    .await
-                    .inspect_err(|err| {
-                        error!(
-                            "We have found a sync error while trying to write to DB a batch: {err}"
-                        )
-                    })?;
+            let return_paths = heal_state_batch(
+                batch,
+                nodes,
+                store.clone(),
+                &mut membatch,
+                &mut nodes_to_write,
+            )
+            .await
+            .inspect_err(|err| {
+                error!("We have found a sync error while trying to write to DB a batch: {err}")
+            })?;
             paths.extend(return_paths);
         }
 
