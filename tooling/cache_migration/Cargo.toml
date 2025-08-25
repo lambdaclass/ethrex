@@ -17,6 +17,7 @@ tracing.workspace = true
 eyre.workspace = true
 tokio = { version = "1.21", default-features = false, features = ["full"] }
 clap.workspace = true
+bincode = "1.3.3"
 ethrex-common = { path = "../../crates/common" }
 ethrex-replay = { path = "../../cmd/ethrex_replay" }
 zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }

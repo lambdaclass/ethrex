@@ -1734,6 +1734,7 @@ dependencies = [
 name = "cache_migration"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "clap 4.5.40",
  "ethrex-common",
  "ethrex-replay",
