@@ -201,7 +201,7 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}. dhat stats {:?}",
                 state
                     .peer_handler
                     .peer_table
@@ -217,6 +217,7 @@ pub async fn heal_storage_trie(
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
                 state.empty_count,
                 state.disconnected_count,
+                dhat::HeapStats::get()
             );
             state.succesful_downloads = 0;
             state.failed_downloads = 0;

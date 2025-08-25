@@ -146,12 +146,13 @@ async fn heal_state_trie(
 
             if is_stale {
                 info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
+                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}, dhat stats {:?}",
                     peers_table.len(),
                     peers_table_2.len(),
                     global_leafs_healed,
                     paths.len(),
-                    membatch.len()
+                    membatch.len(),
+                    dhat::HeapStats::get()
                 );
             } else {
                 info!(
