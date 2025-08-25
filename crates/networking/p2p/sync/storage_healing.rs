@@ -156,6 +156,7 @@ pub async fn heal_storage_trie(
     store: Store,
     membatch: Membatch,
     staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
 ) -> bool {
     info!(
         "Started Storage Healing with {} accounts",
@@ -200,7 +201,7 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
             info!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 state
                     .peer_handler
                     .peer_table
@@ -319,6 +320,7 @@ pub async fn heal_storage_trie(
                     state.store.clone(),
                     &mut state.membatch,
                     &mut state.leafs_healed,
+                    global_leafs_healed,
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
@@ -529,6 +531,7 @@ fn process_node_responses(
     store: Store,
     membatch: &mut Membatch,
     leafs_healed: &mut usize,
+    global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
     to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
@@ -536,7 +539,8 @@ fn process_node_responses(
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
         if let Node::Leaf(_) = &node_response.node {
-            *leafs_healed += 1
+            *leafs_healed += 1;
+            *global_leafs_healed += 1;
         };
 
         *maximum_length_seen = usize::max(
