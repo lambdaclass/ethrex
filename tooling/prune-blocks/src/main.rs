@@ -76,7 +76,8 @@ pub async fn main() -> eyre::Result<()> {
     let prune_start = Instant::now();
     let mut last_show_progress = Instant::now();
     const SHOW_PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
-    for block_number in 0..last_block_to_prune {
+    // Skip the genesis block
+    for block_number in 1..last_block_to_prune {
         if last_show_progress.elapsed() > SHOW_PROGRESS_INTERVAL {
             last_show_progress = Instant::now();
             info!(
