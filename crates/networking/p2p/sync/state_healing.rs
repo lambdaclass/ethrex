@@ -144,26 +144,15 @@ async fn heal_state_trie(
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
 
-            if is_stale {
-                info!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}, dhat stats {:?}",
-                    peers_table.len(),
-                    peers_table_2.len(),
-                    global_leafs_healed,
-                    paths.len(),
-                    membatch.len(),
-                    dhat::HeapStats::get()
-                );
-            } else {
-                info!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
-                    peers_table.len(),
-                    peers_table_2.len(),
-                    global_leafs_healed,
-                    paths.len(),
-                    membatch.len()
-                );
-            }
+            info!(
+                "State Healing ongoing {is_stale}, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}, dhat stats {:?}",
+                peers_table.len(),
+                peers_table_2.len(),
+                global_leafs_healed,
+                paths.len(),
+                membatch.len(),
+                dhat::HeapStats::get()
+            );
             downloads_success = 0;
             downloads_fail = 0;
 
