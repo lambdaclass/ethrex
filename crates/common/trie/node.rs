@@ -97,7 +97,7 @@ impl NodeRef {
         let hash = node.compute_hash();
         // FIXME: need some kind of shallow clone actually.
         // Also need it to use the new indices for dirty children.
-        let temporary_handle = 1u64 << 63 + acc.len() as u64;
+        let temporary_handle = (1u64 << 63) + acc.len() as u64;
         self.handle = NodeHandle(temporary_handle);
         acc.push(self.clone());
 
@@ -229,9 +229,23 @@ impl Node {
         value: impl Into<ValueOrHash>,
     ) -> Result<Node, TrieError> {
         match self {
-            Node::Branch(n) => n.insert(db, path, value.into()),
-            Node::Extension(n) => n.insert(db, path, value.into()),
-            Node::Leaf(n) => n.insert(path, value.into()),
+            Node::Branch(n) => n.insert(db, path, value.into(), None),
+            Node::Extension(n) => n.insert(db, path, value.into(), None),
+            Node::Leaf(n) => n.insert(path, value.into(), None),
+        }
+    }
+
+    pub fn insert_with_link(
+        self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+        value: impl Into<ValueOrHash>,
+        link: Option<NodeHandle>,
+    ) -> Result<Node, TrieError> {
+        match self {
+            Node::Branch(n) => n.insert(db, path, value.into(), link),
+            Node::Extension(n) => n.insert(db, path, value.into(), link),
+            Node::Leaf(n) => n.insert(path, value.into(), link),
         }
     }
 

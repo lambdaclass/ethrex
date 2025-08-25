@@ -7,7 +7,6 @@ mod node_hash;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
-use bytes::{Buf, Bytes, BytesMut};
 mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
@@ -114,6 +113,29 @@ impl Trie {
         } else {
             // If the trie is empty, just add a leaf.
             Node::from(LeafNode::new(path, value)).into()
+        };
+
+        Ok(())
+    }
+
+    pub fn insert_with_link(
+        &mut self,
+        path: PathRLP,
+        value: ValueRLP,
+        link: Option<NodeHandle>,
+    ) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(&path);
+
+        self.root = if self.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert_with_link(self.db.as_ref(), path, value, link)?
+                .into()
+        } else {
+            // If the trie is empty, just add a leaf.
+            Node::from(LeafNode::new_with_link(path, value, link)).into()
         };
 
         Ok(())
@@ -331,7 +353,7 @@ impl Trie {
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
     /// Only use it for proof verification or computing a hash from an iterator
-    pub(crate) fn stateless() -> Trie {
+    pub fn stateless() -> Trie {
         // We will only be using the trie's cache so we don't need a working DB
         struct NullTrieDB;
 
