@@ -14,7 +14,6 @@ bytes.workspace = true
 thiserror.workspace = true
 keccak-hash.workspace = true
 serde.workspace = true
-lazy_static.workspace = true
 lambdaworks-crypto.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
