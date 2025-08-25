@@ -389,9 +389,9 @@ fn commit_node(
         return; // Case where we're saving the root
     }
 
-    let mut membatch_entry = membatch.remove(parent_path).expect(&format!(
-        "The parent should exist. Parent: {parent_path:?}, path: {path:?}"
-    ));
+    let mut membatch_entry = membatch.remove(parent_path).unwrap_or_else(|| {
+        panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
+    });
 
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
