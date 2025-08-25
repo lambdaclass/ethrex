@@ -111,14 +111,11 @@ async fn run(
         let expects_exception = block_fixture.expect_exception.is_some();
 
         // Won't panic because test has been validated
-        // Hold an owned CoreBlock to avoid borrowing a temporary across .await
-        let block_owned: CoreBlock = block_fixture.block().unwrap().clone().into();
-        let block_ref: &CoreBlock = &block_owned;
-
-        let hash = block_ref.hash();
+        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block_ref).await;
+        let chain_result = blockchain.add_block(&block).await;
 
         match chain_result {
             Err(error) => {
