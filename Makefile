@@ -70,6 +70,11 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
+hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
+
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
