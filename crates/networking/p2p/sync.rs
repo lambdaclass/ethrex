@@ -1023,6 +1023,7 @@ impl Syncer {
         if pivot_is_stale {
             info!("Starting Fast Sync");
             let mut global_state_leafs_healed: u64 = 0;
+            let mut global_storage_leafs_healed: u64 = 0;
             let mut healing_done = false;
             while !healing_done {
                 // This if is an edge case for the skip snap sync scenario
@@ -1049,6 +1050,7 @@ impl Syncer {
                     store.clone(),
                     HashMap::new(),
                     staleness_timestamp,
+                    &mut global_storage_leafs_healed,
                 )
                 .await;
                 dirty_accounts.retain(|hashed_address, storage_root| {
