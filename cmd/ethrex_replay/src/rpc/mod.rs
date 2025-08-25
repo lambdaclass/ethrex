@@ -158,6 +158,7 @@ pub async fn get_account(
         code_hash: code_hash.parse()?,
     };
 
+    // TODO: we could ask the self.codes to provide the code. Or separate the code from the account info requests. Make them lazy
     let code = if account_state.code_hash != *EMPTY_KECCACK_HASH {
         Some(get_code(rpc_url, block_number, address).await?)
     } else {

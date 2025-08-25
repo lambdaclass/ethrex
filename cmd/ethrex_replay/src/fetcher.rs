@@ -24,6 +24,7 @@ pub async fn get_blockdata(
     block_number: BlockIdentifier,
     l2: bool,
 ) -> eyre::Result<Cache> {
+    // LOG: get block number
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
     let requested_block_number = match block_number {
@@ -60,6 +61,8 @@ pub async fn get_blockdata(
 
     let block_retrieval_start_time = SystemTime::now();
 
+    // LOG: 1 request to get raw block
+    // TODO: we can change it to eth-getBlockByNumber with true in the hydrated
     let block = eth_client
         .get_raw_block(BlockIdentifier::Number(requested_block_number))
         .await?;

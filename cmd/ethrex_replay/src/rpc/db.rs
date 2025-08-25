@@ -459,6 +459,7 @@ impl LevmDatabase for RpcDB {
                 .unwrap()
                 .clone()
         };
+        // TODO: here we have to cache the account EVEN if it is default
         if let Account::Existing {
             account_state,
             code,
@@ -508,6 +509,9 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+        if let Some(hash) = self.block_hashes.lock().unwrap().get(&block_number) {
+            return Ok(*hash);
+        }
         let handle = tokio::runtime::Handle::current();
         let hash = tokio::task::block_in_place(|| {
             handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
