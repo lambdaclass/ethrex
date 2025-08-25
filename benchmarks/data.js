@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756138066086,
+  "lastUpdate": 1756139207693,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23096,6 +23096,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.00025709058487874463,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "797e81810f81c3503e97e05c214b0443275ca868",
+          "message": "refactor(l1): remove usize usage from constants in network crate (#4116)\n\n**Motivation**\n\nAvoid unnecessary usage of `usize` in the codebase.\n\n**Description**\n\nThe approach taken was the following: if the constant is used only for\nindexing or to be compared against `usize` values, keep it as `usize`.\nOtherwise, change it to `u32` or `u64`, depending on the case.\n\nRelated to #4081",
+          "timestamp": "2025-08-25T14:38:45Z",
+          "tree_id": "4dc7a46de1a33636e8e76e5c485ed18de3f23533",
+          "url": "https://github.com/lambdaclass/ethrex/commit/797e81810f81c3503e97e05c214b0443275ca868"
+        },
+        "date": 1756139206771,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0019274919786096258,
             "unit": "Mgas/s"
           }
         ]
