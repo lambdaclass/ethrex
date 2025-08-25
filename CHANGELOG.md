@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-25
+
+- Remove unneeded RLP encoding from key/values in libmdbx / redb storage [#4020](https://github.com/lambdaclass/ethrex/pull/4020)
+
 ### 2025-08-22
 
 - Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
