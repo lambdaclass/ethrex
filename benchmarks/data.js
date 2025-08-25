@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756155423137,
+  "lastUpdate": 1756162890736,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23302,6 +23302,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.00025791842576028623,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "524685cc3c3c5ca7a38dad711116278cb6644519",
+          "message": "chore(l1,l2): uniformity of tokio dependency in subcrates (#3409)\n\n**Motivation**\n\nThe inclusion of tokio in the Cargo.toml files of the subcrates was\nreferencing different versions.\nThis PR changes Cargo.toml files to use the version in workspace.\n\n**Description**\n\nThis PR changes Cargo.toml files to use the version in workspace.\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-08-25T16:27:11Z",
+          "tree_id": "8f7a9b550f1289bdd15e099f184e5e451619efe6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/524685cc3c3c5ca7a38dad711116278cb6644519"
+        },
+        "date": 1756162889597,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.00025581334279630943,
             "unit": "Mgas/s"
           }
         ]
