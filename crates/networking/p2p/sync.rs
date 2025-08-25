@@ -522,7 +522,15 @@ impl FullBlockSyncState {
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
-        let sync_head_header = block_headers.pop().unwrap();
+        let mut sync_head_header = None;
+        if self
+            .store
+            .get_pending_block(block_headers[block_headers.len() - 1].hash())
+            .await
+            .is_ok()
+        {
+            sync_head_header = block_headers.pop();
+        }
         self.current_headers.extend(block_headers);
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
@@ -547,19 +555,18 @@ impl FullBlockSyncState {
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
-        self.current_blocks.push(
-            self.store
-                .get_pending_block(sync_head_header.hash())
-                .await?
-                .unwrap(),
-        );
+        if let Some(block_header) = sync_head_header {
+            if let Some(block) = self.store.get_pending_block(block_header.hash()).await? {
+                self.current_blocks.push(block);
+            }
+        }
         // Execute full blocks
         while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
             || (!self.current_blocks.is_empty() && sync_head_found)
         {
             // Now that we have a full batch, we can execute and store the blocks in batch
             let execution_start = Instant::now();
-            let block_batch: Vec<Block> = self
+            let mut block_batch: Vec<Block> = self
                 .current_blocks
                 .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
                 .collect();
@@ -587,12 +594,13 @@ impl FullBlockSyncState {
             {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
-                    let blocks_with_invalid_ancestor: Vec<Block> = block_batch[block_batch
+                    let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
+                    if let Some(index) = block_batch
                         .iter()
                         .position(|x| x.hash() == batch_failure.failed_block_hash)
-                        .unwrap()
-                        as usize..]
-                        .to_vec();
+                    {
+                        blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
+                    }
 
                     for block in blocks_with_invalid_ancestor {
                         self.store
