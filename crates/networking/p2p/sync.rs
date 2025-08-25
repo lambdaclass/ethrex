@@ -797,11 +797,11 @@ impl Syncer {
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
                 .request_account_range(
-                    state_root,
                     H256::zero(),
                     H256::repeat_byte(0xff),
                     account_state_snapshots_dir,
-                    calculate_staleness_timestamp(pivot_header.timestamp),
+                    &mut pivot_header,
+                    block_sync_state,
                 )
                 .await;
 

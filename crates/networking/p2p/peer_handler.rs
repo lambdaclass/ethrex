@@ -795,11 +795,11 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
         &self,
-        state_root: H256,
         start: H256,
         limit: H256,
         account_state_snapshots_dir: String,
-        staleness_timestamp: u64,
+        pivot_header: &mut BlockHeader,
+        block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
@@ -1035,124 +1035,22 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            let free_downloader_channels_clone = free_downloader_channels.clone();
 
-            if current_unix_time() > staleness_timestamp {
-                break;
+            if block_is_stale(pivot_header) {
+                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
+                    .await
+                    .expect("Should be able to update pivot")
             }
 
-            tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                    id: request_id,
-                    root_hash: state_root,
-                    starting_hash: chunk_start,
-                    limit_hash: chunk_end,
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (free_downloader_channels_clone.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                if let Some((accounts, proof)) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            if let RLPxMessage::AccountRange(AccountRange {
-                                id,
-                                accounts,
-                                proof,
-                            }) = receiver.recv().await?
-                            {
-                                if id == request_id {
-                                    return Some((accounts, proof));
-                                }
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    if accounts.is_empty() {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        return Ok(());
-                    }
-                    // Unzip & validate response
-                    let proof = encodable_to_proof(&proof);
-                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                        .clone()
-                        .into_iter()
-                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                        .unzip();
-                    let encoded_accounts = account_states
-                        .iter()
-                        .map(|acc| acc.encode_to_vec())
-                        .collect::<Vec<_>>();
-
-                    let Ok(should_continue) = verify_range(
-                        state_root,
-                        &chunk_start,
-                        &account_hashes,
-                        &encoded_accounts,
-                        &proof,
-                    ) else {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        tracing::error!("Received invalid account range");
-                        return Ok(());
-                    };
-
-                    // If the range has more accounts to fetch, we send the new chunk
-                    let chunk_left = if should_continue {
-                        let last_hash = match account_hashes.last() {
-                            Some(last_hash) => last_hash,
-                            None => {
-                                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                                    .await
-                                    .ok();
-                                error!("Account hashes last failed, this shouldn't happen");
-                                return Err(PeerHandlerError::AccountHashes);
-                            }
-                        };
-                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                        let new_start = H256::from_uint(&new_start_u256);
-                        Some((new_start, chunk_end))
-                    } else {
-                        None
-                    };
-                    tx.send((
-                        accounts
-                            .into_iter()
-                            .filter(|unit| unit.hash <= chunk_end)
-                            .collect(),
-                        free_peer_id,
-                        chunk_left,
-                    ))
-                    .await
-                    .ok();
-                } else {
-                    tracing::debug!("Failed to get account range");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                }
-                Ok::<(), PeerHandlerError>(())
-            });
+            tokio::spawn(PeerHandler::request_account_range_worker(
+                free_peer_id,
+                chunk_start,
+                chunk_end,
+                pivot_header.state_root,
+                free_downloader_channels_clone,
+                tx,
+            ));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -1190,6 +1088,125 @@ impl PeerHandler {
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
+    }
+
+    async fn request_account_range_worker(
+        free_peer_id: H256,
+        chunk_start: H256,
+        chunk_end: H256,
+        state_root: H256,
+        mut free_downloader_channels_clone: PeerChannels,
+        tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    ) -> Result<(), PeerHandlerError> {
+        debug!(
+            "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+        );
+        let request_id = rand::random();
+        let request = RLPxMessage::GetAccountRange(GetAccountRange {
+            id: request_id,
+            root_hash: state_root,
+            starting_hash: chunk_start,
+            limit_hash: chunk_end,
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        if let Err(err) = (free_downloader_channels_clone.connection)
+            .cast(CastMessage::BackendMessage(request))
+            .await
+        {
+            error!("Failed to send message to peer: {err:?}");
+            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                .await
+                .ok();
+            return Ok(());
+        }
+        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                if let RLPxMessage::AccountRange(AccountRange {
+                    id,
+                    accounts,
+                    proof,
+                }) = receiver.recv().await?
+                {
+                    if id == request_id {
+                        return Some((accounts, proof));
+                    }
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+        {
+            if accounts.is_empty() {
+                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                    .await
+                    .ok();
+                // Too spammy
+                // tracing::error!("Received empty account range");
+                return Ok(());
+            }
+            // Unzip & validate response
+            let proof = encodable_to_proof(&proof);
+            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                .clone()
+                .into_iter()
+                .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                .unzip();
+            let encoded_accounts = account_states
+                .iter()
+                .map(|acc| acc.encode_to_vec())
+                .collect::<Vec<_>>();
+
+            let Ok(should_continue) = verify_range(
+                state_root,
+                &chunk_start,
+                &account_hashes,
+                &encoded_accounts,
+                &proof,
+            ) else {
+                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                    .await
+                    .ok();
+                tracing::error!("Received invalid account range");
+                return Ok(());
+            };
+
+            // If the range has more accounts to fetch, we send the new chunk
+            let chunk_left = if should_continue {
+                let last_hash = match account_hashes.last() {
+                    Some(last_hash) => last_hash,
+                    None => {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        error!("Account hashes last failed, this shouldn't happen");
+                        return Err(PeerHandlerError::AccountHashes);
+                    }
+                };
+                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                let new_start = H256::from_uint(&new_start_u256);
+                Some((new_start, chunk_end))
+            } else {
+                None
+            };
+            tx.send((
+                accounts
+                    .into_iter()
+                    .filter(|unit| unit.hash <= chunk_end)
+                    .collect(),
+                free_peer_id,
+                chunk_left,
+            ))
+            .await
+            .ok();
+        } else {
+            tracing::debug!("Failed to get account range");
+            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                .await
+                .ok();
+        }
+        Ok::<(), PeerHandlerError>(())
     }
 
     /// Requests bytecodes for the given code hashes
