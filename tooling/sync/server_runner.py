@@ -24,23 +24,25 @@ def parse_args():
     return parser.parse_args()
 
 def send_slack_message(message: str):
-    webhook_url = os.environ["SLACK_WEBHOOK_URL"]
-    message = {"text": message}
+    try:
+        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
+        message = {"text": message}
+        response = requests.post(
+            webhook_url, data=json.dumps(message),
+            headers={'Content-Type': 'application/json'}
+        )
 
-    response = requests.post(
-        webhook_url, data=json.dumps(message),
-        headers={'Content-Type': 'application/json'}
-    )
+        if response.status_code != 200:
+            print(f"Error sending Slack message")
 
-    if response.status_code != 200:
-        print(f"Failed to send Slack message: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Error sending Slack message: {e}", file=sys.stderr)
+        return
 
 def main():
     args = parse_args()
     variables = {}
     hostname = socket.gethostname()
-
-    
     
     # Only include SNAP if flag is set
     if args.snap:
