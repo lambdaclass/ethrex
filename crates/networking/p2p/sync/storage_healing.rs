@@ -652,7 +652,7 @@ pub fn determine_missing_children(
                             .storage_path
                             .append_new(index as u8),
                         parent: node_response.node_request.storage_path.clone(),
-                        hash: node.compute_hash().finalize(),
+                        hash: child.compute_hash().finalize(),
                     }]);
                 }
             }
