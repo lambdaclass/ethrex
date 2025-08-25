@@ -111,7 +111,7 @@ async fn run(
         let expects_exception = block_fixture.expect_exception.is_some();
 
         // Won't panic because test has been validated
-        // Hold an owned CoreBlock to avoid borrowing a temporary across .await
+        // Convert block fixture to owned CoreBlock for block processing
         let block_owned: CoreBlock = block_fixture.block().unwrap().clone().into();
         let block_ref: &CoreBlock = &block_owned;
 
