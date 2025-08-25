@@ -56,6 +56,7 @@ impl Account {
 
 pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<RpcBlock> {
     let block_number = format!("0x{block_number:x}");
+    println!("Fetching block: {}", block_number);
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
@@ -79,6 +80,7 @@ pub async fn get_account(
         .iter()
         .map(|key| format!("0x{key:x}"))
         .collect::<Vec<String>>();
+    println!("Fetching account: {address_str} with storage keys: {storage_keys:?}");
 
     let request = &json!(
            {
@@ -182,6 +184,7 @@ where
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> eyre::Result<Bytes> {
     let block_number = format!("0x{block_number:x}");
     let address = format!("0x{address:x}");
+    println!("Fetching code for address: {address} at block: {block_number}");
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
