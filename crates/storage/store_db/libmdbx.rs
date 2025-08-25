@@ -1289,7 +1289,7 @@ dupsort!(
     /// Storage Snapshot used by an ongoing sync process
     ///
     /// Key: Account hash
-    /// (storage key, storage value)[storage key]
+    /// Value: (storage key, storage value)[storage key]
     ( StorageSnapShot ) Bytes32 => (Bytes32, Bytes32)[Bytes32]
 );
 
