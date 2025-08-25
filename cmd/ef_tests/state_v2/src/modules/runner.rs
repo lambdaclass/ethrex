@@ -147,6 +147,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         .map(|list_item| (list_item.address, list_item.storage_keys.clone()))
         .collect();
 
+    let gas_price = test_case.gas_price.unwrap_or_default();
     // To simplify things, we represent all transactions using only two internal types.
     // Transactions of type 0 (legacy), 1 (EIP-2930), 2 (EIP-1559), and 3 (EIP-4844) are all
     // treated as EIP-1559-style transactions.
@@ -169,12 +170,15 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
                 .collect(),
             chain_id: 1,
             nonce: 0,
-            // I don't know if these 2 are correct
+            // TODO: I believe this will kinda work because the VM uses them only for validation? But this is dead wrong
             max_priority_fee_per_gas: test_case
                 .max_priority_fee_per_gas
-                .unwrap_or_default()
+                .unwrap_or(gas_price / 10)
                 .as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap_or_default().as_u64(),
+            max_fee_per_gas: test_case
+                .max_fee_per_gas
+                .unwrap_or(gas_price * 9 / 10)
+                .as_u64(),
             gas_limit: test_case.gas,
             inner_hash: Default::default(),
             ..Default::default()
@@ -186,11 +190,15 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             access_list,
             chain_id: 1,
             nonce: 0,
+            // TODO: I believe this will kinda work because the VM uses them only for validation? But this is dead wrong
             max_priority_fee_per_gas: test_case
                 .max_priority_fee_per_gas
-                .unwrap_or_default()
+                .unwrap_or(gas_price / 10)
                 .as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap_or_default().as_u64(),
+            max_fee_per_gas: test_case
+                .max_fee_per_gas
+                .unwrap_or(gas_price * 9 / 10)
+                .as_u64(),
             gas_limit: test_case.gas,
             inner_hash: Default::default(),
             ..Default::default()
