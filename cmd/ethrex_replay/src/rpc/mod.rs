@@ -7,9 +7,10 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, Block},
+    types::{AccountState, Block, BlockHeader},
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::types::block::RpcBlock;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
 
@@ -71,6 +72,20 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block
     let encoded_block = decode_hex(get_result(res)?)?;
     let block = Block::decode_unfinished(&encoded_block)?;
     Ok(block.0)
+}
+
+pub async fn get_block_2(rpc_url: &str, block_number: usize) -> eyre::Result<RpcBlock> {
+    let block_number = format!("0x{block_number:x}");
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "eth_getBlockByNumber",
+        "params": [block_number, false]
+    });
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+    let rpc_block: RpcBlock = get_result(response.json::<serde_json::Value>().await?)?;
+
+    Ok(rpc_block)
 }
 
 pub async fn get_account(
