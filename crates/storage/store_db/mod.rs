@@ -5,8 +5,6 @@ use ethrex_common::{H256, U256};
 pub mod in_memory;
 #[cfg(feature = "libmdbx")]
 pub mod libmdbx;
-#[cfg(feature = "redb")]
-pub mod redb;
 
 /// Fixed size encoding for storing in the database, this allows to store H256 and U256 values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

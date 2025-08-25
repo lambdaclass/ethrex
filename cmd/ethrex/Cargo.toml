@@ -7,6 +7,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-common.workspace = true
@@ -35,7 +36,6 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 local-ip-address = "0.6"
 tokio-util.workspace = true
-redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
@@ -71,7 +71,6 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
-redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
