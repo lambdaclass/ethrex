@@ -507,7 +507,7 @@ impl FullBlockSyncState {
     /// Obtain the current head from where to start or resume block sync
     async fn get_current_head(&self) -> Result<H256, SyncError> {
         self.store
-            .get_latest_canonical_block_hash()
+            .get_canonical_block_hash(8530357)
             .await?
             .ok_or(SyncError::NoLatestCanonical)
     }
