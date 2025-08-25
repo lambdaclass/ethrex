@@ -1,3 +1,5 @@
+use std::{io::Write, time::SystemTime};
+
 use clap::{Parser, Subcommand};
 use ethrex_common::{
     H256,
@@ -7,12 +9,14 @@ use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
+use tracing::{error, info};
 
-use crate::constants::get_chain_config;
+use crate::block_run_report::{BlockRunReport, ReplayerMode};
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
@@ -41,14 +45,31 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
+    },
+    #[command(about = "Execute a single block.")]
+    Blocks {
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        blocks: Vec<usize>,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
+        )]
+        network: Network,
+        #[arg(long, required = false)]
+        bench: bool,
+        #[arg(long, required = false)]
+        to_csv: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -60,12 +81,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -77,12 +97,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         l2: bool,
     },
@@ -94,11 +113,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            env = "NETWORK",
-            required = true,
-            help = "ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -113,16 +132,86 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandExecute::Blocks {
+                mut blocks,
+                rpc_url,
+                network,
+                bench,
+                to_csv,
+            } => {
+                blocks.sort();
+
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+
+                #[cfg(feature = "sp1")]
+                let replay_mode = ReplayerMode::ExecuteSP1;
+                #[cfg(feature = "risc0")]
+                let replay_mode = ReplayerMode::ExecuteRISC0;
+                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+                let replay_mode = ReplayerMode::Execute;
+
+                for (i, block_number) in blocks.iter().enumerate() {
+                    info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
+
+                    let block = eth_client
+                        .get_raw_block(BlockIdentifier::Number(*block_number as u64))
+                        .await?;
+
+                    let start = SystemTime::now();
+
+                    let res = Box::pin(async {
+                        SubcommandExecute::Block {
+                            block: Some(*block_number),
+                            rpc_url: rpc_url.clone(),
+                            network: network.clone(),
+                            bench,
+                        }
+                        .run()
+                        .await
+                    })
+                    .await;
+
+                    let elapsed = start.elapsed().unwrap_or_default();
+
+                    let block_run_report = BlockRunReport::new_for(
+                        block,
+                        network.clone(),
+                        res,
+                        replay_mode.clone(),
+                        elapsed,
+                    );
+
+                    if block_run_report.run_result.is_err() {
+                        error!("{block_run_report}");
+                    } else {
+                        info!("{block_run_report}");
+                    }
+
+                    if to_csv {
+                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
+
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
+                }
             }
             SubcommandExecute::BlockRange {
                 start,
@@ -136,9 +225,8 @@ impl SubcommandExecute {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -152,7 +240,6 @@ impl SubcommandExecute {
                 network,
                 l2,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 // Get the block number of the transaction
@@ -164,7 +251,7 @@ impl SubcommandExecute {
 
                 let cache = get_blockdata(
                     eth_client,
-                    chain_config,
+                    network,
                     BlockIdentifier::Number(block_number.as_u64()),
                 )
                 .await?;
@@ -181,9 +268,16 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(rpc_url.as_str())?;
-                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                // Note: I think this condition is not sufficient to determine if the network is an L2 network.
+                // Take this into account if you are fixing this command.
+                if let Network::PublicNetwork(_) = network {
+                    return Err(eyre::Error::msg(
+                        "Batch execution is only supported on L2 networks.",
+                    ));
+                }
+                let chain_config = network.get_genesis()?.config;
+                let rollup_client = EthClient::new(rpc_url.as_str())?;
+                let cache = get_batchdata(rollup_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     exec(BACKEND, cache).await?;
@@ -206,14 +300,31 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
+    },
+    #[command(about = "Execute a single block.")]
+    Blocks {
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        blocks: Vec<usize>,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
+        )]
+        network: Network,
+        #[arg(long, required = false)]
+        bench: bool,
+        #[arg(long, required = false)]
+        to_csv: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -225,12 +336,11 @@ enum SubcommandProve {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            long_help = "Name or ChainID of the network to use. The networks currently supported include holesky, sepolia, hoodi and mainnet."
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -242,11 +352,11 @@ enum SubcommandProve {
         rpc_url: Url,
         #[arg(
             long,
-            env = "NETWORK",
-            required = true,
-            help = "ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -261,16 +371,80 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
                 let block = or_latest(block)?;
-                let cache = get_blockdata(eth_client, chain_config, block).await?;
+                let cache = get_blockdata(eth_client, network.clone(), block).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandProve::Blocks {
+                mut blocks,
+                rpc_url,
+                network,
+                bench,
+                to_csv,
+            } => {
+                blocks.sort();
+
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+
+                for (i, block_number) in blocks.iter().enumerate() {
+                    info!("Proving block {}/{}: {block_number}", i + 1, blocks.len());
+
+                    let block = eth_client
+                        .get_raw_block(BlockIdentifier::Number(*block_number as u64))
+                        .await?;
+
+                    let start = SystemTime::now();
+
+                    let res = Box::pin(async {
+                        SubcommandProve::Block {
+                            block: Some(*block_number),
+                            rpc_url: rpc_url.as_str().to_string(),
+                            network: network.clone(),
+                            bench,
+                        }
+                        .run()
+                        .await
+                    })
+                    .await;
+
+                    let elapsed = start.elapsed().unwrap_or_default();
+
+                    let block_run_report = BlockRunReport::new_for(
+                        block,
+                        network.clone(),
+                        res,
+                        ReplayerMode::ProveSP1, // TODO: Support RISC0
+                        elapsed,
+                    );
+
+                    if block_run_report.run_result.is_err() {
+                        error!("{block_run_report}");
+                    } else {
+                        info!("{block_run_report}");
+                    }
+
+                    if to_csv {
+                        let file_name =
+                            format!("ethrex_replay_{network}_{}.csv", ReplayerMode::ProveSP1);
+
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
+
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
+                }
             }
             SubcommandProve::BlockRange {
                 start,
@@ -284,9 +458,8 @@ impl SubcommandProve {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
-                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let cache = get_rangedata(eth_client, network.clone(), start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(BACKEND, cache).await?;
@@ -300,7 +473,7 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
+                let chain_config = network.get_genesis()?.config;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
@@ -337,12 +510,11 @@ enum EthrexReplayCommand {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
-            env = "NETWORK",
-            required = false,
-            help = "Name or ChainID of the network to use"
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
         )]
-        network: String,
+        network: Network,
     },
 }
 
@@ -363,9 +535,8 @@ pub async fn start() -> eyre::Result<()> {
                     "starting point can't be greater than ending point",
                 ));
             }
-            let chain_config = get_chain_config(&network)?;
             let eth_client = EthClient::new(&rpc_url)?;
-            let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+            let cache = get_rangedata(eth_client, network, start, end).await?;
             plot(cache).await?;
         }
     };
