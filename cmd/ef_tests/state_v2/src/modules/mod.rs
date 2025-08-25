@@ -4,5 +4,6 @@ pub mod parser;
 pub mod report;
 pub mod result_check;
 pub mod runner;
+pub mod stateless;
 pub mod types;
 pub mod utils;

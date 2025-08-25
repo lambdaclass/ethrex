@@ -12,7 +12,7 @@ use clap::Parser;
 pub struct RunnerOptions {
     /// For running tests in a specific file (could be either a directory or a .json)
     //TODO: Change default path to ./vectors when the other EFTests are replaced by this runner
-    #[arg(short, long, value_name = "PATH", default_value = "../state/vectors")]
+    #[arg(short, long, value_name = "PATH", default_value = "../state/vectors/a")]
     pub path: PathBuf,
     /// For running tests in specific .json files. If this is not empty, "path" flag will be ignored.
     #[arg(short, long, value_name = "JSON_FILES", value_delimiter = ',')]
