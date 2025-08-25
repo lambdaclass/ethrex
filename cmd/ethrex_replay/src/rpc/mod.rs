@@ -4,12 +4,7 @@ use std::time::Duration;
 use again::{RetryPolicy, Task};
 
 use bytes::Bytes;
-use ethrex_common::{
-    Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, Block, BlockHeader},
-};
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_common::{Address, H256, U256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rpc::types::block::RpcBlock;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
@@ -59,22 +54,7 @@ impl Account {
     }
 }
 
-pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block> {
-    let block_number = format!("0x{block_number:x}");
-    let request = &json!({
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "debug_getRawBlock",
-        "params": [block_number]
-    });
-    let response = CLIENT.post(rpc_url).json(request).send().await?;
-    let res = response.json::<serde_json::Value>().await?;
-    let encoded_block = decode_hex(get_result(res)?)?;
-    let block = Block::decode_unfinished(&encoded_block)?;
-    Ok(block.0)
-}
-
-pub async fn get_block_2(rpc_url: &str, block_number: usize) -> eyre::Result<RpcBlock> {
+pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<RpcBlock> {
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
         "id": 1,
@@ -84,7 +64,6 @@ pub async fn get_block_2(rpc_url: &str, block_number: usize) -> eyre::Result<Rpc
     });
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let rpc_block: RpcBlock = get_result(response.json::<serde_json::Value>().await?)?;
-
     Ok(rpc_block)
 }
 

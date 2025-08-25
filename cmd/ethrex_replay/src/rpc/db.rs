@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::rpc::{get_account, get_block, get_block_2, retry};
+use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
@@ -247,10 +247,8 @@ impl RpcDB {
 
     pub fn to_prover_db(&self, block: &Block) -> Result<ProverDB, ProverDBError> {
         let chain_config = self.chain_config;
-        dbg!("1");
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
-        dbg!("2");
 
         // pre-execute and get all state changes
         let _ = LEVM::execute_block(block, &mut db, self.vm_type)
@@ -258,9 +256,7 @@ impl RpcDB {
                 println!("Error in executing block:: {e}");
             })
             .map_err(Box::new)?;
-        dbg!("3");
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
-        dbg!("4");
 
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
@@ -282,13 +278,10 @@ impl RpcDB {
                 }
             })
             .collect();
-        dbg!("5");
 
         // fetch all of them, both before and after block execution
         let initial_accounts = self.fetch_accounts_blocking(&index, false).unwrap();
-        dbg!("6");
         let final_accounts = self.fetch_accounts_blocking(&index, true).unwrap();
-        dbg!("7");
         // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
@@ -321,7 +314,6 @@ impl RpcDB {
             })
             .collect();
 
-        dbg!("8");
         #[derive(Clone)]
         struct ExistingAccount<'a> {
             pub account_state: &'a AccountState,
@@ -386,24 +378,19 @@ impl RpcDB {
             .min()
             .cloned()
             .unwrap_or(block.header.number - 1);
-        dbg!("9");
         // from oldest required to parent:
-        let mut i = 0;
         for number in oldest_required_block_number..block.header.number {
             let handle = tokio::runtime::Handle::current();
             let number_usize: usize = number.try_into().map_err(|_| {
                 ProverDBError::Custom("failed to convert block number into usize".to_string())
             })?;
             let header = tokio::task::block_in_place(|| {
-                handle.block_on(get_block_2(&self.rpc_url, number_usize))
+                handle.block_on(get_block(&self.rpc_url, number_usize))
             })
             .map_err(|err| ProverDBError::Store(err.to_string()))?
             .header;
             block_headers.insert(number, header);
-            i += 1;
-            dbg!(i);
         }
-        dbg!("10");
 
         let state_root = initial_account_proofs
             .clone()
@@ -450,20 +437,17 @@ impl RpcDB {
 
 impl LevmDatabase for RpcDB {
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, DatabaseError> {
-        dbg!("gac - enter", code_hash);
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
         let codes = self.codes.lock().unwrap();
-        let a = codes.get(&code_hash).cloned().ok_or_else(|| {
+
+        codes.get(&code_hash).cloned().ok_or_else(|| {
             DatabaseError::Custom("Code not found on already fetched accounts".to_string())
-        });
-        dbg!("gac - exit");
-        a
+        })
     }
 
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError> {
-        dbg!("gai - enter", address);
         let cache = self.cache.lock().unwrap();
         let account = if let Some(account) = cache.get(&address).cloned() {
             account
@@ -485,28 +469,23 @@ impl LevmDatabase for RpcDB {
                 let mut codes = self.codes.lock().unwrap();
                 codes.insert(code_hash(&code), code.clone());
             }
-            let a = Ok(AccountInfo {
+            Ok(AccountInfo {
                 code_hash: account_state.code_hash,
                 balance: account_state.balance,
                 nonce: account_state.nonce,
-            });
-            dbg!("gai - exit");
-            a
+            })
         } else {
-            dbg!("gai - exit");
             Ok(AccountInfo::default())
         }
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        dbg!("gsv - enter", address, key);
         // look into the cache
         {
             if let Some(Account::Existing { storage, .. }) =
                 self.cache.lock().unwrap().get(&address)
             {
                 if let Some(value) = storage.get(&key) {
-                    dbg!("gsv - exit");
                     return Ok(*value);
                 }
             }
@@ -517,7 +496,6 @@ impl LevmDatabase for RpcDB {
             .get(&address)
             .unwrap()
             .clone();
-        dbg!("gsv - exit");
         if let Account::Existing { storage, .. } = account {
             if let Some(value) = storage.get(&key) {
                 Ok(*value)
@@ -530,15 +508,13 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
-        dbg!("gbh - enter", block_number);
         let handle = tokio::runtime::Handle::current();
         let hash = tokio::task::block_in_place(|| {
-            handle.block_on(retry(|| get_block_2(&self.rpc_url, block_number as usize)))
+            handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
         })
         .map_err(|e| DatabaseError::Custom(e.to_string()))?
         .hash;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
-        dbg!("gbh - exit");
         Ok(hash)
     }
 
