@@ -526,6 +526,8 @@ impl L1Committer {
                 .map_err(CommitterError::from)?
         };
 
+        // TODO: transaction signing sometimes runs in a blocking way for ~40ms
+        // `ethrex_l2_rpc::clients::send_generic_transaction`, specifically
         let commit_tx_hash =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
 
