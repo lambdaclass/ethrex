@@ -25,7 +25,7 @@ pub struct LevmAccount {
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmStorageSlot {
     pub current_value: U256,
-    pub previous_value: U256,
+    pub previous_value: Option<U256>,
 }
 
 impl From<AccountInfo> for LevmAccount {
@@ -48,7 +48,7 @@ impl From<GenesisAccount> for LevmAccount {
                     H256::from(key.to_big_endian()),
                     LevmStorageSlot {
                         current_value: value,
-                        previous_value: value,
+                        previous_value: None,
                     },
                 )
             })
@@ -101,7 +101,7 @@ impl LevmAccount {
                 key,
                 LevmStorageSlot {
                     current_value: value,
-                    previous_value: value,
+                    previous_value: None,
                 },
             );
         }

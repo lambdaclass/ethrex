@@ -132,7 +132,7 @@ impl GeneralizedDatabase {
             Some(account) => {
                 let storage_value = LevmStorageSlot {
                     current_value: value,
-                    previous_value: value,
+                    previous_value: None,
                 };
                 account.storage.insert(key, storage_value);
             }
@@ -377,9 +377,22 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        let storage_slot = self.get_storage_slot(address, key)?;
+        let slot = self.get_storage_slot(address, key)?;
+        if let Some(original_value) = slot.previous_value {
+            return Ok(original_value);
+        };
+        let account = self.get_account_mut(address)?;
 
-        Ok(storage_slot.previous_value)
+        let value = slot.current_value;
+        account.storage.insert(
+            key,
+            LevmStorageSlot {
+                current_value: value,
+                previous_value: Some(value),
+            },
+        );
+
+        Ok(value)
     }
 
     /// Accesses to an account's storage slot and returns the value in it.
@@ -433,7 +446,7 @@ impl<'a> VM<'a> {
 
         let storage_slot = LevmStorageSlot {
             current_value,
-            previous_value: current_value,
+            previous_value: None,
         };
 
         let account = self.get_account_mut(address)?;
