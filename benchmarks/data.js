@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756142758117,
+  "lastUpdate": 1756147437023,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10105,6 +10105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163104451109,
             "range": "± 429473014",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4e9336d6c090f9048be12f4613725d136bdfb514",
+          "message": "chore(l2): rename `ETHREX_MONITOR` to `ETHREX_NO_MONITOR` (#4141)\n\nthe boolean is a negation",
+          "timestamp": "2025-08-25T17:53:28Z",
+          "tree_id": "789521e730bb0c7f727cb27ceab27ddf49fc9127",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4e9336d6c090f9048be12f4613725d136bdfb514"
+        },
+        "date": 1756147416041,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160672090488,
+            "range": "± 584314835",
             "unit": "ns/iter"
           }
         ]
