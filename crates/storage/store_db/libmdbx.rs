@@ -586,32 +586,21 @@ impl StoreEngine for Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        {
             let txn = self.db.begin_read().unwrap();
             let mut cursor = txn.cursor::<Headers>().unwrap().walk(None);
+            let mut hash = None;
             while let Some(Ok((a, b))) = cursor.next() {
                 info!(
                     "Block Header: {} -> {}",
                     b.to().unwrap().number,
                     a.to().unwrap()
                 );
-                self.write::<CanonicalBlockHashes>(b.to().unwrap().number, a).await.unwrap();
+                self.write::<CanonicalBlockHashes>(b.to().unwrap().number, a.clone()).await.unwrap();
+                if b.to().unwrap().number == number {
+                    hash = Some(a.to()?)
+                }
             }
-        }
-        for i in 0..BlockNumber::MAX {
-            if let Some(Ok(hash)) = self
-                .read::<CanonicalBlockHashes>(i)
-                .await
-                .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            {
-                info!("Block to hash: {i} -> {hash}");
-            }
-        }
-        self.read::<CanonicalBlockHashes>(number)
-            .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+        Ok(hash)
     }
 
     fn get_canonical_block_hash_sync(
