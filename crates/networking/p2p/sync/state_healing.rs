@@ -191,6 +191,8 @@ async fn heal_state_trie(
                             );
                             if account.storage_root != *EMPTY_TRIE_HASH {
                                 dirty_accounts.insert(account_hash, account.storage_root);
+                            } else {
+                                dirty_accounts.remove(&account_hash);
                             }
                         }
                     }

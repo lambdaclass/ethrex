@@ -402,7 +402,11 @@ where
 
     state
         .table
-        .set_connected_peer(state.node.clone(), peer_channels, state.capabilities.clone())
+        .set_connected_peer(
+            state.node.clone(),
+            peer_channels,
+            state.capabilities.clone(),
+        )
         .await;
 
     log_peer_debug(&state.node, "Peer connection initialized.");

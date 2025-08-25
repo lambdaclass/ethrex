@@ -73,7 +73,12 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(node: Node, record: Option<NodeRecord>, channels: PeerChannels, capabilities: Vec<Capability>) -> Self {
+    pub fn new(
+        node: Node,
+        record: Option<NodeRecord>,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    ) -> Self {
         Self {
             node,
             record,
@@ -122,7 +127,12 @@ impl Kademlia {
         Self::default()
     }
 
-    pub async fn set_connected_peer(&mut self, node: Node, channels: PeerChannels, capabilities: Vec<Capability>) {
+    pub async fn set_connected_peer(
+        &mut self,
+        node: Node,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    ) {
         debug!("New peer connected");
 
         let new_peer_id = node.node_id();
