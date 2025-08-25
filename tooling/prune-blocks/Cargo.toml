@@ -1,0 +1,13 @@
+[package]
+name = "prune-blocks"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethrex-storage.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+clap = { workspace = true, features = ["string"] }
+eyre.workspace = true
+ethrex.workspace = true

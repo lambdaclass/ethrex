@@ -31,7 +31,7 @@ members = [
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
-  "crates/common/config",
+  "crates/common/config", "tooling/prune-blocks",
 ]
 resolver = "2"
 
