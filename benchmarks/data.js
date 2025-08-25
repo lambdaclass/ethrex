@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756125079712,
+  "lastUpdate": 1756129353847,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -22919,6 +22919,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0002598709444844989,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8c312705f4295279dad3297c1f0630fbd66685de",
+          "message": "perf(levm): improve load_range by returning a Bytes directly, avoding a vec (#4098)\n\n**Motivation**\n\nAll load range usage leads to creating a Bytes, but to do so we allocate\na intermediate vec, this pr avoids this.\n\nimprove load_range by returning a Bytes directly, avoding a vec\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-08-25T09:02:40Z",
+          "tree_id": "b43426d32c02a260b64897801aef39417d83da9c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8c312705f4295279dad3297c1f0630fbd66685de"
+        },
+        "date": 1756129352832,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0019969030470914128,
             "unit": "Mgas/s"
           }
         ]
