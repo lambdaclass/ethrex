@@ -1,6 +1,6 @@
 # Prune Blocks
 
-This tool can be used to reduce the DB size of the node by removing old blocks and their asociated data. Note that this is counter-spec and will hinder the node's ability to provide data to other nodes. It also does not performe state prunning.
+This tool can be used to reduce the DB size of the node by removing old blocks and their associated data. Note that this is counter-spec and will hinder the node's ability to provide data to other nodes. It also does not perform state pruning.
 
 ## Usage
 
