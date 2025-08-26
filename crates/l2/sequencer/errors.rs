@@ -255,7 +255,7 @@ pub enum CommitterError {
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
     #[error("Metrics error")]
-    ExecutionCache(#[from] MetricsError),
+    Metrics(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]
