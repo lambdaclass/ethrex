@@ -258,7 +258,7 @@ pub(crate) fn increase_precompile_consumed_gas(
 
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are kept.
-#[inline]
+#[inline(always)]
 pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     if calldata.len() >= target_len {
         // this clone is cheap (Arc)
@@ -445,7 +445,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     let result = mod_exp(base, exponent, modulus);
 
     let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
+    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size);
 
     Ok(res_bytes.slice(..modulus_size))
 }
@@ -490,22 +490,22 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
 }
 
 /// If the result size is less than needed, pads left with zeros.
-pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
+#[inline(always)]
+pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
     #[expect(
         clippy::arithmetic_side_effects,
-        reason = "overflow checked with the if condition"
+        clippy::indexing_slicing,
+        reason = "overflow checked with the if condition, bounds checked"
     )]
     if result.len() < m_size {
         let mut padded_result = vec![0u8; m_size];
         let size_diff = m_size - result.len();
-        padded_result
-            .get_mut(size_diff..)
-            .ok_or(InternalError::Slicing)?
-            .copy_from_slice(result);
+        padded_result[size_diff..].copy_from_slice(result);
 
-        Ok(padded_result.into())
+        padded_result.into()
     } else {
-        Ok(result.clone())
+        // this clone is cheap (Arc)
+        result.clone()
     }
 }
 
