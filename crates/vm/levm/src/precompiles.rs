@@ -391,10 +391,11 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
-
         return Ok(Bytes::new());
     }
 
+    // The try_into are infallible and the compiler optimizes them out, even without unsafe.
+    // https://godbolt.org/z/h8rW8M3c4
     let base_size = u256_from_big_endian_const::<32>(calldata[0..32].try_into()?);
     let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
     let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
