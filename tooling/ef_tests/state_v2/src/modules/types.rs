@@ -288,7 +288,7 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         } else if *fork == Fork::Prague {
             schedule.prague.target
         } else {
-            panic!("Excess blob gas didn't exist pre-cancun");
+            0
         };
 
         Some(excess_blob_gas.as_u64() + target as u64 * GAS_PER_BLOB as u64)
