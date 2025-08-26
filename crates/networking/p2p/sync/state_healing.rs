@@ -191,7 +191,7 @@ async fn heal_state_trie(
                             );
                             if account.storage_root != *EMPTY_TRIE_HASH {
                                 info!(
-                                    "Inserting healed account into dirty {account_hash}, {}",
+                                    "Inserting healed account into dirty {account_hash:?}, {:?}",
                                     account.storage_root
                                 );
                                 dirty_accounts.insert(account_hash, account.storage_root);

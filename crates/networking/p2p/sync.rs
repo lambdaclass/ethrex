@@ -847,6 +847,12 @@ impl Syncer {
 
                 dirty_accounts.extend(account_hashes.iter().zip(account_states.iter()).filter_map(
                     |(hash, state)| {
+                        if (state.storage_root != empty) {
+                            info!(
+                                "Inserting initial account into dirty {hash:?}, {:?}",
+                                state.storage_root
+                            );
+                        }
                         (state.storage_root != empty).then_some((*hash, state.storage_root))
                     },
                 ));
