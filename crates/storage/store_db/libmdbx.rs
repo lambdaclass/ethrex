@@ -30,6 +30,7 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use tracing::info;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -134,24 +135,30 @@ impl StoreEngine for Store {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            let total_account_updates = update_batch.account_updates.len();
+            for (i, (node_hash, node_data)) in update_batch.account_updates.into_iter().enumerate() {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
+                info!("Applied account update {i}/{total_account_updates}");
             }
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
+            let total_code_updates = update_batch.code_updates.len();
+            for (i, (hashed_address, code)) in update_batch.code_updates.into_iter().enumerate() {
                 tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
                     .map_err(StoreError::LibmdbxError)?;
+                info!("Applied code update {i}/{total_code_updates}");
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            let total_storage_updates = update_batch.storage_updates.len();
+            for (i, (hashed_address, nodes)) in update_batch.storage_updates.into_iter().enumerate() {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
+                    info!("Applied storage update {i}/{total_storage_updates}");
                 }
             }
             for block in update_batch.blocks {
@@ -204,7 +211,7 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-
+            info!("Commiting updates");
             tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
