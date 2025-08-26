@@ -395,8 +395,8 @@ pub async fn ensure_post_state(
                 vector,
                 test,
                 fork,
-                &levm_account_updates,
-                &revm_account_updates,
+                levm_account_updates,
+                revm_account_updates,
             )
             .await;
             re_run_report.register_account_updates_report(*vector, account_updates_report, *fork);
@@ -410,11 +410,11 @@ pub async fn compare_levm_revm_account_updates(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-    levm_account_updates: &[AccountUpdate],
-    revm_account_updates: &[AccountUpdate],
+    levm_account_updates: Vec<AccountUpdate>,
+    revm_account_updates: Vec<AccountUpdate>,
 ) -> ComparisonReport {
-    let levm_post_state_root = post_state_root(levm_account_updates, test).await;
-    let revm_post_state_root = post_state_root(revm_account_updates, test).await;
+    let levm_post_state_root = post_state_root(levm_account_updates.clone(), test).await;
+    let revm_post_state_root = post_state_root(revm_account_updates.clone(), test).await;
     let mut initial_accounts: HashMap<Address, Account> = test
         .pre
         .0
@@ -448,8 +448,8 @@ pub async fn compare_levm_revm_account_updates(
         revm_post_state_root,
         initial_accounts,
         expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
-        levm_account_updates: levm_account_updates.to_vec(),
-        revm_account_updates: revm_account_updates.to_vec(),
+        levm_account_updates: levm_account_updates,
+        revm_account_updates: revm_account_updates,
         levm_updated_accounts_only: &levm_updated_accounts - &revm_updated_accounts,
         revm_updated_accounts_only: &revm_updated_accounts - &levm_updated_accounts,
         shared_updated_accounts: &levm_updated_accounts & &revm_updated_accounts,
@@ -585,7 +585,7 @@ pub async fn _ensure_post_state_revm(
                 None => {
                     let revm_account_updates =
                         backends::revm::REVM::get_state_transitions(revm_state);
-                    let pos_state_root = post_state_root(&revm_account_updates, test).await;
+                    let pos_state_root = post_state_root(revm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {

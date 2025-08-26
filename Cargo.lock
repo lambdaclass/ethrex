@@ -3937,6 +3937,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "secp256k1",

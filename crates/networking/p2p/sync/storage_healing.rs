@@ -131,15 +131,15 @@ async fn heal_storage_batch(
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            // trie.db().put_batch(
+            //     nodes
+            //         .iter()
+            //         .filter_map(|node| match node.compute_hash() {
+            //             hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+            //             NodeHash::Inline(_) => None,
+            //         })
+            //         .collect(),
+            // )?;
             if nodes.is_empty() {
                 break;
             }

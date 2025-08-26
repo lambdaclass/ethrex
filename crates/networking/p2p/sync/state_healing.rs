@@ -139,15 +139,15 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            // trie.db().put_batch(
+            //     nodes
+            //         .into_iter()
+            //         .filter_map(|node| match node.compute_hash() {
+            //             hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+            //             NodeHash::Inline(_) => None,
+            //         })
+            //         .collect(),
+            // )?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {

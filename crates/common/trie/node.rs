@@ -17,7 +17,7 @@ use crate::{EMPTY_TRIE_HASH, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeHandle(pub u64);
 #[derive(Clone, Copy, Debug)]
 pub struct CodeHandle(pub u64);

@@ -12,3 +12,4 @@ pub use store::{
     AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,
     hash_address, hash_key,
 };
+pub use store_db::blob;

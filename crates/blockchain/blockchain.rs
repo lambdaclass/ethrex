@@ -23,11 +23,12 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, H256};
 use ethrex_metrics::metrics;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::TrieLogger;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
@@ -368,14 +369,13 @@ impl Blockchain {
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
-        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+        validate_state_root(&block.header, account_updates_list.state_trie_root_hash)?;
 
         let update_batch = UpdateBatch {
-            account_updates: account_updates_list.state_updates,
-            storage_updates: account_updates_list.storage_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates: account_updates_list.code_updates,
+            ..Default::default()
         };
 
         self.storage
@@ -393,7 +393,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)
+            .apply_account_updates_batch(block.header.parent_hash, updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -548,25 +548,22 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(first_block_header.parent_hash, account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
-        let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
+        let new_state_root = account_updates_list.state_trie_root_hash;
         let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,
+            ..Default::default()
         };
 
         self.storage

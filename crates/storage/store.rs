@@ -48,6 +48,7 @@ pub enum EngineType {
     Libmdbx,
 }
 
+#[derive(Default)]
 pub struct UpdateBatch {
     pub state_trie_root_hash: H256,
     pub state_trie_root_handle: NodeHandle,
@@ -66,9 +67,9 @@ pub struct UpdateBatch {
 type StorageUpdates = Vec<(H256, Vec<NodeRef>)>;
 
 pub struct AccountUpdatesList {
-    pub state_trie_hash: H256,
-    pub state_updates: Vec<NodeRef>,
-    pub storage_updates: StorageUpdates,
+    pub trie_version: u64,
+    pub state_trie_root_hash: H256,
+    pub state_trie_root_handle: NodeHandle,
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
@@ -405,7 +406,7 @@ impl Store {
     pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
-        account_updates: &[AccountUpdate],
+        account_updates: Vec<AccountUpdate>,
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(block_header) = self.get_block_header_by_hash(block_hash)? else {
             return Err(StoreError::Trie(TrieError::InconsistentTree));
