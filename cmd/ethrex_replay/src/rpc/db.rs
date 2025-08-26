@@ -122,8 +122,16 @@ impl RpcDB {
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    retry(|| get_account(&self.rpc_url, block_number, address, storage_keys))
-                        .await?,
+                    retry(|| {
+                        get_account(
+                            &self.rpc_url,
+                            block_number,
+                            address,
+                            storage_keys,
+                            &self.codes,
+                        )
+                    })
+                    .await?,
                 ))
             });
 
@@ -381,7 +389,7 @@ impl RpcDB {
                 ProverDBError::Custom("failed to convert block number into usize".to_string())
             })?;
             let header = tokio::task::block_in_place(|| {
-                handle.block_on(get_block(&self.rpc_url, number_usize))
+                handle.block_on(get_block(&self.rpc_url, number_usize, false))
             })
             .map_err(|err| ProverDBError::Store(err.to_string()))?
             .header;
@@ -448,11 +456,14 @@ impl LevmDatabase for RpcDB {
             account
         } else {
             drop(cache);
-            self.fetch_accounts_blocking(&[(address, vec![])], false)
+            let account = self
+                .fetch_accounts_blocking(&[(address, vec![])], false)
                 .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
                 .get(&address)
                 .unwrap()
-                .clone()
+                .clone();
+            self.cache.lock().unwrap().insert(address, account.clone());
+            account
         };
         if let Account::Existing {
             account_state,
@@ -462,7 +473,9 @@ impl LevmDatabase for RpcDB {
         {
             if let Some(code) = code {
                 let mut codes = self.codes.lock().unwrap();
-                codes.insert(code_hash(&code), code.clone());
+                codes
+                    .entry(code_hash(&code))
+                    .or_insert_with(|| code.clone());
             }
             Ok(AccountInfo {
                 code_hash: account_state.code_hash,
@@ -503,12 +516,17 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+        if let Some(hash) = self.block_hashes.lock().unwrap().get(&block_number) {
+            return Ok(*hash);
+        }
         let handle = tokio::runtime::Handle::current();
         let hash = tokio::task::block_in_place(|| {
-            handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
+            handle.block_on(retry(|| {
+                get_block(&self.rpc_url, block_number as usize, false)
+            }))
         })
-        .map_err(|e| DatabaseError::Custom(e.to_string()))
-        .map(|block| block.hash())?;
+        .map_err(|e| DatabaseError::Custom(e.to_string()))?
+        .hash;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
         Ok(hash)
     }

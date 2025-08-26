@@ -1,15 +1,12 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use again::{RetryPolicy, Task};
 
 use bytes::Bytes;
-use ethrex_common::{
-    Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, Block},
-};
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_common::{Address, H256, U256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_rpc::types::block::RpcBlock;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
 
@@ -58,19 +55,21 @@ impl Account {
     }
 }
 
-pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block> {
+pub async fn get_block(
+    rpc_url: &str,
+    block_number: usize,
+    hydrated: bool,
+) -> eyre::Result<RpcBlock> {
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
-        "method": "debug_getRawBlock",
-        "params": [block_number]
+        "method": "eth_getBlockByNumber",
+        "params": [block_number, hydrated]
     });
     let response = CLIENT.post(rpc_url).json(request).send().await?;
-    let res = response.json::<serde_json::Value>().await?;
-    let encoded_block = decode_hex(get_result(res)?)?;
-    let block = Block::decode_unfinished(&encoded_block)?;
-    Ok(block.0)
+    let rpc_block: RpcBlock = get_result(response.json::<serde_json::Value>().await?)?;
+    Ok(rpc_block)
 }
 
 pub async fn get_account(
@@ -78,6 +77,7 @@ pub async fn get_account(
     block_number: usize,
     address: &Address,
     storage_keys: &[H256],
+    codes: &Arc<Mutex<HashMap<H256, Bytes>>>,
 ) -> eyre::Result<Account> {
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
@@ -163,7 +163,14 @@ pub async fn get_account(
     };
 
     let code = if account_state.code_hash != *EMPTY_KECCACK_HASH {
-        Some(get_code(rpc_url, block_number, address).await?)
+        if let Some(cached_code) = codes.lock().unwrap().get(&account_state.code_hash) {
+            Some(cached_code.clone())
+        } else {
+            let fetched_code = get_code(rpc_url, block_number, address).await?;
+            let mut codes_lock = codes.lock().unwrap();
+            codes_lock.insert(account_state.code_hash, fetched_code.clone());
+            Some(fetched_code)
+        }
     } else {
         None
     };
