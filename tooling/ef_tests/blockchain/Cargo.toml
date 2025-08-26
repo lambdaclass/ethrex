@@ -28,7 +28,7 @@ path = "./lib.rs"
 default = ["c-kzg", "blst"]
 blst = ["ethrex-vm/blst"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
-levm = []
+revm = []
 
 [[test]]
 name = "all"
