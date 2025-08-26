@@ -108,9 +108,8 @@ pub fn execution_witness_from_rpc_chain_config(
     )?;
 
     let mut state_nodes = HashMap::new();
-    // TODO: Remove this clone and consume state. We are keeping it until we figure out how to serialize this.
-    for node in rpc_witness.state.iter() {
-        state_nodes.insert(keccak(node), node.clone().to_vec());
+    for node in rpc_witness.state.into_iter() {
+        state_nodes.insert(keccak(&node), node.to_vec());
     }
 
     let state_trie = Trie::from_nodes(

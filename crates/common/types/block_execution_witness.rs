@@ -120,9 +120,8 @@ impl ExecutionWitnessResult {
         Trie::from_nodes(
             NodeHash::Hashed(*account_storage_root_hash),
             self.state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
+                .iter()
+                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
                 .collect(),
         )
         .ok()
