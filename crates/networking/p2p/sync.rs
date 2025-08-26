@@ -529,6 +529,7 @@ impl FullBlockSyncState {
             // We don't have enough headers to fill up a batch, lets request more
             return Ok(());
         }
+        // If we already have the sync head header block there's no need to request it.
         let mut sync_head_header = None;
         if self
             .store
@@ -557,6 +558,7 @@ impl FullBlockSyncState {
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
+        // Since we didn't request the pending block we include it in current_blocks to execute all of them.
         if let Some(block_header) = sync_head_header {
             if let Some(block) = self.store.get_pending_block(block_header.hash()).await? {
                 self.current_blocks.push(block);
