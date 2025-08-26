@@ -72,6 +72,8 @@ enum SubcommandExecute {
         bench: bool,
         #[arg(long, required = false)]
         to_csv: bool,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -151,6 +153,7 @@ impl SubcommandExecute {
                 network,
                 bench,
                 to_csv,
+                l2,
             } => {
                 blocks.sort();
 
@@ -178,6 +181,7 @@ impl SubcommandExecute {
                             rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
+                            l2,
                         }
                         .run()
                         .await
@@ -331,6 +335,8 @@ enum SubcommandProve {
         bench: bool,
         #[arg(long, required = false)]
         to_csv: bool,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -394,6 +400,7 @@ impl SubcommandProve {
                 network,
                 bench,
                 to_csv,
+                l2,
             } => {
                 blocks.sort();
 
@@ -414,6 +421,7 @@ impl SubcommandProve {
                             rpc_url: rpc_url.as_str().to_string(),
                             network: network.clone(),
                             bench,
+                            l2,
                         }
                         .run()
                         .await
