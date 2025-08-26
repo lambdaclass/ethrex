@@ -260,6 +260,23 @@ impl<'a> VM<'a> {
             Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
     }
+
+    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = &mut self.current_call_frame;
+        current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
+
+        let [value] = *current_call_frame.stack.pop()?;
+
+        if value != U256::from(0) {
+            current_call_frame
+                .stack
+                .push1(U256::from(value.leading_zeros()))?;
+        } else {
+            current_call_frame.stack.push1(U256::from(256))?;
+        }
+
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
+    }
 }
 
 /// Shifts the value to the right by 255 bits and checks the most significant bit is a 1
