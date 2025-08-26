@@ -371,7 +371,13 @@ impl Blockchain {
         let mut res = self_clone.build_payload(payload.clone()).await?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
-            res = self_clone.build_payload(payload).await?;
+            // Cancel the current build process and return the previous payload if it is requested earlier
+            if let Some(current_res) = cancel_token
+                .run_until_cancelled(self_clone.build_payload(payload))
+                .await
+            {
+                res = current_res?;
+            }
         }
         Ok(res)
     }
