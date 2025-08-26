@@ -1,3 +1,5 @@
+#![recursion_limit = "400"]
+
 mod admin;
 mod authentication;
 pub mod debug;
