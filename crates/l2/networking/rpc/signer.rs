@@ -172,7 +172,8 @@ impl Signable for LegacyTransaction {
     async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
         let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
 
-        self.v = U256::from(signature[64]);
+        let recovery_id = U256::from(signature[64]);
+        self.v = recovery_id + 27;
         (self.r, self.s, _) = parse_signature(signature);
 
         Ok(())
