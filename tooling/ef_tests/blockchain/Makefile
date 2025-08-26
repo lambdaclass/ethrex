@@ -24,10 +24,10 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT)
 
 test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
-	cargo test --profile release-with-debug --features levm
+	cargo test --profile release-with-debug
 
 test-revm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with REVM
-	cargo test --profile release-with-debug
+	cargo test --profile release-with-debug --features revm
 
 test-sp1:
 	cargo test --profile release-with-debug --features sp1
