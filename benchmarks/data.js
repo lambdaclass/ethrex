@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756182779561,
+  "lastUpdate": 1756211330153,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10165,6 +10165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159949536365,
             "range": "± 728312086",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "731ee9453fa35ec885c30768c2f582f1bce62a5c",
+          "message": "chore(l1): move `ef_tests` to `tooling` (#4143)\n\nCloses #3208",
+          "timestamp": "2025-08-26T11:35:49Z",
+          "tree_id": "b88103f5cbaa1c786d1fa37c439893b4cc530f35",
+          "url": "https://github.com/lambdaclass/ethrex/commit/731ee9453fa35ec885c30768c2f582f1bce62a5c"
+        },
+        "date": 1756211312861,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 158398342923,
+            "range": "± 738814933",
             "unit": "ns/iter"
           }
         ]
