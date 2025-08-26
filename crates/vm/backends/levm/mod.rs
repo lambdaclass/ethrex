@@ -7,6 +7,7 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
+use ::tracing::info;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -27,7 +28,6 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
-use ::tracing::info;
 use std::cmp::min;
 
 /// The struct implements the following functions:
