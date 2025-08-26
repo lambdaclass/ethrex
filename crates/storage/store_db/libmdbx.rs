@@ -177,9 +177,12 @@ impl StoreEngine for Store {
                 }
                 info!("Added transaction locations for block {i}/{total_blocks}");
 
+                let block_body = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                info!("Encoded block body {i}/{total_blocks}");
+
                 tx.upsert::<Bodies>(
                     hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                    block_body,
                 )
                 .map_err(StoreError::LibmdbxError)?;
                 info!("Added block body {i}/{total_blocks}");
