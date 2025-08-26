@@ -57,15 +57,15 @@ jobs:
         if: ${{ inputs.job_type != 'main' }}
         run: |
           make build-image
-          # Tests use ethrex:latest so we retag it
-          docker tag ethrex:unstable ethrex:latest
+          # Tests use ethrex:ci so we retag it
+          docker tag ethrex:local ethrex:ci
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:unstable
           # Tests use ethrex:latest so we retag it
-          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:latest
+          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:ci
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -85,7 +85,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
+        run: cd hive && ./hive --client-file ../.github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
         continue-on-error: true
 
       - name: Upload results
