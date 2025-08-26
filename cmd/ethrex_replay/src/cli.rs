@@ -1,3 +1,5 @@
+use std::{io::Write, time::SystemTime};
+
 use clap::{Parser, Subcommand};
 use ethrex_common::{
     H256,
@@ -7,7 +9,9 @@ use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
+use tracing::{error, info};
 
+use crate::block_run_report::{BlockRunReport, ReplayerMode};
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
@@ -49,6 +53,24 @@ pub enum SubcommandExecute {
         bench: bool,
         #[arg(long, required = false)]
         l2: bool,
+    },
+    #[command(about = "Execute a single block.")]
+    Blocks {
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        blocks: Vec<usize>,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
+        )]
+        network: Network,
+        #[arg(long, required = false)]
+        bench: bool,
+        #[arg(long, required = false)]
+        to_csv: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -121,6 +143,77 @@ impl SubcommandExecute {
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandExecute::Blocks {
+                mut blocks,
+                rpc_url,
+                network,
+                bench,
+                to_csv,
+            } => {
+                blocks.sort();
+
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+
+                #[cfg(feature = "sp1")]
+                let replay_mode = ReplayerMode::ExecuteSP1;
+                #[cfg(feature = "risc0")]
+                let replay_mode = ReplayerMode::ExecuteRISC0;
+                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+                let replay_mode = ReplayerMode::Execute;
+
+                for (i, block_number) in blocks.iter().enumerate() {
+                    info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
+
+                    let block = eth_client
+                        .get_raw_block(BlockIdentifier::Number(*block_number as u64))
+                        .await?;
+
+                    let start = SystemTime::now();
+
+                    let res = Box::pin(async {
+                        SubcommandExecute::Block {
+                            block: Some(*block_number),
+                            rpc_url: rpc_url.clone(),
+                            network: network.clone(),
+                            bench,
+                        }
+                        .run()
+                        .await
+                    })
+                    .await;
+
+                    let elapsed = start.elapsed().unwrap_or_default();
+
+                    let block_run_report = BlockRunReport::new_for(
+                        block,
+                        network.clone(),
+                        res,
+                        replay_mode.clone(),
+                        elapsed,
+                    );
+
+                    if block_run_report.run_result.is_err() {
+                        error!("{block_run_report}");
+                    } else {
+                        info!("{block_run_report}");
+                    }
+
+                    if to_csv {
+                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
+
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
+                }
             }
             SubcommandExecute::BlockRange {
                 start,
@@ -220,6 +313,24 @@ pub enum SubcommandProve {
         #[arg(long, required = false)]
         l2: bool,
     },
+    #[command(about = "Execute a single block.")]
+    Blocks {
+        #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+        blocks: Vec<usize>,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::mainnet(),
+        )]
+        network: Network,
+        #[arg(long, required = false)]
+        bench: bool,
+        #[arg(long, required = false)]
+        to_csv: bool,
+    },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
@@ -275,6 +386,71 @@ impl SubcommandProve {
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandProve::Blocks {
+                mut blocks,
+                rpc_url,
+                network,
+                bench,
+                to_csv,
+            } => {
+                blocks.sort();
+
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+
+                for (i, block_number) in blocks.iter().enumerate() {
+                    info!("Proving block {}/{}: {block_number}", i + 1, blocks.len());
+
+                    let block = eth_client
+                        .get_raw_block(BlockIdentifier::Number(*block_number as u64))
+                        .await?;
+
+                    let start = SystemTime::now();
+
+                    let res = Box::pin(async {
+                        SubcommandProve::Block {
+                            block: Some(*block_number),
+                            rpc_url: rpc_url.clone(),
+                            network: network.clone(),
+                            bench,
+                        }
+                        .run()
+                        .await
+                    })
+                    .await;
+
+                    let elapsed = start.elapsed().unwrap_or_default();
+
+                    let block_run_report = BlockRunReport::new_for(
+                        block,
+                        network.clone(),
+                        res,
+                        ReplayerMode::ProveSP1, // TODO: Support RISC0
+                        elapsed,
+                    );
+
+                    if block_run_report.run_result.is_err() {
+                        error!("{block_run_report}");
+                    } else {
+                        info!("{block_run_report}");
+                    }
+
+                    if to_csv {
+                        let file_name =
+                            format!("ethrex_replay_{network}_{}.csv", ReplayerMode::ProveSP1);
+
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(file_name)?;
+
+                        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                        file.write_all(b"\n")?;
+
+                        file.flush()?;
+                    }
+                }
             }
             SubcommandProve::BlockRange {
                 start,

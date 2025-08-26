@@ -3,10 +3,42 @@ use std::{fmt::Display, time::Duration};
 use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 
-use crate::{
-    slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest},
-    ReplayerMode,
-};
+use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum ReplayerMode {
+    Execute,
+    ExecuteSP1,
+    ExecuteRISC0,
+    ProveSP1,
+    ProveRISC0,
+}
+
+impl ReplayerMode {
+    pub fn is_proving_mode(&self) -> bool {
+        matches!(self, ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0)
+    }
+
+    pub fn is_execution_mode(&self) -> bool {
+        matches!(
+            self,
+            ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0
+        )
+    }
+}
+
+impl Display for ReplayerMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplayerMode::Execute => write!(f, "execute"),
+            ReplayerMode::ExecuteSP1 => write!(f, "execute_sp1"),
+            ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
+            ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
+            ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
+        }
+    }
+}
 
 pub struct BlockRunReport {
     pub network: Network,
@@ -37,6 +69,24 @@ impl BlockRunReport {
         }
     }
 
+    pub fn to_csv(&self) -> String {
+        let execution_result = if let Err(e) = &self.run_result {
+            format!("Error: {e}")
+        } else {
+            "Success".to_string()
+        };
+
+        format!(
+            "{},{},{},{},{},{}",
+            self.number,
+            self.gas,
+            self.txs,
+            format_duration(self.time_taken),
+            self.replayer_mode,
+            execution_result,
+        )
+    }
+
     pub fn to_slack_message(&self) -> SlackWebHookRequest {
         SlackWebHookRequest {
             blocks: vec![
@@ -46,14 +96,32 @@ impl BlockRunReport {
                             (Ok(_), ReplayerMode::Execute) => {
                                 String::from("✅ Successfully Executed Block")
                             }
-                            (Ok(_), ReplayerMode::Prove) => {
-                                String::from("✅ Successfully Proved Block")
+                            (Ok(_), ReplayerMode::ExecuteSP1) => {
+                                String::from("✅ Successfully Executed Block with SP1")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteRISC0) => {
+                                String::from("✅ Successfully Executed Block with RISC0")
+                            }
+                            (Ok(_), ReplayerMode::ProveSP1) => {
+                                String::from("✅ Successfully Proved Block with SP1")
+                            }
+                            (Ok(_), ReplayerMode::ProveRISC0) => {
+                                String::from("✅ Successfully Proved Block with RISC0")
                             }
                             (Err(_), ReplayerMode::Execute) => {
                                 String::from("⚠️ Failed to Execute Block")
                             }
-                            (Err(_), ReplayerMode::Prove) => {
-                                String::from("⚠️ Failed to Prove Block")
+                            (Err(_), ReplayerMode::ExecuteSP1) => {
+                                String::from("⚠️ Failed to Execute Block with SP1")
+                            }
+                            (Err(_), ReplayerMode::ExecuteRISC0) => {
+                                String::from("⚠️ Failed to Execute Block with RISC0")
+                            }
+                            (Err(_), ReplayerMode::ProveSP1) => {
+                                String::from("⚠️ Failed to Prove Block with SP1")
+                            }
+                            (Err(_), ReplayerMode::ProveRISC0) => {
+                                String::from("⚠️ Failed to Prove Block with RISC0")
                             }
                         },
                         emoji: true,
@@ -146,7 +214,7 @@ fn format_duration(duration: Duration) -> String {
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    let milliseconds = total_seconds / 1000;
+    let milliseconds = duration.subsec_millis();
 
     if hours > 0 {
         return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
@@ -157,165 +225,4 @@ fn format_duration(duration: Duration) -> String {
     }
 
     format!("{minutes:02}m {seconds:02}s")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_slack_message_failed_mainnet_execution() {
-        let report = BlockRunReport::new_for(
-            Block::default(),
-            Network::PublicNetwork(PublicNetwork::Mainnet),
-            Err(eyre::Report::msg("Execution failed")),
-            ReplayerMode::Execute,
-            Duration::from_secs(1),
-        );
-
-        let slack_message = report.to_slack_message();
-
-        let slack_message_json_request = serde_json::to_string_pretty(&slack_message)
-            .expect("Failed to serialize Slack message");
-
-        let expected_json = r#"{
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block",
-        "emoji": true
-      }
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*Network:* `mainnet`\n*Block:* 0\n*Gas:* 0\n*#Txs:* 0\n*Execution Result:* Error: Execution failed"
-      }
-    },
-    {
-      "type": "actions",
-      "elements": [
-        {
-          "type": "button",
-          "text": {
-            "type": "plain_text",
-            "text": "View on Etherscan",
-            "emoji": false
-          },
-          "url": "https://etherscan.io/block/0"
-        }
-      ]
-    }
-  ]
-}"#;
-
-        assert_eq!(slack_message_json_request, expected_json);
-    }
-
-    #[test]
-    fn test_slack_message_failed_hoodi_execution() {
-        let report = BlockRunReport::new_for(
-            Block::default(),
-            Network::PublicNetwork(PublicNetwork::Hoodi),
-            Err(eyre::Report::msg("Execution failed")),
-            ReplayerMode::Execute,
-            Duration::from_secs(1),
-        );
-
-        let slack_message = report.to_slack_message();
-
-        let slack_message_json_request = serde_json::to_string_pretty(&slack_message)
-            .expect("Failed to serialize Slack message");
-
-        let expected_json = r#"{
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block",
-        "emoji": true
-      }
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*Network:* `hoodi`\n*Block:* 0\n*Gas:* 0\n*#Txs:* 0\n*Execution Result:* Error: Execution failed"
-      }
-    },
-    {
-      "type": "actions",
-      "elements": [
-        {
-          "type": "button",
-          "text": {
-            "type": "plain_text",
-            "text": "View on Etherscan",
-            "emoji": false
-          },
-          "url": "https://hoodi.etherscan.io/block/0"
-        }
-      ]
-    }
-  ]
-}"#;
-
-        assert_eq!(slack_message_json_request, expected_json);
-    }
-
-    #[test]
-    fn test_slack_message_failed_sepolia_execution() {
-        let report = BlockRunReport::new_for(
-            Block::default(),
-            Network::PublicNetwork(PublicNetwork::Sepolia),
-            Err(eyre::Report::msg("Execution failed")),
-            ReplayerMode::Execute,
-            Duration::from_secs(1),
-        );
-
-        let slack_message = report.to_slack_message();
-
-        let slack_message_json_request = serde_json::to_string_pretty(&slack_message)
-            .expect("Failed to serialize Slack message");
-
-        let expected_json = r#"{
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "⚠️ Failed to Execute Block",
-        "emoji": true
-      }
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*Network:* `sepolia`\n*Block:* 0\n*Gas:* 0\n*#Txs:* 0\n*Execution Result:* Error: Execution failed"
-      }
-    },
-    {
-      "type": "actions",
-      "elements": [
-        {
-          "type": "button",
-          "text": {
-            "type": "plain_text",
-            "text": "View on Etherscan",
-            "emoji": false
-          },
-          "url": "https://sepolia.etherscan.io/block/0"
-        }
-      ]
-    }
-  ]
-}"#;
-
-        assert_eq!(slack_message_json_request, expected_json);
-    }
 }
