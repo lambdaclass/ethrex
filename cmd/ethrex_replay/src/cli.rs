@@ -1,22 +1,20 @@
-use std::{io::Write, time::SystemTime};
-
-use clap::{Parser, Subcommand};
-use ethrex_common::{
-    H256,
-    types::{AccountUpdate, Block, Receipt},
-};
-use ethrex_prover_lib::backends::Backend;
-use ethrex_rpc::types::block_identifier::BlockTag;
-use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
-use reqwest::Url;
-use tracing::{error, info};
-
 use crate::block_run_report::{BlockRunReport, ReplayerMode};
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use clap::{Parser, Subcommand};
+use ethrex_common::{
+    H256,
+    types::{AccountUpdate, Block, Receipt},
+};
 use ethrex_config::networks::Network;
+use ethrex_prover_lib::backends::Backend;
+use ethrex_rpc::types::block_identifier::BlockTag;
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use reqwest::Url;
+use std::{io::Write, time::SystemTime};
+use tracing::{error, info};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -177,6 +175,7 @@ impl SubcommandExecute {
                             rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
+                            l2: false,
                         }
                         .run()
                         .await
@@ -413,6 +412,7 @@ impl SubcommandProve {
                             rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
+                            l2: false,
                         }
                         .run()
                         .await

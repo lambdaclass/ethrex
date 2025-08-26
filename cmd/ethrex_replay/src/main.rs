@@ -1,14 +1,6 @@
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
-mod bench;
-mod cache;
-mod cli;
-mod fetcher;
-mod plot_composition;
-mod rpc;
-mod run;
-
 #[cfg(feature = "jemalloc")]
 use jemallocator::Jemalloc;
 
