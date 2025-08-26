@@ -255,12 +255,15 @@ pub(crate) fn increase_precompile_consumed_gas(
 }
 
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
-/// more than `target_len`, the excess bytes are discarded.
+/// more than `target_len`, the excess bytes are kept.
+#[inline]
 pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
-    let mut padded_calldata = calldata.to_vec();
-    if padded_calldata.len() < target_len {
-        padded_calldata.resize(target_len, 0);
+    if calldata.len() >= target_len {
+        // this clone is cheap (Arc)
+        return calldata.clone();
     }
+    let mut padded_calldata = calldata.to_vec();
+    padded_calldata.resize(target_len, 0);
     padded_calldata.into()
 }
 
@@ -320,18 +323,19 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
 
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
     let uncompressed = vk.to_encoded_point(false);
+    let mut uncompressed = uncompressed.to_bytes();
     #[allow(clippy::indexing_slicing)]
-    let mut xy = uncompressed.as_bytes()[1..65].to_vec();
+    let xy = &mut uncompressed[1..65];
 
     // keccak256(X||Y).
-    keccak256(&mut xy);
+    keccak256(xy);
 
     // Address is the last 20 bytes of the hash.
-    let mut out = vec![0u8; 12];
+    let mut out = [0u8; 32];
     #[allow(clippy::indexing_slicing)]
-    out.extend_from_slice(&xy[12..32]);
+    out[12..32].copy_from_slice(&xy[12..32]);
 
-    Ok(Bytes::from(out))
+    Ok(Bytes::copy_from_slice(&out))
 }
 
 /// Returns the calldata received
@@ -349,9 +353,10 @@ pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMEr
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let result = sha2::Sha256::digest(calldata).to_vec();
+    let digest = sha2::Sha256::digest(calldata);
+    let result = digest.as_slice();
 
-    Ok(Bytes::from(result))
+    Ok(Bytes::copy_from_slice(result))
 }
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
