@@ -36,6 +36,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         test._info.clone(),
         hash,
     );
+
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 

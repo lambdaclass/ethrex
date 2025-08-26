@@ -50,7 +50,6 @@ pub struct Genesis {
     pub blob_gas_used: Option<u64>,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
-
     pub requests_hash: Option<H256>,
 }
 

@@ -16,7 +16,7 @@ use crate::network::Network;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TestUnit {
     #[serde(default, rename = "_info")]
-    pub info: Option<serde_json::Value>,
+    pub info: Info,
     pub blocks: Vec<BlockWithRLP>,
     pub genesis_block_header: Header,
     #[serde(rename = "genesisRLP", with = "ethrex_common::serde_utils::bytes")]
@@ -27,6 +27,44 @@ pub struct TestUnit {
     pub pre: HashMap<Address, Account>,
     pub seal_engine: serde_json::Value,
     pub config: FixtureConfig,
+}
+
+/// General information about the test. Matches the `_info` field in the `.json` file.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Info {
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(rename = "filling-rpc-server", default)]
+    pub filling_rpc_server: Option<String>,
+    #[serde(rename = "filling-tool-version", default)]
+    pub filling_tool_version: Option<String>,
+    #[serde(rename = "generatedTestHash", default)]
+    pub generated_test_hash: Option<H256>,
+    #[serde(default)]
+    pub labels: Option<HashMap<u64, String>>,
+    #[serde(default)]
+    pub lllcversion: Option<String>,
+    #[serde(default)]
+    pub solidity: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(rename = "sourceHash", default)]
+    pub source_hash: Option<H256>,
+    // These fields are implemented in the new version of the test vectors (Prague).
+    #[serde(rename = "hash", default)]
+    pub hash: Option<H256>,
+    #[serde(rename = "filling-transition-tool", default)]
+    pub filling_transition_tool: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "fixture_format", default)]
+    pub fixture_format: Option<String>,
+    #[serde(rename = "reference-spec", default)]
+    pub reference_spec: Option<String>,
+    #[serde(rename = "reference-spec-version", default)]
+    pub reference_spec_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
