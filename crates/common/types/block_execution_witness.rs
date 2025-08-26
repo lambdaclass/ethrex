@@ -50,6 +50,12 @@ pub struct ExecutionWitnessResult {
     pub state_nodes: HashMap<H256, NodeRLP>,
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256Wrapper>)]
     pub account_storage_root_hashes: HashMap<Address, H256>,
+    /// This is a convenience map to track which accounts and storage slots were touched during execution.
+    /// It maps an account address to the last storage slot that was accessed for that account.
+    /// This is needed for building `RpcExecutionWitness`.
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub touched_account_storage_slots: HashMap<Address, Vec<H256>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -304,6 +310,11 @@ impl ExecutionWitnessResult {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
+        self.touched_account_storage_slots
+            .entry(address)
+            .or_default()
+            .push(key);
+
         let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
             storage_trie
         } else {

@@ -8,7 +8,6 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -176,7 +175,7 @@ impl Blockchain {
             .ok_or(ChainError::ParentStateNotFound)?;
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut keys: Vec<Vec<u8>> = Vec::new();
+        let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -204,10 +203,14 @@ impl Blockchain {
             let account_updates = vm.get_state_transitions()?;
 
             for account_update in &account_updates {
-                keys.push(account_update.address.as_bytes().to_vec());
-                for storage in account_update.added_storage.keys() {
-                    keys.push(storage.as_bytes().to_vec());
-                }
+                touched_account_storage_slots.insert(
+                    account_update.address,
+                    account_update
+                        .added_storage
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<H256>>(),
+                );
             }
 
             // Get the used block hashes from the logger
@@ -301,7 +304,7 @@ impl Blockchain {
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
-                keys.push(address.0.to_vec());
+                touched_account_storage_slots.entry(address).or_default();
             }
             trie = updated_trie;
         }
@@ -358,6 +361,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes: HashMap::new(), // FIXME: Complete
             account_storage_root_hashes: HashMap::new(), // FIXME: Complete
+            touched_account_storage_slots,
         })
     }
 
