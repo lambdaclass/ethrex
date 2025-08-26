@@ -4,7 +4,6 @@ use std::{collections::HashMap, str::FromStr};
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
@@ -25,19 +24,6 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
-    pub keys: Vec<Bytes>,
-    // Rlp encoded state trie nodes
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
-    pub state_trie_nodes: Vec<Bytes>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(

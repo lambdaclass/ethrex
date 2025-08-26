@@ -346,13 +346,11 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         Ok(ExecutionWitnessResult {
-            keys: keys.into_iter().map(Bytes::from).collect(),
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
             block_headers,
             chain_config,
-            state_trie_nodes: used_trie_nodes.into_iter().map(Bytes::from).collect(),
             storage_tries: HashMap::new(),
             parent_block_header: self
                 .storage

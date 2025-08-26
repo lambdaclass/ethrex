@@ -45,8 +45,8 @@ pub struct RpcExecutionWitness {
 impl From<ExecutionWitnessResult> for RpcExecutionWitness {
     fn from(value: ExecutionWitnessResult) -> Self {
         Self {
-            state: value.state_trie_nodes,
-            keys: value.keys,
+            state: todo!(), // FIXME
+            keys: todo!(), // FIXME
             codes: value.codes.values().cloned().collect(),
             headers: value
                 .block_headers
@@ -129,8 +129,6 @@ pub fn execution_witness_from_rpc_chain_config(
     }
 
     let mut witness = ExecutionWitnessResult {
-        state_trie_nodes: rpc_witness.state,
-        keys: rpc_witness.keys,
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
         storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
