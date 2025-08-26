@@ -525,7 +525,7 @@ enum SubcommandCache {
         #[arg(help = "Ending block. (Inclusive)")]
         end: usize,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
