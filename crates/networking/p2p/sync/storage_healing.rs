@@ -11,7 +11,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
 use rand::random;
@@ -164,7 +164,7 @@ pub async fn heal_storage_trie(
     );
     let mut state = StorageHealer {
         last_update: Instant::now(),
-        download_queue: get_initial_downloads(&account_paths),
+        download_queue: get_initial_downloads(&account_paths, store, state_root),
         store,
         membatch,
         peer_handler: peers,
@@ -584,15 +584,34 @@ fn process_node_responses(
     Ok(())
 }
 
-fn get_initial_downloads(account_paths: &HashMap<H256, H256>) -> VecDeque<NodeRequest> {
+fn get_initial_downloads(
+    account_paths: &HashMap<H256, H256>,
+    store: Store,
+    state_root: H256,
+) -> VecDeque<NodeRequest> {
     account_paths
         .iter()
-        .map(|(acc_path, storage_root)| {
+        .map(|(acc_path, _)| {
+            let trie = store.open_state_trie(state_root).unwrap();
+            let account = trie
+                .get_node(&Nibbles::from_bytes(&acc_path.0).to_bytes())
+                .unwrap();
+            let decoded = Node::decode_raw(&account).unwrap();
+
+            let state = match decoded {
+                Node::Branch(_) => unreachable!(),
+                Node::Extension(_) => unreachable!(),
+                Node::Leaf(leaf_node) => {
+                    let account = leaf_node.value;
+                    AccountState::decode(&account).unwrap()
+                }
+            };
+
             NodeRequest {
                 acc_path: Nibbles::from_bytes(&acc_path.0),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                 parent: Nibbles::default(),
-                hash: *storage_root,
+                hash: state.storage_root,
             }
         })
         .collect()
