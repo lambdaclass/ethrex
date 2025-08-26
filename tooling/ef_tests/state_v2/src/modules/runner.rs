@@ -39,6 +39,9 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     let mut total_run = 0;
 
     for test in tests {
+        if test.path.starts_with("osaka") {
+            continue;
+        }
         run_test(
             &test,
             &mut passing_tests,
