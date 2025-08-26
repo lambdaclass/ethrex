@@ -1,8 +1,5 @@
 [workspace]
 members = [
-  "cmd/ef_tests/blockchain",
-  "cmd/ef_tests/state",
-  "cmd/ef_tests/state_v2",
   "cmd/ethrex",
   "cmd/ethrex_replay",
   "crates/blockchain",
@@ -26,6 +23,9 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
   "crates/vm/levm/runner",
+  "tooling/ef_tests/blockchain",
+  "tooling/ef_tests/state",
+  "tooling/ef_tests/state_v2",
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",

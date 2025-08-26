@@ -16,11 +16,11 @@ fmt: ## 📄 Runs rustfmt
 
 ###### EF Tests ######
 download-evm-ef-tests: ## 📥 Download EF Tests
-	cd ../../../cmd/ef_tests/state && \
+	cd ../../../tooling/ef_tests/state && \
 	make download-evm-ef-tests flags="$(flags)"
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
-	cd ../../../cmd/ef_tests/state && \
+	cd ../../../tooling/ef_tests/state && \
 	make run-evm-ef-tests flags="$(flags)"
 
 ###### Benchmarks ######
@@ -136,7 +136,7 @@ build-revm-comparison-debuginfo:
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
-EFTEST_DIR := ../../../cmd/ef_tests/state
+EFTEST_DIR := ../../../tooling/ef_tests/state
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
