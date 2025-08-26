@@ -6386,6 +6386,7 @@ dependencies = [
  "clap 4.5.40",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
+ "ethrex-common",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
