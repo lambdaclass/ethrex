@@ -16,8 +16,18 @@ echo "Checking for unused workspace dependencies..."
 # Counter for unused dependencies
 UNUSED_COUNT=0
 
+EXCEPTIONS=(
+  "ef_tests-blockchain"
+  "ef_tests-state"
+  "ef_tests-state_v2"
+)
+
 # For each dependency, check if it's referenced in any crate
 for DEP in $WORKSPACE_DEPS; do
+  if [[ " ${EXCEPTIONS[@]} " =~ " ${DEP} " ]]; then
+    echo "Skipping check for whitelisted dependency: $DEP"
+    continue
+  fi
   echo "Checking dependency: $DEP"
   
   # Check for both workspace reference patterns:
