@@ -882,7 +882,6 @@ impl Syncer {
             let account_store_start = Instant::now();
 
             let mut computed_state_root = *EMPTY_TRIE_HASH;
-            let mut bytecode_hashes: Vec<H256> = Vec::new();
 
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -902,26 +901,19 @@ impl Syncer {
 
                 let trie = store.open_state_trie(computed_state_root)?;
 
-                let (current_state_root, current_bytecode_hashes) =
-                    tokio::task::spawn_blocking(move || -> Result<(H256, Vec<H256>), SyncError> {
-                        let mut bytecode_hashes = vec![];
+                let current_state_root =
+                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
                         let mut trie = trie;
 
                         for (account_hash, account) in account_state_snapshot {
-                            if account.code_hash != *EMPTY_KECCACK_HASH {
-                                bytecode_hashes.push(account.code_hash);
-                            }
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
                         let current_state_root = trie.hash()?;
-                        bytecode_hashes.sort();
-                        bytecode_hashes.dedup();
-                        Ok((current_state_root, bytecode_hashes))
+                        Ok(current_state_root)
                     })
                     .await??;
 
                 computed_state_root = current_state_root;
-                bytecode_hashes.extend(&current_bytecode_hashes);
             }
 
             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
