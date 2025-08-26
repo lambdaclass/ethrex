@@ -344,7 +344,7 @@ impl Blockchain {
                 .await
         });
         let mut payloads = self.payloads.lock().await;
-        if payloads.len() == MAX_PAYLOADS {
+        if payloads.len() >= MAX_PAYLOADS {
             // Remove oldest unclaimed payload
             payloads.remove(0);
         }
