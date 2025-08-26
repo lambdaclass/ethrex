@@ -4,4 +4,3 @@ pub mod l2;
 pub mod utils;
 
 mod decode;
-pub mod networks;

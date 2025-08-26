@@ -52,7 +52,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct StateUpdater {
     on_chain_proposer_address: Address,
     sequencer_registry_address: Address,
@@ -252,10 +251,10 @@ impl GenServer for StateUpdater {
     type Error = StateUpdaterError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         let _ = self
             .update_state()
             .await
@@ -265,7 +264,7 @@ impl GenServer for StateUpdater {
             handle.clone(),
             Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 

@@ -117,6 +117,12 @@ pub fn default_datadir() -> String {
 
 // TODO: Use PathBuf instead of strings
 pub fn init_datadir(data_dir: &str) -> String {
+    let project_dir = ProjectDirs::from("", "", data_dir).expect("Couldn't find home directory");
+    let data_dir = project_dir
+        .data_local_dir()
+        .to_str()
+        .expect("invalid data directory")
+        .to_owned();
     let datadir = PathBuf::from(data_dir);
     if datadir.exists() {
         if !datadir.is_dir() {
@@ -143,12 +149,19 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
 }
 
 #[allow(dead_code)]
-pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
-    match std::fs::File::open(file_path) {
-        Ok(file) => {
-            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {e}"))
-        }
-        Err(e) => Err(format!("No config file found: {e}")),
+pub fn read_node_config_file(data_dir: &str) -> Result<Option<NodeConfigFile>, String> {
+    const NODE_CONFIG_FILENAME: &str = "/node_config.json";
+    let file_path = PathBuf::from(data_dir.to_owned() + NODE_CONFIG_FILENAME);
+    if file_path.exists() {
+        Ok(match std::fs::File::open(file_path) {
+            Ok(file) => Some(
+                serde_json::from_reader(file)
+                    .map_err(|e| format!("Invalid node config file {e}"))?,
+            ),
+            Err(e) => return Err(format!("No config file found: {e}")),
+        })
+    } else {
+        Ok(None)
     }
 }
 

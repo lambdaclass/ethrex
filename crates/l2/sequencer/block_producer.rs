@@ -44,7 +44,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct BlockProducer {
     store: Store,
     blockchain: Arc<Blockchain>,
@@ -93,7 +92,7 @@ impl BlockProducer {
             blockchain,
             sequencer_state,
         )
-        .start();
+        .start_blocking();
         block_producer
             .cast(InMessage::Produce)
             .await
@@ -202,10 +201,10 @@ impl GenServer for BlockProducer {
     type Error = BlockProducerError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Produce message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
@@ -218,6 +217,6 @@ impl GenServer for BlockProducer {
             handle.clone(),
             Self::CastMsg::Produce,
         );
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }

@@ -161,7 +161,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -262,7 +262,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -639,16 +639,14 @@ impl StoreEngine for Store {
     async fn get_transaction_by_location(
         &self,
         block_hash: H256,
-        index: u64,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        let index: usize = index.try_into()?;
+        Ok(block_body.transactions.get(index).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
