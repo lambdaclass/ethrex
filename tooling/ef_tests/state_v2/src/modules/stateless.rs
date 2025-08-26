@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType, fork_choice::apply_fork_choice};
-use ethrex_common::H256;
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
     Block, BlockBody, BlockHeader, Fork, Receipt, compute_receipts_root, compute_transactions_root,
 };
+use ethrex_common::{H256, U256};
 use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -104,7 +104,7 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
         transactions_root: computed_tx_root,
         receipts_root: compute_receipts_root(&[receipt]),
         logs_bloom: Default::default(),
-        difficulty: test.env.current_difficulty,
+        difficulty: U256::zero(),
         number: 1, // I think this is correct
         gas_limit: test.env.current_gas_limit,
         gas_used: report.gas_used,

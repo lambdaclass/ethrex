@@ -390,8 +390,6 @@ impl Blockchain {
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
 
-        println!("Updates: {:?}", updates);
-
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage

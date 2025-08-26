@@ -289,13 +289,13 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
             alloc
         },
         coinbase: test.env.current_coinbase,
-        difficulty: test.env.current_difficulty,
-        gas_limit: test.env.current_gas_limit,
-        mix_hash: test.env.current_random.unwrap_or_default(),
+        difficulty: U256::zero(),
         timestamp: 0,
-        base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
-        excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
         config: chain_config,
+        // Sure about these?
+        gas_limit: test.env.current_gas_limit,
+        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64() * 8).checked_div(7), // This was carefully calculated so that the header doesn't break. But what if base fee per gas is none?
+        excess_blob_gas: None,
         ..Default::default()
     }
 }
