@@ -126,11 +126,22 @@ impl PeerHandler {
 
     // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
-    async fn record_peer_success(&self, _peer_id: H256) {}
+    async fn record_peer_success(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| info.score = info.score.saturating_add(1));
+    }
 
-    // TODO: Implement the logic for recording peer failures
     /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, _peer_id: H256) {}
+    async fn record_peer_failure(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| info.score = info.score.saturating_sub(1));
+    }
 
     // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
@@ -173,6 +184,8 @@ impl PeerHandler {
         start: u64,
         sync_head: H256,
     ) -> Option<Vec<BlockHeader>> {
+        self.refresh_peers_availability().await;
+
         let start_time = SystemTime::now();
 
         let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
@@ -199,10 +212,12 @@ impl PeerHandler {
                 {
                     Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
                         sync_head_number = current_head_number;
+                        self.record_peer_success(peer_id).await;
                         break;
                     }
                     _ => {
                         trace!("Failed to retrieve sync head block number from peer {peer_id}");
+                        self.record_peer_failure(peer_id).await;
                     }
                 }
             }
@@ -275,6 +290,7 @@ impl PeerHandler {
                 self.mark_peer_as_free(peer_id).await;
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
+                    self.record_peer_failure(peer_id).await;
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
                     continue; // Retry with the next peer
@@ -315,9 +331,10 @@ impl PeerHandler {
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
+                self.record_peer_success(peer_id).await;
             }
 
-            let available_downloader = self.get_random_available_downloader().await;
+            let available_downloader = self.get_best_available_downloader().await;
             let Some(available_downloader) = available_downloader else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
@@ -400,7 +417,6 @@ impl PeerHandler {
         }
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
-        self.refresh_peers_availability().await;
         Some(ret)
     }
 
@@ -412,7 +428,8 @@ impl PeerHandler {
         &self,
         block_hashes: Vec<H256>,
     ) -> Option<(Vec<BlockBody>, H256)> {
-        let Some(available_downloader) = self.get_random_available_downloader().await else {
+        self.refresh_peers_availability().await;
+        let Some(available_downloader) = self.get_best_available_downloader().await else {
             debug!("No free downloaders available to request block bodies");
             return None;
         };
@@ -498,7 +515,8 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let available_downloader = self.get_random_available_downloader().await?;
+            let available_downloader = self.get_best_available_downloader().await?;
+            let peer_id = available_downloader.peer_id();
             match available_downloader
                 .start()
                 .call(DownloaderCallRequest::Receipts {
@@ -506,8 +524,16 @@ impl PeerHandler {
                 })
                 .await
             {
-                Ok(DownloaderCallResponse::Receipts(Some(receipts))) => return Some(receipts),
-                _ => continue,
+                Ok(DownloaderCallResponse::Receipts(Some(receipts))) => {
+                    return {
+                        self.record_peer_success(peer_id).await;
+                        Some(receipts)
+                    };
+                }
+                _ => {
+                    self.record_peer_failure(peer_id).await;
+                    continue;
+                }
             }
         }
         None
@@ -530,6 +556,8 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: String,
     ) -> Result<(), PeerHandlerError> {
+        self.refresh_peers_availability().await;
+
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -744,7 +772,6 @@ impl PeerHandler {
         *METRICS.free_accounts_downloaders.lock().await = downloaders_count;
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
-        self.refresh_peers_availability().await;
         Ok(())
     }
 
@@ -756,6 +783,8 @@ impl PeerHandler {
         &self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
+        self.refresh_peers_availability().await;
+
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
@@ -834,7 +863,7 @@ impl PeerHandler {
                 }
             }
 
-            let Some(available_downloader) = self.get_random_available_downloader().await else {
+            let Some(available_downloader) = self.get_best_available_downloader().await else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
@@ -884,7 +913,6 @@ impl PeerHandler {
             all_bytecode_hashes.len()
         );
 
-        self.refresh_peers_availability().await;
         Ok(Some(all_bytecodes))
     }
 
@@ -903,6 +931,8 @@ impl PeerHandler {
         mut chunk_index: u64,
         downloaded_count: &mut u64,
     ) -> Result<u64, PeerHandlerError> {
+        self.refresh_peers_availability().await;
+
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
@@ -1091,7 +1121,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    self.record_peer_success(peer_id).await;
+                    self.record_peer_failure(peer_id).await;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1157,7 +1187,7 @@ impl PeerHandler {
                 });
             }
 
-            let Some(available_downloader) = self.get_random_available_downloader().await else {
+            let Some(available_downloader) = self.get_best_available_downloader().await else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
@@ -1242,7 +1272,6 @@ impl PeerHandler {
         *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = peers_count as u64;
 
-        self.refresh_peers_availability().await;
         Ok(chunk_index + 1)
     }
 
@@ -1257,7 +1286,7 @@ impl PeerHandler {
     ) -> Option<Vec<Node>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let available_downloader = loop {
-                if let Some(downloader) = self.get_random_available_downloader().await {
+                if let Some(downloader) = self.get_best_available_downloader().await {
                     break downloader;
                 }
             };
@@ -1303,7 +1332,7 @@ impl PeerHandler {
     ) -> Option<Vec<Node>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let available_downloader = loop {
-                if let Some(downloader) = self.get_random_available_downloader().await {
+                if let Some(downloader) = self.get_best_available_downloader().await {
                     break downloader;
                 }
             };
@@ -1405,20 +1434,25 @@ impl PeerHandler {
             .transpose()
         else {
             warn!("The RLPxConnection closed the backend channel");
+            // TODO: critically penalize peer?
+            self.record_peer_failure(peer_id).await;
             return Ok(None);
         };
 
         if !block_headers.is_empty() {
+            self.record_peer_success(peer_id).await;
             return Ok(Some(block_headers[0].clone()));
         } else {
             warn!("Peer returned empty block headers");
+            self.record_peer_failure(peer_id).await;
             return Ok(None);
         }
     }
 
     // Creates a Downloader Actor from a random peer
     // Returns None if no peer is available
-    async fn get_random_available_downloader(
+    // TODO: no longer needed?
+    async fn _get_random_available_downloader(
         &self,
         // downloaders: &mut BTreeMap<H256, bool>,
     ) -> Option<Downloader> {
