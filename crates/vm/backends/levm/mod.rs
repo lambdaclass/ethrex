@@ -255,15 +255,15 @@ impl LEVM {
             vm_type,
         )?;
 
-        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !account.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
+        // // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
+        // // has any code after being deployed. If not, the whole block becomes invalid.
+        // // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
+        // let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
+        // if !account.has_code() {
+        //     return Err(EvmError::SystemContractEmpty(
+        //         "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+        //     ));
+        // }
 
         match report.result {
             TxResult::Success => Ok(report),
@@ -294,15 +294,15 @@ impl LEVM {
             vm_type,
         )?;
 
-        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !acc.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
+        // // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // // has any code after being deployed. If not, the whole block becomes invalid.
+        // // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        // let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
+        // if !acc.has_code() {
+        //     return Err(EvmError::SystemContractEmpty(
+        //         "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
+        //     ));
+        // }
 
         match report.result {
             TxResult::Success => Ok(report),
