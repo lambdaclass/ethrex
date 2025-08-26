@@ -161,7 +161,9 @@ impl StoreEngine for Store {
                     info!("Applied storage update {i}/{total_storage_updates}");
                 }
             }
-            for block in update_batch.blocks {
+
+            let total_blocks = update_batch.blocks.len();
+            for (i, block) in update_batch.blocks.into_iter().enumerate() {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
@@ -173,25 +175,31 @@ impl StoreEngine for Store {
                     )
                     .map_err(StoreError::LibmdbxError)?;
                 }
+                info!("Added transaction locations for block {i}/{total_blocks}");
 
                 tx.upsert::<Bodies>(
                     hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
                 )
                 .map_err(StoreError::LibmdbxError)?;
+                info!("Added block body {i}/{total_blocks}");
 
                 tx.upsert::<Headers>(
                     hash.into(),
                     BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
                 )
                 .map_err(StoreError::LibmdbxError)?;
+                info!("Added block header {i}/{total_blocks}");
 
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
+                info!("Added block number {i}/{total_blocks}");
             }
+
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
                 let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                info!("Ordering receipts");
                 for mut entries in
                     receipts
                         .into_iter()
@@ -204,11 +212,13 @@ impl StoreEngine for Store {
                 {
                     key_values.append(&mut entries);
                 }
+                let total_receipts = key_values.len();
                 let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
+                for (i, (key, value)) in key_values.into_iter().enumerate() {
                     cursor
                         .upsert(key, value)
                         .map_err(StoreError::LibmdbxError)?;
+                    info!("Added receipt {i}/{total_receipts}");
                 }
             }
             info!("Commiting updates");
