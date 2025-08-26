@@ -46,8 +46,16 @@ pub struct ExecutionWitnessResult {
     pub parent_block_header: BlockHeader,
     // Chain config
     pub chain_config: ChainConfig,
+    /// This maps node hashes to their corresponding RLP-encoded nodes.
+    /// It is used to rebuild the state trie and storage tries.
+    /// This is precomputed during ExecutionWitness construction to avoid to avoid
+    /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: HashMap<H256, NodeRLP>,
+    /// This maps account addresses to their storage root hashes.
+    /// It is used to quickly find the root hash of an account's storage trie.
+    /// This is precomputed during ExecutionWitness construction to avoid to avoid
+    /// recomputing it when rebuilding storage tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256Wrapper>)]
     pub account_storage_root_hashes: HashMap<Address, H256>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
