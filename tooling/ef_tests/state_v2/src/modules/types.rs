@@ -12,7 +12,9 @@ use ::bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     constants::GAS_PER_BLOB,
-    types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
+    types::{
+        AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
+    },
 };
 use ethrex_common::{
     serde_utils::{bytes, u64, u256},
@@ -310,64 +312,13 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         config: chain_config,
         // Sure about these?
         gas_limit: test.env.current_gas_limit,
-        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64() * 8).checked_div(7), // This was carefully calculated so that the header doesn't break. But what if base fee per gas is none?
+        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64()
+            * BASE_FEE_MAX_CHANGE_DENOMINATOR as u64)
+            .checked_div(7), // This was VERY carefully calculated so that the header passes validations in calculate_base_fee_per_gas
         excess_blob_gas: genesis_excess_blob_gas,
         ..Default::default()
     }
 }
-
-// impl From<&Test> for Genesis {
-//     fn from(test: &Test) -> Self {
-
-//         let algo = test.
-
-//         let config = ChainConfig {
-//             chain_id: todo!(),
-//             homestead_block: 0,
-//             dao_fork_block: 0,
-//             dao_fork_support: 0,
-//             eip150_block: 0,
-//             eip155_block: 0,
-//             eip158_block: 0,
-//             byzantium_block: 0,
-//             constantinople_block: 0,
-//             petersburg_block: 0,
-//             istanbul_block: 0,
-//             muir_glacier_block: 0,
-//             berlin_block: 0,
-//             london_block: 0,
-//             arrow_glacier_block: 0,
-//             gray_glacier_block: 0,
-//             merge_netsplit_block: 0,
-//             shanghai_time: 0,
-//             cancun_time: 0,
-//             prague_time: 0,
-//             verkle_time: 0,
-//             osaka_time: 0,
-//             terminal_total_difficulty: 0,
-//             terminal_total_difficulty_passed: 0,
-//             blob_schedule: BlobSchedule::default(),
-//             deposit_contract_address: todo!(),
-//         }
-//         Genesis {
-//             alloc: {
-//                 let mut alloc = BTreeMap::new();
-//                 for (account, account_state) in &test.pre {
-//                     alloc.insert(*account, GenesisAccount::from(account_state));
-//                 }
-//                 alloc
-//             },
-//             coinbase: test.env.current_coinbase,
-//             difficulty: test.env.current_difficulty,
-//             gas_limit: test.env.current_gas_limit,
-//             mix_hash: test.env.current_random.unwrap_or_default(),
-//             timestamp: 0,
-//             base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
-//             excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
-//             ..Default::default()
-//         }
-//     }
-// }
 
 /// General information about the test. Matches the `_info` field in the `.json` file.
 #[derive(Debug, Deserialize, Clone)]
