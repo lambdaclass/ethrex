@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756179296554,
+  "lastUpdate": 1756182779561,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23447,6 +23447,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0019589184782608697,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d444698ff94e416eb67d784bf9ad631e09dccf3",
+          "message": "feat(l1): don't log an error if we have no node config file when reading known peers (#4127)\n\n**Motivation**\nWe shouldn't emit a warning if we have no node config files where to\nread known peers from. We should log an error if we get an actual error\nwhile reading from an existing node config file\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Don't emit a warning if we have no node config file when reading known\npeers\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3908",
+          "timestamp": "2025-08-25T18:53:48Z",
+          "tree_id": "2fdf927a0b6dc56f28ca4e77d1ecd36848d1fa73",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d444698ff94e416eb67d784bf9ad631e09dccf3"
+        },
+        "date": 1756182778961,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.00025736594073545163,
             "unit": "Mgas/s"
           }
         ]
