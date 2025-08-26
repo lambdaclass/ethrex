@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_vm::EvmError;
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
@@ -599,24 +600,40 @@ impl FullBlockSyncState {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
                     // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor.
-                    let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
-                    if let Some(index) = block_batch
-                        .iter()
-                        .position(|x| x.hash() == batch_failure.failed_block_hash)
-                    {
-                        blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
-                    }
+                    match err {
+                        ChainError::InvalidBlock(_)
+                        | ChainError::InvalidTransaction(_)
+                        | ChainError::EvmError(EvmError::Transaction(_))
+                        | ChainError::EvmError(EvmError::Header(_))
+                        | ChainError::EvmError(EvmError::InvalidDepositRequest)
+                        | ChainError::EvmError(EvmError::SystemContractEmpty(_)) => {
+                            let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
+                            if let Some(index) = block_batch
+                                .iter()
+                                .position(|x| x.hash() == batch_failure.failed_block_hash)
+                            {
+                                blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
+                            }
 
-                    for block in blocks_with_invalid_ancestor {
-                        self.store
-                            .set_latest_valid_ancestor(block.hash(), batch_failure.last_valid_hash)
-                            .await?;
-                    }
-                    // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
-                    for header in self.current_headers.clone() {
-                        self.store
-                            .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
-                            .await?;
+                            for block in blocks_with_invalid_ancestor {
+                                self.store
+                                    .set_latest_valid_ancestor(
+                                        block.hash(),
+                                        batch_failure.last_valid_hash,
+                                    )
+                                    .await?;
+                            }
+                            // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                            for header in self.current_headers.clone() {
+                                self.store
+                                    .set_latest_valid_ancestor(
+                                        header.hash(),
+                                        batch_failure.last_valid_hash,
+                                    )
+                                    .await?;
+                            }
+                        }
+                        _ => continue,
                     }
                 }
                 return Err(err.into());
