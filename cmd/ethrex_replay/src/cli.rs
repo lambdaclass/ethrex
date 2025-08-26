@@ -504,7 +504,7 @@ enum SubcommandCache {
         )]
         network: Network,
     },
-    #[command(about = "Execute a single block.")]
+    #[command(about = "Cache multiple blocks.")]
     Blocks {
         #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
         blocks: Vec<u64>,
