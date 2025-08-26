@@ -490,7 +490,7 @@ impl SubcommandProve {
 
 #[derive(Subcommand)]
 enum SubcommandCache {
-    #[command(about = "Proves a single block.")]
+    #[command(about = "Cache a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
