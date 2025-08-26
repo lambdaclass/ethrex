@@ -274,6 +274,7 @@ impl<'a> VM<'a> {
         } else {
             current_call_frame.stack.push1(U256::from(256))?;
         }
+        dbg!("beep boop");
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

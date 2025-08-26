@@ -89,7 +89,7 @@ pub const CODECOPY_STATIC: u64 = 3;
 pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 //TODO: This cost is a placeholder. The EIP says benchmarks showed similar compute costs to ADD, so I took that as a reference, but we might have to update it once it's more defined
-pub const CLZ: u64 = 3;
+pub const CLZ: u64 = 0;
 
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
