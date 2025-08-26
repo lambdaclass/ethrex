@@ -2,6 +2,7 @@ use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
 mod bench;
+mod block_run_report;
 mod cache;
 mod cli;
 mod fetcher;
