@@ -164,7 +164,7 @@ pub async fn heal_storage_trie(
     );
     let mut state = StorageHealer {
         last_update: Instant::now(),
-        download_queue: get_initial_downloads(&account_paths, store, state_root),
+        download_queue: get_initial_downloads(&account_paths, store.clone(), state_root),
         store,
         membatch,
         peer_handler: peers,
