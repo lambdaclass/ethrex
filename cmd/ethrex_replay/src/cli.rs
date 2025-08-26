@@ -1,21 +1,31 @@
-use std::{io::Write, time::SystemTime};
+use std::{cmp::max, io::Write, time::SystemTime};
 
 use clap::{Parser, Subcommand};
+use ethrex_blockchain::{
+    Blockchain, BlockchainType,
+    fork_choice::apply_fork_choice,
+    payload::{BuildPayloadArgs, create_payload},
+};
 use ethrex_common::{
-    H256,
-    types::{AccountUpdate, Block, Receipt},
+    Address, H256,
+    types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
 };
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EvmEngine;
 use reqwest::Url;
 use tracing::{error, info};
 
-use crate::block_run_report::{BlockRunReport, ReplayerMode};
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use crate::{
+    block_run_report::{BlockRunReport, ReplayerMode},
+    cache::Cache,
+};
 use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -586,6 +596,160 @@ impl SubcommandCache {
 }
 
 #[derive(Subcommand)]
+pub enum SubcommandCustom {
+    #[command(about = "Custom block.")]
+    Block,
+    #[command(about = "Custom L2 batch.")]
+    Batch {
+        #[arg(long, help = "Number of blocks to include in the batch.")]
+        n_blocks: u64,
+    },
+}
+
+impl SubcommandCustom {
+    pub async fn run(self) -> eyre::Result<()> {
+        match self {
+            SubcommandCustom::Block => {
+                let network = Network::LocalDevnet;
+
+                let genesis = network.get_genesis()?;
+
+                let mut store = {
+                    let store_inner = Store::new("./", EngineType::InMemory)?;
+                    store_inner.add_initial_state(genesis.clone()).await?;
+                    store_inner
+                };
+
+                let mut blockchain =
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+
+                let block = produce_block(
+                    &mut blockchain,
+                    &mut store,
+                    genesis.get_block().hash(),
+                    genesis.timestamp + 1,
+                )
+                .await?;
+
+                let blocks = vec![block];
+
+                let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
+
+                let cache = Cache::new(blocks, execution_witness);
+
+                let future = async {
+                    let gas_used = get_total_gas_used(&cache.blocks);
+                    exec(BACKEND, cache).await?;
+                    Ok(gas_used)
+                };
+
+                run_and_measure(future, false).await?;
+            }
+            SubcommandCustom::Batch { n_blocks } => {
+                let network = Network::LocalDevnet;
+
+                let genesis = network.get_genesis()?;
+
+                let mut store = {
+                    let store_inner = Store::new("./", EngineType::InMemory)?;
+                    store_inner.add_initial_state(genesis.clone()).await?;
+                    store_inner
+                };
+
+                let mut blockchain =
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+
+                let mut blocks = Vec::new();
+                let mut head_block_hash = genesis.get_block().hash();
+                let initial_timestamp = genesis.get_block().header.timestamp;
+                for i in 1..=max(1, n_blocks) {
+                    let block = produce_block(
+                        &mut blockchain,
+                        &mut store,
+                        head_block_hash,
+                        initial_timestamp + i,
+                    )
+                    .await?;
+
+                    head_block_hash = block.hash();
+
+                    blocks.push(block);
+                }
+
+                let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
+
+                let cache = Cache::new(blocks, execution_witness);
+
+                let future = async {
+                    let gas_used = get_total_gas_used(&cache.blocks);
+                    exec(BACKEND, cache).await?;
+                    Ok(gas_used)
+                };
+
+                run_and_measure(future, false).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub async fn produce_block(
+    blockchain: &mut Blockchain,
+    store: &mut Store,
+    head_block_hash: H256,
+    timestamp: u64,
+) -> eyre::Result<Block> {
+    apply_fork_choice(store, head_block_hash, head_block_hash, head_block_hash).await?;
+
+    let build_payload_args = BuildPayloadArgs {
+        parent: head_block_hash,
+        timestamp,
+        fee_recipient: Address::zero(),
+        random: H256::zero(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::zero()),
+        version: 3,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    };
+
+    let payload_id = build_payload_args.id()?;
+
+    let payload = create_payload(&build_payload_args, store)?;
+
+    store.add_payload(build_payload_args.id()?, payload).await?;
+
+    let incompleted_payload_bundle = store
+        .get_payload(build_payload_args.id()?)
+        .await?
+        .expect("Storage returned None for existing payload");
+
+    let payload_build_result = blockchain
+        .build_payload(incompleted_payload_bundle.block)
+        .await?;
+
+    let completed_payload_bundle = PayloadBundle {
+        block: payload_build_result.payload,
+        block_value: payload_build_result.block_value,
+        blobs_bundle: payload_build_result.blobs_bundle,
+        requests: payload_build_result.requests,
+        completed: true,
+    };
+
+    store
+        .update_payload(payload_id, completed_payload_bundle.clone())
+        .await?;
+
+    let final_payload = store
+        .get_payload(payload_id)
+        .await?
+        .expect("Storage returned None for existing payload");
+
+    blockchain.add_block(&final_payload.block).await?;
+
+    Ok(completed_payload_bundle.block)
+}
+
+#[derive(Subcommand)]
 enum EthrexReplayCommand {
     #[command(
         subcommand,
@@ -618,6 +782,8 @@ enum EthrexReplayCommand {
         about = "Store the state prior to the execution of the block"
     )]
     Cache(SubcommandCache),
+    #[command(subcommand, about = "Custom block or batch")]
+    Custom(SubcommandCustom),
 }
 
 pub async fn start() -> eyre::Result<()> {
@@ -642,6 +808,7 @@ pub async fn start() -> eyre::Result<()> {
             plot(cache).await?;
         }
         EthrexReplayCommand::Cache(cmd) => cmd.run().await?,
+        EthrexReplayCommand::Custom(cmd) => cmd.run().await?,
     };
     Ok(())
 }

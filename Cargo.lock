@@ -4243,11 +4243,13 @@ version = "0.1.0"
 dependencies = [
  "charming",
  "clap 4.5.40",
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-config",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rpc",
+ "ethrex-storage",
  "ethrex-vm",
  "eyre",
  "hex",
