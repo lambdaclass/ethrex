@@ -242,7 +242,7 @@ pub async fn heal_storage_trie(
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
             let to_write = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            if db_joinset.len() > 3 {
+            if db_joinset.len() > 0 {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
