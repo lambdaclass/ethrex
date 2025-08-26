@@ -598,6 +598,7 @@ impl FullBlockSyncState {
             {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
+                    // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor.
                     let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
                     if let Some(index) = block_batch
                         .iter()
@@ -611,19 +612,12 @@ impl FullBlockSyncState {
                             .set_latest_valid_ancestor(block.hash(), batch_failure.last_valid_hash)
                             .await?;
                     }
-
+                    // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
                     for header in self.current_headers.clone() {
                         self.store
                             .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
                             .await?;
                     }
-
-                    self.store
-                        .set_latest_valid_ancestor(
-                            batch_failure.failed_block_hash,
-                            batch_failure.last_valid_hash,
-                        )
-                        .await?;
                 }
                 return Err(err.into());
             }
