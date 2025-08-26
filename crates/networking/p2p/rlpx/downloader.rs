@@ -6,7 +6,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::verify_range;
+use ethrex_trie::{Nibbles, Node, verify_range};
 use keccak_hash::H256;
 use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::sync::mpsc::Sender;
@@ -26,7 +26,7 @@ use crate::{
         },
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, StorageRanges,
+            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
@@ -72,10 +72,20 @@ impl Downloader {
 #[derive(Clone)]
 pub enum DownloaderCallRequest {
     // Snap sync calls
-    CurrentHead { sync_head: H256 },
-    Receipts { block_hashes: Vec<H256> },
+    CurrentHead {
+        sync_head: H256,
+    },
+    Receipts {
+        block_hashes: Vec<H256>,
+    },
     // Full sync calls
-    BlockBodies { block_hashes: Vec<H256> },
+    BlockBodies {
+        block_hashes: Vec<H256>,
+    },
+    TrieNodes {
+        root_hash: H256,
+        paths: Vec<Nibbles>,
+    },
 }
 
 #[derive(Clone)]
@@ -84,6 +94,7 @@ pub enum DownloaderCallResponse {
     CurrentHead(u64),                    // The sync head block number
     Receipts(Option<Vec<Vec<Receipt>>>), // Requested receipts to a given block hash
     BlockBodies(Vec<BlockBody>),         // Requested block bodies to given block hashes
+    TrieNodes(Vec<Node>),                // Requested trie nodes
 }
 
 #[derive(Clone)]
@@ -272,6 +283,61 @@ impl GenServer for Downloader {
                     return CallResponse::Stop(DownloaderCallResponse::BlockBodies(block_bodies));
                 }
 
+                return CallResponse::Stop(DownloaderCallResponse::NotFound);
+            }
+            DownloaderCallRequest::TrieNodes { root_hash, paths } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+                    id: request_id,
+                    root_hash,
+                    // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
+                    paths: paths
+                        .iter()
+                        .map(|vec| vec![Bytes::from(vec.encode_compact())])
+                        .collect(),
+                    bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                }
+                let expected_nodes = paths.len();
+                if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
+                                if id == request_id =>
+                            {
+                                return Some(nodes);
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|nodes| {
+                    (!nodes.is_empty() && nodes.len() <= expected_nodes)
+                        .then(|| {
+                            nodes
+                                .iter()
+                                .map(|node| Node::decode_raw(node))
+                                .collect::<Result<Vec<_>, _>>()
+                                .ok()
+                        })
+                        .flatten()
+                }) {
+                    return CallResponse::Stop(DownloaderCallResponse::TrieNodes(nodes));
+                }
                 return CallResponse::Stop(DownloaderCallResponse::NotFound);
             }
         }

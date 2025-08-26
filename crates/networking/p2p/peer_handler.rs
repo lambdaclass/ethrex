@@ -1350,66 +1350,38 @@ impl PeerHandler {
         state_root: H256,
         paths: Vec<Nibbles>,
     ) -> Option<Vec<Node>> {
-        let expected_nodes = paths.len();
+        let peers_table = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
+        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+            peers_table
+                .iter()
+                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+        );
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-                id: request_id,
-                root_hash: state_root,
-                // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-                paths: paths
-                    .iter()
-                    .map(|vec| vec![Bytes::from(vec.encode_compact())])
-                    .collect(),
-                bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
+            let available_downloader = loop {
+                if let Some(downloader) =
+                    self.get_random_available_downloader(&mut downloaders).await
+                {
+                    break downloader;
+                }
+            };
+
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::TrieNodes {
+                    root_hash: state_root,
+                    paths: paths.clone(),
+                })
                 .await
             {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                self.record_snap_peer_success(peer_id, peer_ids).await;
-                return Some(nodes);
-            }
+                Ok(DownloaderCallResponse::TrieNodes(nodes)) => Some(nodes),
+                _ => None,
+            };
         }
         None
     }
