@@ -5,7 +5,7 @@ participants:
     cl_image: sigp/lighthouse:v7.1.0
     validator_count: 32
   - el_type: ethrex
-    el_image: ethrex:latest
+    el_image: ethrex:ci
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.1.0
     validator_count: 32
