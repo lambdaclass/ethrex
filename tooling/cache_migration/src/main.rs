@@ -37,21 +37,23 @@ fn main() -> Result<()> {
         ));
     }
 
-    // Find all cache_*.json files in the directory
     let entries = fs::read_dir(dir_path)?;
     let mut processed_count = 0;
     let mut failed_count = 0;
+    let mut failed_files = vec![];
 
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
 
         if path.is_file() {
+            // Find all cache_*.json files in the directory
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                 if filename.starts_with("cache_") && filename.ends_with(".json") {
                     if let Err(e) = process_cache_file(&path) {
                         error!("Failed to process -- skipping {}: {}", path.display(), e);
                         failed_count += 1;
+                        failed_files.push(path);
                         continue;
                     }
                     processed_count += 1;
@@ -61,7 +63,12 @@ fn main() -> Result<()> {
     }
 
     info!("Completed processing {} cache files", processed_count);
-    info!("Failed to process {} cache files", failed_count);
+    if failed_count > 0 {
+        info!("Failed to process {} cache files:", failed_count);
+        for file in &failed_files {
+            error!("    - {}", file.display());
+        }
+    }
     if processed_count == 0 {
         warn!("No cache_*.json files found in {}", dir_path.display());
     }
