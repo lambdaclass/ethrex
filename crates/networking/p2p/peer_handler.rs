@@ -1504,12 +1504,10 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        account_storage_roots: Vec<(H256, H256)>,
+        account_storage_roots: &mut HashMap<H256, H256>,
         account_storages_snapshots_dir: String,
         mut chunk_index: u64,
-        downloaded_count: &mut u64,
         pivot_header: &mut BlockHeader,
-        block_sync_state: &mut BlockSyncState,
     ) -> Result<u64, PeerHandlerError> {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
@@ -1564,7 +1562,7 @@ impl PeerHandler {
             {
                 let current_account_hashes = account_storage_roots
                     .iter()
-                    .map(|a| a.0)
+                    .map(|a| *a.0)
                     .collect::<Vec<_>>();
                 let current_account_storages = std::mem::take(&mut all_account_storages);
                 all_account_storages = vec![vec![]; account_storage_roots.len()];
@@ -1606,12 +1604,12 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            /*             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.storages_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
                 *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
                 *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            }
+            } */
 
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
@@ -1722,11 +1720,11 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
-                *downloaded_count += account_storages.len() as u64;
+                /*                 *downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
                 if !hash_start.is_zero() {
                     *downloaded_count -= 1;
-                }
+                } */
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1736,9 +1734,7 @@ impl PeerHandler {
 
                 *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
 
-                debug!(
-                    "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
-                );
+                debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
                     "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
                     tasks_queue_not_started.len()
@@ -1859,10 +1855,8 @@ impl PeerHandler {
             }
 
             if block_is_stale(pivot_header) {
-                info!("request_storage_ranges became stale, updating pivot");
-                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
-                    .await
-                    .expect("We should get a new block header");
+                info!("request_storage_ranges became stale, breaking");
+                break;
             }
 
             tokio::spawn(PeerHandler::request_storage_ranges_worker(
@@ -1883,7 +1877,7 @@ impl PeerHandler {
         {
             let current_account_hashes = account_storage_roots
                 .iter()
-                .map(|a| a.0)
+                .map(|a| *a.0)
                 .collect::<Vec<_>>();
             let current_account_storages = std::mem::take(&mut all_account_storages);
 
@@ -1908,11 +1902,11 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
 
-        *METRICS.storages_downloads_tasks_queued.lock().await =
+        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
 
         Ok(chunk_index + 1)
     }
