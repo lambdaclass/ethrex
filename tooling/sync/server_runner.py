@@ -45,9 +45,26 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message(message: str):
+def send_slack_message_failed(message: str):
     try:
-        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
+        message = {"text": message}
+        response = requests.post(
+            webhook_url,
+            data=json.dumps(message),
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code != 200:
+            print(f"Error sending Slack message")
+
+    except Exception as e:
+        print(f"Error sending Slack message: {e}", file=sys.stderr)
+        return
+
+def send_slack_message_success(message: str):
+    try:
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
         message = {"text": message}
         response = requests.post(
             webhook_url,
@@ -98,7 +115,7 @@ def main():
                         print(
                             f"⚠️ Node did not sync within {args.timeout} minutes. Stopping."
                         )
-                        send_slack_message(
+                        send_slack_message_failed(
                             f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Stopping. Log File: {logs_file}_{start_time}.log"
                         )
                         with open("sync_logs.txt", "a") as f:
@@ -108,6 +125,9 @@ def main():
                     result = response.get("result")
                     if result is False:
                         print("✅ Node is fully synced!")
+                        send_slack_message_success(
+                            f"✅ Node on {hostname} is fully synced after {elapsed / 60} minutes! Log File: {logs_file}_{start_time}.log"
+                        )
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
                         break
