@@ -1038,6 +1038,7 @@ impl PeerHandler {
             let free_downloader_channels_clone = free_downloader_channels.clone();
 
             if block_is_stale(pivot_header) {
+                info!("request_account_range became stale, updating pivot");
                 *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
                     .await
                     .expect("Should be able to update pivot")
@@ -1858,6 +1859,7 @@ impl PeerHandler {
             }
 
             if block_is_stale(pivot_header) {
+                info!("request_storage_ranges became stale, updating pivot");
                 *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
                     .await
                     .expect("We should get a new block header");
