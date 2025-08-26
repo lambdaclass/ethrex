@@ -636,7 +636,7 @@
         "defaults": {
           "color": {
             "fixedColor": "purple",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
             "axisBorderShow": false,
@@ -700,6 +700,18 @@
             "matcher": {
               "id": "byName",
               "options": "batch_proving_time (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cumulative mean(batch_proving_time (lastNotNull))"
             },
             "properties": [
               {
@@ -803,6 +815,19 @@
               }
             }
           }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "cumulative": {
+              "field": "batch_proving_time (lastNotNull)",
+              "reducer": "mean"
+            },
+            "mode": "cumulativeFunctions",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
         }
       ],
       "type": "xychart"
@@ -816,7 +841,7 @@
         "defaults": {
           "color": {
             "fixedColor": "red",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
             "axisBorderShow": false,
@@ -874,6 +899,18 @@
             "matcher": {
               "id": "byName",
               "options": "batch_gas_used (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "sishort"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cumulative mean(batch_gas_used (lastNotNull))"
             },
             "properties": [
               {
@@ -975,6 +1012,19 @@
                 "aggregations": [],
                 "operation": "groupby"
               }
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "cumulative": {
+              "field": "batch_gas_used (lastNotNull)",
+              "reducer": "mean"
+            },
+            "mode": "cumulativeFunctions",
+            "reduce": {
+              "reducer": "sum"
             }
           }
         }
@@ -1345,7 +1395,7 @@
         "defaults": {
           "color": {
             "fixedColor": "blue",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1408,6 +1458,22 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "unit",
+                "value": "txs"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cumulative mean(batch_tx_count (lastNotNull))"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "txs"
               }
             ]
           }
@@ -1516,6 +1582,34 @@
                 ],
                 "operation": "aggregate"
               }
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "cumulative": {
+              "field": "batch_tx_count (lastNotNull)",
+              "reducer": "mean"
+            },
+            "mode": "cumulativeFunctions",
+            "reduce": {
+              "include": [
+                "batch_tx_count (lastNotNull)"
+              ],
+              "reducer": "mean"
+            },
+            "replaceFields": false,
+            "unary": {
+              "fieldName": "batch_tx_count (lastNotNull)",
+              "operator": "abs"
+            },
+            "window": {
+              "field": "batch_tx_count (lastNotNull)",
+              "reducer": "mean",
+              "windowAlignment": "centered",
+              "windowSize": 1,
+              "windowSizeMode": "percentage"
             }
           }
         }
@@ -1940,6 +2034,10 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "unit",
+                "value": "blocks"
               }
             ]
           }
@@ -2786,5 +2884,5 @@
   "timezone": "browser",
   "title": "Ethrex L2 - Overview",
   "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091a",
-  "version": 1
+  "version": 2
 }
