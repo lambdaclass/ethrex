@@ -1106,7 +1106,7 @@ impl Store {
                 info!("Added transaction locations for block {i}/{total_blocks}");
 
                 let block_body = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                info!("Encoded block body {i}/{total_blocks}");
+                info!("Encoded block body {i}/{total_blocks}, bytelen: {}", block_body.bytes().len());
 
                 tx.upsert::<Bodies>(hash.into(), block_body)
                     .map_err(StoreError::LibmdbxError)?;
