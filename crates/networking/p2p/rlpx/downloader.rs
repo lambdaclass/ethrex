@@ -6,7 +6,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Node, verify_range};
+use ethrex_trie::{Node, verify_range};
 use keccak_hash::H256;
 use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::sync::mpsc::Sender;
@@ -84,7 +84,7 @@ pub enum DownloaderCallRequest {
     },
     TrieNodes {
         root_hash: H256,
-        paths: Vec<Nibbles>,
+        paths: Vec<Vec<Bytes>>,
     },
 }
 
@@ -287,14 +287,12 @@ impl GenServer for Downloader {
             }
             DownloaderCallRequest::TrieNodes { root_hash, paths } => {
                 let request_id = rand::random();
+                let expected_nodes = paths.len();
                 let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
                     id: request_id,
                     root_hash,
                     // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-                    paths: paths
-                        .iter()
-                        .map(|vec| vec![Bytes::from(vec.encode_compact())])
-                        .collect(),
+                    paths,
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = self.peer_channels.receiver.lock().await;
@@ -307,7 +305,6 @@ impl GenServer for Downloader {
                     debug!("Failed to send message to peer: {err:?}");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
                 }
-                let expected_nodes = paths.len();
                 if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {

@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::Node;
-use rand::{random, seq::SliceRandom};
+use rand::random;
 use spawned_concurrency::tasks::GenServer;
 use tokio::sync::Mutex;
 
@@ -21,14 +21,11 @@ use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
     rlpx::{
-        connection::server::CastMessage,
         downloader::{
             Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
         },
-        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
-        message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
-        snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
+        snap::AccountRangeUnit,
     },
     utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
@@ -95,22 +92,6 @@ impl PeerHandler {
         PeerHandler::new(dummy_peer_table)
     }
 
-    /// Helper method to record a succesful peer response as well as record previous failed responses from other peers
-    /// We make this distinction for snap requests as the data we request might have become stale
-    /// So we cannot know whether a peer returning an empty response is a failure until another peer returns the requested data
-    async fn record_snap_peer_success(&self, succesful_peer_id: H256, mut peer_ids: HashSet<H256>) {
-        // Reward succesful peer
-        self.record_peer_success(succesful_peer_id).await;
-        // Penalize previous peers that returned empty/invalid responses
-        peer_ids.remove(&succesful_peer_id);
-        for peer_id in peer_ids {
-            info!(
-                "[SYNCING] Penalizing peer {peer_id} as it failed to return data cornfirmed as non-stale"
-            );
-            self.record_peer_failure(peer_id).await;
-        }
-    }
-
     // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
     async fn record_peer_success(&self, _peer_id: H256) {}
@@ -149,20 +130,6 @@ impl PeerHandler {
         }
 
         Ok(Some((free_peer_id, free_peer_channel.clone())))
-    }
-
-    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
-        &self,
-        capabilities: &[Capability],
-    ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
-
-        peer_channels.shuffle(&mut rand::rngs::OsRng);
-
-        peer_channels.first().cloned()
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -1360,8 +1327,7 @@ impl PeerHandler {
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
+
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let available_downloader = loop {
                 if let Some(downloader) =
@@ -1371,16 +1337,28 @@ impl PeerHandler {
                 }
             };
 
+            let paths: Vec<Vec<Bytes>> = paths
+                .iter()
+                .map(|vec| vec![Bytes::from(vec.encode_compact())])
+                .collect();
+
+            let peer_id = available_downloader.peer_id();
             match available_downloader
                 .start()
                 .call(DownloaderCallRequest::TrieNodes {
                     root_hash: state_root,
-                    paths: paths.clone(),
+                    paths,
                 })
                 .await
             {
-                Ok(DownloaderCallResponse::TrieNodes(nodes)) => Some(nodes),
-                _ => None,
+                Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
+                    self.record_peer_success(peer_id).await;
+                    Some(nodes)
+                }
+                _ => {
+                    self.record_peer_failure(peer_id).await;
+                    None
+                }
             };
         }
         None
@@ -1396,75 +1374,58 @@ impl PeerHandler {
         state_root: H256,
         paths: BTreeMap<H256, Vec<Nibbles>>,
     ) -> Option<Vec<Node>> {
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
+        let peers_table = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
+        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+            peers_table
+                .iter()
+                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+        );
+
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-                id: request_id,
-                root_hash: state_root,
-                // {acc_path: [path, path, ...]} -> [[acc_path, path, path, ...]]
-                paths: paths
-                    .iter()
-                    .map(|(acc_path, paths)| {
-                        [
-                            vec![Bytes::from(acc_path.0.to_vec())],
-                            paths
-                                .iter()
-                                .map(|path| Bytes::from(path.encode_compact()))
-                                .collect(),
-                        ]
-                        .concat()
-                    })
-                    .collect(),
-                bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
+            let available_downloader = loop {
+                if let Some(downloader) =
+                    self.get_random_available_downloader(&mut downloaders).await
+                {
+                    break downloader;
+                }
+            };
+
+            let paths = paths
+                .iter()
+                .map(|(acc_path, paths)| {
+                    [
+                        vec![Bytes::from(acc_path.0.to_vec())],
+                        paths
+                            .iter()
+                            .map(|path| Bytes::from(path.encode_compact()))
+                            .collect(),
+                    ]
+                    .concat()
+                })
+                .collect();
+
+            let peer_id = available_downloader.peer_id();
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::TrieNodes {
+                    root_hash: state_root,
+                    paths,
+                })
                 .await
             {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
+                Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
+                    self.record_peer_success(peer_id).await;
+                    Some(nodes)
                 }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                self.record_snap_peer_success(peer_id, peer_ids).await;
-                return Some(nodes);
-            }
+                _ => {
+                    self.record_peer_failure(peer_id).await;
+                    None
+                }
+            };
         }
         None
     }
@@ -1490,33 +1451,54 @@ impl PeerHandler {
 
     pub async fn get_block_header(
         &self,
-        peer_channel: &mut PeerChannels,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: HashOrNumber::Number(block_number),
-            limit: 1,
-            skip: 0,
-            reverse: false,
-        });
-        info!("get_block_header: requesting header with number {block_number}");
+        let peers_table = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
 
-        let mut receiver = peer_channel.receiver.lock().await;
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
+        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+            peers_table
+                .iter()
+                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+        );
+
+        let mut scores = self.peer_scores.lock().await;
+        let Some(available_downloader) = self
+            .get_best_available_downloader(&mut scores, &mut downloaders)
             .await
-            .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
+        else {
+            return Err(PeerHandlerError::NoPeers);
+        };
+
+        let peer_id = available_downloader.peer_id();
+        info!(
+            "Trying to update pivot to {block_number} with peer {}",
+            peer_id
+        );
+
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
+
+        available_downloader
+            .start()
+            .cast(DownloaderCastRequest::Headers {
+                task_sender,
+                start_block: block_number,
+                chunk_limit: 1,
+            })
+            .await
+            .map_err(|_| PeerHandlerError::BlockHeaders)?;
 
         let response =
-            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
-                .await;
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                async move { task_receiver.recv().await },
+            )
+            .await;
 
-        // TODO: we need to check, this seems a scenario where the peer channel does teardown
-        // after we sent the backend message
-        let Some(Ok(response)) = response
+        let Some(Ok((block_headers, _peer_id, _start_block, _chunk_limit))) = response
             .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
             .transpose()
         else {
@@ -1524,23 +1506,12 @@ impl PeerHandler {
             return Ok(None);
         };
 
-        match response {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
-                if id == request_id && !block_headers.is_empty() {
-                    return Ok(Some(
-                        block_headers
-                            .last()
-                            .ok_or(PeerHandlerError::BlockHeaders)?
-                            .clone(),
-                    ));
-                }
-            }
-            _other_msgs => {
-                info!("Received unexpected message from peer");
-            }
+        if !block_headers.is_empty() {
+            return Ok(Some(block_headers[0].clone()));
+        } else {
+            warn!("Peer returned empty block headers");
+            return Ok(None);
         }
-
-        Ok(None)
     }
 
     // Creates a Downloader Actor from a random peer

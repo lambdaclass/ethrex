@@ -1,5 +1,4 @@
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
-use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
 };
@@ -1135,38 +1134,14 @@ async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
     loop {
-        let mut scores = peers.peer_scores.lock().await;
-
-        let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
-            .await
-            .map_err(SyncError::PeerHandler)?
-            .ok_or(SyncError::NoPeers)?;
-
-        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
-        info!(
-            "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
-        );
         let Some(pivot) = peers
-            .get_block_header(&mut peer_channel, new_pivot_block_number)
+            .get_block_header(new_pivot_block_number)
             .await
             .map_err(SyncError::PeerHandler)?
         else {
-            // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 1);
-            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
-            warn!(
-                "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
-            );
             continue;
         };
 
-        // Reward peer
-        scores.entry(peer_id).and_modify(|score| {
-            if *score < 10 {
-                *score += 1;
-            }
-        });
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
@@ -1223,8 +1198,6 @@ enum SyncError {
     AccountStoragesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("We aren't finding get_peer_channel_with_retry")]
-    NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
     #[error("Called update_pivot outside snapsync mode")]
