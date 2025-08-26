@@ -562,7 +562,7 @@ impl GenServer for L1Committer {
 
     type Error = CommitterError;
 
-    // Right now we only have the Commit message, so we ignore the message
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
