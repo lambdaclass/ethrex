@@ -1,8 +1,10 @@
 use bytes::Bytes;
+use ethrex_blockchain::get_total_blob_gas;
 use ethrex_blockchain::{Blockchain, BlockchainType, fork_choice::apply_fork_choice};
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, Fork, Receipt, compute_receipts_root, compute_transactions_root,
+    Block, BlockBody, BlockHeader, Fork, Receipt, TxType, compute_receipts_root,
+    compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
 use ethrex_levm::{
@@ -22,8 +24,12 @@ use crate::modules::{
 
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     for test in &tests {
+        println!("Running test group: {}", test.name);
         for test_case in &test.test_cases {
-            single_block_run(test, test_case).await?;
+            let res = single_block_run(test, test_case).await;
+            if let Err(e) = res {
+                println!("Error: {:?}", e);
+            }
         }
     }
 
@@ -31,7 +37,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
 }
 
 pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), RunnerError> {
-    println!("Test name: {}", test.name);
+    // println!("Test name: {}", test.name);
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
     let tracer = LevmCallTracer::disabled();
@@ -46,8 +52,12 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
 
     let report = match execution_result {
         Ok(report) => report,
-        Err(_) => {
-            println!("Error in execution, we don't want to run with SP1.");
+        Err(e) => {
+            if test_case.post.expected_exceptions.is_some() {
+                println!("Error returned and that's okay because it was expected");
+            } else {
+                println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e.to_string());
+            }
             return Ok(());
         }
     };
@@ -59,7 +69,7 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
         report.logs.clone(),
     );
 
-    let transactions = vec![tx];
+    let transactions = vec![tx.clone()];
     let computed_tx_root = compute_transactions_root(&transactions);
     let body = BlockBody {
         transactions,
@@ -69,13 +79,19 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
     let fork = test_case.fork;
     let (excess_blob_gas, blob_gas_used, parent_beacon_block_root, requests_hash) = match fork {
         Fork::Prague | Fork::Cancun => {
+            let blob_gas_used = match tx {
+                ethrex_common::types::Transaction::EIP4844Transaction(blob_tx) => {
+                    Some(get_total_blob_gas(&blob_tx) as u64)
+                }
+                _ => Some(0),
+            };
+
             let excess_blob_gas = Some(
                 test.env
                     .current_excess_blob_gas
                     .unwrap_or_default()
                     .as_u64(),
             );
-            let blob_gas_used = Some(env.block_blob_gas_used.map(|v| v.as_u64()).unwrap_or(0));
             let parent_beacon_block_root = Some(H256::zero());
             let requests_hash = if fork == Fork::Prague {
                 Some(*DEFAULT_REQUESTS_HASH)
