@@ -11,6 +11,7 @@ use std::str::FromStr;
 use ::bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
+    constants::GAS_PER_BLOB,
     types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
 };
 use ethrex_common::{
@@ -280,6 +281,21 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
 pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
     let chain_config = get_chain_config_from_fork(fork);
 
+    let genesis_excess_blob_gas = if let Some(excess_blob_gas) = test.env.current_excess_blob_gas {
+        let schedule = BlobSchedule::default();
+        let target = if *fork == Fork::Cancun {
+            schedule.cancun.target
+        } else if *fork == Fork::Prague {
+            schedule.prague.target
+        } else {
+            panic!("Excess blob gas didn't exist pre-cancun");
+        };
+
+        Some(excess_blob_gas.as_u64() + target as u64 * GAS_PER_BLOB as u64)
+    } else {
+        None
+    };
+
     Genesis {
         alloc: {
             let mut alloc = BTreeMap::new();
@@ -295,7 +311,7 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         // Sure about these?
         gas_limit: test.env.current_gas_limit,
         base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64() * 8).checked_div(7), // This was carefully calculated so that the header doesn't break. But what if base fee per gas is none?
-        excess_blob_gas: None,
+        excess_blob_gas: genesis_excess_blob_gas,
         ..Default::default()
     }
 }
