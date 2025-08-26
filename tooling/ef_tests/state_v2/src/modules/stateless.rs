@@ -77,26 +77,26 @@ pub async fn block_run(test: &Test) -> Result<(), RunnerError> {
             "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
         )
         .unwrap(),
-        coinbase: env.coinbase,
+        coinbase: test.env.current_coinbase,
         state_root: test_case.post.hash,
         transactions_root: computed_tx_root,
         receipts_root: compute_receipts_root(&[receipt]),
         logs_bloom: Default::default(),
-        difficulty: env.difficulty,
+        difficulty: test.env.current_difficulty,
         number: 1, // I think this is correct
-        gas_limit: env.block_gas_limit,
+        gas_limit: test.env.current_gas_limit,
         gas_used: report.gas_used,
-        timestamp: env.timestamp.try_into().unwrap(),
+        timestamp: test.env.current_timestamp.as_u64(),
         extra_data: Bytes::new(),
         prev_randao: env.prev_randao.unwrap_or_default(),
         nonce: 0,
-        base_fee_per_gas: Some(env.base_fee_per_gas.try_into().unwrap()),
+        base_fee_per_gas: test.env.current_base_fee.map(|f| f.as_u64()),
         withdrawals_root: Some(
             H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
                 .unwrap(),
         ),
-        blob_gas_used: Some(env.block_blob_gas_used.map(|v| v.as_u64()).unwrap_or(0)), //TODO: Blob gas used should only be post Cancun
-        excess_blob_gas: env.block_excess_blob_gas.map(|v| v.as_u64()),
+        blob_gas_used: Some(env.block_blob_gas_used.map(|v| v.as_u64()).unwrap_or(0)), //TODO: Blob gas used should only be post Cancun. Also, I think for this I need to do a pre-execution to know blob gas used?
+        excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
         parent_beacon_block_root: Some(H256::zero()),
         requests_hash: Some(*DEFAULT_REQUESTS_HASH),
     };
