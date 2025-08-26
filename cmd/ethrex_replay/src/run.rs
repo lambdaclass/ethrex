@@ -70,7 +70,7 @@ pub async fn run_tx(
 
 /// Returns the input based on whether the feature "l2" is enabled or not.
 /// If the feature is enabled, it includes L2 fields (blob commitment and proof).
-pub fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
+fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
         witness: db,
