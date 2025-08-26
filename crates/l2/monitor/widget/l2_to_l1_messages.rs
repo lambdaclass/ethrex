@@ -285,7 +285,7 @@ impl L2ToL1MessagesTable {
                         token_l1: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(1)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX,
                                 ))?
@@ -294,7 +294,7 @@ impl L2ToL1MessagesTable {
                         token_l2: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(2)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX,
                                 ))?
