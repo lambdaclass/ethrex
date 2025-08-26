@@ -477,11 +477,13 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
 
 /// If the result size is less than needed, pads left with zeros.
 pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
-    let mut padded_result = vec![0u8; m_size];
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "overflow checked with the if condition"
+    )]
     if result.len() < m_size {
-        let size_diff = m_size
-            .checked_sub(result.len())
-            .ok_or(InternalError::Underflow)?;
+        let mut padded_result = vec![0u8; m_size];
+        let size_diff = m_size - result.len();
         padded_result
             .get_mut(size_diff..)
             .ok_or(InternalError::Slicing)?
