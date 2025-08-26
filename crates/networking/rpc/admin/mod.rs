@@ -6,28 +6,28 @@ use std::collections::HashMap;
 
 use crate::{rpc::NodeData, utils::RpcErr};
 mod peers;
-pub use peers::peers;
+pub use peers::{PeerNetwork, ProtocolData, Protocols, RpcPeer, peers};
 
 #[derive(Serialize, Debug)]
-struct NodeInfo {
-    enode: String,
-    enr: String,
-    id: String,
-    ip: String,
-    name: String,
-    ports: Ports,
-    protocols: HashMap<String, Protocol>,
+pub struct NodeInfo {
+    pub enode: String,
+    pub enr: String,
+    pub id: String,
+    pub ip: String,
+    pub name: String,
+    pub ports: Ports,
+    pub protocols: HashMap<String, Protocol>,
 }
 
 #[derive(Serialize, Debug)]
-struct Ports {
-    discovery: u16,
-    listener: u16,
+pub struct Ports {
+    pub discovery: u16,
+    pub listener: u16,
 }
 
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
-enum Protocol {
+pub enum Protocol {
     Eth(ChainConfig),
 }
 

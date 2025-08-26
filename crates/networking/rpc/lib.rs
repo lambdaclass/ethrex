@@ -1,4 +1,4 @@
-pub mod admin;
+mod admin;
 mod authentication;
 pub mod debug;
 mod engine;
@@ -17,6 +17,9 @@ pub use rpc::start_api;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.
+pub use admin::{
+    NodeInfo, PeerNetwork, Ports, Protocol, ProtocolData, Protocols, RpcPeer, node_info, peers,
+};
 pub use eth::{
     filter::{ActiveFilters, clean_outdated_filters},
     gas_price::GasPrice,

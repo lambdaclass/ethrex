@@ -8,39 +8,39 @@ use serde_json::Value;
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
 pub struct RpcPeer {
-    caps: Vec<Capability>,
-    enode: String,
-    id: H256,
-    name: String,
-    network: PeerNetwork,
-    protocols: Protocols,
+    pub caps: Vec<Capability>,
+    pub enode: String,
+    pub id: H256,
+    pub name: String,
+    pub network: PeerNetwork,
+    pub protocols: Protocols,
 }
 
 /// Serializable peer network data returned by the node's rpc
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PeerNetwork {
+pub struct PeerNetwork {
     // We can add more data about the connection here, such the local address, whether the peer is trusted, etc
-    inbound: bool,
-    remote_address: SocketAddr,
+    pub inbound: bool,
+    pub remote_address: SocketAddr,
 }
 
 /// Serializable peer protocols data returned by the node's rpc
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Protocols {
+pub struct Protocols {
     #[serde(skip_serializing_if = "Option::is_none")]
-    eth: Option<ProtocolData>,
+    pub eth: Option<ProtocolData>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    snap: Option<ProtocolData>,
+    pub snap: Option<ProtocolData>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    p2p: Option<ProtocolData>,
+    pub p2p: Option<ProtocolData>,
 }
 
 /// Serializable peer protocol data returned by the node's rpc
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProtocolData {
+pub struct ProtocolData {
     version: u8,
 }
 
