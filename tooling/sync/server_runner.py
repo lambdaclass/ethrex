@@ -116,7 +116,7 @@ def main():
                             f"⚠️ Node did not sync within {args.timeout} minutes. Stopping."
                         )
                         send_slack_message_failed(
-                            f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Stopping. Log File: {logs_file}_{start_time}.log"
+                            f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
                         )
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
@@ -126,7 +126,7 @@ def main():
                     if result is False:
                         print("✅ Node is fully synced!")
                         send_slack_message_success(
-                            f"✅ Node on {hostname} is fully synced after {elapsed / 60} minutes! Log File: {logs_file}_{start_time}.log"
+                            f"✅ Node on {hostname} is fully synced after {elapsed / 60:.2f} minutes! Network: {args.network} Log File: {logs_file}_{start_time}.log"
                         )
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
