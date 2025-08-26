@@ -541,11 +541,12 @@ impl Blockchain {
             log_batch_progress(blocks_len, i);
             tokio::task::yield_now().await;
         }
+        info!("Finished executing batch");
 
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
-
+        info!("Got state transitions");
         let last_block = blocks
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
@@ -553,6 +554,7 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
+        info!("Applying account updates");
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -560,6 +562,7 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+        info!("Applied account updates");
 
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
@@ -568,6 +571,7 @@ impl Blockchain {
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
+        info!("Validated state root");
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
@@ -576,11 +580,12 @@ impl Blockchain {
             receipts: all_receipts,
             code_updates,
         };
-
+        info!("Applying updates to store");
         self.storage
             .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
+        info!("Applied updates to store");
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let mut throughput = 0.0;
