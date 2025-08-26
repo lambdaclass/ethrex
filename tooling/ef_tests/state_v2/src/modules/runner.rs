@@ -9,7 +9,10 @@ use std::{
 
 use ethrex_common::{
     U256,
-    types::{EIP1559Transaction, EIP7702Transaction, Transaction, TxKind},
+    types::{
+        EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
+        LegacyTransaction, Transaction, TxKind,
+    },
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
@@ -141,23 +144,18 @@ pub fn get_vm_env_for_test(
 pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
     let value = test_case.value;
     let data = test_case.data.clone();
+    let nonce = test_case.nonce;
+    let to = test_case.to.clone();
+    let chain_id = 1; // It's actually in the test config but it's always 1 I believe.
     let access_list = test_case
         .access_list
         .iter()
         .map(|list_item| (list_item.address, list_item.storage_keys.clone()))
         .collect();
 
-    let gas_price = test_case.gas_price.unwrap_or_default();
-    // To simplify things, we represent all transactions using only two internal types.
-    // Transactions of type 0 (legacy), 1 (EIP-2930), 2 (EIP-1559), and 3 (EIP-4844) are all
-    // treated as EIP-1559-style transactions.
-    // For type 3 transactions (EIP-4844), which include blobs, the difference is captured via
-    // optional blob-related VM environment variables — these are set to Some() instead of None (check `get_vm_env_for_test()`).
-    // Transactions of type 4 (EIP-7702) are represented using their actual type.
-    // This approach avoids the need to handle five distinct transaction types separately.
-    let mut tx = match &test_case.authorization_list {
-        Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
-            to: match test_case.to {
+    let mut tx = if let Some(list) = &test_case.authorization_list {
+        Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match to {
                 TxKind::Call(to) => to,
                 TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType),
             },
@@ -168,42 +166,70 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
                 .iter()
                 .map(|auth_tuple| auth_tuple.clone().into_authorization_tuple())
                 .collect(),
-            chain_id: 1,
-            nonce: 0,
-            // TODO: I believe this will kinda work because the VM uses them only for validation? But this is dead wrong
-            max_priority_fee_per_gas: test_case
-                .max_priority_fee_per_gas
-                .unwrap_or(gas_price / 10)
-                .as_u64(),
-            max_fee_per_gas: test_case
-                .max_fee_per_gas
-                .unwrap_or(gas_price * 9 / 10)
-                .as_u64(),
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
             gas_limit: test_case.gas,
-            inner_hash: Default::default(),
             ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: test_case.to.clone(),
+        })
+    } else if test_case.max_fee_per_blob_gas.is_some() {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            gas: test_case.gas,
+            to: match to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
+            },
             value,
             data,
             access_list,
-            chain_id: 1,
-            nonce: 0,
-            // TODO: I believe this will kinda work because the VM uses them only for validation? But this is dead wrong
-            max_priority_fee_per_gas: test_case
-                .max_priority_fee_per_gas
-                .unwrap_or(gas_price / 10)
-                .as_u64(),
-            max_fee_per_gas: test_case
-                .max_fee_per_gas
-                .unwrap_or(gas_price * 9 / 10)
-                .as_u64(),
-            gas_limit: test_case.gas,
-            inner_hash: Default::default(),
+            max_fee_per_blob_gas: test_case.max_fee_per_blob_gas.unwrap(),
+            blob_versioned_hashes: test_case.blob_versioned_hashes.clone(),
             ..Default::default()
-        }),
+        })
+    } else if test_case.max_priority_fee_per_gas.is_some() && test_case.max_fee_per_gas.is_some() {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            gas_limit: test_case.gas,
+            to,
+            value,
+            data,
+            access_list,
+            ..Default::default()
+        })
+    } else if !test_case.access_list.is_empty() {
+        // TODO: This will work, ideally Vec<something> should be Option<Vec<something>> so that we can tell if the field exists or not...
+        Transaction::EIP2930Transaction(EIP2930Transaction {
+            chain_id,
+            nonce,
+            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas_limit: test_case.gas,
+            to,
+            value,
+            data,
+            access_list,
+            ..Default::default()
+        })
+    } else {
+        Transaction::LegacyTransaction(LegacyTransaction {
+            nonce,
+            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas: test_case.gas,
+            to,
+            value,
+            data,
+            ..Default::default()
+        })
     };
+
+    // Sign transaction using sender's private key.
     let sk = SecretKey::from_slice(test_case.secret_key.as_bytes()).unwrap();
     let signer = Signer::Local(LocalSigner::new(sk));
     tx.sign_inplace(&signer)

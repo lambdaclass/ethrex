@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType, fork_choice::apply_fork_choice};
+use ethrex_common::H256;
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
     Block, BlockBody, BlockHeader, Receipt, compute_receipts_root, compute_transactions_root,
 };
-use ethrex_common::{Address, H256};
 use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -14,7 +14,6 @@ use std::str::FromStr;
 
 use crate::modules::{
     error::RunnerError,
-    result_check::check_test_case_results,
     runner::{get_tx_from_test_case, get_vm_env_for_test},
     types::Test,
     utils::load_initial_state,
