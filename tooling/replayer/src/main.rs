@@ -64,6 +64,22 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub prove: bool,
+    #[arg(
+        long,
+        short = 'l',
+        value_name = "LEVEL",
+        default_value = "all",
+        help = "Block cache level: off, failed, all (default: all)",
+        help_heading = "Replayer options"
+    )]
+    pub cache_level: CacheLevel,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
+pub enum CacheLevel {
+    Off,
+    Failed,
+    All,
 }
 
 #[tokio::main]
@@ -111,7 +127,14 @@ async fn main() {
 
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
-                    replay_execution(replayer_mode, network, rpc_url, slack_webhook_url).await
+                    replay_execution(
+                        replayer_mode,
+                        network,
+                        rpc_url,
+                        slack_webhook_url,
+                        opts.cache_level,
+                    )
+                    .await
                 });
 
                 replayers_handles.push(handle);
@@ -145,6 +168,7 @@ async fn main() {
                     ),
                 ],
                 slack_webhook_url,
+                opts.cache_level,
             )
             .await
         });
@@ -210,6 +234,7 @@ async fn replay_execution(
     network: Network,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
@@ -222,6 +247,7 @@ async fn replay_execution(
             rpc_url.clone(),
             &eth_client,
             slack_webhook_url.clone(),
+            cache_level,
         )
         .await?;
 
@@ -235,6 +261,7 @@ async fn replay_proving(
     replayer_mode: ReplayerMode,
     rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
 ) -> Result<(), EthClientError> {
     loop {
         let start = SystemTime::now();
@@ -252,6 +279,7 @@ async fn replay_proving(
                 rpc_url.clone(),
                 &eth_client,
                 slack_webhook_url.clone(),
+                cache_level,
             )
             .await?;
         }
@@ -271,6 +299,7 @@ async fn replay_latest_block(
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
 ) -> Result<Duration, EthClientError> {
     let latest_block = eth_client
         .get_block_number()
@@ -331,6 +360,32 @@ async fn replay_latest_block(
         tracing::error!("{block_run_report}");
     } else {
         tracing::info!("{block_run_report}");
+    }
+
+    // Caching logic: In replay every block is cached. So here we decide whether to keep the cache or not
+    match cache_level {
+        CacheLevel::Off => {
+            // We don't want any cache
+            tracing::info!("Deleting cache: Caching is disabled");
+            delete_cache(network, latest_block as u64);
+        }
+        CacheLevel::Failed => {
+            // We only want caches that failed
+            if block_run_report.run_result.is_ok() {
+                tracing::info!(
+                    "Deleting cache: Execution was successful and Cache Level is 'failed'"
+                );
+                delete_cache(network, latest_block as u64);
+            } else {
+                // I prefer to be explicit about keeping the cache file
+                tracing::info!(
+                    "Keeping cache file for block {} on network {} because execution failed.",
+                    latest_block,
+                    network
+                );
+            }
+        }
+        CacheLevel::All => {}
     }
 
     if replayer_mode.is_proving_mode()
@@ -432,6 +487,16 @@ fn shutdown(handles: Vec<JoinHandle<Result<(), EthClientError>>>) {
     for handle in handles {
         if !handle.is_finished() {
             handle.abort();
+        }
+    }
+}
+
+fn delete_cache(network: Network, block_number: u64) {
+    // This file_name is the same used in ethrex_replay, this is a quick and simple solution but not ideal. Be aware that if we decide to change the name we have to do it in both places.
+    let file_name = format!("cache_{network}_{block_number}.json");
+    if let Err(e) = std::fs::remove_file(&file_name) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::error!("Failed to delete cache file {}: {}", file_name, e);
         }
     }
 }
