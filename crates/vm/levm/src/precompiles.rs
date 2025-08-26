@@ -40,6 +40,7 @@ use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
+use std::borrow::Cow;
 use std::ops::Mul;
 
 use crate::{
@@ -450,26 +451,28 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
 
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
+///
+/// Uses Cow so that the best case of no resizing doesn't require an allocation.
 #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-fn get_slice_or_default(
-    calldata: &Bytes,
+fn get_slice_or_default<'c>(
+    calldata: &'c Bytes,
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Vec<u8> {
+) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit) {
         if !data.is_empty() {
             if data.len() == size_to_expand {
-                return data.to_vec();
+                return data.into();
             }
             let mut extended = vec![0u8; size_to_expand];
             let copy_size = size_to_expand.min(data.len());
             extended[..copy_size].copy_from_slice(&data[..copy_size]);
-            return extended;
+            return extended.into();
         }
     }
-    Vec::new()
+    Vec::new().into()
 }
 
 #[allow(clippy::arithmetic_side_effects)]
