@@ -1,8 +1,6 @@
 [workspace]
 members = [
   # Command line tools
-  "cmd/ef_tests/blockchain",
-  "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_replay",
 
@@ -40,6 +38,7 @@ members = [
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
+  "crates/common/config",
 ]
 resolver = "2"
 
@@ -80,6 +79,7 @@ ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
+ethrex-config = { path = "./crates/common/config" }
 
 # ----------------------------------------------------------------------------
 # Core & Infrastructure
@@ -166,6 +166,7 @@ p256 = { version = "0.13.2", features = [
   "arithmetic",
   "expose-field",
 ] }
+k256 = "0.13.4"
 lambdaworks-crypto = "0.11.0"
 lambdaworks-math = "0.11.0"
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [

@@ -29,6 +29,7 @@ ark-ec.workspace = true
 ark-ff.workspace = true
 strum.workspace = true
 malachite.workspace = true
+k256.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

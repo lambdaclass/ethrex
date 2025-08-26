@@ -20,17 +20,12 @@ sha3.workspace = true
 hex.workspace = true
 serde_json.workspace = true
 libmdbx = { workspace = true, optional = true }
-redb = { workspace = true, optional = true }
-# NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
-# We only need the runtime for the blocking databases to spawn blocking tasks
-tokio = { workspace = true, optional = true, default-features = false, features = [
-    "rt",
-] }
+tokio = { workspace = true, optional = true, features = ["rt"] }
+bincode.workspace = true
 
 [features]
 default = []
 libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
-redb = ["dep:redb", "dep:tokio"]
 
 [dev-dependencies]
 hex.workspace = true

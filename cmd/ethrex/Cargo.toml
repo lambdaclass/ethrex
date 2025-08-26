@@ -7,6 +7,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-common.workspace = true
@@ -69,7 +70,6 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
-redb = ["ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]

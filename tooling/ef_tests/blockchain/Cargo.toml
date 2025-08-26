@@ -1,0 +1,34 @@
+[package]
+name = "ef_tests-blockchain"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-prover.workspace = true
+zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
+
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+lazy_static.workspace = true
+tokio = { workspace = true, features = ["full"] }
+datatest-stable.workspace = true
+regex.workspace = true
+
+[lib]
+path = "./lib.rs"
+
+[features]
+default = ["c-kzg", "blst"]
+blst = ["ethrex-vm/blst"]
+c-kzg = ["ethrex-blockchain/c-kzg"]
+revm = []
+
+[[test]]
+name = "all"
+harness = false
