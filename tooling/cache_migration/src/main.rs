@@ -1,6 +1,5 @@
 use clap::Parser;
 use ethrex_replay::cache::load_cache;
-use ethrex_replay::run::get_input;
 use eyre::{Result, WrapErr};
 use rkyv::rancor::Error;
 use std::fs::{self, File};
@@ -94,10 +93,7 @@ fn process_cache_file(json_path: &Path) -> Result<()> {
     let cache = load_cache(json_path.to_str().unwrap())
         .wrap_err_with(|| format!("Failed to load cache from: {}", json_path.display()))?;
 
-    let input = get_input(cache)
-        .wrap_err_with(|| "Failed to convert cache to program input".to_string())?;
-
-    let bytes = rkyv::to_bytes::<Error>(&input).wrap_err("Failed to serialize with rkyv")?;
+    let bytes = rkyv::to_bytes::<Error>(&cache).wrap_err("Failed to serialize with rkyv")?;
 
     let mut file = File::create(&bin_path)
         .wrap_err_with(|| format!("Failed to create output file: {}", bin_path.display()))?;

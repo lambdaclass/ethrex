@@ -1,5 +1,6 @@
 use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -8,7 +9,7 @@ use std::{
 };
 
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub struct L2Fields {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
@@ -16,7 +17,7 @@ pub struct L2Fields {
     pub blob_proof: blobs_bundle::Proof,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitnessResult,

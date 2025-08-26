@@ -34,6 +34,7 @@ eyre.workspace = true
 tokio = { version = "1.21", default-features = false, features = ["full"] }
 clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
+rkyv.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 
