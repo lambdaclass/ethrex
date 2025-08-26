@@ -13,6 +13,7 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
+use tracing::info;
 
 pub use self::db::TrieDB;
 pub use self::logger::{TrieLogger, TrieWitness};
@@ -108,7 +109,7 @@ impl Trie {
             self.root
                 .get_node(self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
+                .insert_with_link(self.db.as_ref(), path, value, None)?
                 .into()
         } else {
             // If the trie is empty, just add a leaf.
@@ -171,8 +172,10 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
+            // info!("VALID ROOT NODE");
             self.root.compute_hash().finalize()
         } else {
+            // info!("EMPTY ROOT NODE");
             *EMPTY_TRIE_HASH
         }
     }
@@ -344,11 +347,16 @@ impl Trie {
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
+            // info!(
+            //     path = hex::encode(&path),
+            //     value = hex::encode(&value),
+            //     "INSERTING"
+            // );
             // Unwraping here won't panic as our in_memory trie DB won't fail
             trie.insert(path, value).unwrap();
         }
 
-        trie.hash_no_commit()
+        trie.collect_changes_since_last_hash().0
     }
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash

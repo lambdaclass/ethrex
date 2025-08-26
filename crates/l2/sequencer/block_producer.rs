@@ -163,8 +163,7 @@ impl BlockProducer {
         let account_updates_list = self
             .store
             .apply_account_updates_batch(block.header.parent_hash, account_updates.clone())
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .await?;
 
         self.blockchain
             .store_block(&block, account_updates_list, execution_result)

@@ -1,4 +1,5 @@
 use ethrex_rlp::structs::Encoder;
+use tracing::info;
 
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
@@ -55,6 +56,7 @@ impl ExtensionNode {
             * Prefix partially matches path
             Extension { prefix, child } -> Extension { prefix[..match], Extension { path[match..] child } } (insert into new extension node)
         */
+        // info!("INSERT TO EXTENSION");
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node

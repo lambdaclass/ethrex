@@ -12,6 +12,7 @@ use ethrex_rlp::{
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use tracing::info;
 
 use crate::{EMPTY_TRIE_HASH, TrieDB, error::TrieError, nibbles::Nibbles};
 
@@ -50,17 +51,21 @@ impl NodeRef {
     }
 
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
-        if !self.hash.is_valid() {
+        if !self.hash.is_valid() && self.value.is_none() {
+            // info!("!VALID, RETURN NONE");
             return Ok(None);
         }
         if let Some(ref node) = self.value {
+            // info!("GOT NODE");
             return Ok(Some(node.as_ref().clone()));
         };
         if let NodeHash::Inline((rlp, len)) = self.hash {
+            // info!("GOT INLINE");
             return <Node as RLPDecode>::decode(&rlp[..len as usize])
                 .map_err(TrieError::RLPDecode)
                 .map(Some);
         }
+        // info!("GET FROM DB");
         db.get(self.handle)
     }
 
@@ -73,19 +78,23 @@ impl NodeRef {
 
     pub fn commit(&mut self, acc: &mut Vec<NodeRef>) -> NodeHash {
         if !self.is_dirty() {
+            // info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
             return self.hash;
         }
         let Some(node) = &mut self.value else {
             // Dirty but no node
-            return NodeHash::Hashed(*EMPTY_TRIE_HASH);
+            // info!("NO NODE");
+            return NodeHash::Inline(([0u8; 31], 0));
         };
         match Arc::make_mut(node) {
             Node::Branch(node) => {
+                // info!("BRANCH");
                 for node in &mut node.choices {
                     node.commit(acc);
                 }
             }
             Node::Extension(node) => {
+                // info!("EXTENSION");
                 // If this extension comes from splitting an older one
                 // the child might actually be clean.
                 node.child.commit(acc);
@@ -115,10 +124,12 @@ impl NodeRef {
         // 3. Node exists but hash is empty => signals dirty, compute.
         let current_hash = self.hash;
         if current_hash.is_valid() {
+            // info!(hash = hex::encode(self.hash.finalize()), "VALID HASH");
             return current_hash;
         }
         let Some(ref node) = self.value else {
-            return NodeHash::Hashed(*EMPTY_TRIE_HASH);
+            // info!("NO VALUE");
+            return NodeHash::Inline(([0u8; 31], 0));
         };
         // FIXME: should update the cache but then I have to deal with mutex
         // or use OnceLock
@@ -221,7 +232,6 @@ impl Node {
         }
     }
 
-    /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         self,
         db: &dyn TrieDB,
@@ -235,6 +245,7 @@ impl Node {
         }
     }
 
+    /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert_with_link(
         self,
         db: &dyn TrieDB,

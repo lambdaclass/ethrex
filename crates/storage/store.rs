@@ -1,13 +1,14 @@
-use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::blob::BlobDbEngine;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::{api::StoreEngine, blob::BlobDbRoTxn};
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
+    BigEndianHash,
     constants::EMPTY_TRIE_HASH,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
@@ -81,7 +82,10 @@ impl Store {
     // Tests and benchmarks only
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
-        let blobdb = Arc::new(BlobDbEngine::open(Option::<&str>::None, 0)?);
+        let blobdb = Arc::new(BlobDbEngine::open(
+            (!_path.is_empty()).then(|| [_path, ".edb"].concat()),
+            0,
+        )?);
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
@@ -195,8 +199,10 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .clone();
         if block_hash == latest.hash() {
+            info!("GOT FROM CACHE");
             return Ok(Some(latest));
         }
+        info!("MISSED CACHE");
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -409,18 +415,26 @@ impl Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(block_header) = self.get_block_header_by_hash(block_hash)? else {
+            info!("FAILED GET HEADER BY HASH");
             return Err(StoreError::Trie(TrieError::InconsistentTree));
         };
         let Some(root_handle) = self
             .engine
             .get_state_trie_root_handle(block_header.state_root)?
         else {
+            info!("FAILED GET STATE ROOT HANDLE");
             return Err(StoreError::Trie(TrieError::InconsistentTree));
         };
         self.blob_engine
             .apply_account_updates(root_handle, account_updates)
             .await
-            .map(Some)
+    }
+
+    pub fn get_state_trie_root_handle(
+        &self,
+        state_root: H256,
+    ) -> Result<Option<NodeHandle>, StoreError> {
+        self.engine.get_state_trie_root_handle(state_root)
     }
 
     // Witness generation
@@ -489,32 +503,39 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut genesis_state_trie = self.open_state_trie(*EMPTY_TRIE_HASH)?;
-        for (address, account) in genesis_accounts {
-            let hashed_address = hash_address(&address);
-            // Store account code (as this won't be stored in the trie)
-            let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code).await?;
-            // Store the account's storage in a clean storage trie and compute its root
-            let mut storage_trie =
-                self.open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
-            for (storage_key, storage_value) in account.storage {
-                if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                }
-            }
-            let storage_root = storage_trie.hash()?;
-            // Add account to trie
-            let account_state = AccountState {
-                nonce: account.nonce,
-                balance: account.balance,
-                storage_root,
-                code_hash,
-            };
-            genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-        }
-        genesis_state_trie.hash().map_err(StoreError::Trie)
+        let account_updates = genesis_accounts
+            .into_iter()
+            .map(|(address, account)| AccountUpdate {
+                address,
+                added_storage: account
+                    .storage
+                    .into_iter()
+                    .map(|(k, v)| (H256::from_uint(&k), v))
+                    .collect(),
+                removed: false,
+                code: Some(account.code.clone()),
+                info: Some(AccountInfo {
+                    code_hash: code_hash(&account.code),
+                    balance: account.balance,
+                    nonce: account.nonce,
+                }),
+            })
+            .collect();
+        let Some(account_updates_list) = self
+            .blob_engine
+            .apply_account_updates(NodeHandle(0), account_updates)
+            .await?
+        else {
+            return Ok(*EMPTY_TRIE_HASH);
+        };
+        self.store_block_updates(UpdateBatch {
+            state_trie_root_hash: account_updates_list.state_trie_root_hash,
+            state_trie_root_handle: account_updates_list.state_trie_root_handle,
+            code_updates: account_updates_list.code_updates,
+            ..Default::default()
+        })
+        .await?;
+        Ok(account_updates_list.state_trie_root_hash)
     }
 
     // Tests only
@@ -561,12 +582,15 @@ impl Store {
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
+        info!("GOT BLOCK");
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
+        info!("HASHED BLOCK");
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
+        info!("SET CHAIN CONFIG");
 
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
@@ -595,9 +619,11 @@ impl Store {
                     .await?
             }
         }
+        info!("GOT LATEST HEADER");
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        info!("SETUP STATE TRIE");
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -1092,6 +1118,9 @@ impl Store {
     /// Doesn't check if the state root is valid
     // Internal methods, archive sync tool, snap sync and some command
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        if state_root == *EMPTY_TRIE_HASH {
+            return Ok(Trie::new(Box::new(BlobDbRoTxn::new_empty())));
+        }
         let root_handle = self
             .engine
             .get_state_trie_root_handle(state_root)?
@@ -1107,6 +1136,9 @@ impl Store {
         state_root: H256,
         account_hash: H256,
     ) -> Result<Trie, StoreError> {
+        if state_root == *EMPTY_TRIE_HASH {
+            return Ok(Trie::new(Box::new(BlobDbRoTxn::new_empty())));
+        }
         let root_handle = self
             .engine
             .get_state_trie_root_handle(state_root)?

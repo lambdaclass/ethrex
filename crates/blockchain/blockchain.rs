@@ -33,6 +33,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use std::collections::HashMap;
+use std::os::macos::raw::stat;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -115,6 +116,11 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
+            info!(
+                parent = hex::encode(block.header.parent_hash),
+                block = hex::encode(block.hash()),
+                "BLOCKCHAIN: PARENT NOT FOUND"
+            );
             self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
@@ -365,16 +371,33 @@ impl Blockchain {
     pub async fn store_block(
         &self,
         block: &Block,
-        account_updates_list: AccountUpdatesList,
+        account_updates_list: Option<AccountUpdatesList>,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
-        validate_state_root(&block.header, account_updates_list.state_trie_root_hash)?;
+        let parent_state_root = self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)?
+            .ok_or(ChainError::ParentStateNotFound)?
+            .state_root;
+        let state_trie_root_hash = account_updates_list
+            .as_ref()
+            .map(|l| l.state_trie_root_hash)
+            .unwrap_or(parent_state_root);
+        validate_state_root(&block.header, state_trie_root_hash)?;
+        let state_trie_root_handle = self
+            .storage
+            .get_state_trie_root_handle(state_trie_root_hash)?
+            .ok_or(ChainError::ParentStateNotFound)?;
 
         let update_batch = UpdateBatch {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
-            code_updates: account_updates_list.code_updates,
+            code_updates: account_updates_list
+                .map(|l| l.code_updates)
+                .unwrap_or_default(),
+            state_trie_root_handle,
+            state_trie_root_hash,
             ..Default::default()
         };
 
@@ -394,8 +417,7 @@ impl Blockchain {
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, updates)
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .await?;
 
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;

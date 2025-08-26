@@ -1,4 +1,5 @@
 use ethrex_rlp::structs::Encoder;
+use tracing::info;
 
 use crate::{
     NodeHandle, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash,
@@ -71,6 +72,7 @@ impl BranchNode {
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
+        // info!("INSERT TO BRANCH");
         if let Some(choice) = path.next_choice() {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)

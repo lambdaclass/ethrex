@@ -31,6 +31,7 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::info;
 
 pub struct Store {
     db: Arc<Database>,
@@ -216,6 +217,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        info!(hash = hex::encode(&block_hash.0), "ADDING BLOCK HEADER");
         self.write::<Headers>(block_hash.into(), block_header.into())
             .await
     }
