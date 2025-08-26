@@ -259,11 +259,7 @@ impl RpcDB {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
 
         // pre-execute and get all state changes
-        let _ = LEVM::execute_block(block, &mut db, self.vm_type)
-            .inspect_err(|e| {
-                println!("Error in executing block:: {e}");
-            })
-            .map_err(Box::new)?;
+        let _ = LEVM::execute_block(block, &mut db, self.vm_type).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
@@ -449,7 +445,6 @@ impl LevmDatabase for RpcDB {
             return Ok(Bytes::new());
         }
         let codes = self.codes.lock().unwrap();
-
         codes.get(&code_hash).cloned().ok_or_else(|| {
             DatabaseError::Custom("Code not found on already fetched accounts".to_string())
         })
