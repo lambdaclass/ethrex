@@ -52,7 +52,7 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 512;
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 256;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
