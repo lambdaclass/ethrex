@@ -72,9 +72,6 @@ jobs:
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
-    outputs:
-      artifact_name: ${{ steps.docker.outputs.artifact_name }}
-      artifact_filename: ${{ steps.docker.outputs.artifact_filename }}
     steps:
       - uses: actions/checkout@v4
       - id: docker
@@ -83,6 +80,11 @@ jobs:
         with:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp/ethrex_image.tar
 
   setup-hive-fork:
     name: "Setup Hive"
@@ -149,12 +151,12 @@ jobs:
       - name: Download etherex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.docker_build.outputs.artifact_name }}
+          name: ethrex_image
           path: /tmp
 
       - name: Load image
         run: |
-          docker load --input /tmp/${{ needs.docker_build.outputs.artifact_filename }}
+          docker load --input /tmp/ethrex_image.tar
 
       - name: Run assertoor
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
@@ -213,7 +215,7 @@ jobs:
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.docker_build.outputs.artifact_name }}
+          name: ethrex_image
           path: /tmp
 
       - name: Download hive artifacts
@@ -223,7 +225,7 @@ jobs:
 
       - name: Load image
         run: |
-          docker load --input /tmp/${{ needs.docker_build.outputs.artifact_filename }}
+          docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1

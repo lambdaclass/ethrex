@@ -54,10 +54,9 @@ jobs:
           ref: main
 
       - name: Build image
+        uses: ./.github/actions/setup-docker
         if: ${{ inputs.job_type != 'main' }}
         with:
-          image_name: ethrex
-          upload_artifact: false
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
 

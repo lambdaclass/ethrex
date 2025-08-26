@@ -1,33 +1,15 @@
-name: "Setup Docker"
-description: "Builds the docker image, optionally logs into dockerhub, and uploads the image as an artifact."
+name: Setup Docker
+description: Builds the Ethrex docker image
 
 inputs:
-  image_name:
-    description: "Name for the docker image"
-    required: false
-    default: "ethrex"
   dockerhub_username:
     description: "Docker Hub username"
     required: false
   dockerhub_token:
     description: "Docker Hub token"
     required: false
-  artifact_name:
-    description: "Name of the artifact to upload"
-    required: false
-    default: "ethrex_image"
-  upload_artifact:
-    description: "Whether to upload the image as an artifact"
-    required: false
-    default: "true"
 
 outputs:
-  artifact_name:
-    description: "The name of the uploaded artifact"
-    value: ${{ steps.vars.outputs.artifact_name }}
-  artifact_filename:
-    description: "The filename of the image tar"
-    value: ${{ steps.vars.outputs.artifact_filename }}
   artifact_path:
     description: "The path of the image tar inside the action runner"
     value: ${{ steps.vars.outputs.artifact_path }}
@@ -38,10 +20,8 @@ runs:
     - id: vars
       shell: bash
       run: |
-        echo "artifact_name=${{ inputs.artifact_name }}" >> $GITHUB_OUTPUT
-        echo "artifact_filename=${{ inputs.artifact_name }}.tar" >> $GITHUB_OUTPUT
-        echo "artifact_path=/tmp/${{ inputs.artifact_name }}.tar" >> $GITHUB_OUTPUT
-        echo "image_tags=${{ inputs.image_name }}:unstable,${{ inputs.image_name }}:latest" >> $GITHUB_OUTPUT
+        echo "artifact_path=/tmp/ethrex.tar" >> $GITHUB_OUTPUT
+        echo "image_tags=ethrex:local" >> $GITHUB_OUTPUT
 
     - name: Login to Docker Hub
       if: inputs.dockerhub_username != '' && inputs.dockerhub_token != ''
@@ -63,10 +43,3 @@ runs:
         outputs: type=docker,dest=${{ steps.vars.outputs.artifact_path }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
-    - name: Upload artifacts
-      if: inputs.upload_artifact == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.vars.outputs.artifact_name }}
-        path: ${{ steps.vars.outputs.artifact_path }}
