@@ -576,7 +576,7 @@ impl SubcommandCache {
                 rpc_url,
                 network,
             } => {
-                let eth_client = EthClient::new(&rpc_url.to_string())?;
+                let eth_client = EthClient::new(rpc_url.as_ref())?;
                 let _ = get_rangedata(eth_client, network, start, end).await?;
                 info!("Block from {start} to {end} data cached successfully.");
             }
