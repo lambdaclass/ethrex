@@ -366,18 +366,18 @@ async fn replay_latest_block(
     match cache_level {
         CacheLevel::Off => {
             // We don't want any cache
-            tracing::info!("Deleting cache: Caching is disabled");
+            tracing::debug!("Deleting cache: Caching is disabled");
             delete_cache(network, latest_block as u64);
         }
         CacheLevel::Failed => {
             // We only want caches that failed
             if block_run_report.run_result.is_ok() {
-                tracing::info!(
+                tracing::debug!(
                     "Deleting cache: Execution was successful and Cache Level is 'failed'"
                 );
                 delete_cache(network, latest_block as u64);
             } else {
-                // I prefer to be explicit about keeping the cache file
+                // I prefer to be explicit about keeping the cache file. Info log level to be clear.
                 tracing::info!(
                     "Keeping cache file for block {} on network {} because execution failed.",
                     latest_block,
