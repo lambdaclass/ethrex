@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-08-26
+
+- Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+
 ### 2025-08-22
 
 - Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
