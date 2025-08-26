@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756211330153,
+  "lastUpdate": 1756212743040,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23506,6 +23506,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.00025736594073545163,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "731ee9453fa35ec885c30768c2f582f1bce62a5c",
+          "message": "chore(l1): move `ef_tests` to `tooling` (#4143)\n\nCloses #3208",
+          "timestamp": "2025-08-26T11:35:49Z",
+          "tree_id": "b88103f5cbaa1c786d1fa37c439893b4cc530f35",
+          "url": "https://github.com/lambdaclass/ethrex/commit/731ee9453fa35ec885c30768c2f582f1bce62a5c"
+        },
+        "date": 1756212724187,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.000255631914893617,
             "unit": "Mgas/s"
           }
         ]
