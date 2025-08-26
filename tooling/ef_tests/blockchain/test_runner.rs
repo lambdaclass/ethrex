@@ -31,12 +31,18 @@ pub fn parse_and_execute(
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
+    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
+    //EIPs should be added as strings in the format 'eip-XXXX'
+    let fusaka_eips_to_test: Vec<&str> = vec![];
 
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
+        let test_eip = test.info.clone().reference_spec.unwrap_or_default();
+
         let should_skip_test = test.network < Network::Merge
-            || test.network > Network::Prague
+            || (test.network > Network::Prague
+                && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip)))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);

@@ -141,6 +141,7 @@ async fn run_with_levm(
         if is_not_specific || is_ignored {
             continue;
         }
+
         if opts.verbose {
             println!("Running test: {:?}", test.name);
         }
