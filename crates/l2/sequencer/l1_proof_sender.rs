@@ -7,6 +7,9 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+use ethrex_metrics::metrics;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
@@ -285,6 +288,15 @@ impl L1ProofSender {
             &self.signer,
         )
         .await?;
+
+        metrics!(
+            let verify_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(verify_tx_hash)
+                .await?
+                .ok_or(ProofSenderError::InternalError("no verify tx receipt".to_string()))?;
+            METRICS.set_batch_verification_gas(batch_number, verify_tx_receipt.receipt.cumulative_gas_used as i64);
+        );
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)

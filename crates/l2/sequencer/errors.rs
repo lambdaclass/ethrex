@@ -9,6 +9,7 @@ use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
+use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
@@ -253,6 +254,8 @@ pub enum CommitterError {
     // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+    #[error("Metrics error")]
+    ExecutionCache(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]

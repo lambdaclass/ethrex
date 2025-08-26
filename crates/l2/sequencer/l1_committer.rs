@@ -164,7 +164,9 @@ impl L1Committer {
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = self.prepare_batch_from_block(*last_block).await?;
+                ) = self
+                    .prepare_batch_from_block(*last_block, batch_to_commit)
+                    .await?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -241,6 +243,7 @@ impl L1Committer {
     async fn prepare_batch_from_block(
         &mut self,
         mut last_added_block_number: BlockNumber,
+        batch_number: u64,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -254,7 +257,10 @@ impl L1Committer {
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
-        let mut _blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut batch_gas_used = 0_u64;
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -298,7 +304,8 @@ impl L1Committer {
                     .len()
                     .try_into()
                     .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                batch_gas_used += block_to_commit_header.gas_used;
             );
             // Get block messages and privileged transactions
             let messages = get_block_l1_messages(&receipts);
@@ -370,7 +377,10 @@ impl L1Committer {
 
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
-            _blob_size = latest_blob_size;
+
+            metrics!(
+                blob_size = latest_blob_size;
+            );
 
             privileged_transactions_hashes.extend(
                 privileged_transactions
@@ -403,7 +413,11 @@ impl L1Committer {
                     });
             }
             #[allow(clippy::as_conversions)]
-            let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            METRICS.set_blob_usage_percentage(blob_usage_percentage);
+            METRICS.set_batch_gas_used(batch_number, batch_gas_used as i64);
+            METRICS.set_batch_size(batch_number, (last_added_block_number - first_block_of_batch) as i64);
+            METRICS.set_batch_tx_count(batch_number, tx_count as i64);
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
         );
 
@@ -527,6 +541,18 @@ impl L1Committer {
 
         let commit_tx_hash =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
+
+        metrics!(
+            let commit_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(commit_tx_hash)
+                .await?
+                .ok_or(CommitterError::InternalError("no verify tx receipt".to_string()))?;
+            METRICS.set_batch_commitment_gas(batch.number, commit_tx_receipt.tx_info.gas_used as i64)?;
+            if !self.validium {
+                METRICS.set_batch_commitment_blob_gas(batch.number, commit_tx_receipt.tx_info.blob_gas_used.unwrap() as i64)?;
+            }
+        );
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
