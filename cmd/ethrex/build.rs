@@ -367,7 +367,6 @@ pub fn update_genesis_file(
     l2_genesis_path: &PathBuf,
     out_dir: &Path,
 ) -> Result<(), SystemContractsUpdaterError> {
-    dbg!(l2_genesis_path);
     let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
         SystemContractsUpdaterError::InvalidPath(
             "Failed to convert l2 genesis path to string".to_string(),
