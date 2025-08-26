@@ -518,7 +518,7 @@ enum SubcommandCache {
         )]
         network: Network,
     },
-    #[command(about = "Proves a range of blocks")]
+    #[command(about = "Cache a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
         start: usize,
