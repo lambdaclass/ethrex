@@ -190,6 +190,10 @@ async fn heal_state_trie(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
                             if account.storage_root != *EMPTY_TRIE_HASH {
+                                info!(
+                                    "Inserting healed account into dirty {account_hash}, {}",
+                                    account.storage_root
+                                );
                                 dirty_accounts.insert(account_hash, account.storage_root);
                             } else {
                                 dirty_accounts.remove(&account_hash);

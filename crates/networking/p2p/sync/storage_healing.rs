@@ -305,6 +305,7 @@ pub async fn heal_storage_trie(
                     trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
+                    state.state_root,
                 ) else {
                     if state.download_queue.len() < 350 {
                         info!(
@@ -456,6 +457,7 @@ fn zip_requeue_node_responses_score_peer(
     trie_nodes: TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
+    state_root: H256,
 ) -> Option<Vec<NodeResponse>> {
     trace!(
         "We are processing the nodes, we received {} nodes from our peer",
@@ -495,7 +497,7 @@ fn zip_requeue_node_responses_score_peer(
                 })?;
 
             if node.compute_hash().finalize() != node_request.hash {
-                error!("this peer {} request {node_request:?}, sent us a valid node with the wrong hash, and the raw node was {node_bytes:?}", request.peer_id);
+                error!("this peer {} request {node_request:?}, for the state_root {state_root}, sent us a valid node with the wrong hash, and the raw node was {node_bytes:?}", request.peer_id);
                 Err(RLPDecodeError::MalformedData)
             } else {
                 Ok(NodeResponse {
