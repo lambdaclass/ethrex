@@ -493,7 +493,7 @@ fn shutdown(handles: Vec<JoinHandle<Result<(), EthClientError>>>) {
 
 fn delete_cache(network: Network, block_number: u64) {
     // This file_name is the same used in ethrex_replay, this is a quick and simple solution but not ideal. Be aware that if we decide to change the name we have to do it in both places.
-    let file_name = format!("cache_{network}_{block_number}.json");
+    let file_name = format!("cache_{network}_{block_number}.bin");
     if let Err(e) = std::fs::remove_file(&file_name) {
         if e.kind() != std::io::ErrorKind::NotFound {
             tracing::error!("Failed to delete cache file {}: {}", file_name, e);
