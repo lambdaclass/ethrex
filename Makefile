@@ -25,7 +25,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex:local .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -62,17 +62,18 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
-LOCALNET_CONFIG_FILE ?= ./fixtures/network/network_params.yaml
+LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
+
+# If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
+localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
 hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
@@ -103,16 +104,13 @@ TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
-# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
-# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
-# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
+# Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
+# The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
+# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber, you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
-# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+# The simulation log level can be set using SIM_LOG_LEVEL (from 1 up to 4).
 
-HIVE_CLIENT_FILE := ../fixtures/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../fixtures/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../fixtures/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../fixtures/hive/clients.yaml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
