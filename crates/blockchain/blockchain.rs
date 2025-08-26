@@ -15,21 +15,23 @@ use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -173,6 +175,7 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
+
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
         let mut touched_account_storage_slots = HashMap::new();
@@ -348,6 +351,33 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
+        // Build account storage root hashes.
+        // NOTE: This is not needed for building `RpcExecutionWitness`.
+        let mut account_storage_root_hashes = HashMap::new();
+        for address in touched_account_storage_slots.keys() {
+            let Some(account_state) = trie.get(&hash_address(address)).map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+            })?
+            else {
+                continue;
+            };
+
+            let AccountState { storage_root, .. } =
+                AccountState::decode(&account_state).map_err(|_| {
+                    ChainError::WitnessGeneration(format!(
+                        "Invalid account state for address: {address:#x}"
+                    ))
+                })?;
+
+            account_storage_root_hashes.insert(*address, storage_root);
+        }
+
+        let mut state_nodes = HashMap::new();
+        for node in trie.into_iter().map(|(_nibble, node)| node.encode_raw()) {
+            let hash = Keccak256::digest(&node);
+            state_nodes.insert(H256::from_slice(hash.as_slice()), node);
+        }
+
         Ok(ExecutionWitnessResult {
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
@@ -359,8 +389,8 @@ impl Blockchain {
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
-            state_nodes: HashMap::new(), // FIXME: Complete
-            account_storage_root_hashes: HashMap::new(), // FIXME: Complete
+            state_nodes,
+            account_storage_root_hashes,
             touched_account_storage_slots,
         })
     }
