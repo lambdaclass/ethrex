@@ -1,3 +1,5 @@
+use ethereum_types::H256;
+
 use crate::{
     PathRLP, Trie, TrieDB, ValueRLP,
     nibbles::Nibbles,
@@ -8,16 +10,22 @@ pub struct TrieIterator {
     db: Box<dyn TrieDB>,
     // The stack contains the current traversed path and the next node to be traversed
     stack: Vec<(Nibbles, NodeRef)>,
+    root: H256,
 }
 
 impl TrieIterator {
     pub(crate) fn new(trie: Trie) -> Self {
+        let root = trie.root.compute_hash().finalize();
         let mut stack = Vec::new();
         if trie.root.is_valid() {
             stack.push((Nibbles::default(), trie.root));
         }
 
-        Self { db: trie.db, stack }
+        Self {
+            db: trie.db,
+            stack,
+            root,
+        }
     }
 }
 
@@ -30,7 +38,18 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
-        let next_node = next_node_ref.get_node(self.db.as_ref()).ok().flatten()?;
+        let next_node = next_node_ref
+            .get_node(self.db.as_ref())
+            .inspect_err(|err| {
+                println!("ERROR trie_iter error {err:?}. Path={path:?}. NextRef={next_node_ref:?}. State root={:x}", self.root)
+            })
+            .inspect(|node| {
+                if node.is_none() {
+                    println!("ERROR trie_iter is_none. Path={path:?}. NextRef={next_node_ref:?}. State root={:x}", self.root)
+                }
+            })
+            .ok()
+            .flatten()?;
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
