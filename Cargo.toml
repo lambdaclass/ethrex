@@ -94,7 +94,6 @@ anyhow = "1.0.86"
 eyre = "0.6.12"
 
 libmdbx = { version = "=0.5.3", features = ["orm"] }
-redb = "=2.4.0"
 libsql = "0.9.10"
 
 tokio = { version = "1.41.1", default-features = false }
