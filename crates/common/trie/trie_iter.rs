@@ -38,7 +38,7 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
-        let next_node = next_node_ref
+        let Some(next_node) = next_node_ref
             .get_node(self.db.as_ref())
             .inspect_err(|err| {
                 println!("ERROR trie_iter error {err:?}. Path={path:?}. NextRef={next_node_ref:?}. State root={:x}", self.root)
@@ -49,7 +49,9 @@ impl Iterator for TrieIterator {
                 }
             })
             .ok()
-            .flatten()?;
+            .flatten() else {
+                return self.next();
+            };
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
