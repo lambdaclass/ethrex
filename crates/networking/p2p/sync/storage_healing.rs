@@ -487,7 +487,7 @@ fn zip_requeue_node_responses_score_peer(
         panic!("The node responded with more data than us!");
     }
 
-    if let Ok(nodes) = request
+    match request
         .requests
         .iter()
         .zip(trie_nodes.nodes.clone())
@@ -508,22 +508,34 @@ fn zip_requeue_node_responses_score_peer(
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
     {
-        if request.requests.len() > nodes_size {
-            download_queue.extend(request.requests.into_iter().skip(nodes_size));
+        Ok(nodes) => {
+            if request.requests.len() > nodes_size {
+                download_queue.extend(request.requests.into_iter().skip(nodes_size));
+            }
+            *succesful_downloads += 1;
+            if peer.score < 10 {
+                peer.score += 1;
+            }
+            Some(nodes)
+        } 
+        Err(RLPDecodeError::MalformedData) => {
+            if download_queue.len() < 350 {
+                info!("This should get logged already {request:?}");
+            }
+            *failed_downloads += 1;
+            peer.score -= 100;
+            download_queue.extend(request.requests);
+            None
         }
-        *succesful_downloads += 1;
-        if peer.score < 10 {
-            peer.score += 1;
+        Err(_) => {
+            if download_queue.len() < 350 {
+                info!("This should get logged already {request:?}");
+            }
+            *failed_downloads += 1;
+            peer.score -= 1;
+            download_queue.extend(request.requests);
+            None
         }
-        Some(nodes)
-    } else {
-        if download_queue.len() < 350 {
-            info!("This should get logged already {request:?}");
-        }
-        *failed_downloads += 1;
-        peer.score -= 1;
-        download_queue.extend(request.requests);
-        None
     }
 }
 
