@@ -182,14 +182,13 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
 
 pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duration, u64) {
     let (blockchain, genesis_block, store) = input;
-    let blockchain = std::sync::Arc::new(blockchain);
     // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
     // which finally calls payload::create_payload(), this mimics this step without
     // the RPC handling. The payload is then sent to `Blockchain` to initiate the payload building
     // Blockchain::initiate_payload_build eventually calls 'fill_transactions'
     // which should take transactions from the previously filled mempool
     let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
-    <Arc<Blockchain> as Clone>::clone(&blockchain)
+    <Arc<Blockchain> as Clone>::clone(blockchain)
         .initiate_payload_build(payload_block, payload_id)
         .await;
     // 2. engine_getPayload is called, this code path ends up calling Blockchain::get_payload(id),
