@@ -240,13 +240,24 @@ pub async fn heal_storage_trie(
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
-            let to_write = nodes_to_write.drain().collect();
+            let to_write: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)> = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            if db_joinset.len() > 0 {
+            if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
+                    to_write.chunks(STORAGE_BATCH_SIZE).for_each(|res| {
+                        println!(
+                            "[Comprehensive Log] Writing to DB {:?}",
+                            res.iter()
+                                .map(|(account, nodes_to_write)| (
+                                    account,
+                                    nodes_to_write.iter().map(|(node_hash, _)| node_hash)
+                                ))
+                                .collect::<Vec<_>>()
+                        );
+                    });
                     store
                         .write_storage_trie_nodes_batch(to_write)
                         .await
@@ -371,6 +382,15 @@ async fn ask_peers_for_nodes(
         };
         let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
+
+        {
+            let peer_id = peer.0;
+            let debug_download_chunk = download_chunk
+                .iter()
+                .map(|node_request| (&node_request.acc_path, &node_request.storage_path))
+                .collect::<Vec<_>>();
+            info!("[Comprehensive Log] Asking peer {peer_id} for {debug_download_chunk:?}",);
+        }
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);
         requests.insert(
@@ -465,6 +485,20 @@ fn zip_requeue_node_responses_score_peer(
         info!("We received a response where we had a missing requests {trie_nodes:?}");
         return None;
     };
+    {
+        let debug_request = request
+            .requests
+            .iter()
+            .map(|node_request| {
+                (
+                    &node_request.acc_path,
+                    &node_request.storage_path,
+                    node_request.hash,
+                )
+            })
+            .collect::<Vec<_>>();
+        info!("[Comprehensive Log] Received the response for the request: {debug_request:?}",);
+    }
     let peer = scored_peers
         .get_mut(&request.peer_id)
         .expect("Each time we request we should add to scored_peeers");
@@ -506,6 +540,12 @@ fn zip_requeue_node_responses_score_peer(
         })
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
     {
+        {
+            let debug_nodes = nodes
+                .iter()
+                .map(|node_response| (&node_response.node_request.acc_path, &node_response.node_request.storage_path, node_response.node.compute_hash().finalize())).collect::<Vec<_>>();
+            info!("[Comprehensive Log] Succesfully downloaded {debug_nodes:?}",);
+        }
         if request.requests.len() > nodes_size {
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
