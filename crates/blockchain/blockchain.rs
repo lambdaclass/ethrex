@@ -146,11 +146,20 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        if block.header.number == 8662966 {
+            info!("Validated Block 8662966")
+        }
         let execution_result = vm.execute_block(block)?;
+        if block.header.number == 8662966 {
+            info!("Executed Block 8662966")
+        }
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if block.header.number == 8662966 {
+            info!("Post-exec Validated block 8662966")
+        }
 
         Ok(execution_result)
     }
@@ -460,6 +469,7 @@ impl Blockchain {
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
+        info!("Executing Batch [{}-{}]", blocks[0].header.number, blocks.last().unwrap().header.number);
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));
@@ -506,6 +516,9 @@ impl Blockchain {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
             };
+            if block.header.number == 8662966 {
+                info!("Found parent for 8662966")
+            }
 
             let BlockExecutionResult { receipts, .. } = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)

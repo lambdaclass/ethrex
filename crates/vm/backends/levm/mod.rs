@@ -27,6 +27,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
+use ::tracing::info;
 use std::cmp::min;
 
 /// The struct implements the following functions:
@@ -44,6 +45,9 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
+        if block.header.number == 8662966 {
+            info!("Prepared Block 8662966")
+        }
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -52,6 +56,9 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            if block.header.number == 8662966 {
+                info!("Executed Block 8662966 TX: {}", tx.hash())
+            }
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -67,6 +74,9 @@ impl LEVM {
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
+        if block.header.number == 8662966 {
+            info!("Processed Withdrawals for Block 8662966")
+        }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
@@ -75,6 +85,9 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2 => Default::default(),
         };
+        if block.header.number == 8662966 {
+            info!("Extracted requests for Block 8662966")
+        }
 
         Ok(BlockExecutionResult { receipts, requests })
     }
