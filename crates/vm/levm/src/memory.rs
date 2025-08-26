@@ -270,7 +270,7 @@ impl Memory {
         let mut buffer = self.buffer.borrow_mut();
 
         // resize ensures bounds are correct
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             buffer
                 .get_unchecked_mut(real_offset..(real_offset.wrapping_add(size)))
