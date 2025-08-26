@@ -2,11 +2,11 @@ use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
 use ethrex_p2p::{kademlia::PeerData, rlpx::p2p::Capability};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Serializable peer data returned by the node's rpc
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RpcPeer {
     pub caps: Vec<Capability>,
     pub enode: String,
@@ -17,7 +17,7 @@ pub struct RpcPeer {
 }
 
 /// Serializable peer network data returned by the node's rpc
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerNetwork {
     // We can add more data about the connection here, such the local address, whether the peer is trusted, etc
@@ -26,7 +26,7 @@ pub struct PeerNetwork {
 }
 
 /// Serializable peer protocols data returned by the node's rpc
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Protocols {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,7 +38,7 @@ pub struct Protocols {
 }
 
 /// Serializable peer protocol data returned by the node's rpc
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolData {
     version: u8,

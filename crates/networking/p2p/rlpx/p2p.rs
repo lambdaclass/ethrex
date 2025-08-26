@@ -12,7 +12,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
 };
 use secp256k1::PublicKey;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
@@ -40,7 +40,7 @@ const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
     padded
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 /// A capability is identified by a short ASCII name (max eight characters) and version number
 pub struct Capability {
     protocol: [u8; CAPABILITY_NAME_MAX_LENGTH],
