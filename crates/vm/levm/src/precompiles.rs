@@ -6,6 +6,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
@@ -376,20 +377,26 @@ pub fn ripemd_160(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VM
 }
 
 /// Returns the result of the module-exponentiation operation
+#[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
 pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = U256::from_big_endian(calldata.get(0..32).ok_or(InternalError::Slicing)?);
-    let exponent_size = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
-    let modulus_size = U256::from_big_endian(calldata.get(64..96).ok_or(InternalError::Slicing)?);
+    // Defer converting to a U256 after the zero check.
+    let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
+    let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
+    const ZERO_BYTES: [u8; 32] = [0u8; 32];
 
-    if base_size == U256::zero() && modulus_size == U256::zero() {
+    if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
 
         return Ok(Bytes::new());
     }
+
+    let base_size = u256_from_big_endian_const::<32>(calldata[0..32].try_into()?);
+    let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
+    let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
 
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
     let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
@@ -408,15 +415,15 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .checked_add(exponent_limit)
         .ok_or(InternalError::Overflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
     let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
 
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
     let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
 
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
     let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
 
@@ -443,23 +450,26 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
 
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
+#[expect(clippy::indexing_slicing, reason = "bounds checked")]
 fn get_slice_or_default(
     calldata: &Bytes,
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Result<Vec<u8>, VMError> {
+) -> Vec<u8> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit) {
         if !data.is_empty() {
-            let mut extended = vec![0u8; size_to_expand];
-            for (dest, data) in extended.iter_mut().zip(data.iter()) {
-                *dest = *data;
+            if data.len() == size_to_expand {
+                return data.to_vec();
             }
-            return Ok(extended);
+            let mut extended = vec![0u8; size_to_expand];
+            let copy_size = size_to_expand.min(data.len());
+            extended[..copy_size].copy_from_slice(&data[..copy_size]);
+            return extended;
         }
     }
-    Ok(Default::default())
+    Vec::new()
 }
 
 #[allow(clippy::arithmetic_side_effects)]
