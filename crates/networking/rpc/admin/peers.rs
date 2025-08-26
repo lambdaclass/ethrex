@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Serializable peer data returned by the node's rpc
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RpcPeer {
     pub caps: Vec<Capability>,
     pub enode: String,
@@ -17,7 +17,7 @@ pub struct RpcPeer {
 }
 
 /// Serializable peer network data returned by the node's rpc
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerNetwork {
     // We can add more data about the connection here, such the local address, whether the peer is trusted, etc
@@ -26,7 +26,7 @@ pub struct PeerNetwork {
 }
 
 /// Serializable peer protocols data returned by the node's rpc
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Protocols {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,7 +38,7 @@ pub struct Protocols {
 }
 
 /// Serializable peer protocol data returned by the node's rpc
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolData {
     version: u8,
