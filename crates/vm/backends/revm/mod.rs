@@ -179,17 +179,6 @@ impl REVM {
             *SYSTEM_ADDRESS,
         )?;
 
-        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account_info =
-            Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
-        if account_info.is_empty_code_hash() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
-
         match tx_result {
             ExecutionResult::Success {
                 gas_used: _,
@@ -223,17 +212,6 @@ impl REVM {
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
         )?;
-
-        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let account_info =
-            Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
-        if account_info.is_empty_code_hash() {
-            return Err(EvmError::SystemContractEmpty(
-                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
-            ));
-        }
 
         match tx_result {
             ExecutionResult::Success {
