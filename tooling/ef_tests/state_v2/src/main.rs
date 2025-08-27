@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use clap::Parser;
 use ef_tests_statev2::modules::{
     error::RunnerError,
