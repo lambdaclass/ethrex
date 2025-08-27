@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756322989013,
+  "lastUpdate": 1756325839303,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10375,6 +10375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161753356115,
             "range": "± 216767237",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e019531dfdc25fb92e0413213d72eb9e7c2171f4",
+          "message": "feat(l2): deposit rich accounts by default (#4184)\n\n**Motivation**\n\nCurrently, running `ethrex l2 --dev` doesn't make deposits because\n`../../fixtures/keys/private_keys_l1.txt` can't be found at runtime.\n\n**Description**\n\nEmbeds the contents of `private_keys_l1.txt` into the binary and uses\nthem when the `deposit_rich` flag is set without a private key path\nspecified.\n\nCloses None",
+          "timestamp": "2025-08-27T19:25:22Z",
+          "tree_id": "68622f52167242d73e4dd16b5dcd4e6c91872e41",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e019531dfdc25fb92e0413213d72eb9e7c2171f4"
+        },
+        "date": 1756325823319,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163098719524,
+            "range": "± 461188245",
             "unit": "ns/iter"
           }
         ]
