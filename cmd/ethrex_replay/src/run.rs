@@ -24,7 +24,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
     catch_unwind(AssertUnwindSafe(|| {
         ethrex_prover_lib::prove(backend, input, ProofFormat::Groth16)
-            .map_err(|e| eyre::Error::msg(e.to_string()))?;
+            .map_err(|e| eyre::Error::msg(e.to_string()))
     }))
     .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
     Ok(())
