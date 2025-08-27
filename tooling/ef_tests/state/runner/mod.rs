@@ -61,7 +61,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
-        default_value = "Merge,Shanghai,Cancun,Prague"
+        default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
     /// For running specific .json files
@@ -141,7 +141,6 @@ async fn run_with_levm(
         if is_not_specific || is_ignored {
             continue;
         }
-
         if opts.verbose {
             println!("Running test: {:?}", test.name);
         }

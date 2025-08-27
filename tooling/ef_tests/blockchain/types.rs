@@ -52,7 +52,7 @@ pub struct Info {
     pub source_hash: Option<H256>,
     // These fields are implemented in the new version of the test vectors (Prague).
     #[serde(rename = "hash", default)]
-    pub hash: Option<H256>,
+    pub hash: Option<String>,
     #[serde(rename = "filling-transition-tool", default)]
     pub filling_transition_tool: Option<String>,
     #[serde(default)]
