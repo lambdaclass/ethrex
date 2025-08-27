@@ -594,16 +594,18 @@ impl GenServer for L1Committer {
             let commit_time_ms: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time_ms - self.last_committed_batch_timestamp > commit_time_ms;
-
-            if should_send_commitment
-                && self
+            #[allow(clippy::collapsible_if)]
+            if should_send_commitment {
+                if self
                     .commit_next_batch_to_l1()
                     .await
                     .inspect_err(|e| error!("L1 Committer Error: {e}"))
                     .is_ok()
-            {
-                self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time_ms);
-                self.last_committed_batch = current_last_committed_batch + 1;
+                {
+                    self.last_committed_batch_timestamp =
+                        system_now_ms().unwrap_or(current_time_ms);
+                    self.last_committed_batch = current_last_committed_batch + 1;
+                }
             }
         }
         let check_interval = random_duration(self.committer_wake_up_ms);
