@@ -15,6 +15,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
 use rand::random;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
@@ -590,16 +591,19 @@ fn get_initial_downloads(
     state_root: H256,
     account_paths: &HashSet<H256>,
 ) -> VecDeque<NodeRequest> {
-    let trie = store.open_state_trie(state_root).unwrap();
+    let trie = store.open_locked_state_trie(state_root).unwrap();
     account_paths
-        .iter()
+        .par_iter()
         .filter_map(|acc_path| {
             let rlp = trie
                 .get(&acc_path.to_fixed_bytes().to_vec())
                 .unwrap()
                 .unwrap();
             let account = AccountState::decode(&rlp).unwrap();
-            if store.contains_storage_node(*acc_path, account.storage_root).unwrap() {
+            if store
+                .contains_storage_node(*acc_path, account.storage_root)
+                .unwrap()
+            {
                 return None;
             }
             Some(NodeRequest {
