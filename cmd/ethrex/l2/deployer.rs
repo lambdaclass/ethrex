@@ -952,9 +952,9 @@ async fn make_deposits(
     };
 
     let pks = if let Some(path) = &opts.private_keys_file_path {
-        read_to_string(path).map_err(|_| DeployerError::FailedToGetStringFromPath)?
+        &read_to_string(path).map_err(|_| DeployerError::FailedToGetStringFromPath)?
     } else {
-        LOCAL_DEVNET_PRIVATE_KEYS.to_string()
+        LOCAL_DEVNET_PRIVATE_KEYS
     };
 
     let private_keys: Vec<String> = pks
