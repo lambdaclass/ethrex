@@ -5,6 +5,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
+    sync::AccountStorageRoots,
     sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     utils::current_unix_time,
 };
@@ -152,14 +153,14 @@ pub struct NodeRequest {
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
-    storage_accounts: &HashSet<H256>,
+    storage_accounts: &AccountStorageRoots,
     peers: PeerHandler,
     store: Store,
     membatch: Membatch,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> bool {
-    let download_queue = get_initial_downloads(&store, state_root, &storage_accounts);
+    let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
         download_queue.len()
@@ -589,33 +590,58 @@ fn process_node_responses(
 fn get_initial_downloads(
     store: &Store,
     state_root: H256,
-    account_paths: &HashSet<H256>,
+    account_paths: &AccountStorageRoots,
 ) -> VecDeque<NodeRequest> {
     let trie = store
         .open_state_trie(state_root)
         .expect("We should be able to open the store");
-    account_paths
-        .par_iter()
-        .filter_map(|acc_path| {
-            let rlp = trie
-                .get(&acc_path.to_fixed_bytes().to_vec())
-                .expect("We should be able to open the store")
-                .expect("This account should exist in the trie");
-            let account = AccountState::decode(&rlp).expect("We should have a valid account");
-            if store
-                .contains_storage_node(*acc_path, account.storage_root)
-                .expect("We should be able to open the store")
-            {
-                return None;
-            }
-            Some(NodeRequest {
-                acc_path: Nibbles::from_bytes(&acc_path.0),
-                storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                parent: Nibbles::default(),
-                hash: account.storage_root,
+    let mut initial_requests: VecDeque<NodeRequest> = VecDeque::new();
+    initial_requests.extend(
+        account_paths
+            .healed_accounts
+            .par_iter()
+            .filter_map(|acc_path| {
+                let rlp = trie
+                    .get(&acc_path.to_fixed_bytes().to_vec())
+                    .expect("We should be able to open the store")
+                    .expect("This account should exist in the trie");
+                let account = AccountState::decode(&rlp).expect("We should have a valid account");
+                if store
+                    .contains_storage_node(*acc_path, account.storage_root)
+                    .expect("We should be able to open the store")
+                {
+                    return None;
+                }
+                Some(NodeRequest {
+                    acc_path: Nibbles::from_bytes(&acc_path.0),
+                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
+                    parent: Nibbles::default(),
+                    hash: account.storage_root,
+                })
             })
-        })
-        .collect()
+            .collect::<VecDeque<_>>(),
+    );
+    initial_requests.extend(
+        account_paths
+            .accounts_with_storage_root
+            .par_iter()
+            .filter_map(|(acc_path, storage_root)| {
+                if store
+                    .contains_storage_node(*acc_path, *storage_root)
+                    .expect("We should be able to open the store")
+                {
+                    return None;
+                }
+                Some(NodeRequest {
+                    acc_path: Nibbles::from_bytes(&acc_path.0),
+                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
+                    parent: Nibbles::default(),
+                    hash: *storage_root,
+                })
+            })
+            .collect::<VecDeque<_>>(),
+    );
+    initial_requests
 }
 
 /// Returns the full paths to the node's missing children and grandchildren

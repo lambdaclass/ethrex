@@ -796,7 +796,7 @@ impl Syncer {
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
         let mut pivot_is_stale = true;
-        let mut storage_accounts = HashSet::new();
+        let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
                 .request_account_range(
@@ -846,11 +846,13 @@ impl Syncer {
                 let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                     account_states_snapshot.iter().cloned().unzip();
 
-                storage_accounts.extend(
+                storage_accounts.accounts_with_storage_root.extend(
                     account_hashes
                         .iter()
                         .zip(account_states.iter())
-                        .filter_map(|(hash, state)| (state.storage_root != empty).then_some(*hash)),
+                        .filter_map(|(hash, state)| {
+                            (state.storage_root != empty).then_some((*hash, state.storage_root))
+                        }),
                 );
 
                 chunk_index = self
@@ -1241,6 +1243,17 @@ async fn update_pivot(
         }
         return Ok((pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12)));
     }
+}
+
+#[derive(Debug, Default)]
+/// We store for optimization the accounts that need to heal storage
+pub struct AccountStorageRoots {
+    /// The accounts that have not been healed are guaranteed to have the original storage root
+    /// we can read this storage root
+    pub accounts_with_storage_root: HashMap<H256, H256>,
+    /// If an account has been healed, it may return to a previous state, so we just store the account
+    /// in a hashset
+    pub healed_accounts: HashSet<H256>,
 }
 
 #[derive(thiserror::Error, Debug)]

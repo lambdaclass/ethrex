@@ -24,6 +24,7 @@ use crate::{
     kademlia::PeerChannels,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    sync::AccountStorageRoots,
     utils::current_unix_time,
 };
 
@@ -50,7 +51,7 @@ pub async fn heal_state_trie_wrap(
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    storage_accounts: &mut HashSet<H256>,
+    storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -85,7 +86,7 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
-    storage_accounts: &mut HashSet<H256>,
+    storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -190,8 +191,11 @@ async fn heal_state_trie(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
                             if account.storage_root != *EMPTY_TRIE_HASH {
-                                storage_accounts.insert(account_hash);
+                                storage_accounts.healed_accounts.insert(account_hash);
                             }
+                            storage_accounts
+                                .accounts_with_storage_root
+                                .remove(&account_hash);
                         }
                     }
                     leafs_healed += nodes
