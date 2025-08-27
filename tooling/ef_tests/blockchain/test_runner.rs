@@ -47,10 +47,14 @@ pub fn parse_and_execute(
 
         let should_skip_test = test.network < Network::Merge
             || (test.network > Network::Prague
-                && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
-                && !hashes_of_fusaka_tests_to_run
-                    .iter()
-                    .any(|hash| *hash == test.info.hash.clone().unwrap()))
+                && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+                    && !hashes_of_fusaka_tests_to_run
+                        .iter()
+                        .any(|hash| *hash == test.info.hash.clone().unwrap())
+                    || match evm {
+                        EvmEngine::LEVM => false,
+                        EvmEngine::REVM => true,
+                    }))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
