@@ -41,13 +41,33 @@ def parse_args():
     parser.add_argument(
         "--timeout", type=int, default=60, help="Timeout in minutes (default: 60)"
     )
+    parser.add_argument(
+        "--no-monitor", action="store_true", help="Whether we should restart after success/failure"
+    )
 
     return parser.parse_args()
 
 
-def send_slack_message(message: str):
+def send_slack_message_failed(message: str):
     try:
-        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
+        message = {"text": message}
+        response = requests.post(
+            webhook_url,
+            data=json.dumps(message),
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code != 200:
+            print(f"Error sending Slack message")
+
+    except Exception as e:
+        print(f"Error sending Slack message: {e}", file=sys.stderr)
+        return
+
+def send_slack_message_success(message: str):
+    try:
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
         message = {"text": message}
         response = requests.post(
             webhook_url,
@@ -91,6 +111,9 @@ def main():
             subprocess.run(
                 command + [f"LOGS_FILE={logs_file}_{start_time}.log"], check=True
             )
+            if args.no_monitor:
+                print("No monitor flag set, exiting.")
+                break
             while True:
                 try:
                     elapsed = time.time() - start_time
@@ -98,8 +121,8 @@ def main():
                         print(
                             f"⚠️ Node did not sync within {args.timeout} minutes. Stopping."
                         )
-                        send_slack_message(
-                            f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Stopping. Log File: {logs_file}_{start_time}.log"
+                        send_slack_message_failed(
+                            f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
                         )
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
@@ -108,6 +131,9 @@ def main():
                     result = response.get("result")
                     if result is False:
                         print("✅ Node is fully synced!")
+                        send_slack_message_success(
+                            f"✅ Node on {hostname} is fully synced after {elapsed / 60:.2f} minutes! Network: {args.network} Log File: {logs_file}_{start_time}.log"
+                        )
                         with open("sync_logs.txt", "a") as f:
                             f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
                         break
