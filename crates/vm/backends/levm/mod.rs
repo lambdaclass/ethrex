@@ -43,6 +43,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
+        dbg!("Inside execute block");
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
