@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756330833566,
+  "lastUpdate": 1756331134565,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10435,6 +10435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162562490766,
             "range": "± 220473574",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc38e604f066ec8366277de499a479138e010f8c",
+          "message": "perf(levm): adjust memory resize (#4177)\n\nCurrent memory resize is overly eager, tune it to resize to multiples of\n64 instead, this avoids really small allocations while not over\nallocating, since we require to zero the allocated bytes, it can be\nexpensive to overallocate\n\n<img width=\"1361\" height=\"1259\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/f56a217d-c78b-492d-bf50-137df830a570\"\n/>",
+          "timestamp": "2025-08-27T20:50:41Z",
+          "tree_id": "0b7b4c5d55036f8567e6efd165e61545ce022ee6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dc38e604f066ec8366277de499a479138e010f8c"
+        },
+        "date": 1756331030596,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161950926444,
+            "range": "± 291517440",
             "unit": "ns/iter"
           }
         ]
