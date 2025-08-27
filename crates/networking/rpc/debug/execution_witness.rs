@@ -2,16 +2,13 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, serde_utils,
+    serde_utils,
     types::{
-        AccountState, BlockHeader, ChainConfig,
+        BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::hash_address;
-use ethrex_trie::{NodeHash, Trie};
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -44,25 +41,9 @@ pub struct RpcExecutionWitness {
 
 impl From<ExecutionWitnessResult> for RpcExecutionWitness {
     fn from(value: ExecutionWitnessResult) -> Self {
-        let mut keys = Vec::new();
-
-        let touched_account_storage_slots = value.touched_account_storage_slots;
-
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(Bytes::from(address.as_bytes().to_vec()));
-            for slot in touched_storage_slots.iter() {
-                keys.push(Bytes::from(slot.as_bytes().to_vec()));
-            }
-        }
-
         Self {
-            state: value
-                .state_nodes
-                .values()
-                .cloned()
-                .map(Into::into)
-                .collect(),
-            keys,
+            state: value.state_trie_nodes,
+            keys: value.keys,
             codes: value.codes.values().cloned().collect(),
             headers: value
                 .block_headers
@@ -107,52 +88,15 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
-    let mut state_nodes = HashMap::new();
-    for node in rpc_witness.state.into_iter() {
-        state_nodes.insert(keccak(&node), node.to_vec());
-    }
-
-    let state_trie = Trie::from_nodes(
-        NodeHash::Hashed(parent_header.state_root),
-        state_nodes
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (NodeHash::Hashed(k), v))
-            .collect(),
-    )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))?;
-
-    let mut account_storage_root_hashes = HashMap::new();
-    for address in rpc_witness
-        .keys
-        .iter()
-        .filter(|key| key.len() == Address::len_bytes())
-        .map(|key| Address::from_slice(key))
-    {
-        let Ok(Some(account_state)) = state_trie.get(&hash_address(&address)) else {
-            continue;
-        };
-
-        let AccountState { storage_root, .. } =
-            AccountState::decode(&account_state).map_err(|_| {
-                ExecutionWitnessError::RebuildTrie(format!(
-                    "Invalid account state for address: {address:#x}"
-                ))
-            })?;
-
-        account_storage_root_hashes.insert(address, storage_root);
-    }
-
     let mut witness = ExecutionWitnessResult {
+        state_trie_nodes: rpc_witness.state,
+        keys: rpc_witness.keys,
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
         storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
-        state_nodes,
-        account_storage_root_hashes,
-        touched_account_storage_slots: HashMap::new(),
     };
 
     witness.rebuild_state_trie()?;
