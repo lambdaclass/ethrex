@@ -512,6 +512,7 @@ impl StoreEngine for Store {
         }
         tracing::info!("Have {counter} pending blocks in store");
         txn.clear_table::<PendingBlocks>().unwrap();
+        txn.commit().unwrap();
         tracing::info!("Cleared Pending blocks");
         match self
             .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
