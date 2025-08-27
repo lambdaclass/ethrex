@@ -386,6 +386,18 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         return Ok(Bytes::new());
     }
 
+    if base_size > U256::from(1024)
+        || exponent_size > U256::from(1024)
+        || modulus_size > U256::from(1024)
+    {
+        // Since Osaka if any of these inputs are larger than the limit, the precompile execution stops, returns an error, and consumes all gas
+        *gas_remaining = 0;
+
+        return Err(VMError::ExceptionalHalt(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        )));
+    }
+
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
     let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let exponent_size =
