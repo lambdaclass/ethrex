@@ -30,6 +30,7 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use tracing::info;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -494,6 +495,15 @@ impl StoreEngine for Store {
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+
+    let stat = self.db.stat().unwrap();
+    info!("Page size: {}", stat.page_size());
+    info!("Tree depth: {}", stat.depth());
+    info!("Branch pages: {}", stat.branch_pages());
+    info!("Leaf pages: {}", stat.leaf_pages());
+    info!("Overflow pages: {}", stat.overflow_pages());
+    info!("Entries: {}", stat.entries());
+
         let txn = self.db.begin_readwrite().unwrap();
         let mut cursor = txn.cursor::<PendingBlocks>().unwrap();
         let mut counter = 0;
