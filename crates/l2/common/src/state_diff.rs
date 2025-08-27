@@ -210,7 +210,7 @@ impl StateDiff {
         let mut modified_accounts = BTreeMap::new();
         for _ in 0..modified_accounts_len {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
-                StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
+                StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
             )?;
             let (bytes_read, address, account_diff) = AccountStateDiff::decode(next_bytes)?;
             decoder.advance(bytes_read);
