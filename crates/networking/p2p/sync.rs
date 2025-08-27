@@ -24,6 +24,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::cell::OnceCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::{
     array,
@@ -795,7 +796,7 @@ impl Syncer {
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
         let mut pivot_is_stale = true;
-        let mut dirty_accounts = HashMap::new();
+        let mut storage_accounts = HashSet::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             self.peers
                 .request_account_range(
@@ -845,17 +846,16 @@ impl Syncer {
                 let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                     account_states_snapshot.iter().cloned().unzip();
 
-                dirty_accounts.extend(account_hashes.iter().zip(account_states.iter()).filter_map(
-                    |(hash, state)| {
-                        (state.storage_root != empty).then_some((*hash, state.storage_root))
-                    },
-                ));
+                storage_accounts.extend(account_hashes.iter());
 
                 chunk_index = self
                     .peers
                     .request_storage_ranges(
                         state_root,
-                        dirty_accounts.iter().map(|(k, v)| (*k, *v)).collect(),
+                        account_states_snapshot
+                            .iter()
+                            .map(|(k, v)| (*k, v.storage_root))
+                            .collect(),
                         account_storages_snapshots_dir.clone(),
                         chunk_index,
                         &mut downloaded_account_storages,
@@ -1029,7 +1029,7 @@ impl Syncer {
                     &self.peers,
                     staleness_timestamp,
                     &mut global_state_leafs_healed,
-                    &mut dirty_accounts,
+                    &mut storage_accounts,
                 )
                 .await?;
                 if !healing_done {
@@ -1037,7 +1037,7 @@ impl Syncer {
                 }
                 healing_done = heal_storage_trie(
                     pivot_header.state_root,
-                    &dirty_accounts,
+                    &storage_accounts,
                     self.peers.clone(),
                     store.clone(),
                     HashMap::new(),
@@ -1045,23 +1045,6 @@ impl Syncer {
                     &mut global_storage_leafs_healed,
                 )
                 .await;
-                dirty_accounts.retain(|hashed_address, storage_root| {
-                    !store
-                        .contains_storage_node(*hashed_address, *storage_root)
-                        .expect("store error")
-                });
-            }
-            if !dirty_accounts.is_empty() {
-                error!("Some ({})  accounts are still dirty.", dirty_accounts.len());
-                let trie = store.open_state_trie(pivot_header.state_root).unwrap();
-                for (account, root) in dirty_accounts {
-                    let path = Nibbles::from_bytes(&account.0).encode_to_vec();
-                    let state = AccountState::decode(&trie.get(&path).unwrap().unwrap()).unwrap();
-                    error!(
-                        "Remaining dirty: account {account:?} expected root {root:?} got {:?}",
-                        state.storage_root
-                    );
-                }
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
             validate_state_root(store.clone(), pivot_header.state_root).await;

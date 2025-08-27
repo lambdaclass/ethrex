@@ -10,7 +10,7 @@
 
 use std::{
     cmp::min,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -50,7 +50,7 @@ pub async fn heal_state_trie_wrap(
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    dirty_accounts: &mut HashMap<H256, H256>,
+    storage_accounts: &mut HashSet<H256>,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -62,7 +62,7 @@ pub async fn heal_state_trie_wrap(
             staleness_timestamp,
             global_leafs_healed,
             HashMap::new(),
-            dirty_accounts,
+            storage_accounts,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -85,7 +85,7 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
-    dirty_accounts: &mut HashMap<H256, H256>,
+    storage_accounts: &mut HashSet<H256>,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -190,9 +190,7 @@ async fn heal_state_trie(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
                             if account.storage_root != *EMPTY_TRIE_HASH {
-                                dirty_accounts.insert(account_hash, account.storage_root);
-                            } else {
-                                dirty_accounts.remove(&account_hash);
+                                storage_accounts.insert(account_hash);
                             }
                         }
                     }
