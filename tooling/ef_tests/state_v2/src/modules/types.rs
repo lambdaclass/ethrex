@@ -310,7 +310,6 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         difficulty: U256::zero(),
         timestamp: 0,
         config: chain_config,
-        // Sure about these?
         gas_limit: test.env.current_gas_limit,
         base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64()
             * BASE_FEE_MAX_CHANGE_DENOMINATOR as u64)

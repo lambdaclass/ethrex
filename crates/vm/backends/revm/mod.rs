@@ -18,9 +18,8 @@ use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use revm::db::AccountStatus;
 use revm::db::states::bundle_state::BundleRetention;
 
-use revm::{Database, DatabaseCommit};
 use revm::{
-    Evm,
+    DatabaseCommit, Evm,
     primitives::{B256, BlobExcessGasAndPrice, BlockEnv, TxEnv},
 };
 use revm_inspectors::access_list::AccessListInspector;
@@ -157,16 +156,7 @@ impl REVM {
         )?;
         Ok(())
     }
-    fn system_contract_account_info(
-        addr: Address,
-        state: &mut EvmState,
-    ) -> Result<revm_primitives::AccountInfo, EvmError> {
-        let revm_addr = RevmAddress::from_slice(addr.as_bytes());
-        let account_info = state.inner.basic(revm_addr)?.ok_or(EvmError::DB(
-            "System contract address was not found after deployment".to_string(),
-        ))?;
-        Ok(account_info)
-    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,

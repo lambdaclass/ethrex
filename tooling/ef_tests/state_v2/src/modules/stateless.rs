@@ -3,8 +3,7 @@ use ethrex_blockchain::get_total_blob_gas;
 use ethrex_blockchain::{Blockchain, BlockchainType, fork_choice::apply_fork_choice};
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, Fork, Receipt, TxType, compute_receipts_root,
-    compute_transactions_root,
+    Block, BlockBody, BlockHeader, Fork, Receipt, compute_receipts_root, compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
 use ethrex_levm::{
