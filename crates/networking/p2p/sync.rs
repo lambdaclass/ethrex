@@ -24,7 +24,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::cell::OnceCell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::{
     array,
@@ -799,6 +799,8 @@ impl Syncer {
             // We start by downloading all of the leafs of the trie of accounts
             // The function request_account_range writes the leafs into files in
             // account_state_snapshots_dir
+
+            info!("Starting to download account ranges from peers");
             self.peers
                 .request_account_range(
                     H256::zero(),
@@ -808,8 +810,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-
-            info!("Starting to download storage ranges from peers");
+            info!("Finish downloading account ranges from peers");
 
             /*             let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
             *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
@@ -851,6 +852,8 @@ impl Syncer {
                         }),
                 );
 
+                info!("Inserting accounts into the state trie");
+
                 let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
@@ -869,7 +872,7 @@ impl Syncer {
 
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
-                storage_accounts.len()
+                storage_accounts.accounts_with_storage_root.len()
             );
 
             /*             METRICS
@@ -885,15 +888,14 @@ impl Syncer {
 
             let account_store_time = Instant::now().saturating_duration_since(account_store_start); */
 
-            info!("Expected state root: {state_root:?}");
-            info!("Computed state root: {computed_state_root:?}");
+            info!("Original state root: {state_root:?}");
+            info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
-            let mut done = false;
             let mut state_leafs_healed = 0_u64;
-            while done {
+            loop {
                 while block_is_stale(&pivot_header) {
                     pivot_header =
                         update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
@@ -913,6 +915,10 @@ impl Syncer {
                     continue;
                 };
 
+                info!(
+                    "Started request_storage_ranges with {} accounts with storage root known",
+                    storage_accounts.accounts_with_storage_root.len()
+                );
                 chunk_index = self
                     .peers
                     .request_storage_ranges(
@@ -923,8 +929,17 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
-                done = block_is_stale(&pivot_header)
+
+                info!(
+                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet",
+                    storage_accounts.accounts_with_storage_root.len()
+                );
+                if !block_is_stale(&pivot_header) {
+                    info!("We stopped because of staleness, restarting loop");
+                    break;
+                }
             }
+            info!("Finished request_storage_ranges");
 
             /*             let storages_store_start = Instant::now();
 
@@ -1016,45 +1031,43 @@ impl Syncer {
             info!("Finished storing storage tries");
         }
 
-        if pivot_is_stale {
-            info!("Starting Healing Process");
-            let mut global_state_leafs_healed: u64 = 0;
-            let mut global_storage_leafs_healed: u64 = 0;
-            let mut healing_done = false;
-            while !healing_done {
-                // This if is an edge case for the skip snap sync scenario
-                if block_is_stale(&pivot_header) {
-                    pivot_header =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-                }
-                healing_done = heal_state_trie_wrap(
-                    pivot_header.state_root,
-                    store.clone(),
-                    &self.peers,
-                    calculate_staleness_timestamp(pivot_header.timestamp),
-                    &mut global_state_leafs_healed,
-                    &mut storage_accounts,
-                )
-                .await?;
-                if !healing_done {
-                    continue;
-                }
-                healing_done = heal_storage_trie(
-                    pivot_header.state_root,
-                    &storage_accounts,
-                    self.peers.clone(),
-                    store.clone(),
-                    HashMap::new(),
-                    calculate_staleness_timestamp(pivot_header.timestamp),
-                    &mut global_storage_leafs_healed,
-                )
-                .await;
+        info!("Starting Healing Process");
+        let mut global_state_leafs_healed: u64 = 0;
+        let mut global_storage_leafs_healed: u64 = 0;
+        let mut healing_done = false;
+        while !healing_done {
+            // This if is an edge case for the skip snap sync scenario
+            if block_is_stale(&pivot_header) {
+                pivot_header =
+                    update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
             }
-            // TODO: 💀💀💀 either remove or change to a debug flag
-            validate_state_root(store.clone(), pivot_header.state_root).await;
-            validate_storage_root(store.clone(), pivot_header.state_root).await;
-            info!("Finished healing");
+            healing_done = heal_state_trie_wrap(
+                pivot_header.state_root,
+                store.clone(),
+                &self.peers,
+                calculate_staleness_timestamp(pivot_header.timestamp),
+                &mut global_state_leafs_healed,
+                &mut storage_accounts,
+            )
+            .await?;
+            if !healing_done {
+                continue;
+            }
+            healing_done = heal_storage_trie(
+                pivot_header.state_root,
+                &storage_accounts,
+                self.peers.clone(),
+                store.clone(),
+                HashMap::new(),
+                calculate_staleness_timestamp(pivot_header.timestamp),
+                &mut global_storage_leafs_healed,
+            )
+            .await;
         }
+        // TODO: 💀💀💀 either remove or change to a debug flag
+        validate_state_root(store.clone(), pivot_header.state_root).await;
+        validate_storage_root(store.clone(), pivot_header.state_root).await;
+        info!("Finished healing");
 
         let mut bytecode_hashes: Vec<H256> = store
             .iter_accounts(pivot_header.state_root)
@@ -1253,7 +1266,7 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
 pub struct AccountStorageRoots {
     /// The accounts that have not been healed are guaranteed to have the original storage root
     /// we can read this storage root
-    pub accounts_with_storage_root: HashMap<H256, H256>,
+    pub accounts_with_storage_root: BTreeMap<H256, H256>,
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,

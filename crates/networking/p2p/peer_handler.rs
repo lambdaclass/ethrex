@@ -33,7 +33,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{BlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
         SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
         get_account_storages_snapshot_file,
@@ -1504,14 +1504,14 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        account_storage_roots: &mut HashMap<H256, H256>,
+        account_storage_roots: &mut AccountStorageRoots,
         account_storages_snapshots_dir: String,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
-        let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
+        let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1519,7 +1519,8 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
+            let chunk_end = (chunk_start + chunk_size)
+                .min(account_storage_roots.accounts_with_storage_root.len());
             tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
@@ -1534,15 +1535,16 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
 
-        let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
+        let mut all_account_storages =
+            vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
 
         // channel to send the result of dumping storages
-        let (dump_storage_result_sender, mut dump_storage_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
+        let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =
+            tokio::task::JoinSet::new();
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
@@ -1555,19 +1557,24 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
+        // TODO: in a refactor, delete this replace with a structure that can handle removes
+        let mut accounts_done: Vec<H256> = Vec::new();
+        let current_account_hashes = account_storage_roots
+            .accounts_with_storage_root
+            .iter()
+            .map(|a| *a.0)
+            .collect::<Vec<_>>();
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > 1024 * 1024 * 1024 * 8
             {
-                let current_account_hashes = account_storage_roots
-                    .iter()
-                    .map(|a| *a.0)
-                    .collect::<Vec<_>>();
                 let current_account_storages = std::mem::take(&mut all_account_storages);
-                all_account_storages = vec![vec![]; account_storage_roots.len()];
+                all_account_storages =
+                    vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
                 let snapshot = current_account_hashes
+                    .clone()
                     .into_iter()
                     .zip(current_account_storages)
                     .collect::<Vec<_>>()
@@ -1580,21 +1587,23 @@ impl PeerHandler {
                         .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
                 }
                 let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
-                let dump_account_result_sender_cloned = dump_storage_result_sender.clone();
-                tokio::task::spawn(async move {
+                if !disk_joinset.is_empty() {
+                    disk_joinset
+                        .join_next()
+                        .await
+                        .expect("Shouldn't be empty")
+                        .expect("Shouldn't have a join error")
+                        .inspect_err(|err| {
+                            error!("We found this error while dumping to file {err:?}")
+                        })
+                        .map_err(PeerHandlerError::DumpError)?;
+                }
+                disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
                         account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    let result = dump_to_file(path, snapshot);
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send storage dump result through channel. Error: {err}"
-                            )
-                        })
+                    dump_to_file(path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1626,6 +1635,10 @@ impl PeerHandler {
                     *downloader_is_free = true;
                 });
 
+                for account in current_account_hashes.iter() {
+                    accounts_done.push(*account);
+                }
+
                 if remaining_start < remaining_end {
                     trace!("Failed to download chunk from peer {peer_id}");
                     if hash_start.is_zero() {
@@ -1649,6 +1662,10 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
+                            accounts_done.push(current_account_hashes[remaining_start]);
+                            account_storage_roots
+                                .healed_accounts
+                                .insert(current_account_hashes[start_index]);
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1749,29 +1766,6 @@ impl PeerHandler {
                 }
             }
 
-            // Check if any write storage task finished
-            if let Ok(Err(dump_storage_data)) = dump_storage_result_receiver.try_recv() {
-                if dump_storage_data.error == ErrorKind::StorageFull {
-                    return Err(PeerHandlerError::StorageFull);
-                }
-                // If the dumping failed, retry it
-                let dump_storage_result_sender_cloned = dump_storage_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let DumpError { path, contents, .. } = dump_storage_data;
-                    // Write the storage data
-                    let result = dump_to_file(path, contents);
-                    // Send the result through the channel
-                    dump_storage_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send storage dump result through channel. Error: {err}"
-                            )
-                        })
-                });
-            }
-
             let peer_channels = self
                 .peer_table
                 .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
@@ -1840,6 +1834,7 @@ impl PeerHandler {
 
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
+                    .accounts_with_storage_root
                     .iter()
                     .skip(task.start_index)
                     .take(task.end_index - task.start_index)
@@ -1876,6 +1871,7 @@ impl PeerHandler {
 
         {
             let current_account_hashes = account_storage_roots
+                .accounts_with_storage_root
                 .iter()
                 .map(|a| *a.0)
                 .collect::<Vec<_>>();
@@ -1907,6 +1903,22 @@ impl PeerHandler {
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
+        disk_joinset
+            .join_all()
+            .await
+            .into_iter()
+            .map(|result| {
+                result
+                    .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+            })
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(PeerHandlerError::DumpError)?;
+
+        for account_done in accounts_done {
+            account_storage_roots
+                .accounts_with_storage_root
+                .remove(&account_done);
+        }
 
         Ok(chunk_index + 1)
     }
@@ -2243,6 +2255,8 @@ fn format_duration(duration: Duration) -> String {
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
+
+#[derive(Debug)]
 pub struct DumpError {
     pub path: String,
     pub contents: Vec<u8>,
@@ -2289,6 +2303,8 @@ pub enum PeerHandlerError {
     NoStorageRoots,
     #[error("No response from peer")]
     NoResponseFromPeer,
+    #[error("Dumping snapshots to disk failed {0:?}")]
+    DumpError(DumpError),
 }
 
 #[derive(Debug, Clone, std::hash::Hash)]
