@@ -131,7 +131,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         gas_used: report.gas_used,
         timestamp: test.env.current_timestamp.as_u64(),
         extra_data: Bytes::new(),
-        prev_randao: env.prev_randao.unwrap_or_default(),
+        prev_randao: test.env.current_random.unwrap_or_default(),
         nonce: 0,
         base_fee_per_gas: test.env.current_base_fee.map(|f| f.as_u64()),
         withdrawals_root: Some(
