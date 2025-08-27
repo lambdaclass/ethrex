@@ -18,7 +18,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHandle, NodeRef, Trie, TrieError, TrieLogger, TrieWitness};
+use ethrex_trie::{Nibbles, Node, NodeHandle, NodeRef, Trie, TrieError, TrieLogger, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -140,14 +140,30 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        info!(
+            block_hash = hex::encode(block_hash),
+            address = hex::encode(address),
+            "GET ACCOUNT INFO"
+        );
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            info!("TRIE NOT FOUND");
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(Node::Leaf(encoded_state)) = state_trie
+            .db()
+            .get_path(Nibbles::from_bytes(&hashed_address))?
+        else {
+            info!("VALUE NOT FOUND");
             return Ok(None);
         };
-        let account_state = AccountState::decode(&encoded_state)?;
+        let account_state = AccountState::decode(&encoded_state.value)?;
+        info!(
+            code = hex::encode(account_state.code_hash),
+            balance = hex::encode(account_state.balance.to_big_endian()),
+            nonce = hex::encode(account_state.nonce.to_be_bytes()),
+            "FOUND"
+        );
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -712,14 +728,27 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        info!(
+            block_hash = hex::encode(block_hash),
+            address = hex::encode(address),
+            key = hex::encode(storage_key),
+            "GET ACCOUNT STORAGE"
+        );
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
+            info!("TRIE NOT FOUND");
             return Ok(None);
         };
         let hashed_key = hash_key(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+        let Some(Node::Leaf(value)) = storage_trie
+            .db()
+            .get_path(Nibbles::from_bytes(&hashed_key))?
+        else {
+            info!("VALUE NOT FOUND");
+            return Ok(None);
+        };
+        let value = U256::decode(&value.value).map_err(StoreError::RLPDecode)?;
+        info!(value = hex::encode(value.to_big_endian()), "FOUND");
+        Ok(Some(value))
     }
 
     // Tests, Self::add_initial_state
@@ -856,12 +885,28 @@ impl Store {
     /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            info!(
+                block_hash = hex::encode(block_hash),
+                status = "BLOCK NOT FOUND",
+                "OPEN STATE TRIE"
+            );
             return Ok(None);
         };
         let Some(state_root_handle) = self.engine.get_state_trie_root_handle(header.state_root)?
         else {
+            info!(
+                block_hash = hex::encode(block_hash),
+                status = "HANDLE NOT FOUND",
+                "OPEN STATE TRIE"
+            );
             return Ok(None);
         };
+        info!(
+            block_hash = hex::encode(block_hash),
+            handle = hex::encode(state_root_handle.0.to_be_bytes()),
+            status = "HANDLE FOUND",
+            "OPEN STATE TRIE"
+        );
         Ok(Some(self.blob_engine.open_state_trie(state_root_handle)?))
     }
 
@@ -874,13 +919,29 @@ impl Store {
     ) -> Result<Option<Trie>, StoreError> {
         // Fetch Account from state_trie
         let Some(header) = self.engine.get_block_header_by_hash(block_hash)? else {
+            info!(
+                block_hash = hex::encode(block_hash),
+                status = "BLOCK NOT FOUND",
+                "OPEN STORAGE TRIE"
+            );
             return Ok(None);
         };
         let Some(state_root_handle) = self.engine.get_state_trie_root_handle(header.state_root)?
         else {
+            info!(
+                block_hash = hex::encode(block_hash),
+                status = "HANDLE NOT FOUND",
+                "OPEN STORAGE TRIE"
+            );
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+        info!(
+            block_hash = hex::encode(block_hash),
+            handle = hex::encode(state_root_handle.0.to_be_bytes()),
+            status = "HANDLE FOUND",
+            "OPEN STORAGE TRIE"
+        );
         Ok(Some(self.blob_engine.open_storage_trie(
             state_root_handle,
             H256::from_slice(&hashed_address),
@@ -921,10 +982,13 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(Node::Leaf(encoded_state)) = state_trie
+            .db()
+            .get_path(Nibbles::from_bytes(&hashed_address))?
+        else {
             return Ok(None);
         };
-        Ok(Some(AccountState::decode(&encoded_state)?))
+        Ok(Some(AccountState::decode(&encoded_state.value)?))
     }
 
     // RPC account proof request

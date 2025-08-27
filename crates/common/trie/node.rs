@@ -112,7 +112,9 @@ impl NodeRef {
 
         self.hash = hash;
         // Node is committed, clear dirty flag.
-        self.clear_dirty();
+        // FIXME: actually I should just mark the children here, otherwise
+        // when we clone all children self-marked clean, breaking serialization.
+        // self.clear_dirty();
 
         hash
     }

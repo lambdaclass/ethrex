@@ -384,6 +384,12 @@ impl Blockchain {
             .as_ref()
             .map(|l| l.state_trie_root_hash)
             .unwrap_or(parent_state_root);
+        info!(
+            block_state_root = hex::encode(block.header.state_root),
+            parent_state_root = hex::encode(parent_state_root),
+            computed_state_root = hex::encode(state_trie_root_hash),
+            "VALIDATE ROOT"
+        );
         validate_state_root(&block.header, state_trie_root_hash)?;
         let state_trie_root_handle = self
             .storage
