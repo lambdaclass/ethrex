@@ -253,6 +253,8 @@ pub enum CommitterError {
     // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+    #[error("Failed to join task: {0}")]
+    JoinError(#[from] JoinError),
 }
 
 #[derive(Debug, thiserror::Error)]

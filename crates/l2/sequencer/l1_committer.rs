@@ -355,7 +355,8 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                generate_blobs_bundle(&state_diff)
+                spawned_rt::tasks::spawn_blocking(move || generate_blobs_bundle(&state_diff))
+                    .await?
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -525,6 +526,8 @@ impl L1Committer {
                 .map_err(CommitterError::from)?
         };
 
+        // TODO: transaction signing sometimes runs in a blocking way for ~40ms
+        // `ethrex_l2_rpc::clients::send_generic_transaction`, specifically
         let commit_tx_hash =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
 
