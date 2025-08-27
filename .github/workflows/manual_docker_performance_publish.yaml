@@ -1,4 +1,4 @@
-name: Publish Docker
+name: Publish Performance tag Docker
 
 on:
   workflow_dispatch:
