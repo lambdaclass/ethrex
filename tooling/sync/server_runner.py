@@ -41,6 +41,9 @@ def parse_args():
     parser.add_argument(
         "--timeout", type=int, default=60, help="Timeout in minutes (default: 60)"
     )
+    parser.add_argument(
+        "--no-monitor", action="store_true", help="Whether we should restart after success/failure"
+    )
 
     return parser.parse_args()
 
@@ -108,6 +111,9 @@ def main():
             subprocess.run(
                 command + [f"LOGS_FILE={logs_file}_{start_time}.log"], check=True
             )
+            if args.no_monitor:
+                print("No monitor flag set, exiting.")
+                break
             while True:
                 try:
                     elapsed = time.time() - start_time
