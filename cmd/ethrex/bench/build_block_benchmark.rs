@@ -118,14 +118,14 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = tempdir::TempDir::new("storage").unwrap();
+    let storage_path = tempfile::TempDir::new().unwrap();
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(
-        &storage_path.into_path().display().to_string(),
+        &storage_path.path().display().to_string(),
         EngineType::Libmdbx,
     )
     .unwrap();
