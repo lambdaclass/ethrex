@@ -11,12 +11,13 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
 use rand::random;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
@@ -151,20 +152,21 @@ pub struct NodeRequest {
 ///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
-    account_paths: &HashMap<H256, H256>,
+    storage_accounts: &HashSet<H256>,
     peers: PeerHandler,
     store: Store,
     membatch: Membatch,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> bool {
+    let download_queue = get_initial_downloads(&store, state_root, &storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
-        account_paths.len()
+        download_queue.len()
     );
     let mut state = StorageHealer {
         last_update: Instant::now(),
-        download_queue: get_initial_downloads(&account_paths),
+        download_queue,
         store,
         membatch,
         peer_handler: peers,
@@ -584,16 +586,34 @@ fn process_node_responses(
     Ok(())
 }
 
-fn get_initial_downloads(account_paths: &HashMap<H256, H256>) -> VecDeque<NodeRequest> {
+fn get_initial_downloads(
+    store: &Store,
+    state_root: H256,
+    account_paths: &HashSet<H256>,
+) -> VecDeque<NodeRequest> {
+    let trie = store
+        .open_state_trie(state_root)
+        .expect("We should be able to open the store");
     account_paths
-        .iter()
-        .map(|(acc_path, storage_root)| {
-            NodeRequest {
+        .par_iter()
+        .filter_map(|acc_path| {
+            let rlp = trie
+                .get(&acc_path.to_fixed_bytes().to_vec())
+                .expect("We should be able to open the store")
+                .expect("This account should exist in the trie");
+            let account = AccountState::decode(&rlp).expect("We should have a valid account");
+            if store
+                .contains_storage_node(*acc_path, account.storage_root)
+                .expect("We should be able to open the store")
+            {
+                return None;
+            }
+            Some(NodeRequest {
                 acc_path: Nibbles::from_bytes(&acc_path.0),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                 parent: Nibbles::default(),
-                hash: *storage_root,
-            }
+                hash: account.storage_root,
+            })
         })
         .collect()
 }
