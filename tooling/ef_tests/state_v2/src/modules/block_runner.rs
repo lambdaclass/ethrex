@@ -48,7 +48,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
 
-    let (receipts_root, gas_used) = match execution_result {
+    let (receipts, gas_used) = match execution_result {
         Ok(report) => {
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -56,17 +56,11 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                 report.gas_used,
                 report.logs.clone(),
             );
-            (compute_receipts_root(&[receipt]), report.gas_used)
+            (vec![receipt], report.gas_used)
         }
         Err(e) => {
             if test_case.post.expected_exceptions.is_some() {
-                (
-                    H256::from_str(
-                        "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-                    )
-                    .unwrap(),
-                    0,
-                )
+                (vec![], 0)
             } else {
                 println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e);
                 return Err(RunnerError::Custom(format!("Internal error {e}")));
@@ -128,7 +122,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         coinbase: test.env.current_coinbase,
         state_root: test_case.post.hash,
         transactions_root: computed_tx_root,
-        receipts_root,
+        receipts_root: compute_receipts_root(&receipts),
         logs_bloom: Default::default(),
         difficulty: U256::zero(),
         number: 1, // I think this is correct
