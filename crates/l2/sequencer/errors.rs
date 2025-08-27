@@ -66,10 +66,8 @@ pub enum L1WatcherError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("{0}")]
     Custom(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,13 +129,11 @@ pub enum ProofSenderError {
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
-    InternalError(String),
+    UnexpectedError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
     #[error("Proof Sender failed to estimate Aligned fee: {0}")]
@@ -204,10 +200,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,20 +240,20 @@ pub enum CommitterError {
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Unexpected Error: {0}")]
-    InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Failed to sign error: {0}")]
     FailedToSignError(#[from] SignerError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
+    #[error("Retrieval Error: {0}")]
+    RetrievalError(String),
+    #[error("Conversion Error: {0}")]
+    ConversionError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -284,10 +278,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -300,10 +292,8 @@ pub enum ExecutionCacheError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionHandlerError {
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -322,10 +312,8 @@ pub enum MonitorError {
     GetBlockByNumber(u64, #[source] StoreError),
     #[error("Block {0} not found in the store")]
     BlockNotFound(u64),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
     #[error("Failed to get logs topics {0}")]
     LogsTopics(usize),
     #[error("Failed to get logs data from {0}")]
