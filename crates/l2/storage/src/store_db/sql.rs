@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, ops::Range, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 13] = [
+const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -42,6 +42,9 @@ const DB_SCHEMA: [&str; 13] = [
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
     "INSERT INTO latest_sent VALUES (0, 0)",
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
+    "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE precommit_privileged (_id INT PRIMARY KEY, start INT, end INT)",
 ];
 
 impl SQLStore {
@@ -671,6 +674,114 @@ impl StoreEngineRollup for SQLStore {
         }
         transaction.commit().await.map_err(RollupStoreError::from)
     }
+
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(
+            vec![
+                (
+                    "DELETE FROM block_signatures WHERE block_hash = ?1",
+                    vec![Vec::from(block_hash.to_fixed_bytes())].into_params()?,
+                ),
+                (
+                    "INSERT INTO block_signatures VALUES (?1, ?2)",
+                    (
+                        Vec::from(block_hash.to_fixed_bytes()),
+                        Vec::from(signature.as_fixed_bytes()),
+                    )
+                        .into_params()?,
+                ),
+            ],
+            None,
+        )
+        .await
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT signature FROM block_signatures WHERE block_hash = ?1",
+                vec![Vec::from(block_hash.to_fixed_bytes())],
+            )
+            .await?;
+        rows.next()
+            .await?
+            .map(|row| {
+                read_from_row_blob(&row, 0)
+                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
+            })
+            .transpose()
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(
+            vec![
+                (
+                    "DELETE FROM batch_signatures WHERE batch = ?1",
+                    vec![batch_number].into_params()?,
+                ),
+                (
+                    "INSERT INTO batch_signatures VALUES (?1, ?2)",
+                    (batch_number, Vec::from(signature.to_fixed_bytes())).into_params()?,
+                ),
+            ],
+            None,
+        )
+        .await
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT signature FROM batch_signatures WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        rows.next()
+            .await?
+            .map(|row| {
+                read_from_row_blob(&row, 0)
+                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
+            })
+            .transpose()
+    }
+
+    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        let mut rows = self.query("SELECT * from precommit_privileged", ()).await?;
+        if let Some(row) = rows.next().await? {
+            let start = read_from_row_int(&row, 1)?;
+            let end = read_from_row_int(&row, 2)?;
+            return Ok(Some(start..end));
+        }
+        Ok(None)
+    }
+
+    async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        let mut queries = vec![("DELETE FROM precommit_privileged", ().into_params()?)];
+        if let Some(range) = range {
+            queries.push((
+                "INSERT INTO precommit_privileged VALUES (0, ?1, ?2)",
+                (range.start, range.end).into_params()?,
+            ));
+        }
+        self.execute_in_tx(queries, None).await
+    }
 }
 
 #[cfg(test)]
@@ -690,6 +801,9 @@ mod tests {
             "operation_count",
             "latest_sent",
             "batch_proofs",
+            "block_signatures",
+            "batch_signatures",
+            "precommit_privileged",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -730,6 +844,13 @@ mod tests {
                 ("batch_proofs", "batch") => "INT",
                 ("batch_proofs", "prover_type") => "INT",
                 ("batch_proofs", "proof") => "BLOB",
+                ("block_signatures", "block_hash") => "BLOB",
+                ("block_signatures", "signature") => "BLOB",
+                ("batch_signatures", "batch") => "INT",
+                ("batch_signatures", "signature") => "BLOB",
+                ("precommit_privileged", "_id") => "INT",
+                ("precommit_privileged", "start") => "INT",
+                ("precommit_privileged", "end") => "INT",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

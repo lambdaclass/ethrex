@@ -1,3 +1,5 @@
 cache_*.json
 bench_latest.json
 chart_*.svg
+output.json
+profile.pb

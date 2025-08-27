@@ -15,7 +15,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -42,7 +41,7 @@ pub async fn start_l2(
     cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
 ) -> Result<(), errors::SequencerError> {
-    let initial_status = if cfg.based.based {
+    let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
         SequencerStatus::Sequencing
@@ -53,18 +52,25 @@ pub async fn start_l2(
     let shared_state = SequencerState::from(initial_status);
 
     let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.proof_coordinator.dev_mode,
         cfg.eth.rpc_url.clone(),
         cfg.l1_committer.on_chain_proposer_address,
     )
     .await
-    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
+    .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
         return Ok(());
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
         error!(
             "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
+        );
+        return Ok(());
+    }
+    if needed_proof_types.contains(&ProverType::TDX)
+        && cfg.proof_coordinator.tdx_private_key.is_none()
+    {
+        error!(
+            "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
         );
         return Ok(());
     }
@@ -130,18 +136,19 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
         });
+    let mut verifier_handle = None;
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+        verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
-        ));
+        )));
     }
-    if cfg.based.based {
+    if cfg.based.enabled {
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
+            blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )
@@ -173,6 +180,20 @@ pub async fn start_l2(
         )
         .await?;
     }
+
+    let Some(handle) = verifier_handle else {
+        return Ok(());
+    };
+
+    match handle.await {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            error!("Error running verifier: {err}");
+        }
+        Err(err) => {
+            error!("Task error: {err}");
+        }
+    };
 
     Ok(())
 }

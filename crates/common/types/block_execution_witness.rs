@@ -1,63 +1,60 @@
-use core::fmt;
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::fmt;
+use std::{collections::HashMap, str::FromStr};
 
 use crate::{
     H160,
-    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    constants::EMPTY_KECCACK_HASH,
+    serde_utils,
+    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
 use bytes::Bytes;
-use ethereum_types::Address;
+use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, SeqAccess, Visitor},
-    ser::{self, SerializeSeq},
-};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+use serde::de::{SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
-
-type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 
 /// In-memory execution witness database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
+    pub keys: Vec<Bytes>,
     // Rlp encoded state trie nodes
     #[serde(
-        serialize_with = "serialize_proofs",
-        deserialize_with = "deserialize_state"
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
-    pub state_trie_nodes: Option<Vec<Vec<u8>>>,
-    // Indexed by account
-    // Rlp encoded state trie nodes
-    #[serde(
-        serialize_with = "serialize_storage_tries",
-        deserialize_with = "deserialize_storage_tries"
-    )]
-    pub storage_trie_nodes: Option<HashMap<Address, Vec<Vec<u8>>>>,
+    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
+    pub state_trie_nodes: Vec<Bytes>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
         serialize_with = "serialize_code",
         deserialize_with = "deserialize_code"
     )]
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
     pub codes: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
-    pub state_trie: Option<Arc<Mutex<Trie>>>,
-    // Indexed by account
-    // Pruned storage MPT
+    #[rkyv(with = rkyv::with::Skip)]
+    pub state_trie: Option<Trie>,
+    // Storage tries accessed by account address
     #[serde(skip)]
-    pub storage_tries: Option<Arc<Mutex<HashMap<Address, Trie>>>>,
+    #[rkyv(with = rkyv::with::Skip)]
+    pub storage_tries: HashMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -76,125 +73,66 @@ pub enum ExecutionWitnessError {
     Database(String),
     #[error("No block headers stored, should at least store parent header")]
     NoBlockHeaders,
+    #[error("Parent block header of block {0} was not found")]
+    MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
-        let (Some(state_trie_nodes), Some(storage_trie_map)) = (
-            self.state_trie_nodes.as_ref(),
-            self.storage_trie_nodes.as_ref(),
-        ) else {
-            return Err(ExecutionWitnessError::RebuildTrie(
-                "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
-                    .to_string(),
-            ));
-        };
-
-        let initial_state_root = self.parent_block_header.state_root;
-
-        let mut initial_node = None;
-
-        for node in state_trie_nodes.iter() {
-            let x = Node::decode_raw(node).map_err(|_| {
-                ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
-            })?;
-            let hash = x.compute_hash().finalize();
-            if hash == initial_state_root {
-                initial_node = Some(node.clone());
-                break;
-            }
-        }
-
-        let state_trie =
-            Trie::from_nodes(initial_node.as_ref(), state_trie_nodes).map_err(|e| {
-                ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
-            })?;
-
-        let mut storage_tries = HashMap::new();
-        for (addr, nodes) in storage_trie_map {
-            let hashed_address = hash_address(addr);
-            let encoded_state = state_trie
-                .get(&hashed_address)
-                .expect("Failed to get from trie");
-
-            let state = encoded_state
-                .map(|encoded| AccountState::decode(&encoded))
-                .unwrap_or_else(|| Ok(AccountState::default()))
-                .expect("Failed to get account state");
-
-            if state.storage_root == *EMPTY_TRIE_HASH {
-                storage_tries.insert(
-                    *addr,
-                    Trie::from_nodes(None, nodes).map_err(|e| {
-                        ExecutionWitnessError::RebuildTrie(format!(
-                            "Failed to build storage trie {e}"
-                        ))
-                    })?,
-                );
-                continue;
-            }
-
-            let mut initial_node = None;
-
-            for node in nodes.iter() {
-                let x = Node::decode_raw(node).expect("invalid node");
-                let hash = x.compute_hash().finalize();
-                if hash == state.storage_root {
-                    initial_node = Some(node);
-                    break;
-                }
-            }
-
-            let Ok(storage_trie) = Trie::from_nodes(initial_node, nodes) else {
-                return Err(ExecutionWitnessError::RebuildTrie(
-                    "Failed to rebuild storage trie".to_string(),
-                ));
-            };
-
-            storage_tries.insert(*addr, storage_trie);
-        }
-
-        self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
-        self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
-        self.state_trie_nodes = None;
-        self.storage_trie_nodes = None;
+    /// Use the state nodes to build the state trie and store them in `self.state_trie`
+    /// This function will fail if the state trie cannot be rebuilt.
+    pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
+        let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
+        self.state_trie = Some(state_trie);
 
         Ok(())
     }
 
+    /// Helper function to rebuild the storage trie for a given account address
+    /// Returns if root is not empty, an Option with the rebuilt trie
+    // This function is an option because we expect it to fail sometimes, and we just want to filter it
+    pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
+        let account_state_rlp = trie.get(&hash_address(address)).ok()??;
+
+        let account_state = AccountState::decode(&account_state_rlp).ok()?;
+
+        if account_state.storage_root == *EMPTY_TRIE_HASH {
+            return None;
+        }
+
+        rebuild_trie(account_state.storage_root, state).ok()
+    }
+
+    /// Helper function to apply account updates to the execution witness
+    /// It updates the state trie and storage tries with the given account updates
+    /// Returns an error if the updates cannot be applied
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ExecutionWitnessError> {
-        let (Some(state_trie), Some(storage_tries_map)) =
-            (self.state_trie.as_ref(), self.storage_tries.as_ref())
+        let (Some(state_trie), storage_tries) = (self.state_trie.as_mut(), &mut self.storage_tries)
         else {
             return Err(ExecutionWitnessError::ApplyAccountUpdates(
                 "Tried to apply account updates before rebuilding the tries".to_string(),
             ));
         };
 
-        let mut state_trie_lock = state_trie.lock().map_err(|_| {
-            ExecutionWitnessError::ApplyAccountUpdates("Failed to lock state trie".to_string())
-        })?;
-        let mut storage_tries_lock = storage_tries_map.lock().map_err(|_| {
-            ExecutionWitnessError::ApplyAccountUpdates("Failed to lock storage tries".to_string())
-        })?;
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie_lock
+                state_trie
                     .remove(hashed_address)
                     .expect("failed to remove from trie");
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match state_trie_lock
+                let mut account_state = match state_trie
                     .get(&hashed_address)
                     .expect("failed to get account state from trie")
                 {
@@ -213,26 +151,36 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie =
-                        storage_tries_lock.entry(update.address).or_insert_with(|| {
-                            Trie::from_nodes(None, &[]).expect("failed to create empty trie")
-                        });
+                    let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
+                        Trie::from_nodes(None, &[]).expect("failed to create empty trie")
+                    });
 
-                    for (storage_key, storage_value) in &update.added_storage {
-                        let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
-                            storage_trie
-                                .remove(hashed_key)
-                                .expect("failed to remove key");
-                        } else {
-                            storage_trie
-                                .insert(hashed_key, storage_value.encode_to_vec())
-                                .expect("failed to insert in trie");
-                        }
+                    // Inserts must come before deletes, otherwise deletes might require extra nodes
+                    // Example:
+                    // If I have a branch node [A, B] and want to delete A and insert C
+                    // I will need to have B only if the deletion happens first
+                    let (deletes, inserts): (Vec<_>, Vec<_>) = update
+                        .added_storage
+                        .iter()
+                        .map(|(k, v)| (hash_key(k), v))
+                        .partition(|(_k, v)| v.is_zero());
+
+                    for (hashed_key, storage_value) in inserts {
+                        storage_trie
+                            .insert(hashed_key, storage_value.encode_to_vec())
+                            .expect("failed to insert in trie");
                     }
+
+                    for (hashed_key, _) in deletes {
+                        storage_trie
+                            .remove(hashed_key)
+                            .expect("failed to remove key");
+                    }
+
                     account_state.storage_root = storage_trie.hash_no_commit();
                 }
-                state_trie_lock
+
+                state_trie
                     .insert(hashed_address, account_state.encode_to_vec())
                     .expect("failed to insert into storage");
             }
@@ -240,6 +188,8 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
+    /// Returns the root hash of the state trie
+    /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
         let state_trie = self
             .state_trie
@@ -247,10 +197,8 @@ impl ExecutionWitnessResult {
             .ok_or(ExecutionWitnessError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
-        let lock = state_trie.lock().map_err(|_| {
-            ExecutionWitnessError::Database("Failed to lock state trie".to_string())
-        })?;
-        Ok(lock.hash_no_commit())
+
+        Ok(state_trie.hash_no_commit())
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -289,13 +237,116 @@ impl ExecutionWitnessResult {
         Ok(None)
     }
 
+    /// Retrieves the parent block header for the specified block number
+    /// Searches within `self.block_headers`
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
     ) -> Result<&BlockHeader, ExecutionWitnessError> {
         self.block_headers
             .get(&block_number.saturating_sub(1))
-            .ok_or(ExecutionWitnessError::NoBlockHeaders)
+            .ok_or(ExecutionWitnessError::MissingParentHeaderOf(block_number))
+    }
+
+    /// Retrieves the account info based on what is stored in the state trie.
+    /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
+    pub fn get_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, ExecutionWitnessError> {
+        let state_trie = self
+            .state_trie
+            .as_ref()
+            .ok_or(ExecutionWitnessError::Database(
+                "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
+            ))?;
+
+        let hashed_address = hash_address(&address);
+        let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+            return Ok(None);
+        };
+        let state = AccountState::decode(&encoded_state).map_err(|_| {
+            ExecutionWitnessError::Database("Failed to get decode account from trie".to_string())
+        })?;
+
+        Ok(Some(AccountInfo {
+            balance: state.balance,
+            code_hash: state.code_hash,
+            nonce: state.nonce,
+        }))
+    }
+
+    /// Fetches the block hash for a specific block number.
+    /// Looks up `self.block_headers` and computes the hash if it is not already computed.
+    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
+        self.block_headers
+            .get(&block_number)
+            .map(|header| header.hash())
+            .ok_or_else(|| {
+                ExecutionWitnessError::Database(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
+    }
+
+    /// Retrieves a storage slot value for an account in its storage trie.
+    ///
+    /// Lazily builds the storage trie for the address if not already available.
+    /// This lazy loading approach minimizes memory usage by only building tries when needed.
+    pub fn get_storage_slot(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<Option<U256>, ExecutionWitnessError> {
+        let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
+            storage_trie
+        } else {
+            let Some(state_trie) = self.state_trie.as_ref() else {
+                return Err(ExecutionWitnessError::Database(
+                    "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
+                        .to_string(),
+                ));
+            };
+            let Some(storage_trie) =
+                Self::rebuild_storage_trie(&address, state_trie, &self.state_trie_nodes)
+            else {
+                return Ok(None);
+            };
+
+            self.storage_tries.entry(address).or_insert(storage_trie)
+        };
+        let hashed_key = hash_key(&key);
+        if let Some(encoded_key) = storage_trie
+            .get(&hashed_key)
+            .map_err(|e| ExecutionWitnessError::Database(e.to_string()))?
+        {
+            U256::decode(&encoded_key)
+                .map_err(|_| {
+                    ExecutionWitnessError::Database("failed to read storage from trie".to_string())
+                })
+                .map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieves the chain configuration for the execution witness.
+    pub fn get_chain_config(&self) -> Result<ChainConfig, ExecutionWitnessError> {
+        Ok(self.chain_config)
+    }
+
+    /// Retrieves the account code for a specific account.
+    /// Returns an Err if the code is not found.
+    pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        match self.codes.get(&code_hash) {
+            Some(code) => Ok(code.clone()),
+            None => Err(ExecutionWitnessError::Database(format!(
+                "Could not find code for hash {code_hash}"
+            ))),
+        }
     }
 }
 
@@ -314,71 +365,6 @@ where
         seq_serializer.serialize_element(&obj)?;
     }
     seq_serializer.end()
-}
-
-pub fn serialize_storage_tries<S>(
-    map: &Option<HashMap<H160, Vec<Vec<u8>>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(map) = map else {
-        return Err(ser::Error::custom("Storage trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
-
-    for (address, keys) in map {
-        let address_hex = format!("0x{}", hex::encode(address));
-        let values_hex: Vec<String> = keys
-            .iter()
-            .map(|v| format!("0x{}", hex::encode(v)))
-            .collect();
-
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            address_hex,
-            serde_json::Value::Array(
-                values_hex
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            ),
-        );
-
-        seq_serializer.serialize_element(&obj)?;
-    }
-
-    seq_serializer.end()
-}
-
-pub fn deserialize_state<'de, D>(deserializer: D) -> Result<Option<Vec<Vec<u8>>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct HexVecVisitor;
-
-    impl<'de> Visitor<'de> for HexVecVisitor {
-        type Value = Option<Vec<Vec<u8>>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a list of hex-encoded strings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut out = Vec::new();
-            while let Some(s) = seq.next_element::<String>()? {
-                let bytes = decode_hex(&s).map_err(de::Error::custom)?;
-                out.push(bytes);
-            }
-            Ok(Some(out))
-        }
-    }
-
-    deserializer.deserialize_seq(HexVecVisitor)
 }
 
 pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
@@ -427,80 +413,6 @@ where
     deserializer.deserialize_seq(BytesVecVisitor)
 }
 
-pub fn deserialize_storage_tries<'de, D>(
-    deserializer: D,
-) -> Result<Option<StorageTrieNodes>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct KeysVisitor;
-
-    impl<'de> Visitor<'de> for KeysVisitor {
-        type Value = Option<StorageTrieNodes>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str(
-                "a list of maps with H160 keys and array of hex-encoded strings as values",
-            )
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut map = HashMap::new();
-
-            #[derive(Deserialize)]
-            struct KeyEntry(HashMap<String, Vec<String>>);
-
-            while let Some(entry) = seq.next_element::<KeyEntry>()? {
-                let obj = entry.0;
-                if obj.len() != 1 {
-                    return Err(de::Error::custom(
-                        "Each object must contain exactly one key",
-                    ));
-                }
-
-                for (k, v) in obj {
-                    let h160 =
-                        H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
-
-                    let vecs = v
-                        .into_iter()
-                        .map(|s| {
-                            let s = s.trim_start_matches("0x");
-                            hex::decode(s).map_err(de::Error::custom)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-
-                    map.insert(h160, vecs);
-                }
-            }
-
-            Ok(Some(map))
-        }
-    }
-
-    deserializer.deserialize_seq(KeysVisitor)
-}
-
-pub fn serialize_proofs<S>(
-    state_trie_nodes: &Option<Vec<Vec<u8>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let Some(state_trie_nodes) = state_trie_nodes else {
-        return Err(ser::Error::custom("State trie nodes is empty"));
-    };
-    let mut seq_serializer = serializer.serialize_seq(Some(state_trie_nodes.len()))?;
-    for encoded_node in state_trie_nodes {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
-    }
-    seq_serializer.end()
-}
-
 fn hash_address(address: &Address) -> Vec<u8> {
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
@@ -511,4 +423,29 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+
+pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
+    let mut initial_node = None;
+
+    for node in state.iter() {
+        // If the node is empty we skip it
+        if node == &vec![128_u8] {
+            continue;
+        }
+        let x = Node::decode_raw(node).map_err(|_| {
+            ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
+        })?;
+        let hash = x.compute_hash().finalize();
+        if hash == initial_state {
+            initial_node = Some(node.clone());
+            break;
+        }
+    }
+
+    Trie::from_nodes(
+        initial_node.map(|b| b.to_vec()).as_ref(),
+        &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
+    )
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
 }

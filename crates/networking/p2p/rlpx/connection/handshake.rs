@@ -4,10 +4,15 @@ use std::{
     sync::Arc,
 };
 
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
+        l2::l2_connection::L2ConnState,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -36,11 +41,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-
-use super::{
-    codec::RLPxCodec,
-    server::{Initiator, Receiver},
-};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -111,6 +111,11 @@ pub(crate) async fn perform(
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()));
         }
+        // Shouldn't perform a Handshake on an already failed connection.
+        // Put it here to complete the match arms
+        InnerState::HandshakeFailed => {
+            return Err(RLPxError::StateError("Handshake Failed".to_string()));
+        }
     };
     let (sink, stream) = framed.split();
     Ok((
@@ -131,6 +136,9 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
+            l2_state: context
+                .based_context
+                .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
         },
         stream,
     ))
@@ -373,9 +381,9 @@ fn encrypt_message(
     remote_static_pubkey: &PublicKey,
     mut encoded_msg: Vec<u8>,
 ) -> Result<Vec<u8>, RLPxError> {
-    const SIGNATURE_SIZE: usize = 65;
-    const IV_SIZE: usize = 16;
-    const MAC_FOOTER_SIZE: usize = 32;
+    const SIGNATURE_SIZE: u16 = 65;
+    const IV_SIZE: u16 = 16;
+    const MAC_FOOTER_SIZE: u16 = 32;
 
     let mut rng = rand::thread_rng();
 
@@ -386,9 +394,11 @@ fn encrypt_message(
 
     // Precompute the size of the message. This is needed for computing the MAC.
     let ecies_overhead = SIGNATURE_SIZE + IV_SIZE + MAC_FOOTER_SIZE;
-    let auth_size: u16 = (encoded_msg.len() + ecies_overhead)
+    let encoded_msg_len: u16 = encoded_msg
+        .len()
         .try_into()
         .map_err(|_| RLPxError::CryptographyError("Invalid message length".to_owned()))?;
+    let auth_size = ecies_overhead + encoded_msg_len;
     let auth_size_bytes = auth_size.to_be_bytes();
 
     // Generate a keypair just for this message.

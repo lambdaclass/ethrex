@@ -115,6 +115,8 @@ pub enum ProofCoordinatorError {
     ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
+    #[error("Missing TDX private key")]
+    MissingTDXPrivateKey,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -187,7 +189,7 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
-    #[error("Interval does not fit in u64")]
+    #[error("Block Producer failed to convert values: {0}")]
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("{0}")]
     Custom(String),
@@ -329,7 +331,7 @@ pub enum MonitorError {
     GetLatestBatch,
     #[error("Failed to get latest verified batch")]
     GetLatestVerifiedBatch,
-    #[error("Failed to get committed batch")]
+    #[error("Failed to get commited batch")]
     GetLatestCommittedBatch,
     #[error("Failed to get last L1 block fetched")]
     GetLastFetchedL1,
@@ -343,8 +345,14 @@ pub enum MonitorError {
     PrivilegedTxParseError,
     #[error("Failure in rpc call: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to get receipt for transaction")]
+    ReceiptError,
+    #[error("Expected transaction to have logs")]
+    NoLogs,
     #[error("Expected items in the table")]
     NoItemsInTable,
     #[error("RPC List can't be empty")]
     RPCListEmpty,
+    #[error("Error converting batch window")]
+    BatchWindow,
 }

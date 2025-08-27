@@ -305,7 +305,7 @@ impl Discv4Server {
                 }
 
                 let nodes = &neighbors_msg.nodes;
-                let total_nodes_sent = req.nodes_sent + nodes.len();
+                let total_nodes_sent = req.nodes_sent + nodes.len() as u64;
 
                 if total_nodes_sent > MAX_NODES_PER_BUCKET {
                     node.find_node_request = None;
@@ -798,6 +798,7 @@ pub(super) mod tests {
             blockchain,
             broadcast,
             client_version: "ethrex/test".to_string(),
+            based_context: None,
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
@@ -841,6 +842,8 @@ pub(super) mod tests {
         };
         store.set_chain_config(&config).await?;
 
+        let mut new_canonical_blocks = vec![];
+
         for i in 0..blocks {
             let header = BlockHeader {
                 number: 0,
@@ -851,9 +854,20 @@ pub(super) mod tests {
             };
             let block_hash = header.hash();
             store.add_block_header(block_hash, header).await?;
-            store.set_canonical_block(i, block_hash).await?;
+            new_canonical_blocks.push((i, block_hash));
         }
-        store.update_latest_block_number(blocks - 1).await?;
+        let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
+            return Ok(store);
+        };
+        store
+            .forkchoice_update(
+                Some(new_canonical_blocks),
+                last_number,
+                last_hash,
+                None,
+                None,
+            )
+            .await?;
         Ok(store)
     }
 

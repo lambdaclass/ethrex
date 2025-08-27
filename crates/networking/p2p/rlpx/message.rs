@@ -9,6 +9,8 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+use super::l2::messages::{BatchSealed, L2Message, NewBlock};
+use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -19,6 +21,7 @@ use ethrex_rlp::encode::RLPEncode;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET: u8 = 0x21;
+const BASED_CAPABILITY_OFFSET: u8 = 0x30;
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;
@@ -57,6 +60,8 @@ pub(crate) enum Message {
     ByteCodes(ByteCodes),
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
+    // based capability
+    L2(messages::L2Message),
 }
 
 impl Message {
@@ -93,6 +98,16 @@ impl Message {
             Message::ByteCodes(_) => SNAP_CAPABILITY_OFFSET + ByteCodes::CODE,
             Message::GetTrieNodes(_) => SNAP_CAPABILITY_OFFSET + GetTrieNodes::CODE,
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
+
+            // based capability
+            Message::L2(l2_msg) => {
+                BASED_CAPABILITY_OFFSET + {
+                    match l2_msg {
+                        L2Message::NewBlock(_) => NewBlock::CODE,
+                        L2Message::BatchSealed(_) => BatchSealed::CODE,
+                    }
+                }
+            }
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -133,7 +148,7 @@ impl Message {
                 }
                 _ => Err(RLPDecodeError::MalformedData),
             }
-        } else {
+        } else if msg_id < BASED_CAPABILITY_OFFSET {
             // snap capability
             match msg_id - SNAP_CAPABILITY_OFFSET {
                 GetAccountRange::CODE => {
@@ -150,6 +165,19 @@ impl Message {
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
+        } else {
+            // based capability
+            Ok(Message::L2(match msg_id - BASED_CAPABILITY_OFFSET {
+                messages::NewBlock::CODE => {
+                    let decoded = l2::messages::NewBlock::decode(data)?;
+                    L2Message::NewBlock(decoded)
+                }
+                BatchSealed::CODE => {
+                    let decoded = l2::messages::BatchSealed::decode(data)?;
+                    L2Message::BatchSealed(decoded)
+                }
+                _ => return Err(RLPDecodeError::MalformedData),
+            }))
         }
     }
 
@@ -180,6 +208,10 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(msg) => msg.encode(buf),
+                L2Message::NewBlock(msg) => msg.encode(buf),
+            },
         }
     }
 }
@@ -211,6 +243,10 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+                L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
+            },
         }
     }
 }

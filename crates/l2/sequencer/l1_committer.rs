@@ -10,7 +10,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
-        MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
 use ethrex_l2_common::{
@@ -30,7 +30,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -49,7 +49,18 @@ const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]
-pub struct CommitterState {
+pub enum InMessage {
+    Commit,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+    Error,
+}
+
+pub struct L1Committer {
     eth_client: EthClient,
     blockchain: Arc<Blockchain>,
     on_chain_proposer_address: Address,
@@ -63,7 +74,7 @@ pub struct CommitterState {
     sequencer_state: SequencerState,
 }
 
-impl CommitterState {
+impl L1Committer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         committer_config: &CommitterConfig,
@@ -96,23 +107,7 @@ impl CommitterState {
             sequencer_state,
         })
     }
-}
 
-#[derive(Clone)]
-pub enum InMessage {
-    Commit,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-    Error,
-}
-
-pub struct L1Committer;
-
-impl L1Committer {
     pub async fn spawn(
         store: Store,
         blockchain: Arc<Blockchain>,
@@ -120,20 +115,422 @@ impl L1Committer {
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
-        let state = CommitterState::new(
+        let state = Self::new(
             &cfg.l1_committer,
             &cfg.eth,
             blockchain,
             store.clone(),
             rollup_store.clone(),
-            cfg.based.based,
+            cfg.based.enabled,
             sequencer_state,
         )?;
-        let mut l1_committer = L1Committer::start(state);
+        let mut l1_committer = state.start();
         l1_committer
             .cast(InMessage::Commit)
             .await
             .map_err(CommitterError::GenServerError)
+    }
+
+    async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
+        info!("Running committer main loop");
+        // Get the batch to commit
+        let last_committed_batch_number = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+        let batch_to_commit = last_committed_batch_number + 1;
+
+        let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
+            Some(batch) => batch,
+            None => {
+                let last_committed_blocks = self
+                    .rollup_store
+                    .get_block_numbers_by_batch(last_committed_batch_number)
+                    .await?
+                    .ok_or(
+                        CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
+                    )?;
+                let last_block = last_committed_blocks
+                    .last()
+                    .ok_or(
+                        CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
+                    )?;
+                let first_block_to_commit = last_block + 1;
+
+                // Try to prepare batch
+                let (
+                    blobs_bundle,
+                    new_state_root,
+                    message_hashes,
+                    privileged_transactions_hash,
+                    last_block_of_batch,
+                ) = self.prepare_batch_from_block(*last_block).await?;
+
+                if *last_block == last_block_of_batch {
+                    debug!("No new blocks to commit, skipping");
+                    return Ok(());
+                }
+
+                let batch = Batch {
+                    number: batch_to_commit,
+                    first_block: first_block_to_commit,
+                    last_block: last_block_of_batch,
+                    state_root: new_state_root,
+                    privileged_transactions_hash,
+                    message_hashes,
+                    blobs_bundle,
+                    commit_tx: None,
+                    verify_tx: None,
+                };
+
+                self.rollup_store.seal_batch(batch.clone()).await?;
+
+                debug!(
+                    first_block = batch.first_block,
+                    last_block = batch.last_block,
+                    "Batch {} stored in database",
+                    batch.number
+                );
+
+                batch
+            }
+        };
+
+        info!(
+            first_block = batch.first_block,
+            last_block = batch.last_block,
+            "Sending commitment for batch {}",
+            batch.number,
+        );
+
+        self.rollup_store.update_precommit_privileged(None).await?;
+
+        match self.send_commitment(&batch).await {
+            Ok(commit_tx_hash) => {
+                metrics!(
+                let _ = METRICS
+                    .set_block_type_and_block_number(
+                        MetricsBlockType::LastCommittedBlock,
+                        batch.last_block,
+                    )
+                    .inspect_err(|e| {
+                        tracing::error!(
+                            "Failed to set metric: last committed block {}",
+                            e.to_string()
+                        )
+                    });
+                );
+
+                self.rollup_store
+                    .store_commit_tx_by_batch(batch.number, commit_tx_hash)
+                    .await?;
+
+                info!(
+                    "Commitment sent for batch {}, with tx hash {commit_tx_hash:#x}.",
+                    batch.number
+                );
+                Ok(())
+            }
+            Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
+                "Failed to send commitment for batch {}. first_block: {} last_block: {}: {error}",
+                batch.number, batch.first_block, batch.last_block
+            ))),
+        }
+    }
+
+    async fn prepare_batch_from_block(
+        &mut self,
+        mut last_added_block_number: BlockNumber,
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+        let first_block_of_batch = last_added_block_number + 1;
+        let mut blobs_bundle = BlobsBundle::default();
+
+        let mut acc_messages = vec![];
+        let mut acc_privileged_txs = vec![];
+        let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        let mut message_hashes = vec![];
+        let mut privileged_transactions_hashes = vec![];
+        let mut new_state_root = H256::default();
+
+        #[cfg(feature = "metrics")]
+        let mut tx_count = 0_u64;
+        let mut _blob_size = 0_usize;
+
+        info!("Preparing state diff from block {first_block_of_batch}");
+
+        loop {
+            let block_to_commit_number = last_added_block_number + 1;
+            // Get a block to add to the batch
+            let Some(block_to_commit_body) = self
+                .store
+                .get_block_body(block_to_commit_number)
+                .await
+                .map_err(CommitterError::from)?
+            else {
+                debug!("No new block to commit, skipping..");
+                break;
+            };
+            let block_to_commit_header = self
+                .store
+                .get_block_header(block_to_commit_number)
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                    "Failed to get_block_header() after get_block_body()".to_owned(),
+                ))?;
+
+            // Get block transactions and receipts
+            let mut txs = vec![];
+            let mut receipts = vec![];
+            for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
+                let receipt = self
+                    .store
+                    .get_receipt(block_to_commit_number, index.try_into()?)
+                    .await?
+                    .ok_or(CommitterError::InternalError(
+                        "Transactions in a block should have a receipt".to_owned(),
+                    ))?;
+                txs.push(tx.clone());
+                receipts.push(receipt);
+            }
+
+            metrics!(
+                tx_count += txs
+                    .len()
+                    .try_into()
+                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                    .unwrap_or(0)
+            );
+            // Get block messages and privileged transactions
+            let messages = get_block_l1_messages(&receipts);
+            let privileged_transactions = get_block_privileged_transactions(&txs);
+
+            // Get block account updates.
+            let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
+            let account_updates = if let Some(account_updates) = self
+                .rollup_store
+                .get_account_updates_by_block_number(block_to_commit_number)
+                .await?
+            {
+                account_updates
+            } else {
+                warn!(
+                    "Could not find execution cache result for block {}, falling back to re-execution",
+                    last_added_block_number + 1
+                );
+
+                let vm_db =
+                    StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
+                let mut vm = self.blockchain.new_evm(vm_db)?;
+                vm.execute_block(&block_to_commit)?;
+                vm.get_state_transitions()?
+            };
+
+            // Accumulate block data with the rest of the batch.
+            acc_messages.extend(messages.clone());
+            acc_privileged_txs.extend(privileged_transactions.clone());
+            for account in account_updates {
+                let address = account.address;
+                if let Some(existing) = acc_account_updates.get_mut(&address) {
+                    existing.merge(account);
+                } else {
+                    acc_account_updates.insert(address, account);
+                }
+            }
+
+            let parent_block_hash = self
+                .store
+                .get_block_header(first_block_of_batch)?
+                .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                    "Failed to get_block_header() of the last added block".to_owned(),
+                ))?
+                .parent_hash;
+            let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+
+            let result = if !self.validium {
+                // Prepare current state diff.
+                let state_diff = prepare_state_diff(
+                    block_to_commit_header,
+                    &parent_db,
+                    &acc_messages,
+                    &acc_privileged_txs,
+                    acc_account_updates.clone().into_values().collect(),
+                )?;
+                generate_blobs_bundle(&state_diff)
+            } else {
+                Ok((BlobsBundle::default(), 0_usize))
+            };
+
+            let Ok((bundle, latest_blob_size)) = result else {
+                warn!(
+                    "Batch size limit reached. Any remaining blocks will be processed in the next batch."
+                );
+                // Break loop. Use the previous generated blobs_bundle.
+                break;
+            };
+
+            // Save current blobs_bundle and continue to add more blocks.
+            blobs_bundle = bundle;
+            _blob_size = latest_blob_size;
+
+            privileged_transactions_hashes.extend(
+                privileged_transactions
+                    .iter()
+                    .filter_map(|tx| tx.get_privileged_hash())
+                    .collect::<Vec<H256>>(),
+            );
+
+            new_state_root = self
+                .store
+                .state_trie(block_to_commit.hash())?
+                .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                    "Failed to get state root from storage".to_owned(),
+                ))?
+                .hash_no_commit();
+
+            last_added_block_number += 1;
+        }
+
+        metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
+                privileged_transactions_hashes.len().try_into(),
+                message_hashes.len().try_into()
+            ) {
+                let _ = self
+                    .rollup_store
+                    .update_operations_count(tx_count, privileged_transaction_count, messages_count)
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("Failed to update operations metric: {}", e.to_string())
+                    });
+            }
+            #[allow(clippy::as_conversions)]
+            let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            METRICS.set_blob_usage_percentage(blob_usage_percentage);
+        );
+
+        let privileged_transactions_hash =
+            compute_privileged_transactions_hash(privileged_transactions_hashes)?;
+        for msg in &acc_messages {
+            message_hashes.push(get_l1_message_hash(msg));
+        }
+        Ok((
+            blobs_bundle,
+            new_state_root,
+            message_hashes,
+            privileged_transactions_hash,
+            last_added_block_number,
+        ))
+    }
+
+    async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
+        let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
+        let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
+
+        let mut calldata_values = vec![
+            Value::Uint(U256::from(batch.number)),
+            Value::FixedBytes(batch.state_root.0.to_vec().into()),
+            Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
+            Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
+            Value::FixedBytes(last_block_hash.0.to_vec().into()),
+        ];
+
+        let (commit_function_signature, values) = if self.based {
+            let mut encoded_blocks: Vec<Bytes> = Vec::new();
+
+            for i in batch.first_block..=batch.last_block {
+                let block_header = self
+                    .store
+                    .get_block_header(i)
+                    .map_err(CommitterError::from)?
+                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+                let block_body = self
+                    .store
+                    .get_block_body(i)
+                    .await
+                    .map_err(CommitterError::from)?
+                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+                let block = Block::new(block_header, block_body);
+
+                encoded_blocks.push(block.encode_to_vec().into());
+            }
+
+            calldata_values.push(Value::Array(
+                encoded_blocks.into_iter().map(Value::Bytes).collect(),
+            ));
+
+            (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
+        } else {
+            (COMMIT_FUNCTION_SIGNATURE, calldata_values)
+        };
+
+        let calldata = encode_calldata(commit_function_signature, &values)?;
+
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
+        // Validium: EIP1559 Transaction.
+        // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
+        let tx = if !self.validium {
+            info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
+            let le_bytes = estimate_blob_gas(
+                &self.eth_client,
+                self.arbitrary_base_blob_gas_price,
+                20, // 20% of headroom
+            )
+            .await?
+            .to_le_bytes();
+
+            let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+
+            self.eth_client
+                .build_generic_tx(
+                    TxType::EIP4844,
+                    self.on_chain_proposer_address,
+                    self.signer.address(),
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.signer.address()),
+                        gas_price_per_blob: Some(gas_price_per_blob),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        blobs_bundle: Some(batch.blobs_bundle.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(CommitterError::from)?
+        } else {
+            info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
+            self.eth_client
+                .build_generic_tx(
+                    TxType::EIP1559,
+                    self.on_chain_proposer_address,
+                    self.signer.address(),
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.signer.address()),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(CommitterError::from)?
+        };
+
+        let commit_tx_hash =
+            send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
+
+        info!("Commitment sent: {commit_tx_hash:#x}");
+
+        Ok(commit_tx_hash)
     }
 }
 
@@ -141,319 +538,25 @@ impl GenServer for L1Committer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = CommitterState;
 
     type Error = CommitterError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
-        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = commit_next_batch_to_l1(&mut state)
+        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+            let _ = self
+                .commit_next_batch_to_l1()
                 .await
                 .inspect_err(|err| error!("L1 Committer Error: {err}"));
         }
-        let check_interval = random_duration(state.commit_time_ms);
+        let check_interval = random_duration(self.commit_time_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
-        CastResponse::NoReply(state)
+        CastResponse::NoReply
     }
-}
-
-async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), CommitterError> {
-    info!("Running committer main loop");
-    // Get the batch to commit
-    let last_committed_batch_number = state
-        .eth_client
-        .get_last_committed_batch(state.on_chain_proposer_address)
-        .await?;
-    let batch_to_commit = last_committed_batch_number + 1;
-
-    let batch = match state.rollup_store.get_batch(batch_to_commit).await? {
-        Some(batch) => batch,
-        None => {
-            let last_committed_blocks = state
-                .rollup_store
-                .get_block_numbers_by_batch(last_committed_batch_number)
-                .await?
-                .ok_or(
-                    CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
-                )?;
-            let last_block = last_committed_blocks
-                .last()
-                .ok_or(
-                    CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
-                )?;
-            let first_block_to_commit = last_block + 1;
-
-            // Try to prepare batch
-            let (
-                blobs_bundle,
-                new_state_root,
-                message_hashes,
-                privileged_transactions_hash,
-                last_block_of_batch,
-            ) = prepare_batch_from_block(state, *last_block).await?;
-
-            if *last_block == last_block_of_batch {
-                debug!("No new blocks to commit, skipping");
-                return Ok(());
-            }
-
-            let batch = Batch {
-                number: batch_to_commit,
-                first_block: first_block_to_commit,
-                last_block: last_block_of_batch,
-                state_root: new_state_root,
-                privileged_transactions_hash,
-                message_hashes,
-                blobs_bundle,
-                commit_tx: None,
-                verify_tx: None,
-            };
-
-            state.rollup_store.seal_batch(batch.clone()).await?;
-
-            debug!(
-                first_block = batch.first_block,
-                last_block = batch.last_block,
-                "Batch {} stored in database",
-                batch.number
-            );
-
-            batch
-        }
-    };
-
-    info!(
-        first_block = batch.first_block,
-        last_block = batch.last_block,
-        "Sending commitment for batch {}",
-        batch.number,
-    );
-
-    match send_commitment(state, &batch).await {
-        Ok(commit_tx_hash) => {
-            metrics!(
-            let _ = METRICS
-                .set_block_type_and_block_number(
-                    MetricsBlockType::LastCommittedBlock,
-                    batch.last_block,
-                )
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Failed to set metric: last committed block {}",
-                        e.to_string()
-                    )
-                });
-            );
-
-            state
-                .rollup_store
-                .store_commit_tx_by_batch(batch.number, commit_tx_hash)
-                .await?;
-
-            info!(
-                "Commitment sent for batch {}, with tx hash {commit_tx_hash:#x}.",
-                batch.number
-            );
-            Ok(())
-        }
-        Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
-            "Failed to send commitment for batch {}. first_block: {} last_block: {}: {error}",
-            batch.number, batch.first_block, batch.last_block
-        ))),
-    }
-}
-
-async fn prepare_batch_from_block(
-    state: &mut CommitterState,
-    mut last_added_block_number: BlockNumber,
-) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
-    let first_block_of_batch = last_added_block_number + 1;
-    let mut blobs_bundle = BlobsBundle::default();
-
-    let mut acc_messages = vec![];
-    let mut acc_privileged_txs = vec![];
-    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-    let mut message_hashes = vec![];
-    let mut privileged_transactions_hashes = vec![];
-    let mut new_state_root = H256::default();
-
-    #[cfg(feature = "metrics")]
-    let mut tx_count = 0_u64;
-    let mut _blob_size = 0_usize;
-
-    info!("Preparing state diff from block {first_block_of_batch}");
-
-    loop {
-        let block_to_commit_number = last_added_block_number + 1;
-        // Get a block to add to the batch
-        let Some(block_to_commit_body) = state
-            .store
-            .get_block_body(block_to_commit_number)
-            .await
-            .map_err(CommitterError::from)?
-        else {
-            debug!("No new block to commit, skipping..");
-            break;
-        };
-        let block_to_commit_header = state
-            .store
-            .get_block_header(block_to_commit_number)
-            .map_err(CommitterError::from)?
-            .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                "Failed to get_block_header() after get_block_body()".to_owned(),
-            ))?;
-
-        // Get block transactions and receipts
-        let mut txs = vec![];
-        let mut receipts = vec![];
-        for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
-            let receipt = state
-                .store
-                .get_receipt(block_to_commit_number, index.try_into()?)
-                .await?
-                .ok_or(CommitterError::InternalError(
-                    "Transactions in a block should have a receipt".to_owned(),
-                ))?;
-            txs.push(tx.clone());
-            receipts.push(receipt);
-        }
-
-        metrics!(
-            tx_count += txs
-                .len()
-                .try_into()
-                .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                .unwrap_or(0)
-        );
-        // Get block messages and privileged transactions
-        let messages = get_block_l1_messages(&receipts);
-        let privileged_transactions = get_block_privileged_transactions(&txs);
-
-        // Get block account updates.
-        let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
-        let account_updates = if let Some(account_updates) = state
-            .rollup_store
-            .get_account_updates_by_block_number(block_to_commit_number)
-            .await?
-        {
-            account_updates
-        } else {
-            warn!(
-                "Could not find execution cache result for block {}, falling back to re-execution",
-                last_added_block_number + 1
-            );
-
-            let vm_db =
-                StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
-            let mut vm = state.blockchain.new_evm(vm_db)?;
-            vm.execute_block(&block_to_commit)?;
-            vm.get_state_transitions()?
-        };
-
-        // Accumulate block data with the rest of the batch.
-        acc_messages.extend(messages.clone());
-        acc_privileged_txs.extend(privileged_transactions.clone());
-        for account in account_updates {
-            let address = account.address;
-            if let Some(existing) = acc_account_updates.get_mut(&address) {
-                existing.merge(account);
-            } else {
-                acc_account_updates.insert(address, account);
-            }
-        }
-
-        let parent_block_hash = state
-            .store
-            .get_block_header(first_block_of_batch)?
-            .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                "Failed to get_block_header() of the last added block".to_owned(),
-            ))?
-            .parent_hash;
-        let parent_db = StoreVmDatabase::new(state.store.clone(), parent_block_hash);
-
-        let result = if !state.validium {
-            // Prepare current state diff.
-            let state_diff = prepare_state_diff(
-                block_to_commit_header,
-                &parent_db,
-                &acc_messages,
-                &acc_privileged_txs,
-                acc_account_updates.clone().into_values().collect(),
-            )?;
-            generate_blobs_bundle(&state_diff)
-        } else {
-            Ok((BlobsBundle::default(), 0_usize))
-        };
-
-        let Ok((bundle, latest_blob_size)) = result else {
-            warn!(
-                "Batch size limit reached. Any remaining blocks will be processed in the next batch."
-            );
-            // Break loop. Use the previous generated blobs_bundle.
-            break;
-        };
-
-        // Save current blobs_bundle and continue to add more blocks.
-        blobs_bundle = bundle;
-        _blob_size = latest_blob_size;
-
-        privileged_transactions_hashes.extend(
-            privileged_transactions
-                .iter()
-                .filter_map(|tx| tx.get_privileged_hash())
-                .collect::<Vec<H256>>(),
-        );
-
-        new_state_root = state
-            .store
-            .state_trie(block_to_commit.hash())?
-            .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                "Failed to get state root from storage".to_owned(),
-            ))?
-            .hash_no_commit();
-
-        last_added_block_number += 1;
-    }
-
-    metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
-            privileged_transactions_hashes.len().try_into(),
-            message_hashes.len().try_into()
-        ) {
-            let _ = state
-                .rollup_store
-                .update_operations_count(tx_count, privileged_transaction_count, messages_count)
-                .await
-                .inspect_err(|e| {
-                    tracing::error!("Failed to update operations metric: {}", e.to_string())
-                });
-        }
-        #[allow(clippy::as_conversions)]
-        let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
-        METRICS.set_blob_usage_percentage(blob_usage_percentage);
-    );
-
-    let privileged_transactions_hash =
-        compute_privileged_transactions_hash(privileged_transactions_hashes)?;
-    for msg in &acc_messages {
-        message_hashes.push(get_l1_message_hash(msg));
-    }
-    Ok((
-        blobs_bundle,
-        new_state_root,
-        message_hashes,
-        privileged_transactions_hash,
-        last_added_block_number,
-    ))
 }
 
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
@@ -470,130 +573,6 @@ pub fn generate_blobs_bundle(
         BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
         blob_size,
     ))
-}
-
-async fn send_commitment(
-    state: &mut CommitterState,
-    batch: &Batch,
-) -> Result<H256, CommitterError> {
-    let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
-    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
-
-    let mut calldata_values = vec![
-        Value::Uint(U256::from(batch.number)),
-        Value::FixedBytes(batch.state_root.0.to_vec().into()),
-        Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
-        Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
-        Value::FixedBytes(last_block_hash.0.to_vec().into()),
-    ];
-
-    let (commit_function_signature, values) = if state.based {
-        let mut encoded_blocks: Vec<Bytes> = Vec::new();
-
-        for i in batch.first_block..=batch.last_block {
-            let block_header = state
-                .store
-                .get_block_header(i)
-                .map_err(CommitterError::from)?
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-            let block_body = state
-                .store
-                .get_block_body(i)
-                .await
-                .map_err(CommitterError::from)?
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-            let block = Block::new(block_header, block_body);
-
-            encoded_blocks.push(block.encode_to_vec().into());
-        }
-
-        calldata_values.push(Value::Array(
-            encoded_blocks.into_iter().map(Value::Bytes).collect(),
-        ));
-
-        (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
-    } else {
-        (COMMIT_FUNCTION_SIGNATURE, calldata_values)
-    };
-
-    let calldata = encode_calldata(commit_function_signature, &values)?;
-
-    let gas_price = state
-        .eth_client
-        .get_gas_price_with_extra(20)
-        .await?
-        .try_into()
-        .map_err(|_| {
-            CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
-    // Validium: EIP1559 Transaction.
-    // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
-    let mut tx = if !state.validium {
-        info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
-        let le_bytes = estimate_blob_gas(
-            &state.eth_client,
-            state.arbitrary_base_blob_gas_price,
-            20, // 20% of headroom
-        )
-        .await?
-        .to_le_bytes();
-
-        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
-
-        let wrapped_tx = state
-            .eth_client
-            .build_eip4844_transaction(
-                state.on_chain_proposer_address,
-                state.signer.address(),
-                calldata.into(),
-                Overrides {
-                    from: Some(state.signer.address()),
-                    gas_price_per_blob: Some(gas_price_per_blob),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-                batch.blobs_bundle.clone(),
-            )
-            .await
-            .map_err(CommitterError::from)?;
-
-        WrappedTransaction::EIP4844(wrapped_tx)
-    } else {
-        info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
-        let wrapped_tx = state
-            .eth_client
-            .build_eip1559_transaction(
-                state.on_chain_proposer_address,
-                state.signer.address(),
-                calldata.into(),
-                Overrides {
-                    from: Some(state.signer.address()),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(CommitterError::from)?;
-
-        WrappedTransaction::EIP1559(wrapped_tx)
-    };
-
-    state
-        .eth_client
-        .set_gas_for_wrapped_tx(&mut tx, state.signer.address())
-        .await?;
-
-    let commit_tx_hash =
-        send_tx_bump_gas_exponential_backoff(&state.eth_client, &mut tx, &state.signer).await?;
-
-    info!("Commitment sent: {commit_tx_hash:#x}");
-
-    Ok(commit_tx_hash)
 }
 
 fn get_last_block_hash(

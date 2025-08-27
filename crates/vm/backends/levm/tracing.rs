@@ -14,7 +14,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        Self::prepare_block(block, db, vm_type.clone())?;
+        Self::prepare_block(block, db, vm_type)?;
 
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block
@@ -28,7 +28,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type.clone())?;
+            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
         }
 
         // Process withdrawals only if the whole block has been executed.

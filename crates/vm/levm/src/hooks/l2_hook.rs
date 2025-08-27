@@ -31,7 +31,7 @@ impl Hook for L2Hook {
         // since they must always be accepted, and an error would mark them as invalid
         // Instead, we make them revert by inserting a revert2
         if sender_address != COMMON_BRIDGE_L2_ADDRESS {
-            let value = vm.current_call_frame()?.msg_value;
+            let value = vm.current_call_frame.msg_value;
             if value > sender_balance {
                 tx_should_fail = true;
             } else {
@@ -88,8 +88,8 @@ impl Hook for L2Hook {
         if tx_should_fail {
             // If the transaction failed some validation, but it must still be included
             // To prevent it from taking effect, we force it to revert
-            vm.current_call_frame_mut()?.msg_value = U256::zero();
-            vm.current_call_frame_mut()?
+            vm.current_call_frame.msg_value = U256::zero();
+            vm.current_call_frame
                 .set_code(vec![Opcode::INVALID.into()].into())?;
             return Ok(());
         }

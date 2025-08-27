@@ -10,66 +10,50 @@ permissions:
   contents: write
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   build-ethrex:
     strategy:
       matrix:
         platform:
           - ubuntu-22.04
-          - ubuntu-22.04-arm
+          - ubuntu-24.04-arm
           - macos-latest
+        gpu:
+          - true
+          - false
         include:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-          - platform: ubuntu-22.04-arm
+            prover_features: sp1,risc0
+            cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
+          - platform: ubuntu-24.04-arm
             os: linux
             arch: aarch64
+            prover_features: sp1
           - platform: macos-latest
             os: macos
             arch: aarch64
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Build ethrex
-        run: |
-          cargo build --release --all-features --bin ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
-
-  build-prover-exec:
-    strategy:
-      matrix:
-        platform:
-          - ubuntu-22.04
-          - ubuntu-22.04-arm
-          - macos-latest
-        include:
-          - platform: ubuntu-22.04
-            os: linux
-            arch: x86_64
-            rustflags: -C target-cpu=native
-          - platform: ubuntu-22.04-arm
-            os: linux
-            arch: aarch64
-            rustflags: -C target-cpu=native
+          - gpu: true
+            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
+            gpu_feature: ",gpu"
+            gpu_suffix: "-gpu"
+        exclude:
           - platform: macos-latest
-            os: macos
-            arch: aarch64
+            gpu: true
     runs-on: ${{ matrix.platform }}
     steps:
+      - name: Free Disk Space (Ubuntu)
+        if: ${{ matrix.os == 'linux' }}
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -78,166 +62,141 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-      - name: Build prover binary
-        run: |
-          export RUSTFLAGS="${{ matrix.rustflags }}"
-          cd crates/l2
-          cargo build --release --features "l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
-
-  build-prover-sp1:
-    strategy:
-      matrix:
-        platform:
-          - ubuntu-22.04
-          - ubuntu-22.04-arm
-        include:
-          - platform: ubuntu-22.04
-            arch: x86_64
-          - platform: ubuntu-22.04-arm
-            arch: aarch64
-          - os: linux # This property will be added to all matrix combinations
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Install SP1
+      - name: Install SP1 (only Linux)
+        if: ${{ matrix.os == 'linux' }}
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.0
+          ~/.sp1/bin/sp1up --version 5.0.8
 
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
+      - name: Set up QEMU (only Linux ARM)
+        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
 
-      - name: Build prover binary
-        run: |
-          export RUSTFLAGS='-C target-cpu=native'
-          cd crates/l2
-          cargo build --release --features "sp1,gpu,l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload sp1 vk
-        if: ${{ matrix.arch == 'x86_64' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex-riscv32im-succinct-zkvm-vk
-          path: ethrex-riscv32im-succinct-zkvm-vk
-
-  build-prover-risc0:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Install RISC0
+      - name: Install RISC0 (only Linux x86)
+        if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
-      - uses: Jimver/cuda-toolkit@v0.2.24
+      - name: Install CUDA (only Linux x86 GPU)
+        uses: Jimver/cuda-toolkit@v0.2.24
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
           method: "network"
           sub-packages: '["nvcc"]'
 
-      - name: Build prover binary
+      - name: Install solc
+        if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install solc (Linux ARM)
+        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         run: |
-          export RUSTFLAGS='-C target-cpu=native'
-          export NVCC_PREPEND_FLAGS='-arch=sm_70'
-          cd crates/l2
-          cargo build --release --features "risc0,gpu,l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_risc0-linux_x86_64
-          mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
+          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
+          sudo chmod +x /usr/local/bin/solc
+
+      - name: Build ethrex
+        run: |
+          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.prover_features }}${{ matrix.gpu_feature }}" --bin ethrex
+          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+
+      - name: Copy verification keys
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        run: |
+          mkdir -p ./verification_keys
+          mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk verification_keys/ethrex-riscv32im-succinct-zkvm-vk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_prover_risc0-linux_x86_64
-          path: ethrex_prover_risc0-linux_x86_64
+          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
-      - name: Upload risc0 vk
+      - name: Upload verification keys
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-riscv32im-risc0-vk
-          path: ethrex-riscv32im-risc0-vk
+          name: verification_keys
+          path: verification_keys/
 
   package-contracts:
+    needs:
+      - build-ethrex
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: verification_keys
+          path: crates/l2/contracts/src/
+
       - name: Archive contracts
         run: |
           cd crates/l2/contracts/src/
-          tar -czvf l1-contracts.tar.gz ./l1
-          tar -czvf l2-contracts.tar.gz ./l2
-          cd ../../../../
-          mv crates/l2/contracts/src/l1-contracts.tar.gz ethrex-l1-contracts.tar.gz
-          mv crates/l2/contracts/src/l2-contracts.tar.gz ethrex-l2-contracts.tar.gz
+          tar -czvf ../../../../ethrex-contracts.tar.gz .
 
-      - name: Upload L1 artifact
+      - name: Upload contracts artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-l1-contracts.tar.gz
-          path: ethrex-l1-contracts.tar.gz
+          name: ethrex-contracts.tar.gz
+          path: ethrex-contracts.tar.gz
 
-      - name: Upload L2 artifact
-        uses: actions/upload-artifact@v4
+  build-docker:
+    name: "Build and publish ethrex docker image"
+    runs-on: ubuntu-latest
+
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Format name
+        run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
         with:
-          name: ethrex-l2-contracts.tar.gz
-          path: ethrex-l2-contracts.tar.gz
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushes to ghcr.io/lambdaclass/ethrex
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:
     needs:
       - build-ethrex
-      - build-prover-exec
-      - build-prover-sp1
-      - build-prover-risc0
+      - build-docker
       - package-contracts
     runs-on: ubuntu-latest
     steps:
@@ -251,9 +210,6 @@ jobs:
         with:
           path: ./bin
           pattern: "ethrex*"
-
-      - name: Format name
-        run: echo "RELEASE_NAME=$(echo ${{ github.ref_name }} | cut -d_ -f2)" >> $GITHUB_ENV
 
       - name: Get previous tag
         run: |
@@ -279,5 +235,8 @@ jobs:
           draft: false
           prerelease: false
           tag_name: ${{ github.ref_name }}
-          name: "ethrex: ${{ env.RELEASE_NAME }}"
-          body: ${{ steps.changelog.outputs.changes }}
+          name: "ethrex: ${{ github.ref_name }}"
+          body: >
+            Installation and running instructions can be found in [our docs](https://docs.ethrex.xyz/)
+
+            ${{ steps.changelog.outputs.changes }}

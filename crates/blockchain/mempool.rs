@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Mutex, RwLock},
 };
 
@@ -12,7 +12,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H160, H256, U256,
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
@@ -21,6 +21,7 @@ use ethrex_storage::error::StoreError;
 pub struct Mempool {
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
+    txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
 }
 impl Mempool {
     pub fn new() -> Self {
@@ -33,11 +34,14 @@ impl Mempool {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        let mut tx_pool = self
-            .transaction_pool
+        self.txs_by_sender_nonce
             .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        tx_pool.insert(hash, transaction);
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert((transaction.sender(), transaction.nonce()), hash);
+        self.transaction_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert(hash, transaction);
 
         Ok(())
     }
@@ -76,9 +80,13 @@ impl Mempool {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                    .remove(hash);
             }
 
+            self.txs_by_sender_nonce
+                .write()
+                .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+                .remove(&(tx.sender(), tx.nonce()));
             tx_pool.remove(hash);
         };
 
@@ -183,24 +191,16 @@ impl Mempool {
     }
 
     pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
-        let pending_filter = PendingTxFilter {
-            min_tip: None,
-            base_fee: None,
-            blob_fee: None,
-            only_plain_txs: false,
-            only_blob_txs: false,
-        };
-
-        let pending_txs = self.filter_transactions(&pending_filter)?;
-        let nonce = match pending_txs.get(address) {
-            Some(txs) => txs.last().map(|tx| tx.nonce() + 1),
-            None => None,
-        };
-
-        Ok(nonce)
+        Ok(self
+            .txs_by_sender_nonce
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
+            .range((*address, 0)..=(*address, u64::MAX))
+            .last()
+            .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
-    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+    pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = self
                 .transaction_pool
@@ -216,7 +216,7 @@ impl Mempool {
             pool_lock.len()
         };
 
-        Ok((txs_size, blobs_size))
+        Ok((txs_size as u64, blobs_size as u64))
     }
 
     /// Returns all transactions currently in the pool
@@ -232,15 +232,24 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns all blobs bundles currently in the pool
+    pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
+        let blobs_bundle_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
-    pub fn status(&self) -> Result<usize, MempoolError> {
+    pub fn status(&self) -> Result<u64, MempoolError> {
         let pool_lock = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        Ok(pool_lock.len())
+        Ok(pool_lock.len() as u64)
     }
 
     pub fn contains_sender_nonce(
@@ -249,23 +258,32 @@ impl Mempool {
         nonce: u64,
         received_hash: H256,
     ) -> Result<Option<MempoolTransaction>, MempoolError> {
-        let pooled_transactions = self
+        let Some(hash) = self
+            .txs_by_sender_nonce
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
+            .get(&(sender, nonce))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        if hash == received_hash {
+            return Ok(None);
+        }
+
+        let transaction_pool = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx = transaction_pool.get(&hash).cloned();
+        Ok(tx)
+    }
 
-        let mut txs = pooled_transactions
-            .iter()
-            .filter_map(|(hash, tx)| {
-                if tx.sender() == sender && tx.nonce() == nonce && *hash != received_hash {
-                    Some(tx.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Ok(txs.pop())
+    pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
+        self.transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()).into())
+            .map(|pool| pool.contains_key(&tx_hash))
     }
 
     pub fn find_tx_to_replace(
@@ -274,7 +292,7 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.compute_hash())? else {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
 
@@ -312,7 +330,7 @@ impl Mempool {
             return Err(MempoolError::NonceTooLow);
         }
 
-        Ok(Some(tx_in_pool.compute_hash()))
+        Ok(Some(tx_in_pool.hash()))
     }
 }
 
@@ -411,8 +429,9 @@ mod tests {
         let block_number = header.number;
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
+        store
+            .forkchoice_update(None, block_number, block_hash, None, None)
+            .await?;
         store.set_chain_config(&config).await?;
         Ok(store)
     }
@@ -627,10 +646,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 99_000_000,
-            to: TxKind::Create,                                  // Create tx
-            value: U256::zero(),                                 // Value zero
-            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE + 1]), // Large init code
-            access_list: Default::default(),                     // No access list
+            to: TxKind::Create,  // Create tx
+            value: U256::zero(), // Value zero
+            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE as usize + 1]), // Large init code
+            access_list: Default::default(), // No access list
             ..Default::default()
         };
 
@@ -758,8 +777,8 @@ mod tests {
         let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
         let blob_tx_sender = blob_tx_decoded.sender().unwrap();
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-        let plain_tx_hash = plain_tx.compute_hash();
-        let blob_tx_hash = blob_tx.compute_hash();
+        let plain_tx_hash = plain_tx.hash();
+        let blob_tx_hash = blob_tx.hash();
         let mempool = Mempool::new();
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };

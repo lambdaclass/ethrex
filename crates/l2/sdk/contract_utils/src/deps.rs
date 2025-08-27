@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, ExitStatus},
 };
 
@@ -164,34 +164,4 @@ pub fn git_clone(
             .wait()
             .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))
     }
-}
-
-pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
-    trace!("Downloading contract dependencies");
-    std::fs::create_dir_all(contracts_path.join("lib")).map_err(|err| {
-        GitError::DependencyError(format!("Failed to create contracts/lib: {err}"))
-    })?;
-
-    git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-        contracts_path
-            .join("lib/openzeppelin-contracts-upgradeable")
-            .to_str()
-            .ok_or(GitError::FailedToGetStringFromPath)?,
-        None,
-        true,
-    )?;
-
-    git_clone(
-        "https://github.com/succinctlabs/sp1-contracts.git",
-        contracts_path
-            .join("lib/sp1-contracts")
-            .to_str()
-            .ok_or(GitError::FailedToGetStringFromPath)?,
-        None,
-        false,
-    )?;
-
-    trace!("Contract dependencies downloaded");
-    Ok(())
 }

@@ -1,19 +1,17 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
-    DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
-    networks::Network,
-    utils::set_datadir,
+    utils::{default_datadir, init_datadir},
 };
 use ethrex_blockchain::BlockchainType;
+use ethrex_config::networks::Network;
 use ethrex_vm::EvmEngine;
 use tokio_util::sync::CancellationToken;
 
 #[inline]
 fn block_import() {
-    let data_dir = DEFAULT_DATADIR;
-    set_datadir(data_dir);
-    remove_db(data_dir, true);
+    let data_dir = init_datadir(&default_datadir());
+    remove_db(&data_dir, true);
 
     let evm_engine = EvmEngine::default();
 
@@ -26,7 +24,7 @@ fn block_import() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
         "../../fixtures/blockchain/l2-1k-erc20.rlp",
-        data_dir,
+        &data_dir,
         genesis,
         evm_engine,
         blockchain_type,

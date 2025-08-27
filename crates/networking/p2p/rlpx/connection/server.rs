@@ -16,7 +16,11 @@ use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{
+        CastResponse, GenServer, GenServerHandle,
+        InitResult::{self, NoSuccess, Success},
+        send_interval, spawn_listener,
+    },
 };
 use spawned_rt::tasks::BroadcastStream;
 use tokio::{
@@ -43,6 +47,13 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
+        l2::{
+            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            l2_connection::{
+                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+                handle_l2_broadcast,
+            },
+        },
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
@@ -60,6 +71,8 @@ use crate::{
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
+// Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
+const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -69,20 +82,20 @@ type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 #[derive(Clone)]
 pub struct RLPxConnectionState(pub InnerState);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Receiver {
     pub(crate) context: P2PContext,
     pub(crate) peer_addr: SocketAddr,
     pub(crate) stream: Arc<TcpStream>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
     // Sending part of the TcpStream to connect with the remote peer
@@ -112,10 +125,26 @@ pub struct Established {
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
+    pub(crate) l2_state: L2ConnState,
 }
 
-#[derive(Clone)]
+impl Established {
+    async fn teardown(&self) {
+        // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
+        // Just logging a debug line if that's the case.
+        let _ = self
+            .sink
+            .lock()
+            .await
+            .close()
+            .await
+            .inspect_err(|err| debug!("Could not close the socket: {err}"));
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum InnerState {
+    HandshakeFailed,
     Initiator(Initiator),
     Receiver(Receiver),
     Established(Established),
@@ -138,7 +167,7 @@ impl RLPxConnectionState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
@@ -147,6 +176,7 @@ pub enum CastMessage {
     SendNewPooledTxHashes,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
+    L2(L2Cast),
 }
 
 #[derive(Clone)]
@@ -161,7 +191,9 @@ pub enum OutMessage {
 }
 
 #[derive(Debug)]
-pub struct RLPxConnection {}
+pub struct RLPxConnection {
+    inner_state: InnerState,
+}
 
 impl RLPxConnection {
     pub async fn spawn_as_receiver(
@@ -169,13 +201,22 @@ impl RLPxConnection {
         peer_addr: SocketAddr,
         stream: TcpStream,
     ) -> RLPxConnectionHandle {
-        let state = RLPxConnectionState::new_as_receiver(context, peer_addr, stream);
-        RLPxConnection::start(state)
+        let inner_state = InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream: Arc::new(stream),
+        });
+        let connection = RLPxConnection { inner_state };
+        connection.start()
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
-        let state = RLPxConnectionState::new_as_initiator(context, node);
-        RLPxConnection::start(state.clone())
+        let inner_state = InnerState::Initiator(Initiator {
+            context,
+            node: node.clone(),
+        });
+        let connection = RLPxConnection { inner_state };
+        connection.start()
     }
 }
 
@@ -183,33 +224,40 @@ impl GenServer for RLPxConnection {
     type CallMsg = Unused;
     type CastMsg = CastMessage;
     type OutMsg = MsgResult;
-    type State = RLPxConnectionState;
     type Error = RLPxError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn init(
-        &mut self,
+        mut self,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
-        log_peer_debug(&established_state.node, "Starting RLPx connection");
+    ) -> Result<InitResult<Self>, Self::Error> {
+        match handshake::perform(self.inner_state).await {
+            Ok((mut established_state, stream)) => {
+                log_peer_debug(&established_state.node, "Starting RLPx connection");
 
-        if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
-            connection_failed(
-                &mut established_state,
-                "Failed to initialize RLPx connection",
-                reason,
-            )
-            .await;
-            Err(RLPxError::Disconnected())
-        } else {
-            // New state
-            state.0 = InnerState::Established(established_state);
-            Ok(state)
+                if let Err(reason) =
+                    initialize_connection(handle, &mut established_state, stream).await
+                {
+                    connection_failed(
+                        &mut established_state,
+                        "Failed to initialize RLPx connection",
+                        reason,
+                    )
+                    .await;
+                    self.inner_state = InnerState::Established(established_state);
+                    Ok(NoSuccess(self))
+                } else {
+                    // New state
+                    self.inner_state = InnerState::Established(established_state);
+                    Ok(Success(self))
+                }
+            }
+            Err(err) => {
+                // Handshake failed, just log a debug message.
+                // No connection was established so no need to perform any other action
+                debug!("Failed Handshake on RLPx connection {err}");
+                self.inner_state = InnerState::HandshakeFailed;
+                Ok(NoSuccess(self))
+            }
         }
     }
 
@@ -217,53 +265,112 @@ impl GenServer for RLPxConnection {
         &mut self,
         message: Self::CastMsg,
         _handle: &RLPxConnectionHandle,
-        mut state: Self::State,
-    ) -> CastResponse<Self> {
-        if let InnerState::Established(mut established_state) = state.0.clone() {
-            match message {
-                // TODO: handle all these "let _"
-                // See https://github.com/lambdaclass/ethrex/issues/3375
+    ) -> CastResponse {
+        if let InnerState::Established(ref mut established_state) = self.inner_state {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
+            let result = match message {
                 Self::CastMsg::PeerMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received peer message: {message}"),
                     );
-                    let _ = handle_peer_message(&mut established_state, message).await;
+                    handle_peer_message(established_state, message).await
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received backend message: {message}"),
                     );
-                    let _ = handle_backend_message(&mut established_state, message).await;
+                    handle_backend_message(established_state, message).await
                 }
                 Self::CastMsg::SendPing => {
-                    let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
-                    log_peer_debug(&established_state.node, "Ping sent");
+                    send(established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
-                    let _ = send_new_pooled_tx_hashes(&mut established_state).await;
+                    send_new_pooled_tx_hashes(established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
-                    let _ = handle_broadcast(&mut established_state, (id, msg)).await;
+                    handle_broadcast(established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
                     log_peer_debug(&established_state.node, "Block Range Update");
-                    let _ = handle_block_range_update(&mut established_state).await;
+                    handle_block_range_update(established_state).await
+                }
+                Self::CastMsg::L2(msg) if peer_supports_l2 => {
+                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
+                    match msg {
+                        L2Cast::BatchBroadcast => {
+                            l2_connection::send_sealed_batch(established_state).await
+                        }
+                        L2Cast::BlockBroadcast => {
+                            l2::l2_connection::send_new_block(established_state).await
+                        }
+                    }
+                }
+                _ => Err(RLPxError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                )),
+            };
+
+            if let Err(e) = result {
+                match e {
+                    RLPxError::Disconnected()
+                    | RLPxError::DisconnectReceived(_)
+                    | RLPxError::DisconnectSent(_)
+                    | RLPxError::HandshakeError(_)
+                    | RLPxError::NoMatchingCapabilities()
+                    | RLPxError::InvalidPeerId()
+                    | RLPxError::InvalidMessageLength()
+                    | RLPxError::StateError(_)
+                    | RLPxError::InvalidRecoveryId() => {
+                        log_peer_debug(&established_state.node, &e.to_string());
+                        return CastResponse::Stop;
+                    }
+                    RLPxError::IoError(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                        log_peer_error(
+                            &established_state.node,
+                            "Broken pipe with peer, disconnected",
+                        );
+                        return CastResponse::Stop;
+                    }
+                    _ => {
+                        log_peer_warn(
+                            &established_state.node,
+                            &format!("Error handling cast message: {e}"),
+                        );
+                    }
                 }
             }
-            // Update the state
-            state.0 = InnerState::Established(established_state);
-            CastResponse::NoReply(state)
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply(state)
         }
+        CastResponse::NoReply
+    }
+
+    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+        match self.inner_state {
+            InnerState::Established(established_state) => {
+                log_peer_debug(
+                    &established_state.node,
+                    "Closing connection with established peer",
+                );
+                established_state
+                    .table
+                    .lock()
+                    .await
+                    .replace_peer(established_state.node.node_id());
+                established_state.teardown().await;
+            }
+            _ => {
+                // Nothing to do if the connection was not established
+            }
+        };
+        Ok(())
     }
 }
 
@@ -322,6 +429,20 @@ where
         CastMessage::BlockRangeUpdate,
     );
 
+    // Periodic L2 messages events.
+    if state.l2_state.connection_state().is_ok() {
+        send_interval(
+            PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BlockBroadcast),
+        );
+        send_interval(
+            PERIODIC_BATCH_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BatchBroadcast),
+        );
+    }
+
     spawn_listener(
         handle.clone(),
         |msg: Message| CastMessage::PeerMessage(msg),
@@ -343,8 +464,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let filter =
-            |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.compute_hash()) };
+        let filter = |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.hash()) };
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool
@@ -353,23 +473,27 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             .flatten()
             .collect();
         if !txs.is_empty() {
-            let tx_count = txs.len();
-            for tx in txs {
+            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+                let tx_count = tx_chunk.len();
+                let mut txs_to_send = Vec::with_capacity(tx_count);
+                for tx in tx_chunk {
+                    txs_to_send.push((**tx).clone());
+                    state.broadcasted_txs.insert(tx.hash());
+                }
+
                 send(
                     state,
                     Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        vec![(*tx).clone()],
+                        txs_to_send,
                         &state.blockchain,
                     )?),
                 )
                 .await?;
-                // Possible improvement: the mempool already knows the hash but the filter function does not return it
-                state.broadcasted_txs.insert((*tx).compute_hash());
+                log_peer_debug(
+                    &state.node,
+                    &format!("Sent {tx_count} transaction hashes to peer"),
+                );
             }
-            log_peer_debug(
-                &state.node,
-                &format!("Sent {tx_count} transactions to peer"),
-            );
         }
     }
     Ok(())
@@ -464,8 +588,6 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
 }
 
 async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
-    log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
-
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
@@ -477,6 +599,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         // already connected, don't discard it
         RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
+            log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
             log_peer_debug(&state.node, "Peer already connected, don't replace it");
         }
         _ => {
@@ -489,7 +612,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         }
     }
 
-    let _ = state.sink.lock().await.close().await;
+    state.teardown().await;
 }
 
 fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
@@ -509,11 +632,14 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
-    let supported_capabilities: Vec<Capability> = [
+    let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
     ]
     .concat();
+    if state.l2_state.is_supported() {
+        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
         PublicKey::from_secret_key(secp256k1::SECP256K1, &state.signer),
@@ -558,6 +684,9 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    "based" if state.l2_state.is_supported() => {
+                        state.l2_state.set_established()?;
+                    }
                     _ => {}
                 }
             }
@@ -587,7 +716,7 @@ where
     }
 }
 
-async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
+pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     state.sink.lock().await.send(message).await
 }
 
@@ -611,6 +740,7 @@ where
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -637,16 +767,28 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
+            // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
-                for tx in &txs.transactions {
+                for tx in txs.transactions {
+                    // Mark as broadcasted for the sender so we don't include it in the next
+                    // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
+                    // For broadcast itself, `handle_broadcast` filters by task id already.
+                    state.broadcasted_txs.insert(tx.hash());
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
-                    valid_txs.push(tx.clone());
+                    valid_txs.push(tx);
                 }
+                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
+                // subset and send only the hashes to everyone else.
+                // Consider sending to the sqrt of the number of peers like geth does.
                 if !valid_txs.is_empty() {
+                    log_peer_debug(
+                        &state.node,
+                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
+                    );
                     broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
@@ -702,7 +844,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::PooledTransactions(msg) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
-                    if let Err(error) = msg.validate_requested(requested).await {
+                    let fork = state.blockchain.current_fork().await?;
+                    if let Err(error) = msg.validate_requested(requested, fork).await {
                         log_peer_warn(
                             &state.node,
                             &format!("disconnected from peer. Reason: {error}"),
@@ -730,6 +873,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::GetTrieNodes(req) => {
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
+        }
+        Message::L2(req) if peer_supports_l2 => {
+            handle_based_capability_message(state, req).await?;
         }
         // Send response messages to the backend
         message @ Message::AccountRange(_)
@@ -769,12 +915,31 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
-                // TODO(#1131): Avoid cloning this vector.
-                let cloned = txs.transactions.clone();
-                let new_msg = Message::Transactions(Transactions {
-                    transactions: cloned,
-                });
-                send(state, new_msg).await?;
+                let mut filtered = Vec::with_capacity(txs.transactions.len());
+                for tx in &txs.transactions {
+                    let tx_hash = tx.hash();
+                    if state.broadcasted_txs.contains(&tx_hash) {
+                        continue;
+                    }
+                    filtered.push(tx.clone());
+                    state.broadcasted_txs.insert(tx_hash);
+                }
+                if !filtered.is_empty() {
+                    log_peer_debug(
+                        &state.node,
+                        &format!(
+                            "Sending {} transactions to peer from broadcast",
+                            filtered.len()
+                        ),
+                    );
+                    let new_msg = Message::Transactions(Transactions {
+                        transactions: filtered,
+                    });
+                    send(state, new_msg).await?;
+                }
+            }
+            l2_msg @ Message::L2(_) => {
+                handle_l2_broadcast(state, l2_msg).await?;
             }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
@@ -794,7 +959,7 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
     }
 }
 
-fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
+pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         txs_msg @ Message::Transactions(_) => {
             let txs = Arc::new(txs_msg);
@@ -806,6 +971,7 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError>
             };
             Ok(())
         }
+        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
             log_peer_error(&state.node, &error_message);

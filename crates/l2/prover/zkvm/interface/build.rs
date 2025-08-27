@@ -2,15 +2,16 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
 
-    #[cfg(feature = "risc0")]
+    #[cfg(all(not(clippy), feature = "risc0"))]
     build_risc0_program();
 
-    #[cfg(feature = "sp1")]
+    #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
 }
 
-#[cfg(feature = "risc0")]
+#[cfg(all(not(clippy), feature = "risc0"))]
 fn build_risc0_program() {
+    use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
 
     let features = if cfg!(feature = "l2") {
@@ -38,12 +39,16 @@ fn build_risc0_program() {
     // this errs if the dir already exists, so we don't handle an error.
     let _ = std::fs::create_dir("./risc0/out");
 
-    std::fs::write("./risc0/out/riscv32im-risc0-vk", image_id)
-        .expect("could not write Risc0 vk to file");
+    std::fs::write(
+        "./risc0/out/riscv32im-risc0-vk",
+        format!("0x{}\n", hex::encode(image_id.as_bytes())),
+    )
+    .expect("could not write Risc0 vk to file");
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(all(not(clippy), feature = "sp1"))]
 fn build_sp1_program() {
+    use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
     let features = if cfg!(feature = "l2") {
@@ -59,7 +64,7 @@ fn build_sp1_program() {
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: true,
-            tag: "v5.0.0".to_string(),
+            tag: "v5.0.8".to_string(),
             workspace_directory: Some(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
         },
@@ -76,11 +81,14 @@ fn build_sp1_program() {
 
     if aligned_mode == "true" {
         let vk = vk.vk.hash_bytes();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
-            .expect("could not write SP1 vk to file");
+        std::fs::write(
+            "./sp1/out/riscv32im-succinct-zkvm-vk",
+            format!("0x{}\n", hex::encode(vk)),
+        )
+        .expect("could not write SP1 vk to file");
     } else {
-        let vk = vk.vk.bytes32_raw();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
+        let vk = vk.vk.bytes32();
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", format!("{}\n", vk))
             .expect("could not write SP1 vk to file");
     };
 }

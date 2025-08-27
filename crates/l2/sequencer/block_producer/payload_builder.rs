@@ -9,7 +9,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address,
-    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
+    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType},
 };
 use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
@@ -23,12 +23,16 @@ use ethrex_metrics::{
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
+
+/// Max privileged tx to allow per batch
+const PRIVILEGED_TX_BUDGET: usize = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -37,6 +41,7 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
+    rollup_store: &StoreRollup,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -49,7 +54,7 @@ pub async fn build_payload(
         blockchain.r#type.clone(),
     )?;
 
-    fill_transactions(blockchain.clone(), &mut context, store).await?;
+    fill_transactions(blockchain.clone(), &mut context, store, rollup_store).await?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -79,7 +84,7 @@ pub async fn build_payload(
             .mempool
             .get_mempool_size()
             .inspect_err(|e| tracing::error!("Failed to get metrics for: mempool size {}", e.to_string()))
-            .unwrap_or((0_usize, 0_usize));
+            .unwrap_or((0_u64, 0_u64));
         let _ = METRICS_TX
             .set_mempool_tx_count(tx_pool_size, false)
             .inspect_err(|e| tracing::error!("Failed to set metrics for: blob tx mempool size {}", e.to_string()));
@@ -94,11 +99,13 @@ pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
+    rollup_store: &StoreRollup,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
-    let mut acc_size_without_accounts = 1 + *BLOCK_HEADER_LEN + 2 + 2 + 2;
+    let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
+    let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
 
     let chain_config = store.get_chain_config()?;
 
@@ -106,6 +113,8 @@ pub async fn fill_transactions(
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
     let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
+    // Inserting an excessive number may prevent the commitment from being sent
+    let mut privileged_range = rollup_store.precommit_privileged().await?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -116,7 +125,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough space for the StateDiff to run more transactions
         if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
-            > SAFE_BYTES_PER_BLOB
+            > safe_bytes_per_blob
         {
             debug!("No more StateDiff space to run transactions");
             break;
@@ -127,19 +136,36 @@ pub async fn fill_transactions(
             break;
         };
 
+        // Check we don't have an excessive number of privileged transactions
+        if head_tx.tx_type() == TxType::Privileged {
+            let id = head_tx.nonce();
+            if let Some(range) = privileged_range.as_mut() {
+                if range.clone().count() > PRIVILEGED_TX_BUDGET {
+                    debug!("Ran out of space for privileged transactions");
+                    txs.pop();
+                    continue;
+                }
+                if id != range.end {
+                    debug!("Ignoring out-of-order privileged transaction");
+                    txs.pop();
+                    continue;
+                }
+                range.end += 1;
+            } else {
+                privileged_range = Some(id..(id + 1));
+            }
+        }
+
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!(
-                "Skipping transaction: {}, no gas left",
-                head_tx.tx.compute_hash()
-            );
+            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-        let tx_hash = head_tx.tx.compute_hash();
+        let tx_hash = head_tx.tx.hash();
 
         // Check whether the tx is replay-protected
         if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -179,16 +205,11 @@ pub async fn fill_transactions(
         let account_diffs_in_tx = get_account_diffs_in_tx(context)?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
-        let (tx_size_without_accounts, new_accounts_diff_size) = calculate_tx_diff_size(
-            &merged_diffs,
-            &head_tx,
-            &receipt,
-            *PRIVILEGED_TX_LOG_LEN,
-            *L1MESSAGE_LOG_LEN,
-        )?;
+        let (tx_size_without_accounts, new_accounts_diff_size) =
+            calculate_tx_diff_size(&merged_diffs, &head_tx, &receipt)?;
 
         if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
-            > SAFE_BYTES_PER_BLOB
+            > safe_bytes_per_blob
         {
             debug!(
                 "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
@@ -204,7 +225,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // We only add the messages and privileged transaction length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
@@ -217,6 +238,10 @@ pub async fn fill_transactions(
         // Save receipt for hash calculation
         context.receipts.push(receipt);
     }
+
+    rollup_store
+        .update_precommit_privileged(privileged_range)
+        .await?;
 
     metrics!(
         context
@@ -237,7 +262,7 @@ fn fetch_mempool_transactions(
 ) -> Result<TransactionQueue, BlockProducerError> {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
-        let tx_hash = blob_tx.compute_hash();
+        let tx_hash = blob_tx.hash();
         blockchain.remove_transaction_from_pool(&tx_hash)?;
         blob_txs.pop();
     }
@@ -277,8 +302,12 @@ fn get_account_diffs_in_tx(
                     None
                 };
 
-                let bytecode = if new_account.code != original_account.code {
-                    Some(new_account.code.clone())
+                let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
+                    // After execution the code should be in db.codes
+                    let code = db.codes.get(&new_account.info.code_hash).ok_or_else(|| {
+                        BlockProducerError::FailedToGetDataFrom("Code DB Cache".to_owned())
+                    })?;
+                    Some(code.clone())
                 } else {
                     None
                 };
@@ -375,9 +404,7 @@ fn calculate_tx_diff_size(
     merged_diffs: &HashMap<Address, AccountStateDiff>,
     head_tx: &HeadTransaction,
     receipt: &Receipt,
-    privileged_tx_log_len: usize,
-    messages_log_len: usize,
-) -> Result<(usize, usize), BlockProducerError> {
+) -> Result<(u64, u64), BlockProducerError> {
     let mut tx_state_diff_size = 0;
     let mut new_accounts_diff_size = 0;
 
@@ -393,13 +420,15 @@ fn calculate_tx_diff_size(
                 return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
             }
         };
-        new_accounts_diff_size += encoded.len();
+        let encoded_len: u64 = encoded.len().try_into()?;
+        new_accounts_diff_size += encoded_len;
     }
 
     if is_privileged_tx(head_tx) {
-        tx_state_diff_size += privileged_tx_log_len;
+        tx_state_diff_size += PRIVILEGED_TX_LOG_LEN;
     }
-    tx_state_diff_size += get_block_l1_messages(&[receipt.clone()]).len() * messages_log_len;
+    let l1_message_count: u64 = get_block_l1_messages(&[receipt.clone()]).len().try_into()?;
+    tx_state_diff_size += l1_message_count * L1MESSAGE_LOG_LEN;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))
 }

@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
@@ -48,7 +48,7 @@ impl RpcHandler for GetBalanceRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested balance of account {} at block {}",
             self.address, self.block
         );
@@ -84,7 +84,7 @@ impl RpcHandler for GetCodeRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested code of account {} at block {}",
             self.address, self.block
         );
@@ -121,7 +121,7 @@ impl RpcHandler for GetStorageAtRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested storage sot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
         );
@@ -157,7 +157,7 @@ impl RpcHandler for GetTransactionCountRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!(
+        debug!(
             "Requested nonce of account {} at block {}",
             self.address, self.block
         );
@@ -210,7 +210,7 @@ impl RpcHandler for GetProofRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!(
+        debug!(
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );

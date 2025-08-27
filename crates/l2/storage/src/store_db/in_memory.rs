@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    ops::Range,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -34,6 +35,10 @@ struct StoreInner {
     lastest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
+    /// Map of signatures from the sequencer by block hashes
+    signatures_by_block: HashMap<H256, ethereum_types::Signature>,
+    /// Map of signatures from the sequencer by batch numbers
+    signatures_by_batch: HashMap<u64, ethereum_types::Signature>,
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
@@ -42,6 +47,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Privileged transactions included in the batch being built
+    precommit_privileged: Option<Range<u64>>,
 }
 
 impl Store {
@@ -169,6 +176,46 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.operations_counts)
     }
 
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_block
+            .insert(block_hash, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self.inner()?.signatures_by_block.get(&block_hash).cloned())
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_batch
+            .insert(batch_number, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .signatures_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         Ok(self.inner()?.lastest_sent_batch_proof)
     }
@@ -243,6 +290,7 @@ impl StoreEngineRollup for Store {
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
+        store.precommit_privileged = None;
         Ok(())
     }
 
@@ -274,6 +322,19 @@ impl StoreEngineRollup for Store {
         if let Some(verify_tx) = batch.verify_tx {
             inner.verify_txs.insert(batch.number, verify_tx);
         }
+        inner.precommit_privileged = None;
+        Ok(())
+    }
+
+    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
+        Ok(self.inner()?.precommit_privileged.clone())
+    }
+
+    async fn update_precommit_privileged(
+        &self,
+        range: Option<Range<u64>>,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.precommit_privileged = range;
         Ok(())
     }
 }

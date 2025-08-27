@@ -30,7 +30,7 @@ jobs:
         # but it throws a "error decoding response body" in that case
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
           ~/.risc0/bin/rzup install rust
 
       - name: RISC-V SP1 toolchain install
@@ -39,7 +39,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.0
+          ~/.sp1/bin/sp1up --version 5.0.8
 
       - name: Check ${{ matrix.backend }} backend
         run: |
