@@ -13,6 +13,9 @@ use ethrex_rpc::{
 };
 use keccak_hash::H256;
 use serde_json::json;
+use tracing::{error, warn};
+
+const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
 pub async fn get_message_proof(
     client: &EthClient,

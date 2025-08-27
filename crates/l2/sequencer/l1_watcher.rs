@@ -145,6 +145,11 @@ impl L1Watcher {
             latest_block_to_check,
         );
 
+        if self.last_block_fetched == latest_block_to_check {
+            debug!("{:#x} ==  {:#x}", self.last_block_fetched, new_last_block);
+            return Ok(vec![]);
+        }
+
         debug!(
             "Looking logs from block {:#x} to {:#x}",
             self.last_block_fetched, new_last_block

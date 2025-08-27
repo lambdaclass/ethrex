@@ -713,7 +713,15 @@ pub async fn send_tx_bump_gas_exponential_backoff(
                 }
             }
         }
-        let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer).await else {
+        let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
+                    client.max_number_of_retries
+                );
+            })
+        else {
             bump_gas_generic_tx(&mut tx, 30);
             number_of_retries += 1;
             continue;
