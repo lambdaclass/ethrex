@@ -390,7 +390,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
-            account_storage_root_hashes,
+            // account_storage_root_hashes,
             touched_account_storage_slots,
         })
     }

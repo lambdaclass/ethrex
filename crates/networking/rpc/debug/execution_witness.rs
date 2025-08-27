@@ -166,7 +166,7 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: parent_header,
         state_nodes,
-        account_storage_root_hashes,
+        // account_storage_root_hashes,
         touched_account_storage_slots,
     };
 

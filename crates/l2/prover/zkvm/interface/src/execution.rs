@@ -165,7 +165,7 @@ pub fn stateless_validation_l2(
         storage_tries: HashMap::new(),
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
-        account_storage_root_hashes: db.account_storage_root_hashes.clone(),
+        // account_storage_root_hashes: db.account_storage_root_hashes.clone(),
         touched_account_storage_slots: HashMap::new(),
     };
 
