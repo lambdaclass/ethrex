@@ -18,13 +18,16 @@ use ethrex_vm::EvmEngine;
 use reqwest::Url;
 use tracing::{error, info};
 
-use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
+};
+use crate::{
+    fetcher::{get_blockdata, get_rangedata},
+    run,
 };
 use ethrex_config::networks::Network;
 
@@ -598,18 +601,53 @@ impl SubcommandCache {
 #[derive(Subcommand)]
 pub enum SubcommandCustom {
     #[command(about = "Custom block.")]
-    Block,
+    Block {
+        #[arg(
+            long,
+            default_value_t = false,
+            value_name = "BOOLEAN",
+            conflicts_with = "prove",
+            help = "Replayer will execute blocks"
+        )]
+        execute: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            value_name = "BOOLEAN",
+            conflicts_with = "execute",
+            help = "Replayer will prove block executions"
+        )]
+        prove: bool,
+    },
     #[command(about = "Custom L2 batch.")]
     Batch {
         #[arg(long, help = "Number of blocks to include in the batch.")]
         n_blocks: u64,
+        #[arg(
+            long,
+            default_value_t = false,
+            value_name = "BOOLEAN",
+            group = "replayer_mode",
+            required = true,
+            help = "Replayer will execute batches"
+        )]
+        execute: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            value_name = "BOOLEAN",
+            group = "replayer_mode",
+            required = true,
+            help = "Replayer will prove batch executions"
+        )]
+        prove: bool,
     },
 }
 
 impl SubcommandCustom {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            SubcommandCustom::Block => {
+            SubcommandCustom::Block { execute, prove: _ } => {
                 let network = Network::LocalDevnet;
 
                 let genesis = network.get_genesis()?;
@@ -639,13 +677,41 @@ impl SubcommandCustom {
 
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
+                    if execute {
+                        exec(BACKEND, cache).await?;
+                    } else {
+                        prove(BACKEND, cache).await?;
+                    }
                     Ok(gas_used)
                 };
 
                 run_and_measure(future, false).await?;
             }
-            SubcommandCustom::Batch { n_blocks } => {
+            SubcommandCustom::Batch {
+                n_blocks,
+                execute,
+                prove,
+            } => {
+                if execute {
+                    println!(
+                        "Executing batch with {}",
+                        if n_blocks == 1 {
+                            "1 block".to_owned()
+                        } else {
+                            format!("{n_blocks} blocks")
+                        }
+                    );
+                } else if prove {
+                    println!(
+                        "Proving batch with {}",
+                        if n_blocks == 1 {
+                            "1 block".to_owned()
+                        } else {
+                            format!("{n_blocks} blocks")
+                        }
+                    );
+                }
+
                 let network = Network::LocalDevnet;
 
                 let genesis = network.get_genesis()?;
@@ -678,11 +744,20 @@ impl SubcommandCustom {
 
                 let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
+                println!(
+                    "Successfully generated witness for {} blocks.",
+                    blocks.len()
+                );
+
                 let cache = Cache::new(blocks, execution_witness);
 
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
+                    if execute {
+                        run::exec(BACKEND, cache).await?;
+                    } else {
+                        run::prove(BACKEND, cache).await?;
+                    }
                     Ok(gas_used)
                 };
 
