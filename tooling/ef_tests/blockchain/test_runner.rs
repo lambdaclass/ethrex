@@ -11,7 +11,6 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
 };
 use ethrex_common::{
-    H256,
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
@@ -48,7 +47,7 @@ pub fn parse_and_execute(
         let should_skip_test = test.network < Network::Merge
             || (test.network > Network::Prague
                 && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
-                && !hashes_of_tests_to_run
+                && !hashes_of_fusaka_tests_to_run
                     .iter()
                     .any(|hash| *hash == test.info.hash.clone().unwrap()))
             || skipped_tests
