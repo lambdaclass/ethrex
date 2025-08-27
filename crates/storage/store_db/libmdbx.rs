@@ -494,6 +494,11 @@ impl StoreEngine for Store {
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let txn = self.db.begin_read().unwrap();
+        let mut cursor = txn.cursor::<Payloads>().unwrap();
+        while let Ok(Some((id, payload))) = cursor.next() {
+            tracing::info!("Payload with id {id}: {}", payload.to().unwrap().block.hash())
+        }
         match self
             .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
             .await?
