@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756213979743,
+  "lastUpdate": 1756307743326,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10195,6 +10195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 158398342923,
             "range": "± 738814933",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b6457402151cf642d9e180a071d6bd9b9d60dae8",
+          "message": "test(l1): add possibility of running Blockchain EFTests with SP1 (#4135)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nRun tests with SP1.\n\nIf we weren't able to generate the execution witness we won't run the\ntest with SP1 because it'd make no sense.\n\nCreated this issue so that we can do stateless run without depending on\na normal run done before, it's not essential though.\nhttps://github.com/lambdaclass/ethrex/issues/4142\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4144\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-08-27T14:10:33Z",
+          "tree_id": "fa05739f0d879d965235753cb3bb814022a52cde",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b6457402151cf642d9e180a071d6bd9b9d60dae8"
+        },
+        "date": 1756307726665,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161725435677,
+            "range": "± 508206336",
             "unit": "ns/iter"
           }
         ]
