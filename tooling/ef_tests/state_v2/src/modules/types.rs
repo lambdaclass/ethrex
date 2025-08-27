@@ -256,7 +256,7 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
         osaka_time: None,
         terminal_total_difficulty: Some(0),
         terminal_total_difficulty_passed: true,
-        blob_schedule: BlobSchedule::default(), // This will be set with the fork
+        blob_schedule: BlobSchedule::default(),
         deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
             .unwrap(), // Doesn't matter
     };
