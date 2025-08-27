@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756311966518,
+  "lastUpdate": 1756321471496,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10285,6 +10285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163463782271,
             "range": "± 868493233",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "61285ae6fe4512517327e0bb0e4a2d153ee54e4a",
+          "message": "fix(l2): l1_watcher don't request logs if latest L1 block is already checked (#4122)\n\n**Motivation**\n\nWhen getting logs we were constantly getting `Error when getting logs\nfrom L1: eth_getLogs request error: end (8944755) < begin (8944756)`\nerrors because the default `watch_interval_ms` for l1_watcher was 1\nsecond and we were not checking that end > begin\n\n**Description**\n\n- change default `watch_interval_ms` to 1 L1 slot (12seconds)\n- if `self.last_block_fetched == latest_block_to_check` there are no new\nblocks to check so we just return",
+          "timestamp": "2025-08-27T18:13:08Z",
+          "tree_id": "234724708e03a6e6c87f1151577bf3f4d16795ab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/61285ae6fe4512517327e0bb0e4a2d153ee54e4a"
+        },
+        "date": 1756321454368,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160794742535,
+            "range": "± 237109232",
             "unit": "ns/iter"
           }
         ]
