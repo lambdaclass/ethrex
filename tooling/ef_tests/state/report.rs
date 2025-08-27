@@ -324,6 +324,7 @@ impl Display for EFTestsReport {
         let total_run = total_fork_test_run(&self.0);
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Osaka))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Cancun))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
