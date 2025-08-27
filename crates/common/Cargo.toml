@@ -28,7 +28,6 @@ bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 rayon.workspace = true
-url.workspace = true
 rkyv.workspace = true
 
 [dev-dependencies]

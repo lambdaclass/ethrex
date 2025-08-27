@@ -21,7 +21,6 @@ hex.workspace = true
 serde_json.workspace = true
 libmdbx = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt"] }
-bincode.workspace = true
 
 [features]
 default = []

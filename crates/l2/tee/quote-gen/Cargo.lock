@@ -2411,7 +2411,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -2659,7 +2658,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
