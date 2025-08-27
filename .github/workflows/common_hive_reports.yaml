@@ -54,7 +54,7 @@ jobs:
           ref: main
 
       - name: Build image
-        uses: ./.github/actions/setup-docker
+        uses: ./.github/actions/build-docker
         if: ${{ inputs.job_type != 'main' }}
         with:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}

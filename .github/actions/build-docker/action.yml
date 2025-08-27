@@ -1,4 +1,4 @@
-name: Setup Docker
+name: Build Docker
 description: Builds the Ethrex docker image
 
 inputs:
@@ -8,6 +8,14 @@ inputs:
   dockerhub_token:
     description: "Docker Hub token"
     required: false
+  tags:
+    description: "Comma-separated list of tags to apply to the built image"
+    required: false
+    default: "ethrex:local"
+  push:
+    description: "Whether to push the built image to the registry"
+    required: false
+    default: "false"
 
 outputs:
   artifact_path:
@@ -21,7 +29,6 @@ runs:
       shell: bash
       run: |
         echo "artifact_path=/tmp/ethrex_image.tar" >> $GITHUB_OUTPUT
-        echo "image_tags=ethrex:local" >> $GITHUB_OUTPUT
 
     - name: Login to Docker Hub
       if: inputs.dockerhub_username != '' && inputs.dockerhub_token != ''
@@ -38,8 +45,9 @@ runs:
       with:
         context: .
         file: ./Dockerfile
-        load: true
-        tags: ${{ steps.vars.outputs.image_tags }}
-        outputs: type=docker,dest=${{ steps.vars.outputs.artifact_path }}
+        load: ${{ inputs.push == 'false' }}
+        push: ${{ inputs.push }}
+        tags: ${{ inputs.tags }}
+        outputs: ${{ inputs.push == 'false' && format('type=docker,dest={0}', steps.vars.outputs.artifact_path) || '' }}
         cache-from: type=gha
         cache-to: type=gha,mode=max

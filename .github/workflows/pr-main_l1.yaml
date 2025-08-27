@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - id: docker
         name: Setup Docker
-        uses: ./.github/actions/setup-docker
+        uses: ./.github/actions/build-docker
         with:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
