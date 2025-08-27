@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756325839303,
+  "lastUpdate": 1756330833566,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10405,6 +10405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 163098719524,
             "range": "± 461188245",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62400508+juan518munoz@users.noreply.github.com",
+            "name": "juan518munoz",
+            "username": "juan518munoz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "742f9d532d468d6ab431684d31c138956f37e4e4",
+          "message": "refactor(l1,l2): rename genserver errors (#3825)\n\n**Motivation**\n\nEnd user might (and shouldn't) be aware of what a `GenServer`\nrepresents, so seing an error of such type would be confusing.\n\n**Description**\n\nThis PR rewords the _GenServer_ errors to _Internal_ such that they are\nstill as detailed as before, but without the technical wording. There\nwere some parts of the where `InternalError` already existed, in such\ncases this types of errors have been expanded to different, new, types.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3376\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-08-27T20:48:18Z",
+          "tree_id": "79892e9496a585ed653aafe92b6bb9b2d46577da",
+          "url": "https://github.com/lambdaclass/ethrex/commit/742f9d532d468d6ab431684d31c138956f37e4e4"
+        },
+        "date": 1756330818400,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162562490766,
+            "range": "± 220473574",
             "unit": "ns/iter"
           }
         ]
