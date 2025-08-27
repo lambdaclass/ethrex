@@ -4,15 +4,13 @@ use std::{collections::HashMap, str::FromStr};
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
 use bytes::Bytes;
-use ethereum_types::{Address, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
-use keccak_hash::H256;
+use ethrex_trie::{NodeHash, NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -26,19 +24,6 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
-    pub keys: Vec<Bytes>,
-    // Rlp encoded state trie nodes
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
-    pub state_trie_nodes: Vec<Bytes>,
     // Indexed by code hash
     // Used evm bytecodes
     #[serde(
@@ -61,6 +46,24 @@ pub struct ExecutionWitnessResult {
     pub parent_block_header: BlockHeader,
     // Chain config
     pub chain_config: ChainConfig,
+    /// This maps node hashes to their corresponding RLP-encoded nodes.
+    /// It is used to rebuild the state trie and storage tries.
+    /// This is precomputed during ExecutionWitness construction to avoid to avoid
+    /// recomputing it when rebuilding tries.
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
+    pub state_nodes: HashMap<H256, NodeRLP>,
+    /// This maps account addresses to their storage root hashes.
+    /// It is used to quickly find the root hash of an account's storage trie.
+    /// This is precomputed during ExecutionWitness construction to avoid to avoid
+    /// recomputing it when rebuilding storage tries.
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256Wrapper>)]
+    pub account_storage_root_hashes: HashMap<Address, H256>,
+    /// This is a convenience map to track which accounts and storage slots were touched during execution.
+    /// It maps an account address to the last storage slot that was accessed for that account.
+    /// This is needed for building `RpcExecutionWitness`.
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub touched_account_storage_slots: HashMap<Address, Vec<H256>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -87,7 +90,22 @@ impl ExecutionWitnessResult {
     /// Use the state nodes to build the state trie and store them in `self.state_trie`
     /// This function will fail if the state trie cannot be rebuilt.
     pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
-        let state_trie = rebuild_trie(self.parent_block_header.state_root, &self.state_trie_nodes)?;
+        if self.state_trie.is_some() {
+            return Ok(());
+        }
+
+        let state_trie = Trie::from_nodes(
+            NodeHash::Hashed(self.parent_block_header.state_root),
+            self.state_nodes
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (NodeHash::Hashed(k), v))
+                .collect(),
+        )
+        .map_err(|e| {
+            ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
+        })?;
+
         self.state_trie = Some(state_trie);
 
         Ok(())
@@ -96,16 +114,17 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: &[Bytes]) -> Option<Trie> {
-        let account_state_rlp = trie.get(&hash_address(address)).ok()??;
+    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
+        let account_storage_root_hash = self.account_storage_root_hashes.get(address)?;
 
-        let account_state = AccountState::decode(&account_state_rlp).ok()?;
-
-        if account_state.storage_root == *EMPTY_TRIE_HASH {
-            return None;
-        }
-
-        rebuild_trie(account_state.storage_root, state).ok()
+        Trie::from_nodes(
+            NodeHash::Hashed(*account_storage_root_hash),
+            self.state_nodes
+                .iter()
+                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
+                .collect(),
+        )
+        .ok()
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -151,9 +170,9 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
-                        Trie::from_nodes(None, &[]).expect("failed to create empty trie")
-                    });
+                    let storage_trie = storage_tries
+                        .entry(update.address)
+                        .or_insert_with(Trie::empty_in_memory);
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -298,18 +317,22 @@ impl ExecutionWitnessResult {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
+        self.touched_account_storage_slots
+            .entry(address)
+            .or_default()
+            .push(key);
+
         let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
             storage_trie
         } else {
-            let Some(state_trie) = self.state_trie.as_ref() else {
+            if self.state_trie.is_none() {
                 return Err(ExecutionWitnessError::Database(
                     "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
                         .to_string(),
                 ));
             };
-            let Some(storage_trie) =
-                Self::rebuild_storage_trie(&address, state_trie, &self.state_trie_nodes)
-            else {
+
+            let Some(storage_trie) = self.rebuild_storage_trie(&address) else {
                 return Ok(None);
             };
 
@@ -423,29 +446,4 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
-}
-
-pub fn rebuild_trie(initial_state: H256, state: &[Bytes]) -> Result<Trie, ExecutionWitnessError> {
-    let mut initial_node = None;
-
-    for node in state.iter() {
-        // If the node is empty we skip it
-        if node == &vec![128_u8] {
-            continue;
-        }
-        let x = Node::decode_raw(node).map_err(|_| {
-            ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
-        })?;
-        let hash = x.compute_hash().finalize();
-        if hash == initial_state {
-            initial_node = Some(node.clone());
-            break;
-        }
-    }
-
-    Trie::from_nodes(
-        initial_node.map(|b| b.to_vec()).as_ref(),
-        &state.iter().map(|b| b.to_vec()).collect::<Vec<_>>(),
-    )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
 }
