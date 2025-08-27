@@ -515,56 +515,32 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                let mut table_lock = self.ctx.table.lock().await;
-
-                let Some(node) = table_lock.get_by_node_id_mut(packet.get_node_id()) else {
-                    return Err(DiscoveryError::InvalidMessage("not a known node".into()));
-                };
-
-                let Some(req) = &mut node.find_node_request else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "find node request not sent".into(),
-                    ));
-                };
-                if current_unix_time().saturating_sub(req.sent_at) >= 60 {
-                    node.find_node_request = None;
-                    return Err(DiscoveryError::InvalidMessage(
-                        "find_node request expired after one minute".into(),
-                    ));
+                if is_msg_expired(msg.expiration) {
+                    trace!("Neighbors expired");
+                    return CastResponse::Stop;
                 }
 
-                let nodes = &neighbors_msg.nodes;
-                let total_nodes_sent = req.nodes_sent + nodes.len() as u64;
+                // TODO(#3746): check that we requested neighbors from the node
 
-                if total_nodes_sent > MAX_NODES_PER_BUCKET {
-                    node.find_node_request = None;
-                    return Err(DiscoveryError::InvalidMessage(
-                        "sent more than allowed nodes".into(),
-                    ));
+                let mut contacts = self.discovery_server.kademlia.table.lock().await;
+                let discarded_contacts = self
+                    .discovery_server
+                    .kademlia
+                    .discarded_contacts
+                    .lock()
+                    .await;
+
+                for node in msg.nodes {
+                    let node_id = node.node_id();
+                    if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
+                        if !discarded_contacts.contains(&node_id)
+                            && node_id != self.discovery_server.local_node.node_id()
+                        {
+                            vacant_entry.insert(Contact::from(node));
+                            METRICS.record_new_discovery().await;
+                        }
+                    };
                 }
-
-                // update the number of node_sent
-                // and forward the nodes sent if a channel is attached
-                req.nodes_sent = total_nodes_sent;
-                if let Some(tx) = &req.tx {
-                    let _ = tx.send(nodes.clone());
-                }
-
-                if total_nodes_sent == MAX_NODES_PER_BUCKET {
-                    debug!("Neighbors request has been fulfilled");
-                    node.find_node_request = None;
-                }
-
-                // release the lock early
-                // as we might be a long time pinging all the new nodes
-                drop(table_lock);
-
-                debug!("Storing neighbors in our table!");
-                for node in nodes {
-                    let _ = self.try_add_peer_and_ping(node.clone()).await;
-                }
-
-                Ok(())
             }
             Self::CastMsg::ENRRequest {
                 message: msg,

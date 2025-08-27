@@ -8514,6 +8514,7 @@ dependencies = [
  "libc",
  "memchr",
  "parking_lot 0.12.4",
+ "procfs",
  "protobuf 2.28.0",
  "thiserror 1.0.69",
 ]
