@@ -31,7 +31,7 @@ libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
-tempdir = "0.3.7"
+tempfile = "3.8"
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

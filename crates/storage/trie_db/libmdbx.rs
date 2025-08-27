@@ -51,7 +51,7 @@ mod test {
         table_info,
     };
     use std::sync::Arc;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn simple_addition() {
