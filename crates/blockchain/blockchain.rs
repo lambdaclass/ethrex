@@ -190,27 +190,6 @@ impl Blockchain {
         let mut block_hashes = HashMap::new();
         let mut codes = HashMap::new();
 
-        // Build account storage root hashes.
-        // NOTE: This is not needed for building `RpcExecutionWitness`.
-        let mut account_storage_root_hashes = HashMap::new();
-        for address in touched_account_storage_slots.keys() {
-            let Some(account_state) = trie.get(&hash_address(address)).map_err(|_e| {
-                ChainError::WitnessGeneration("Failed to access account from trie".to_string())
-            })?
-            else {
-                continue;
-            };
-
-            let AccountState { storage_root, .. } =
-                AccountState::decode(&account_state).map_err(|_| {
-                    ChainError::WitnessGeneration(format!(
-                        "Invalid account state for address: {address:#x}"
-                    ))
-                })?;
-
-            account_storage_root_hashes.insert(*address, storage_root);
-        }
-
         for block in blocks {
             let parent_hash = block.header.parent_hash;
             let vm_db: DynVmDatabase =
@@ -371,6 +350,27 @@ impl Blockchain {
         }
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+
+        // Build account storage root hashes.
+        // NOTE: This is not needed for building `RpcExecutionWitness`.
+        let mut account_storage_root_hashes = HashMap::new();
+        for address in touched_account_storage_slots.keys() {
+            let Some(account_state) = trie.get(&hash_address(address)).map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+            })?
+            else {
+                continue;
+            };
+
+            let AccountState { storage_root, .. } =
+                AccountState::decode(&account_state).map_err(|_| {
+                    ChainError::WitnessGeneration(format!(
+                        "Invalid account state for address: {address:#x}"
+                    ))
+                })?;
+
+            account_storage_root_hashes.insert(*address, storage_root);
+        }
 
         let mut state_nodes = HashMap::new();
         for node in used_trie_nodes.into_iter() {
