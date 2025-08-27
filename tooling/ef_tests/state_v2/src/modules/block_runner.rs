@@ -62,7 +62,6 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
             if test_case.post.expected_exceptions.is_some() {
                 (vec![], 0)
             } else {
-                println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e);
                 return Err(RunnerError::Custom(format!("Internal error {e}")));
             }
         }
