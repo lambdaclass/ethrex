@@ -37,9 +37,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
 }
 
 pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerError> {
-    // 1. We need to do a pre-execution with LEVM for two reasons:
-    //    a. We need to know gas used and generate receipts for the block header.
-    //    b. If execution expects a validation error in the EVM we don't re-execute it as a block (TODO: See if we should keep it as iss)
+    // 1. We need to do a pre-execution with LEVM because we need to know gas used and generate receipts for the block header.
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
     let tracer = LevmCallTracer::disabled();
@@ -50,24 +48,31 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
 
-    let report = match execution_result {
-        Ok(report) => report,
+    let (receipts_root, gas_used) = match execution_result {
+        Ok(report) => {
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                report.is_success(),
+                report.gas_used,
+                report.logs.clone(),
+            );
+            (compute_receipts_root(&[receipt]), report.gas_used)
+        }
         Err(e) => {
             if test_case.post.expected_exceptions.is_some() {
-                println!("Error returned and that's okay because it was expected");
+                (
+                    H256::from_str(
+                        "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+                    )
+                    .unwrap(),
+                    0,
+                )
             } else {
                 println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e);
+                return Err(RunnerError::Custom(format!("Internal error {e}")));
             }
-            return Ok(());
         }
     };
-
-    let receipt = Receipt::new(
-        tx.tx_type(),
-        report.is_success(),
-        report.gas_used,
-        report.logs.clone(),
-    );
 
     // 2. Set up Block Body and Block Header
 
@@ -123,12 +128,12 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         coinbase: test.env.current_coinbase,
         state_root: test_case.post.hash,
         transactions_root: computed_tx_root,
-        receipts_root: compute_receipts_root(&[receipt]),
+        receipts_root,
         logs_bloom: Default::default(),
         difficulty: U256::zero(),
         number: 1, // I think this is correct
         gas_limit: test.env.current_gas_limit,
-        gas_used: report.gas_used,
+        gas_used,
         timestamp: test.env.current_timestamp.as_u64(),
         extra_data: Bytes::new(),
         prev_randao: test.env.current_random.unwrap_or_default(),
@@ -149,10 +154,14 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let blockchain = Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
 
-    blockchain
-        .add_block(&block)
-        .await
-        .expect("Execution shouldn't fail unless we have a bug :D");
+    let result = blockchain.add_block(&block).await;
+
+    if result.is_err() && !test_case.post.expected_exceptions.is_some() {
+        println!("ERROR: Execution failed but test didn't expect any error.");
+    }
+    if test_case.post.expected_exceptions.is_some() && !result.is_err() {
+        println!("ERROR: Test expected an error but execution didn't fail.")
+    }
 
     Ok(())
 }
