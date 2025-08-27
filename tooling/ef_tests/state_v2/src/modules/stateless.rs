@@ -42,7 +42,7 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
     let tracer = LevmCallTracer::disabled();
 
     // Note that this db is
-    let (mut db, initial_block_hash, store, genesis) =
+    let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork).await;
     // Normal run cause we want to get the execution report.
     let mut vm =
@@ -55,7 +55,7 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
             if test_case.post.expected_exceptions.is_some() {
                 println!("Error returned and that's okay because it was expected");
             } else {
-                println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e.to_string());
+                println!("THIS ERROR SHOULD NOT HAVE HAPPENED: {}", e);
             }
             return Ok(());
         }
