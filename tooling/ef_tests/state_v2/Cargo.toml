@@ -32,3 +32,4 @@ hex = "0.4.3"
 default = ["c-kzg", "blst"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["ethrex-vm/blst"]
+block = []

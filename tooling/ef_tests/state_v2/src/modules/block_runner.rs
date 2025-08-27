@@ -1,9 +1,10 @@
 use bytes::Bytes;
 use ethrex_blockchain::get_total_blob_gas;
-use ethrex_blockchain::{Blockchain, BlockchainType, fork_choice::apply_fork_choice};
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, Fork, Receipt, compute_receipts_root, compute_transactions_root,
+    Block, BlockBody, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
+    compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
 use ethrex_levm::{
@@ -36,15 +37,15 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
 }
 
 pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), RunnerError> {
-    // println!("Test name: {}", test.name);
+    // 1. We need to do a pre-execution with LEVM for two reasons:
+    //    a. We need to know gas used and generate receipts for the block header.
+    //    b. If execution expects a validation error in the EVM we don't re-execute it as a block (TODO: See if we should keep it as iss)
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
     let tracer = LevmCallTracer::disabled();
 
-    // Note that this db is
     let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork).await;
-    // Normal run cause we want to get the execution report.
     let mut vm =
         VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
@@ -68,6 +69,8 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
         report.logs.clone(),
     );
 
+    // 2. Set up Block Body and Block Header
+
     let transactions = vec![tx.clone()];
     let computed_tx_root = compute_transactions_root(&transactions);
     let body = BlockBody {
@@ -76,10 +79,13 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
     };
 
     let fork = test_case.fork;
+    // These variables are Some or None depending on the fork.
+    // So they could be specified in the test but if the fork is e.g. Paris we should set them to None despite that.
+    // Otherwise it will fail block header validations
     let (excess_blob_gas, blob_gas_used, parent_beacon_block_root, requests_hash) = match fork {
         Fork::Prague | Fork::Cancun => {
             let blob_gas_used = match tx {
-                ethrex_common::types::Transaction::EIP4844Transaction(blob_tx) => {
+                Transaction::EIP4844Transaction(blob_tx) => {
                     Some(get_total_blob_gas(&blob_tx) as u64)
                 }
                 _ => Some(0),
@@ -108,7 +114,7 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
     };
 
     let header = BlockHeader {
-        hash: Default::default(), // I initialize it later with block.hash().
+        hash: Default::default(), // It is initialized later with block.hash().
         parent_hash: initial_block_hash,
         ommers_hash: H256::from_str(
             "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
@@ -132,24 +138,21 @@ pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), R
             H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
                 .unwrap(),
         ),
-        blob_gas_used, //TODO: I think for this I need to do a pre-execution to know blob gas used? Does it matter?
+        blob_gas_used,
         excess_blob_gas,
         parent_beacon_block_root,
         requests_hash,
     };
-    header.hash();
-
     let block = Block::new(header, body);
-    let hash = block.hash();
+
+    // 3. Create Blockchain and add block.
 
     let blockchain = Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
 
     blockchain
         .add_block(&block)
         .await
-        .expect("Execution shouldn't fail :D");
-
-    apply_fork_choice(&store, hash, hash, hash).await.unwrap();
+        .expect("Execution shouldn't fail unless we have a bug :D");
 
     Ok(())
 }
