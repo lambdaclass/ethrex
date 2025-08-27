@@ -22,13 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
-#[cfg(feature = "metrics")]
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-#[cfg(feature = "metrics")]
-use tokio::sync::Mutex;
-#[cfg(feature = "metrics")]
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -38,7 +33,9 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 #[cfg(feature = "metrics")]
-use std::time::SystemTime;
+use std::{collections::HashMap, time::SystemTime};
+#[cfg(feature = "metrics")]
+use tokio::sync::Mutex;
 
 #[serde_as]
 #[derive(Serialize, Deserialize)]
