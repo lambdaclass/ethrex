@@ -75,11 +75,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: docker
-        name: Setup Docker
+        name: Build Ethrex Docker Image
         uses: ./.github/actions/build-docker
         with:
-          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
-          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

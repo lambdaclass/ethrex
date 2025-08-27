@@ -57,8 +57,8 @@ jobs:
         uses: ./.github/actions/build-docker
         if: ${{ inputs.job_type != 'main' }}
         with:
-          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
-          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}
