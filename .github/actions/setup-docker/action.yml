@@ -20,7 +20,7 @@ runs:
     - id: vars
       shell: bash
       run: |
-        echo "artifact_path=/tmp/ethrex.tar" >> $GITHUB_OUTPUT
+        echo "artifact_path=/tmp/ethrex_image.tar" >> $GITHUB_OUTPUT
         echo "image_tags=ethrex:local" >> $GITHUB_OUTPUT
 
     - name: Login to Docker Hub
