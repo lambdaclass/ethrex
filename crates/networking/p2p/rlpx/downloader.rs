@@ -425,10 +425,6 @@ impl GenServer for Downloader {
                 starting_hash,
                 limit_hash,
             } => {
-                debug!(
-                    "Requesting account range from peer {}, chunk: {:?} - {:?}",
-                    self.peer_id, starting_hash, limit_hash
-                );
                 let request_id = rand::random();
                 let request = RLPxMessage::GetAccountRange(GetAccountRange {
                     id: request_id,
@@ -504,7 +500,6 @@ impl GenServer for Downloader {
                             .await
                             .ok();
                         tracing::error!("Received invalid account range");
-                        // Downloader has done its job, stop it
                         return CastResponse::Stop;
                     };
 
@@ -519,7 +514,7 @@ impl GenServer for Downloader {
                     } else {
                         None
                     };
-                    task_sender
+                    if let Err(_) = task_sender
                         .send((
                             accounts
                                 .into_iter()
@@ -529,13 +524,17 @@ impl GenServer for Downloader {
                             chunk_left,
                         ))
                         .await
-                        .ok();
+                    {
+                        tracing::error!("UNRECOVERABLE ERROR!!!")
+                    }
                 } else {
                     tracing::debug!("Failed to get account range");
-                    task_sender
+                    if let Err(_) = task_sender
                         .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
                         .await
-                        .ok();
+                    {
+                        tracing::error!("UNRECOVERABLE ERROR!!")
+                    }
                 }
                 // Downloader has done its job, stop it
                 return CastResponse::Stop;

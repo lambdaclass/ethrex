@@ -15,7 +15,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::Node;
 use rand::random;
 use spawned_concurrency::tasks::GenServer;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
@@ -24,7 +24,7 @@ use crate::{
         downloader::{
             Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
         },
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
+        p2p::{Capability, SUPPORTED_SNAP_CAPABILITIES},
         snap::AccountRangeUnit,
     },
     utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
@@ -38,6 +38,8 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 pub const SNAP_LIMIT: usize = 20;
 
+pub const MIN_PEER_SCORE_THRESHOLD: i64 = -20;
+
 // Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
@@ -49,6 +51,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
+    last_peer_timeout_check: Arc<Mutex<Instant>>,
     pub peer_table: Kademlia,
     pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
 }
@@ -58,6 +61,7 @@ pub struct PeerHandler {
 pub struct PeerInformation {
     pub score: i64,
     pub available: bool,
+    pub request_time: Option<Instant>,
 }
 
 impl Default for PeerInformation {
@@ -65,6 +69,7 @@ impl Default for PeerInformation {
         Self {
             score: 0,
             available: true,
+            request_time: None,
         }
     }
 }
@@ -98,6 +103,7 @@ impl PeerHandler {
         Self {
             peer_table,
             peers_info: Default::default(),
+            last_peer_timeout_check: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -113,7 +119,10 @@ impl PeerHandler {
             .lock()
             .await
             .entry(peer_id)
-            .and_modify(|info| info.available = true);
+            .and_modify(|info| {
+                info.available = true;
+                info.request_time = None
+            });
     }
 
     /// Helper function called in between syncing steps.
@@ -121,6 +130,7 @@ impl PeerHandler {
     async fn refresh_peers_availability(&self) {
         for peer_info in self.peers_info.lock().await.values_mut() {
             peer_info.available = true;
+            peer_info.request_time = None;
         }
     }
 
@@ -192,11 +202,6 @@ impl PeerHandler {
 
         let mut ret = Vec::<BlockHeader>::new();
 
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
-
         let mut sync_head_number = 0_u64;
 
         let sync_head_number_retrieval_start = SystemTime::now();
@@ -204,23 +209,32 @@ impl PeerHandler {
         info!("Retrieving sync head block number from peers");
 
         while sync_head_number == 0 {
-            for (peer_id, peer_channels) in peers_table.clone() {
-                match Downloader::new(peer_id, peer_channels)
-                    .start()
-                    .call(DownloaderCallRequest::CurrentHead { sync_head })
-                    .await
-                {
-                    Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
-                        sync_head_number = current_head_number;
-                        self.record_peer_success(peer_id).await;
-                        break;
-                    }
-                    _ => {
-                        trace!("Failed to retrieve sync head block number from peer {peer_id}");
-                        self.record_peer_failure(peer_id).await;
-                    }
+            let available_downloader = loop {
+                if let Some(downloader) = self.get_random_available_downloader().await {
+                    break downloader;
+                } else {
+                    debug!("No peers available to retrieve sync head");
+                }
+            };
+            let peer_id = available_downloader.peer_id();
+
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::CurrentHead { sync_head })
+                .await
+            {
+                Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
+                    sync_head_number = current_head_number;
+                    self.record_peer_success(peer_id).await;
+                    self.mark_peer_as_free(peer_id).await;
+                    break;
+                }
+                _ => {
+                    trace!("Failed to retrieve sync head block number from peer {peer_id}");
+                    self.record_peer_failure(peer_id).await;
                 }
             }
+            self.mark_peer_as_free(peer_id).await;
         }
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -271,7 +285,10 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
 
+        self.refresh_peers_availability().await;
         loop {
+            self.reset_timed_out_busy_peers().await;
+
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
@@ -556,8 +573,6 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: String,
     ) -> Result<(), PeerHandlerError> {
-        self.refresh_peers_availability().await;
-
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -594,6 +609,7 @@ impl PeerHandler {
             tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
 
         info!("Starting to download account ranges from peers");
+        info!("Initial tasks amount {:?}", tasks_queue_not_started.len());
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -601,7 +617,9 @@ impl PeerHandler {
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
 
+        self.refresh_peers_availability().await;
         loop {
+            self.reset_timed_out_busy_peers().await;
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -737,8 +755,11 @@ impl PeerHandler {
                 .unwrap(); // TODO: handle unwrap
 
             if new_last_metrics_update >= Duration::from_secs(1) {
+                info!("{:?} pending account tasks", tasks_queue_not_started.len());
+                info!("completed tasks {completed_tasks} chunk count {chunk_count}");
                 last_metrics_update = SystemTime::now();
             }
+            // tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         // TODO: This is repeated code, consider refactoring
@@ -819,6 +840,8 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         loop {
+            self.reset_timed_out_busy_peers().await;
+
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
@@ -1398,6 +1421,7 @@ impl PeerHandler {
         &self,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
+        self.refresh_peers_availability().await;
         let Some(available_downloader) = self.get_best_available_downloader().await else {
             return Err(PeerHandlerError::NoPeers);
         };
@@ -1451,11 +1475,7 @@ impl PeerHandler {
 
     // Creates a Downloader Actor from a random peer
     // Returns None if no peer is available
-    // TODO: no longer needed?
-    async fn _get_random_available_downloader(
-        &self,
-        // downloaders: &mut BTreeMap<H256, bool>,
-    ) -> Option<Downloader> {
+    async fn get_random_available_downloader(&self) -> Option<Downloader> {
         let peer_channels = self
             .peer_table
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
@@ -1505,6 +1525,7 @@ impl PeerHandler {
         // Mark the downloader as busy
         peers_info.entry(*free_peer_id).and_modify(|peer_info| {
             peer_info.available = false;
+            peer_info.request_time = Some(Instant::now());
         });
 
         // Create and spawn Downloader Actor
@@ -1542,10 +1563,15 @@ impl PeerHandler {
             return None;
         }
 
-        let (free_peer_id, _) = free_downloaders
+        let (free_peer_id, peer_info) = free_downloaders
             .iter()
             .max_by_key(|(_, peer_info)| peer_info.score)
             .unwrap(); // TODO: remove unwrap
+
+        if peer_info.score < MIN_PEER_SCORE_THRESHOLD {
+            debug!("Best available peer doesn't meet minimun scoring, skipping it");
+            return None;
+        }
 
         let Some(free_downloader_channels) = self
             .peer_table
@@ -1566,11 +1592,41 @@ impl PeerHandler {
         // Mark the downloader as busy
         peers_info.entry(*free_peer_id).and_modify(|peer_info| {
             peer_info.available = false;
+            peer_info.request_time = Some(Instant::now());
         });
 
         // Create and spawn Downloader Actor
         let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
         Some(downloader)
+    }
+
+    /// It can happen that some peers are mistakenly marked as busy,
+    /// this method is a failsafe that resets all peers to available
+    /// after their are kept as busy for longer than 5 seconds.
+    async fn reset_timed_out_busy_peers(&self) {
+        let now = Instant::now();
+        let mut last_peer_timeout_check = self.last_peer_timeout_check.lock().await;
+        if now.duration_since(*last_peer_timeout_check) < Duration::from_secs(5) {
+            return;
+        }
+        *last_peer_timeout_check = now;
+
+        let mut peers_info = self.peers_info.lock().await;
+        info!("Checking for timed out peers");
+        info!("Now: {:?}", now);
+        info!("Peers: {:?}", peers_info);
+        peers_info
+            .iter_mut()
+            .filter(|(_, i)| {
+                !i.available
+                    && Instant::now().duration_since(i.request_time.unwrap_or(Instant::now()))
+                        > Duration::from_secs(2)
+            })
+            .for_each(|(peer_id, i)| {
+                info!("{peer_id} timed out, resetting it");
+                i.available = true;
+                i.request_time = None
+            });
     }
 }
 
