@@ -648,6 +648,12 @@ impl SubcommandCustom {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             SubcommandCustom::Block { execute, prove: _ } => {
+                if execute {
+                    println!("Executing custom block");
+                } else {
+                    println!("Proving custom block");
+                }
+
                 let network = Network::LocalDevnet;
 
                 let genesis = network.get_genesis()?;
@@ -685,7 +691,13 @@ impl SubcommandCustom {
                     Ok(gas_used)
                 };
 
-                run_and_measure(future, false).await?;
+                let elapsed = run_and_measure(future, false).await?;
+
+                if execute {
+                    println!("Successfully executed custom block in {elapsed} seconds.");
+                } else {
+                    println!("Successfully proved custom block in {elapsed} seconds.");
+                }
             }
             SubcommandCustom::Batch {
                 n_blocks,
@@ -761,7 +773,13 @@ impl SubcommandCustom {
                     Ok(gas_used)
                 };
 
-                run_and_measure(future, false).await?;
+                let elapsed = run_and_measure(future, false).await?;
+
+                if execute {
+                    println!("Successfully executed batch in {elapsed} seconds.");
+                } else if prove {
+                    println!("Successfully proved batch in {elapsed} seconds.");
+                }
             }
         }
         Ok(())

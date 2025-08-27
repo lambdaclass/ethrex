@@ -33,7 +33,7 @@ pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
 pub async fn run_and_measure(
     run: impl Future<Output = eyre::Result<f64>>,
     write_to_file: bool,
-) -> eyre::Result<()> {
+) -> eyre::Result<u64> {
     info!("Starting prover program");
     let now = std::time::Instant::now();
     let gas_used = run.await?;
@@ -42,5 +42,5 @@ pub async fn run_and_measure(
         write_benchmark_file(gas_used, elapsed as f64);
     }
     info!("Total gas from block/s: {gas_used}");
-    Ok(())
+    Ok(elapsed)
 }
