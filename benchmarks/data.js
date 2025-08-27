@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756321471496,
+  "lastUpdate": 1756321620455,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10315,6 +10315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160794742535,
             "range": "± 237109232",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "06fb63969a799c93b3187d5d8949093ee599acf3",
+          "message": "fix(l2): log errors in send_generic_transaction, improve web3signer errors (#4113)\n\n**Motivation**\n\nWhen `send_generic_transaction` failed we didn't log the reason we only\nretried.\nWhen web3signer fails we were not checking the response code from the\nserver, we were still trying to decode the response as a Signature\n\n**Description**\n\n- use inspect_err to log the error from `send_generic_transaction`\n- check the response `StatusCode` from the web3signer request and return\ncorrect errors",
+          "timestamp": "2025-08-27T18:13:17Z",
+          "tree_id": "827896b50ec60ce7d18b94210ab55aeb4d5636b1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/06fb63969a799c93b3187d5d8949093ee599acf3"
+        },
+        "date": 1756321600654,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161326760312,
+            "range": "± 985780681",
             "unit": "ns/iter"
           }
         ]
