@@ -32,7 +32,7 @@ use crate::{
     snap::encodable_to_proof,
 };
 
-use crate::peer_handler::MAX_RESPONSE_BYTES; // TODO: move here eventually
+pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 
 use tracing::{debug, error, warn};
 
@@ -49,18 +49,12 @@ impl Downloader {
         }
     }
 
-    async fn send_headers_response(
-        &self,
-        response_channel: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
-        headers: Vec<BlockHeader>,
-        start_block: u64,
-        chunk_limit: u64,
-    ) {
-        if let Err(_) = response_channel
-            .send((headers, self.peer_id, start_block, chunk_limit))
-            .await
-        {
-            error!("[SYNCING] Failed to send headers response to channel"); // TODO: irrecoverable as of now
+    async fn send_through_response_channel<T>(&self, response_channel: Sender<T>, msg: T)
+    where
+        T: Send + 'static,
+    {
+        if let Err(_) = response_channel.send(msg).await {
+            error!("[SYNCING] Failed to send response though response channel"); // TODO: Irrecoverable?
         }
     }
 
@@ -151,12 +145,15 @@ impl GenServer for Downloader {
                     reverse: false,
                 });
 
-                self.peer_channels
+                if let Err(_) = self
+                    .peer_channels
                     .connection
                     .cast(CastMessage::BackendMessage(request.clone()))
                     .await
-                    .map_err(|e| format!("Failed to send message to peer {}: {e}", self.peer_id))
-                    .unwrap(); // TODO: handle unwrap
+                {
+                    error!("Failed sending backend message to peer");
+                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                }
 
                 let peer_id = self.peer_id;
                 match tokio::time::timeout(Duration::from_millis(100), async move {
@@ -370,8 +367,8 @@ impl GenServer for Downloader {
                     .await
                 {
                     warn!("Failed to send message to peer: {err:?}");
-                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
-                        .await;
+                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                    self.send_through_response_channel(task_sender, msg).await;
                     return CastResponse::Stop;
                 };
 
@@ -393,27 +390,27 @@ impl GenServer for Downloader {
                 {
                     Ok(Some(headers)) => headers,
                     _ => {
-                        self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
-                            .await;
+                        let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                        self.send_through_response_channel(task_sender, msg).await;
                         return CastResponse::Stop;
                     }
                 };
 
                 if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-                    self.send_headers_response(
-                        task_sender,
-                        block_headers,
+                    let msg = (
+                        block_headers.clone(),
+                        self.peer_id,
                         start_block,
                         chunk_limit,
-                    )
-                    .await;
+                    );
+                    self.send_through_response_channel(task_sender, msg).await;
                 } else {
                     warn!(
                         "[SYNCING] Received invalid headers from peer: {}",
                         self.peer_id
                     );
-                    self.send_headers_response(task_sender, vec![], start_block, chunk_limit)
-                        .await;
+                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                    self.send_through_response_channel(task_sender, msg).await;
                 }
 
                 // Nothing to do after completion, stop actor
@@ -440,12 +437,8 @@ impl GenServer for Downloader {
                     .await
                 {
                     error!("Failed to send message to peer: {err:?}");
-                    task_sender
-                        .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                        .await
-                        .ok();
-
-                    // Downloader has done its job, stop it
+                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                    self.send_through_response_channel(task_sender, msg).await;
                     return CastResponse::Stop;
                 }
                 if let Some((accounts, proof)) =
@@ -467,13 +460,8 @@ impl GenServer for Downloader {
                     .flatten()
                 {
                     if accounts.is_empty() {
-                        task_sender
-                            .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                            .await
-                            .ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        // Downloader has done its job, stop it
+                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                        self.send_through_response_channel(task_sender, msg).await;
                         return CastResponse::Stop;
                     }
                     // Unzip & validate response
@@ -495,11 +483,8 @@ impl GenServer for Downloader {
                         &encoded_accounts,
                         &proof,
                     ) else {
-                        task_sender
-                            .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                            .await
-                            .ok();
-                        tracing::error!("Received invalid account range");
+                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                        self.send_through_response_channel(task_sender, msg).await;
                         return CastResponse::Stop;
                     };
 
@@ -514,29 +499,18 @@ impl GenServer for Downloader {
                     } else {
                         None
                     };
-                    if let Err(_) = task_sender
-                        .send((
-                            accounts
-                                .into_iter()
-                                .filter(|unit| unit.hash <= limit_hash)
-                                .collect(),
-                            self.peer_id,
-                            chunk_left,
-                        ))
-                        .await
-                    {
-                        tracing::error!("UNRECOVERABLE ERROR!!!")
-                    }
+
+                    let accounts = accounts
+                        .into_iter()
+                        .filter(|unit| unit.hash <= limit_hash)
+                        .collect();
+                    let msg = (accounts, self.peer_id, chunk_left);
+                    self.send_through_response_channel(task_sender, msg).await;
                 } else {
                     tracing::debug!("Failed to get account range");
-                    if let Err(_) = task_sender
-                        .send((Vec::new(), self.peer_id, Some((starting_hash, limit_hash))))
-                        .await
-                    {
-                        tracing::error!("UNRECOVERABLE ERROR!!")
-                    }
+                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                    self.send_through_response_channel(task_sender, msg).await;
                 }
-                // Downloader has done its job, stop it
                 return CastResponse::Stop;
             }
             DownloaderCastRequest::ByteCode {
@@ -568,7 +542,8 @@ impl GenServer for Downloader {
                     .await
                 {
                     error!("Failed to send message to peer: {err:?}");
-                    task_sender.send(empty_task_result).await.ok();
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                     return CastResponse::Stop;
                 }
 
@@ -590,9 +565,8 @@ impl GenServer for Downloader {
                 .flatten()
                 {
                     if codes.is_empty() {
-                        task_sender.send(empty_task_result).await.ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
+                        self.send_through_response_channel(task_sender, empty_task_result)
+                            .await;
                         return CastResponse::Stop;
                     }
                     // Validate response by hashing bytecodes
@@ -602,17 +576,18 @@ impl GenServer for Downloader {
                         .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
                         .map(|(b, _hash)| b)
                         .collect();
-                    let result = BytecodeRequestTaskResult {
+                    let msg = BytecodeRequestTaskResult {
                         start_index: chunk_start,
                         remaining_start: chunk_start + validated_codes.len(),
                         bytecodes: validated_codes,
                         peer_id: self.peer_id,
                         remaining_end: chunk_end,
                     };
-                    task_sender.send(result).await.ok();
+                    self.send_through_response_channel(task_sender, msg).await;
                 } else {
                     tracing::error!("Failed to get bytecode");
-                    task_sender.send(empty_task_result).await.ok();
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                 }
 
                 CastResponse::Stop
@@ -650,7 +625,8 @@ impl GenServer for Downloader {
                     .await
                 {
                     error!("Failed to send message to peer: {err:?}");
-                    task_sender.send(empty_task_result).await.ok();
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                     return CastResponse::Stop;
                 }
                 let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
@@ -671,17 +647,20 @@ impl GenServer for Downloader {
                 .flatten();
                 let Some((slots, proof)) = request_result else {
                     tracing::debug!("Failed to get storage range");
-                    task_sender.send(empty_task_result).await.ok();
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                     return CastResponse::Stop;
                 };
                 if slots.is_empty() && proof.is_empty() {
-                    task_sender.send(empty_task_result).await.ok();
                     tracing::debug!("Received empty account range");
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                     return CastResponse::Stop;
                 }
                 // Check we got some data and no more than the requested amount
                 if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-                    task_sender.send(empty_task_result).await.ok();
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
                     return CastResponse::Stop;
                 }
                 // Unzip & validate response
@@ -696,7 +675,8 @@ impl GenServer for Downloader {
                     if next_account_slots.is_empty() {
                         // This shouldn't happen
                         error!("Received empty storage range, skipping");
-                        task_sender.send(empty_task_result.clone()).await.ok();
+                        self.send_through_response_channel(task_sender, empty_task_result)
+                            .await;
                         return CastResponse::Stop;
                     }
                     let encoded_values = next_account_slots
@@ -709,8 +689,9 @@ impl GenServer for Downloader {
                     let storage_root = match storage_roots.next() {
                         Some(root) => root,
                         None => {
-                            task_sender.send(empty_task_result.clone()).await.ok();
                             error!("No storage root for account {i}");
+                            self.send_through_response_channel(task_sender, empty_task_result)
+                                .await;
                             return CastResponse::Stop;
                         }
                     };
@@ -724,7 +705,8 @@ impl GenServer for Downloader {
                             &encoded_values,
                             &proof,
                         ) else {
-                            task_sender.send(empty_task_result).await.ok();
+                            self.send_through_response_channel(task_sender, empty_task_result)
+                                .await;
                             return CastResponse::Stop;
                         };
                         should_continue = sc;
@@ -737,7 +719,8 @@ impl GenServer for Downloader {
                     )
                     .is_err()
                     {
-                        task_sender.send(empty_task_result.clone()).await.ok();
+                        self.send_through_response_channel(task_sender, empty_task_result)
+                            .await;
                         return CastResponse::Stop;
                     }
 
@@ -752,7 +735,8 @@ impl GenServer for Downloader {
                     let last_account_storage = match account_storages.last() {
                         Some(storage) => storage,
                         None => {
-                            task_sender.send(empty_task_result.clone()).await.ok();
+                            self.send_through_response_channel(task_sender, empty_task_result)
+                                .await;
                             error!("No account storage found, this shouldn't happen");
                             return CastResponse::Stop;
                         }
@@ -760,7 +744,8 @@ impl GenServer for Downloader {
                     let (last_hash, _) = match last_account_storage.last() {
                         Some(last_hash) => last_hash,
                         None => {
-                            task_sender.send(empty_task_result.clone()).await.ok();
+                            self.send_through_response_channel(task_sender, empty_task_result)
+                                .await;
                             error!("No last hash found, this shouldn't happen");
                             return CastResponse::Stop;
                         }
@@ -788,7 +773,8 @@ impl GenServer for Downloader {
                     remaining_end,
                     remaining_hash_range: (remaining_start_hash, end_hash),
                 };
-                task_sender.send(task_result).await.ok();
+                self.send_through_response_channel(task_sender, task_result)
+                    .await;
 
                 CastResponse::NoReply
             }
