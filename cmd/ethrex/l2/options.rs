@@ -165,6 +165,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                first_wake_up_time_ms: opts
+                    .committer_opts
+                    .first_wake_up_time_ms
+                    .unwrap_or(opts.committer_opts.commit_time_ms),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
@@ -454,6 +458,14 @@ pub struct CommitterOptions {
     )]
     pub commit_time_ms: u64,
     #[arg(
+        long = "committer.first-wake-up-time",
+        value_name = "UINT64",
+        env = "ETHREX_COMMITTER_FIRST_WAKE_UP_TIME",
+        help_heading = "L1 Committer options",
+        help = "Time to wait before the sequencer commits new blocks for the first time. Defaults to commit_time_ms. After sending the first commit `committer.commit-time` will be used."
+    )]
+    pub first_wake_up_time_ms: Option<u64>,
+    #[arg(
         long = "committer.arbitrary-base-blob-gas-price",
         default_value = "1000000000", // 1 Gwei
         value_name = "UINT64",
@@ -472,6 +484,7 @@ impl Default for CommitterOptions {
             .ok(),
             on_chain_proposer_address: None,
             commit_time_ms: 60000,
+            first_wake_up_time_ms: None,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
             committer_remote_signer_public_key: None,

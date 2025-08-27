@@ -145,11 +145,13 @@ impl L1Committer {
             .eth_client
             .get_last_committed_batch(state.on_chain_proposer_address)
             .await?;
-        let mut l1_committer = state.start();
-        l1_committer
-            .cast(InMessage::Commit)
-            .await
-            .map_err(CommitterError::GenServerError)
+        let l1_committer = state.start();
+        send_after(
+            random_duration(cfg.l1_committer.first_wake_up_time_ms),
+            l1_committer,
+            InMessage::Commit,
+        );
+        Ok(())
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
