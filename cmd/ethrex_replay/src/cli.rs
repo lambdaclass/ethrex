@@ -761,7 +761,19 @@ impl SubcommandCustom {
                     blocks.len()
                 );
 
-                let cache = Cache::new(blocks, execution_witness);
+                // Make cache mutable for L2 fields
+                #[expect(unused_mut)]
+                let mut cache = Cache::new(blocks, execution_witness);
+
+                #[cfg(feature = "l2")]
+                {
+                    use crate::cache::L2Fields;
+
+                    cache.l2_fields = Some(L2Fields {
+                        blob_commitment: [0_u8; 48],
+                        blob_proof: [0_u8; 48],
+                    });
+                }
 
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
