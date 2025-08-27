@@ -334,6 +334,7 @@ fn execute_stateless(
         parent_block_header = &block.header;
         acc_receipts.push(receipts);
     }
+    dbg!("After executing blocks");
 
     // Calculate final state root hash and check
     let last_block = blocks
@@ -348,6 +349,8 @@ fn execute_stateless(
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
+
+    dbg!("After minor things");
 
     Ok(StatelessResult {
         receipts: acc_receipts,
