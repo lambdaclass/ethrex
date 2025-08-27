@@ -54,11 +54,11 @@ jobs:
           ref: main
 
       - name: Build image
+        uses: ./.github/actions/build-docker
         if: ${{ inputs.job_type != 'main' }}
-        run: |
-          make build-image
-          # Tests use ethrex:ci so we retag it
-          docker tag ethrex:local ethrex:ci
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}

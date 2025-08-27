@@ -128,7 +128,7 @@ impl L1Committer {
         l1_committer
             .cast(InMessage::Commit)
             .await
-            .map_err(CommitterError::GenServerError)
+            .map_err(CommitterError::InternalError)
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
@@ -148,12 +148,12 @@ impl L1Committer {
                     .get_block_numbers_by_batch(last_committed_batch_number)
                     .await?
                     .ok_or(
-                        CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
+                        CommitterError::RetrievalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
                     )?;
                 let last_block = last_committed_blocks
                     .last()
                     .ok_or(
-                        CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
+                        CommitterError::RetrievalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
                     )?;
                 let first_block_to_commit = last_block + 1;
 
@@ -286,7 +286,7 @@ impl L1Committer {
                     .store
                     .get_receipt(block_to_commit_number, index.try_into()?)
                     .await?
-                    .ok_or(CommitterError::InternalError(
+                    .ok_or(CommitterError::RetrievalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
                 txs.push(tx.clone());
@@ -472,7 +472,7 @@ impl L1Committer {
             .await?
             .try_into()
             .map_err(|_| {
-                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
+                CommitterError::ConversionError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
         // Validium: EIP1559 Transaction.
@@ -582,7 +582,7 @@ fn get_last_block_hash(
     store
         .get_block_header(last_block_number)?
         .map(|header| header.hash())
-        .ok_or(CommitterError::InternalError(
+        .ok_or(CommitterError::RetrievalError(
             "Failed to get last block hash from storage".to_owned(),
         ))
 }

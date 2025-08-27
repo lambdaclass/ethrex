@@ -24,6 +24,9 @@ pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str =
     include_str!("../../../fixtures/genesis/l1-dev.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
+pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
+    include_str!("../../../fixtures/keys/private_keys_l1.txt");
+
 #[derive(Debug, Clone)]
 pub enum Network {
     PublicNetwork(PublicNetwork),

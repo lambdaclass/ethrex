@@ -29,6 +29,8 @@ default = ["c-kzg", "blst"]
 blst = ["ethrex-vm/blst"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
 revm = []
+sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
+stateless = []
 
 [[test]]
 name = "all"
