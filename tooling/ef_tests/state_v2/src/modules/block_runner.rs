@@ -26,7 +26,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     for test in &tests {
         println!("Running test group: {}", test.name);
         for test_case in &test.test_cases {
-            let res = single_block_run(test, test_case).await;
+            let res = run_test(test, test_case).await;
             if let Err(e) = res {
                 println!("Error: {:?}", e);
             }
@@ -36,7 +36,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     Ok(())
 }
 
-pub async fn single_block_run(test: &Test, test_case: &TestCase) -> Result<(), RunnerError> {
+pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerError> {
     // 1. We need to do a pre-execution with LEVM for two reasons:
     //    a. We need to know gas used and generate receipts for the block header.
     //    b. If execution expects a validation error in the EVM we don't re-execute it as a block (TODO: See if we should keep it as iss)
