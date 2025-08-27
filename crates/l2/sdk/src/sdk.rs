@@ -23,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::warn;
+use tracing::{error, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
