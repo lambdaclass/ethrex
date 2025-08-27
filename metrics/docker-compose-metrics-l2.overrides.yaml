@@ -4,6 +4,8 @@ services:
       - ../metrics/provisioning/prometheus/prometheus_l2.yaml:/etc/prometheus/prometheus.yaml
     ports:
       - "9092:9090"
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"
   grafana:
     ports:
       - "3802:3000"
