@@ -891,14 +891,15 @@ impl Syncer {
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut done = false;
-            let mut healing_done = false;
             let mut state_leafs_healed = 0_u64;
             while done {
                 while block_is_stale(&pivot_header) {
                     pivot_header =
                         update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
                 }
-                healing_done = heal_state_trie_wrap(
+                // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
+                // We just need to update the pivot and start again
+                if !heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
                     &self.peers,
@@ -906,11 +907,10 @@ impl Syncer {
                     &mut state_leafs_healed,
                     &mut storage_accounts,
                 )
-                .await?;
-
-                if !healing_done {
+                .await?
+                {
                     continue;
-                }
+                };
 
                 chunk_index = self
                     .peers
