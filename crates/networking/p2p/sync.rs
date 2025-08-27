@@ -794,7 +794,7 @@ impl Syncer {
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
         let mut pivot_is_stale = true;
-        let mut storage_accounts = HashSet::new();
+        let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
             // The function request_account_range writes the leafs into files in
@@ -841,7 +841,15 @@ impl Syncer {
                 let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                     account_states_snapshot.iter().cloned().unzip();
 
-                storage_accounts.extend(account_hashes.iter());
+                storage_accounts.accounts_with_storage_root.extend(
+                    account_hashes
+                        .iter()
+                        .zip(account_states.iter())
+                        .filter_map(|(hash, state)| {
+                            (state.storage_root != *EMPTY_TRIE_HASH)
+                                .then_some((*hash, state.storage_root))
+                        }),
+                );
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -1239,6 +1247,16 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
+}
+#[derive(Debug, Default)]
+/// We store for optimization the accounts that need to heal storage
+pub struct AccountStorageRoots {
+    /// The accounts that have not been healed are guaranteed to have the original storage root
+    /// we can read this storage root
+    pub accounts_with_storage_root: HashMap<H256, H256>,
+    /// If an account has been healed, it may return to a previous state, so we just store the account
+    /// in a hashset
+    pub healed_accounts: HashSet<H256>,
 }
 
 #[derive(thiserror::Error, Debug)]
