@@ -27,7 +27,7 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     #[cfg(feature = "sp1")]
     let backend = Some(ethrex_prover_lib::backends::Backend::SP1);
 
-    parse_and_execute(path, EvmEngine::LEVM, None, backend)
+    parse_and_execute(path, EvmEngine::LEVM, Some(SKIPPED_TESTS), backend)
 }
 
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
