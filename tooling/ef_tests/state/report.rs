@@ -200,7 +200,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{total_passed}").green()
