@@ -232,12 +232,10 @@ async fn handle_forkchoice(
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
-                    for tx in &block.body.transactions {
-                        context
-                            .blockchain
-                            .remove_transaction_from_pool(&tx.hash())
-                            .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                    }
+                    // Remove executed transactions from mempool
+                    context
+                        .blockchain
+                        .remove_block_transactions_from_pool(&block)?;
                 }
                 Ok(None) => {
                     warn!(
