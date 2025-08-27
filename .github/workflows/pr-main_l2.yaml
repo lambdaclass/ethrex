@@ -67,12 +67,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+        uses: ./.github/actions/build-docker
         with:
-          context: .
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:unstable
-          load: true
-          outputs: type=docker,dest=/tmp/ethrex_image.tar
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
