@@ -21,12 +21,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
 
-    /// Sets the blocks as part of the canonical chain
-    async fn mark_chain_as_canonical(
-        &self,
-        numbers_and_hashes: &[(BlockNumber, BlockHash)],
-    ) -> Result<(), StoreError>;
-
     /// Add block header
     async fn add_block_header(
         &self,
@@ -169,10 +163,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        let index: usize = index.try_into()?;
+        Ok(block_body.transactions.get(index).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -207,9 +199,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Ignores previously stored values if present
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError>;
 
-    /// Returns the stored chain configuration
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError>;
-
     /// Update earliest block number
     async fn update_earliest_block_number(
         &self,
@@ -219,24 +208,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain earliest block number
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Update finalized block number
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
-
     /// Obtain finalized block number
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Update safe block number
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
-
     /// Obtain safe block number
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
-
-    /// Update latest block number
-    async fn update_latest_block_number(&self, block_number: BlockNumber)
-    -> Result<(), StoreError>;
 
     /// Obtain latest block number
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
@@ -264,15 +240,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
-    /// Set the canonical block hash for a given block number.
-    async fn set_canonical_block(
+    async fn forkchoice_update(
         &self,
-        number: BlockNumber,
-        hash: BlockHash,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError>;
-
-    /// Unsets canonical block for a block number.
-    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError>;
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 

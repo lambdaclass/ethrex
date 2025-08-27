@@ -16,6 +16,7 @@ use ratatui::{
 use crate::{
     monitor::{
         self,
+        utils::SelectableScroller,
         widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
     },
     sequencer::errors::MonitorError,
@@ -50,7 +51,7 @@ event L1Message(
 */
 const L1MESSAGE_MESSAGE_ID_TOPIC_IDX: usize = 3;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2ToL1MessageStatus {
     WithdrawalInitiated,
     WithdrawalClaimed,
@@ -115,7 +116,7 @@ impl Display for L2ToL1MessageStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2ToL1MessageKind {
     ETHWithdraw,
     ERC20Withdraw,
@@ -132,15 +133,16 @@ impl Display for L2ToL1MessageKind {
     }
 }
 
-pub type L2ToL1MessageRow = (
-    L2ToL1MessageKind,
-    L2ToL1MessageStatus,
-    Address, // receiver in L1
-    U256,    // value
-    Address, // token (L2)
-    Address, // token (L1)
-    H256,    // L2 tx hash
-);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2ToL1MessageRow {
+    pub kind: L2ToL1MessageKind,
+    pub status: L2ToL1MessageStatus,
+    pub receiver: Address,
+    pub value: U256,
+    pub token_l1: Address,
+    pub token_l2: Address,
+    pub l2_tx_hash: H256,
+}
 
 #[derive(Clone, Default)]
 pub struct L2ToL1MessagesTable {
@@ -148,6 +150,7 @@ pub struct L2ToL1MessagesTable {
     pub items: Vec<L2ToL1MessageRow>,
     last_l2_block_fetched: U256,
     common_bridge_address: Address,
+    selected: bool,
 }
 
 impl L2ToL1MessagesTable {
@@ -186,9 +189,9 @@ impl L2ToL1MessagesTable {
         l1_client: &EthClient,
         l2_client: &EthClient,
     ) -> Result<(), MonitorError> {
-        for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
-            *status = L2ToL1MessageStatus::for_tx(
-                *l2_tx_hash,
+        for row in self.items.iter_mut() {
+            row.status = L2ToL1MessageStatus::for_tx(
+                row.l2_tx_hash,
                 self.common_bridge_address,
                 l1_client,
                 l2_client,
@@ -227,43 +230,47 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
-            let withdrawal_status = L2ToL1MessageStatus::for_tx(
+            let withdrawal_status = match L2ToL1MessageStatus::for_tx(
                 log.transaction_hash,
                 common_bridge_address,
                 l1_client,
                 l2_client,
             )
-            .await?;
-            let start = log.log.data.len().saturating_sub(32);
+            .await
+            {
+                Ok(status) => status,
+                Err(MonitorError::NoLogs) => continue,
+                Err(e) => return Err(e),
+            };
             match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
-                    processed_logs.push((
-                        L2ToL1MessageKind::ETHWithdraw,
-                        withdrawal_status,
-                        Address::from_slice(
+                    processed_logs.push(L2ToL1MessageRow {
+                        kind: L2ToL1MessageKind::ETHWithdraw,
+                        status: withdrawal_status,
+                        receiver: Address::from_slice(
                             &log.log
                                 .topics
                                 .get(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        U256::from_big_endian(
+                        value: U256::from_big_endian(
                             log.log
                                 .topics
                                 .get(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX))?
                                 .as_fixed_bytes(),
                         ),
-                        Address::default(),
-                        Address::default(),
-                        log.transaction_hash,
-                    ));
+                        token_l1: Address::default(),
+                        token_l2: Address::default(),
+                        l2_tx_hash: log.transaction_hash,
+                    });
                 }
                 topic if topic == erc20_withdrawal_topic => {
-                    processed_logs.push((
-                        L2ToL1MessageKind::ERC20Withdraw,
-                        withdrawal_status,
-                        Address::from_slice(
+                    processed_logs.push(L2ToL1MessageRow {
+                        kind: L2ToL1MessageKind::ERC20Withdraw,
+                        status: withdrawal_status,
+                        receiver: Address::from_slice(
                             &log.log
                                 .topics
                                 .get(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX)
@@ -272,32 +279,29 @@ impl L2ToL1MessagesTable {
                                 ))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        U256::from_big_endian(
-                            log.log
-                                .data
-                                .get(start..)
-                                .ok_or(MonitorError::LogsData(start))?,
+                        value: U256::from_big_endian(
+                            log.log.data.get(0..32).ok_or(MonitorError::LogsData(32))?,
                         ),
-                        Address::from_slice(
+                        token_l1: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(1)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX,
                                 ))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        Address::from_slice(
+                        token_l2: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(2)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX,
                                 ))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        log.transaction_hash,
-                    ));
+                        l2_tx_hash: log.transaction_hash,
+                    });
                 }
                 _ => {
                     continue;
@@ -326,19 +330,17 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
         ];
 
-        let rows = self.items.iter().map(
-            |(kind, status, receiver_on_l1, value, token_l1, token_l2, l2_tx_hash)| {
-                Row::new(vec![
-                    Span::styled(format!("{kind}"), Style::default()),
-                    Span::styled(format!("{status}"), Style::default()),
-                    Span::styled(format!("{receiver_on_l1:#x}"), Style::default()),
-                    Span::styled(value.to_string(), Style::default()),
-                    Span::styled(format!("{token_l1:#x}"), Style::default()),
-                    Span::styled(format!("{token_l2:#x}"), Style::default()),
-                    Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
-                ])
-            },
-        );
+        let rows = self.items.iter().map(|row| {
+            Row::new(vec![
+                Span::styled(format!("{}", row.kind), Style::default()),
+                Span::styled(format!("{}", row.status), Style::default()),
+                Span::styled(format!("{:#x}", row.receiver), Style::default()),
+                Span::styled(row.value.to_string(), Style::default()),
+                Span::styled(format!("{:#x}", row.token_l1), Style::default()),
+                Span::styled(format!("{:#x}", row.token_l2), Style::default()),
+                Span::styled(format!("{:#x}", row.l2_tx_hash), Style::default()),
+            ])
+        });
 
         let l1_to_l2_messages_table = Table::new(rows, constraints)
             .header(
@@ -355,7 +357,11 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             )
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L2 to L1 Messages",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -363,5 +369,24 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             );
 
         l1_to_l2_messages_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for L2ToL1MessagesTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

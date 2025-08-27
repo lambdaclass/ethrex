@@ -5,6 +5,7 @@ participants:
     cl_image: sigp/lighthouse:v7.1.0
     validator_count: 32
   - el_type: ethrex
+    el_image: ethrex:ci
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.1.0
     validator_count: 32
@@ -25,8 +26,6 @@ spamoor_params:
         throughput: 6
 
 network_params:
-  electra_fork_epoch: 1
-
   # The address of the staking contract address on the Eth1 chain
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
 

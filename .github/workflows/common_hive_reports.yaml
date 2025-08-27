@@ -24,21 +24,13 @@ jobs:
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
             }
-          - { 
-              name: "Devp2p eth tests",
-              file_name: devp2p,
-              simulation: devp2p
-            }
+          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
           - {
               name: "Cancun Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
-          - {
-              name: "Sync tests",
-              file_name: sync,
-              simulation: ethereum/sync
-            }
+          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
           - {
               name: "Consume Engine tests",
               file_name: consume-engine,
@@ -62,14 +54,18 @@ jobs:
           ref: main
 
       - name: Build image
+        uses: ./.github/actions/build-docker
         if: ${{ inputs.job_type != 'main' }}
-        run: make build-image
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}
         run: |
-          docker pull ghcr.io/lambdaclass/ethrex:latest
-          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
+          docker pull ghcr.io/lambdaclass/ethrex:unstable
+          # Tests use ethrex:latest so we retag it
+          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:ci
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -89,7 +85,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
+        run: cd hive && ./hive --client-file ../.github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
         continue-on-error: true
 
       - name: Upload results

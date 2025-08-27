@@ -1,3 +1,4 @@
+use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
@@ -14,25 +15,34 @@ pub struct NodeStatusTable {
     pub state: TableState,
     pub items: [(String, String); 5],
     sequencer_state: SequencerState,
+    is_based: bool,
 }
 
 impl NodeStatusTable {
-    pub fn new(sequencer_state: SequencerState) -> Self {
+    pub fn new(sequencer_state: SequencerState, is_based: bool) -> Self {
         Self {
             state: TableState::default(),
             items: Default::default(),
             sequencer_state,
+            is_based,
         }
     }
 
-    pub async fn on_tick(&mut self, store: &Store) -> Result<(), MonitorError> {
-        self.items = Self::refresh_items(&self.sequencer_state, store).await?;
+    pub async fn on_tick(
+        &mut self,
+        store: &Store,
+        l2_client: &EthClient,
+    ) -> Result<(), MonitorError> {
+        self.items =
+            Self::refresh_items(&self.sequencer_state, store, l2_client, self.is_based).await?;
         Ok(())
     }
 
     async fn refresh_items(
         sequencer_state: &SequencerState,
         store: &Store,
+        l2_client: &EthClient,
+        is_based: bool,
     ) -> Result<[(String, String); 5], MonitorError> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let status = sequencer_state.status().await;
@@ -41,7 +51,7 @@ impl NodeStatusTable {
             .get_latest_block_number()
             .await
             .map_err(|_| MonitorError::GetLatestBlock)?;
-        let follower_nodes = "NaN"; // TODO: Implement follower nodes retrieval
+        let active_peers = l2_client.peer_count().await?;
 
         Ok([
             ("Last Update:".to_string(), last_update),
@@ -54,7 +64,11 @@ impl NodeStatusTable {
                 "Last Known Block:".to_string(),
                 last_known_block.to_string(),
             ),
-            ("Peers:".to_string(), follower_nodes.to_string()),
+            if is_based {
+                ("Peers:".to_string(), active_peers.to_string())
+            } else {
+                ("".to_string(), "".to_string())
+            },
         ])
     }
 }

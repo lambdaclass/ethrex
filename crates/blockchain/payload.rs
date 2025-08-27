@@ -10,7 +10,7 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, bloom_from_logs,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
@@ -410,17 +410,14 @@ impl Blockchain {
 
             // Check if we have enough gas to run the transaction
             if context.remaining_gas < head_tx.tx.gas_limit() {
-                debug!(
-                    "Skipping transaction: {}, no gas left",
-                    head_tx.tx.compute_hash()
-                );
+                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
             }
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.compute_hash();
+            let tx_hash = head_tx.tx.hash();
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -428,7 +425,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
 
@@ -437,7 +434,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                    self.remove_transaction_from_pool(&tx_hash)?;
 
                     metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
@@ -479,7 +476,7 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
-        let tx_hash = head.tx.compute_hash();
+        let tx_hash = head.tx.hash();
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
@@ -500,7 +497,7 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
+            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
     }
@@ -692,6 +689,12 @@ impl TransactionQueue {
 // Orders transactions by highest tip, if tip is equal, orders by lowest timestamp
 impl Ord for HeadTransaction {
     fn cmp(&self, other: &Self) -> Ordering {
+        match (self.tx_type(), other.tx_type()) {
+            (TxType::Privileged, TxType::Privileged) => return self.nonce().cmp(&other.nonce()),
+            (TxType::Privileged, _) => return Ordering::Less,
+            (_, TxType::Privileged) => return Ordering::Greater,
+            _ => (),
+        };
         match other.tip.cmp(&self.tip) {
             Ordering::Equal => self.tx.time().cmp(&other.tx.time()),
             ordering => ordering,

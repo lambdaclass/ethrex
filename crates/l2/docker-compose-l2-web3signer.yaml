@@ -8,23 +8,20 @@ services:
       - 0.0.0.0:9000:9000
     volumes:
       - ../../fixtures/keys:/keys
-    command:
-      "--http-host-allowlist=* --key-store-path=/keys eth1 --chain-id=1729" 
+    command: "--http-host-allowlist=* --key-store-path=/keys eth1 --chain-id=1729"
 
   ethrex_l2:
     command: >
-      l2 init
+      l2
       --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729
       --authrpc.port 8552
       --evm levm
       --proof-coordinator.addr 0.0.0.0
-      --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
-      --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.remote-signer-url http://web3signer:9000 
-      --committer.remote-signer-public-key 02eadbea0cdb17fda8d56fc9c51df8a6158c2ab157aabf2ca57c3a32cd69f98bbc 
-      --proof-coordinator.remote-signer-url http://web3signer:9000 
-      --proof-coordinator.remote-signer-public-key 029a87812d21330c485e2ab11fbbcc875fd3ecda9e74c3964d8de9a95560b64f21 
-      --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --committer.remote-signer-url http://web3signer:9000
+      --committer.remote-signer-public-key 02eadbea0cdb17fda8d56fc9c51df8a6158c2ab157aabf2ca57c3a32cd69f98bbc
+      --proof-coordinator.remote-signer-url http://web3signer:9000
+      --proof-coordinator.remote-signer-public-key 029a87812d21330c485e2ab11fbbcc875fd3ecda9e74c3964d8de9a95560b64f21
+      --no-monitor

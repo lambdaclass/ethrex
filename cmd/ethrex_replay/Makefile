@@ -78,5 +78,19 @@ prove-batch-risc0:
 prove-batch-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 
+## Profile SP1 l1 block
+profile-sp1:
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,profiling" -- execute block  ${REPLAY_BLOCK_ARGS}
+## Profile SP1 l2 batch
+profile-batch-sp1:
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,l2,profiling" -- execute batch ${REPLAY_BATCH_ARGS}
+
+## Profile risc0 l1 block
+profile-risc0:
+	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0" -- execute block  ${REPLAY_BLOCK_ARGS}
+## Profile risc0 l2 block
+profile-batch-risc0:
+	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+
 help:
 	cargo r -r -- --help

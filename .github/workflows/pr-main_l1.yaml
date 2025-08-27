@@ -25,6 +25,19 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install RISC0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
+          ~/.risc0/bin/rzup install rust
+
+      - name: Create placeholder SP1 ELF
+        run: |
+          mkdir -p crates/l2/prover/zkvm/interface/sp1/out
+          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -32,7 +45,7 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
+          make lint
 
       - name: Run cargo fmt
         run: |
@@ -54,26 +67,19 @@ jobs:
 
       - name: Run Blockchain EF tests
         run: |
-          make -C cmd/ef_tests/blockchain test
+          make -C tooling/ef_tests/blockchain test
 
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
+      - id: docker
+        name: Build Ethrex Docker Image
+        uses: ./.github/actions/build-docker
         with:
-          context: .
-          file: ./Dockerfile
-          load: true
-          tags: ethrex
-          outputs: type=docker,dest=/tmp/ethrex_image.tar
-
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -84,12 +90,12 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 8e8c83f5c5a06561407a6a7848f5a4b32a10a467 # commit from our fork
+      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
         run: |
-          git clone --single-branch --branch master https://github.com/lambdaclass/hive
+          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
@@ -103,12 +109,14 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 276ca9deaee8e5831b11fa6e884a9479ee8ca140
+      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
+        # TODO: Change repo back to https://github.com/ethereum/hive when
+        # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
-          git clone --single-branch --branch master https://github.com/ethereum/hive
+          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
@@ -124,6 +132,7 @@ jobs:
     needs: [docker_build]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - name: Transaction Check
@@ -154,8 +163,8 @@ jobs:
         with:
           enclave_name: ${{ matrix.enclave_name }}
           kurtosis_version: "1.10.2"
-          ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "7d0d6c6d91f1745a6b396b3965df69d580cf70a9"
+          ethereum_package_url: "github.com/ethpandaops/ethereum-package"
+          ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
@@ -164,6 +173,7 @@ jobs:
     needs: [docker_build, setup-hive-fork, setup-hive-upstream]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: true
       matrix:
         include:
           - name: "Rpc Compat tests"
@@ -182,7 +192,7 @@ jobs:
             test_pattern: engine-(auth|exchange-capabilities)/
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Request Blob Pooled Transactions|Invalid NewPayload, Incomplete Transactions|Re-Org Back to Canonical Chain*|Invalid PayloadAttributes*|Invalid NewPayload, VersionedHashes|Invalid NewPayload, Incomplete VersionedHashes|Invalid NewPayload, Extra VersionedHashes|Bad Hash on NewPayload|Unknown HeadBlockHash|In-Order Consecutive Payload Execution|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Syncing=False|Payload Build after New Invalid Payload|Invalid NewPayload|Invalid Missing Ancestor ReOrg" # Invalid Missing Ancestor Syncing ReOrG is flaky
+            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Request Blob Pooled Transactions Single|Invalid NewPayload, Incomplete Transactions|Re-Org Back to Canonical Chain*|Invalid PayloadAttributes*|Invalid NewPayload, VersionedHashes|Invalid NewPayload, Incomplete VersionedHashes|Invalid NewPayload, Extra VersionedHashes|Bad Hash on NewPayload|Unknown HeadBlockHash|In-Order Consecutive Payload Execution|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Syncing=False|Payload Build after New Invalid Payload|Invalid NewPayload|Invalid Missing Ancestor ReOrg" # Invalid Missing Ancestor Syncing ReOrG is flaky
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-api/RPC|Bad Hash on NewPayload|Build Payload|Fork ID|In-Order Consecutive Payload Execution|Inconsistent|Invalid Missing Ancestor ReOrg|Invalid NewPayload|Invalid PayloadAttributes|Multiple New Payloads|NewPayload with|ParentHash equals BlockHash on NewPayload|Payload Build|PrevRandao Opcode Transactions|Re-Execute Payload|Re-Org Back|Re-org to Previously Validated Sidechain Payload|RPC:|Safe Re-Org|Suggested Fee|Transaction Re-Org|Unique Payload ID|Unknown|Valid NewPayload->ForkchoiceUpdated" # |Invalid P9 -> flaky
@@ -218,7 +228,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
+        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

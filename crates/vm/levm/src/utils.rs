@@ -1,5 +1,6 @@
 use crate::{
     EVMConfig, Environment,
+    account::{AccountStatus, LevmAccount},
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
@@ -17,16 +18,13 @@ use crate::{
     vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::Bytes;
+use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, Transaction, tx_fields::*},
+    types::{Account, Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
-use ethrex_common::{
-    types::{Account, TxKind},
-    utils::u256_from_big_endian_const,
-};
+use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -35,7 +33,10 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    iter::Enumerate,
+};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -96,28 +97,67 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// Generates blacklist of jump destinations given some bytecode.
-/// This is a necessary calculation because of PUSH opcodes.
-/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
-/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-    let mut address_blacklist = Vec::new();
+/// # Filter for jump target offsets.
+///
+/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
+/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
+#[derive(Debug)]
+pub struct JumpTargetFilter {
+    /// The list of invalid jump target offsets.
+    filter: Vec<usize>,
+    /// The last processed offset, plus one.
+    offset: usize,
 
-    let mut iter = code.iter().enumerate();
-    while let Some((_, &value)) = iter.next() {
-        let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
-            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-            address_blacklist.extend(
-                (&mut iter)
-                    .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-            );
+    /// Program bytecode iterator.
+    iter: Enumerate<IntoIter<Bytes>>,
+    /// Number of bytes remaining to process from the last push instruction.
+    partial: usize,
+}
+
+impl JumpTargetFilter {
+    /// Create an empty `JumpTargetFilter`.
+    pub fn new(bytecode: Bytes) -> Self {
+        Self {
+            filter: Vec::new(),
+            offset: 0,
+
+            iter: bytecode.into_iter().enumerate(),
+            partial: 0,
         }
     }
 
-    Ok(address_blacklist.into_boxed_slice())
+    /// Check whether a target jump address is blacklisted or not.
+    ///
+    /// This method may potentially grow the filter if the requested address is out of range.
+    pub fn is_blacklisted(&mut self, address: usize) -> bool {
+        if let Some(delta) = address.checked_sub(self.offset) {
+            // It is not realistic to expect a bytecode offset to overflow an `usize`.
+            #[expect(clippy::arithmetic_side_effects)]
+            for (offset, value) in (&mut self.iter).take(delta + 1) {
+                match self.partial.checked_sub(1) {
+                    None => {
+                        // Neither the `as` conversions nor the subtraction can fail here.
+                        #[expect(clippy::as_conversions)]
+                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
+                            self.partial = value as usize - Opcode::PUSH0 as usize;
+                        }
+                    }
+                    Some(partial) => {
+                        self.partial = partial;
+
+                        #[expect(clippy::as_conversions)]
+                        if value == Opcode::JUMPDEST as u8 {
+                            self.filter.push(offset);
+                        }
+                    }
+                }
+            }
+
+            self.filter.last() == Some(&address)
+        } else {
+            self.filter.binary_search(&address).is_ok()
+        }
+    }
 }
 
 // ================== Backup related functions =======================
@@ -130,7 +170,6 @@ pub fn restore_cache_state(
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
-            current_account.code = account.code;
         }
     }
 
@@ -160,7 +199,7 @@ pub fn get_base_fee_per_blob_gas(
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         block_excess_blob_gas.unwrap_or_default(),
-        base_fee_update_fraction.into(),
+        base_fee_update_fraction,
     )
 }
 
@@ -218,30 +257,23 @@ pub fn word_to_address(word: U256) -> Address {
 
 // ================== EIP-7702 related functions =====================
 
-/// Checks if account.info.bytecode has been delegated as the EIP7702
-/// determines.
-pub fn has_delegation(account: &Account) -> Result<bool, VMError> {
-    let mut has_delegation = false;
-    if account.has_code() && account.code.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = &account.code.get(..3).ok_or(InternalError::Slicing)?;
-
-        if *first_3_bytes == SET_CODE_DELEGATION_BYTES {
-            has_delegation = true;
-        }
+pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+    if code.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
+        return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
     }
-    Ok(has_delegation)
+    Ok(false)
 }
 
-/// Gets the address inside the account.info.bytecode if it has been
+/// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
-    if has_delegation(account)? {
-        let address_bytes = &account
-            .code
+pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+    if code_has_delegation(code)? {
+        let address_bytes = &code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(InternalError::Slicing)?;
         // It shouldn't panic when doing Address::from_slice()
-        // because the length is checked inside the has_delegation() function
+        // because the length is checked inside the code_has_delegation() function
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {
@@ -327,20 +359,19 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = db.get_account(address)?;
-    let bytecode = account.code.clone();
+    let bytecode = db.get_account_code(address)?;
 
     // If the Address doesn't have a delegation code
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(account)? {
-        return Ok((false, 0, address, bytecode));
+    if !code_has_delegation(bytecode)? {
+        return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(account)?;
+    let auth_address = get_authorized_address_from_code(bytecode)?;
 
     let access_cost = if accrued_substate.accessed_addresses.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -349,7 +380,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account(auth_address)?.code.clone();
+    let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
@@ -383,12 +414,13 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let authority_account = self.db.get_account(authority_address)?;
+            let authority_info = self.db.get_account(authority_address)?.info.clone();
+            let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.accessed_addresses.insert(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
-                authority_account.code.is_empty() || has_delegation(authority_account)?;
+                authority_code.is_empty() || code_has_delegation(authority_code)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -396,12 +428,12 @@ impl<'a> VM<'a> {
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account.info.nonce != auth_tuple.nonce {
+            if authority_info.nonce != auth_tuple.nonce {
                 continue;
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_account.is_empty() {
+            if !authority_info.is_empty() {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
@@ -417,14 +449,12 @@ impl<'a> VM<'a> {
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
-            let auth_account = self.get_account_mut(authority_address)?;
-
             let code = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
                 Bytes::new()
             };
-            auth_account.set_code(code);
+            self.update_account_bytecode(authority_address, code)?;
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
@@ -635,5 +665,38 @@ impl<'a> VM<'a> {
                 Ok((created_address, true))
             }
         }
+    }
+}
+
+/// Converts Account to LevmAccount
+pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
+    (
+        LevmAccount {
+            info: account.info,
+            storage: account.storage,
+            status: AccountStatus::Unmodified,
+        },
+        account.code,
+    )
+}
+
+/// Converts a U256 value into usize, returning an error if the value is over 32 bits
+/// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
+#[expect(clippy::as_conversions)]
+pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
+    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+        return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
+    }
+    Ok(val.0[0] as usize)
+}
+
+/// Converts U256 size and offset to usize.
+/// If the size is zero, the offset will be zero regardless of its original value as it is not relevant
+pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), VMError> {
+    if size.is_zero() {
+        // Offset is irrelevant
+        Ok((0, 0))
+    } else {
+        Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
     }
 }

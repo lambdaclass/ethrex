@@ -1,5 +1,5 @@
 use ethrex_common::types::{Transaction, TxKind};
-use revm_primitives::HashMap;
+use std::collections::HashMap;
 
 use charming::{
     Chart, ImageRenderer,

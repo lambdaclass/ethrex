@@ -113,6 +113,8 @@ pub enum ProofCoordinatorError {
     ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
+    #[error("Missing TDX private key")]
+    MissingTDXPrivateKey,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -183,7 +185,7 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
-    #[error("Interval does not fit in u64")]
+    #[error("Block Producer failed to convert values: {0}")]
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("{0}")]
     Custom(String),
