@@ -327,8 +327,7 @@ impl Blockchain {
         // Return the held payload
         match &payloads[idx].1 {
             PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
-            // We already converted the payload into a finished version
-            _ => unreachable!(),
+            _ => unreachable!("we already converted the payload into a finished version"),
         }
     }
 
