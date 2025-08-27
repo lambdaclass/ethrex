@@ -28,7 +28,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::based::sequencer_state::SequencerState;
 use crate::monitor::utils::SelectableScroller;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::sequencer::configs::MonitorConfig;
@@ -39,6 +38,9 @@ use crate::{
         L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
     },
     sequencer::errors::MonitorError,
+};
+use crate::{
+    based::sequencer_state::SequencerState, monitor::widget::rich_accounts::RichAccountsTable,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -60,6 +62,7 @@ pub struct EthrexMonitorWidget {
     pub blocks_table: BlocksTable,
     pub l1_to_l2_messages: L1ToL2MessagesTable,
     pub l2_to_l1_messages: L2ToL1MessagesTable,
+    pub rich_accounts: RichAccountsTable,
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
@@ -204,6 +207,7 @@ impl EthrexMonitorWidget {
             blocks_table: BlocksTable::new(),
             l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
             l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
+            rich_accounts: RichAccountsTable::new(&rollup_client).await?,
             eth_client,
             rollup_client,
             store,
@@ -327,7 +331,11 @@ impl EthrexMonitorWidget {
     {
         let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
         let tabs = Tabs::default()
-            .titles([TabsState::Overview.to_string(), TabsState::Logs.to_string()])
+            .titles([
+                TabsState::Overview.to_string(),
+                TabsState::Logs.to_string(),
+                TabsState::Accounts.to_string(),
+            ])
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
@@ -457,6 +465,18 @@ impl EthrexMonitorWidget {
 
                 let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
 
+                help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
+            }
+            TabsState::Accounts => {
+                let mut accounts = self.rich_accounts.state.clone();
+                self.rich_accounts.render(
+                    *chunks.first().ok_or(MonitorError::Chunks)?,
+                    buf,
+                    &mut accounts,
+                );
+
+                // TODO: help doesn't apply
+                let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };

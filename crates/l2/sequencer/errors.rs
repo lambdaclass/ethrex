@@ -355,4 +355,10 @@ pub enum MonitorError {
     RPCListEmpty,
     #[error("Error converting batch window")]
     BatchWindow,
+    #[error("Error while parsing private key")]
+    DecodingError(String),
+    #[error("Error parsing secret key")]
+    FromHexError(#[from] hex::FromHexError),
+    #[error("Error parsing secret key")]
+    SecretKeyError(#[from] secp256k1::Error),
 }

@@ -5,13 +5,15 @@ pub enum TabsState {
     #[default]
     Overview = 0,
     Logs = 1,
+    Accounts = 2,
 }
 
 impl TabsState {
     pub fn next(&mut self) {
         match self {
             TabsState::Overview => *self = TabsState::Logs,
-            TabsState::Logs => *self = TabsState::Overview,
+            TabsState::Logs => *self = TabsState::Accounts,
+            TabsState::Accounts => *self = TabsState::Overview,
         }
     }
 
@@ -19,6 +21,7 @@ impl TabsState {
         match self {
             TabsState::Overview => *self = TabsState::Logs,
             TabsState::Logs => *self = TabsState::Overview,
+            TabsState::Accounts => *self = TabsState::Logs,
         }
     }
 }
@@ -28,6 +31,7 @@ impl Display for TabsState {
         match self {
             TabsState::Overview => write!(f, "Overview"),
             TabsState::Logs => write!(f, "Logs"),
+            TabsState::Accounts => write!(f, "Accounts"),
         }
     }
 }
@@ -37,6 +41,7 @@ impl From<TabsState> for Option<usize> {
         match state {
             TabsState::Overview => Some(0),
             TabsState::Logs => Some(1),
+            TabsState::Accounts => Some(2),
         }
     }
 }
