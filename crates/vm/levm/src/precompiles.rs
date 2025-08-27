@@ -418,14 +418,13 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
         .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
+
     let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
-
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
     let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
-
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
     let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
 
