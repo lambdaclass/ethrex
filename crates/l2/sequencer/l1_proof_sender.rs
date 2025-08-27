@@ -295,7 +295,9 @@ impl L1ProofSender {
                 .get_transaction_receipt(verify_tx_hash)
                 .await?
                 .ok_or(ProofSenderError::InternalError("no verify tx receipt".to_string()))?;
-            METRICS.set_batch_verification_gas(batch_number, verify_tx_receipt.receipt.cumulative_gas_used as i64);
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()
+                    .map_err(|_| ProofSenderError::InternalError("failed to convert verify gas used to i64".to_string()))?;
+            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
         );
 
         self.rollup_store

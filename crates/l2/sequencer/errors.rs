@@ -118,6 +118,8 @@ pub enum ProofCoordinatorError {
     MissingBlob(u64),
     #[error("Missing TDX private key")]
     MissingTDXPrivateKey,
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,6 +146,8 @@ pub enum ProofSenderError {
     AlignedGetNonceError(String),
     #[error("Proof Sender failed to submit proof: {0}")]
     AlignedSubmitProofError(String),
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]

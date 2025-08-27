@@ -23,11 +23,11 @@ use serde_with::serde_as;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
 #[cfg(feature = "metrics")]
-use tokio::sync::Mutex;
-#[cfg(feature = "metrics")]
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+#[cfg(feature = "metrics")]
+use tokio::sync::Mutex;
 #[cfg(feature = "metrics")]
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -390,8 +390,10 @@ impl ProofCoordinator {
                 let proving_time = request_timestamp
                     .elapsed()
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
-                    .as_secs();
-                METRICS.set_batch_proving_time(batch_number, proving_time as i64);
+                    .as_secs().try_into()
+                    .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?
+                    ;
+                METRICS.set_batch_proving_time(batch_number, proving_time)?;
             );
             // If not, store it
             self.rollup_store
