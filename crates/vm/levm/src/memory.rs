@@ -92,8 +92,8 @@ impl Memory {
         let real_new_memory_size = new_memory_size + self.current_base;
 
         if real_new_memory_size > buffer.len() {
-            // when resizing, resize by allocating entire pages instead of small memory sizes.
-            let new_size = real_new_memory_size.next_multiple_of(4096);
+            // when resizing, avoid really small resizes.
+            let new_size = real_new_memory_size.next_multiple_of(64);
             buffer.resize(new_size, 0);
         }
 
