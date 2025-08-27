@@ -846,7 +846,12 @@ impl Syncer {
                 let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                     account_states_snapshot.iter().cloned().unzip();
 
-                storage_accounts.extend(account_hashes.iter());
+                storage_accounts.extend(
+                    account_hashes
+                        .iter()
+                        .zip(account_states.iter())
+                        .filter_map(|(hash, state)| (state.storage_root != empty).then_some(*hash)),
+                );
 
                 chunk_index = self
                     .peers
@@ -854,6 +859,7 @@ impl Syncer {
                         state_root,
                         account_states_snapshot
                             .iter()
+                            .filter(|(_, acc)| acc.storage_root != empty)
                             .map(|(k, v)| (*k, v.storage_root))
                             .collect(),
                         account_storages_snapshots_dir.clone(),
