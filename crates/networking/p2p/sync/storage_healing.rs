@@ -592,7 +592,7 @@ fn get_initial_downloads(
     account_paths: &HashSet<H256>,
 ) -> VecDeque<NodeRequest> {
     let trie = store
-        .open_state_trie(state_root)
+        .open_locked_state_trie(state_root)
         .expect("We should be able to open the store");
     account_paths
         .par_iter()
