@@ -880,8 +880,6 @@ impl Syncer {
 
             let account_store_start = Instant::now(); */
 
-            let mut computed_state_root = *EMPTY_TRIE_HASH;
-
             /*             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
 
             let account_store_time = Instant::now().saturating_duration_since(account_store_start); */
