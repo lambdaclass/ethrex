@@ -931,13 +931,16 @@ impl Syncer {
                     .map_err(SyncError::PeerHandler)?;
 
                 info!(
-                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet",
-                    storage_accounts.accounts_with_storage_root.len()
+                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
+                    storage_accounts.accounts_with_storage_root.len(),
+                    // These accounts are marked as heals if they're a big account. This is
+                    // because we don't know if the storage root is still valid
+                    storage_accounts.healed_accounts.len(),
                 );
                 if !block_is_stale(&pivot_header) {
-                    info!("We stopped because of staleness, restarting loop");
                     break;
                 }
+                info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
 
@@ -963,6 +966,7 @@ impl Syncer {
                 let entry = entry.map_err(|_| {
                     SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
                 })?;
+                info!("Reading account storage file from entry {entry:?}");
 
                 let snapshot_path = entry.path();
 
@@ -977,6 +981,7 @@ impl Syncer {
                     maybe_big_account_storage_state_roots.clone();
                 let store_clone = store.clone();
                 let pivot_hash_moved = pivot_header.hash();
+                info!("Starting compute of account_storages_snapshot");
                 let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                     let store: Store = store_clone;
 
@@ -997,11 +1002,13 @@ impl Syncer {
                         .collect::<Result<Vec<_>, SyncError>>()
                 })
                 .await??;
+                info!("Writing to db");
 
                 store
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
+            info!("Finished writing to db");
 
             for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
                 .lock()
