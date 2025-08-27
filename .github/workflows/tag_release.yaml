@@ -97,7 +97,7 @@ jobs:
 
       - name: Install solc
         if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN }}
