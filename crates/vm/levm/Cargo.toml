@@ -40,6 +40,7 @@ ark-bn254 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 strum = { version = "0.27.1", features = ["derive"] }
+k256 = "0.13.4"
 
 
 [dev-dependencies]

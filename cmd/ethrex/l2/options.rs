@@ -97,7 +97,7 @@ pub struct SequencerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_MONITOR",
+        env = "ETHREX_NO_MONITOR",
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,

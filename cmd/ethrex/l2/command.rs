@@ -6,7 +6,6 @@ use crate::{
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::{Options, ProverClientOptions},
     },
-    networks::Network,
     utils::{default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
@@ -14,6 +13,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
+use ethrex_config::networks::Network;
 use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
 use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
@@ -284,10 +284,8 @@ impl Command {
                 cfg_if::cfg_if! {
                     if #[cfg(feature = "libmdbx")] {
                         let store_type = EngineType::Libmdbx;
-                    } else if #[cfg(feature = "redb")] {
-                        let store_type = EngineType::RedB;
                     } else {
-                        eyre::bail!("Expected one of libmdbx or redb store engine");
+                        eyre::bail!("Expected libmdbx store engine");
                     }
                 };
                 cfg_if::cfg_if! {

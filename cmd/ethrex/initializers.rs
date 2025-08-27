@@ -1,6 +1,5 @@
 use crate::{
     cli::Options,
-    networks::Network,
     utils::{
         get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
         read_node_config_file,
@@ -8,6 +7,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 
@@ -102,10 +102,8 @@ pub fn open_store(data_dir: &str) -> Store {
         cfg_if::cfg_if! {
             if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
-            } else if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
             } else {
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
         }
@@ -252,18 +250,17 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 
     bootnodes.extend(network.get_bootnodes());
 
+    info!("Reading known peers from config file");
+
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => bootnodes.append(&mut config.known_peers),
+        Ok(None) => {} // No config file, nothing to do
+        Err(e) => warn!("Could not read from peers file: {e}"),
+    };
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
-
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    info!("Reading known peers from config file {:?}", config_file);
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
-        Err(e) => warn!("Could not read from peers file: {e}"),
-    };
 
     bootnodes
 }
@@ -325,14 +322,12 @@ pub fn get_local_node_record(
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => {
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => {
             NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
                 .expect("Node record could not be created from local node")
         }
-        Err(_) => {
+        _ => {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()

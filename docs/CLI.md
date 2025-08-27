@@ -444,7 +444,7 @@ L2 options:
 
 Monitor options:
       --no-monitor
-          [env: ETHREX_MONITOR=]
+          [env: ETHREX_NO_MONITOR=]
 ```
 
 ## ethrex l2 prover

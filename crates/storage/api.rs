@@ -163,10 +163,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        let index: usize = index.try_into()?;
+        Ok(block_body.transactions.get(index).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
