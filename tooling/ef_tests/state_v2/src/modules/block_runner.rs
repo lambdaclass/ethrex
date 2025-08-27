@@ -151,10 +151,14 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     let result = blockchain.add_block(&block).await;
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
-        println!("ERROR: Execution failed but test didn't expect any error.");
+        return Err(RunnerError::Custom(
+            "Execution failed but test didn't expect any error.".to_string(),
+        ));
     }
     if test_case.post.expected_exceptions.is_some() && result.is_ok() {
-        println!("ERROR: Test expected an error but execution didn't fail.")
+        return Err(RunnerError::Custom(
+            "Test expected an error but execution didn't fail.".to_string(),
+        ));
     }
 
     Ok(())
