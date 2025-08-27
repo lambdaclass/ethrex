@@ -267,9 +267,7 @@ impl Trie {
         mut state_nodes: HashMap<NodeHash, NodeRLP>,
     ) -> Result<Self, TrieError> {
         // TODO: Try to remove this clone.
-        dbg!(&root_hash, state_nodes.len());
         let Some(root) = state_nodes.get(&root_hash).cloned() else {
-            dbg!("enters here");
             let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
@@ -315,7 +313,6 @@ impl Trie {
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
-        dbg!(&root);
         trie.root = root;
 
         Ok(trie)

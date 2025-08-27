@@ -8,7 +8,6 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -178,8 +177,8 @@ impl Blockchain {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
-        let mut keys: Vec<Vec<u8>> = Vec::new();
-        // let mut touched_account_storage_slots = HashMap::new();
+
+        let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -207,18 +206,14 @@ impl Blockchain {
             let account_updates = vm.get_state_transitions()?;
 
             for account_update in &account_updates {
-                // touched_account_storage_slots.insert(
-                //     account_update.address,
-                //     account_update
-                //         .added_storage
-                //         .keys()
-                //         .cloned()
-                //         .collect::<Vec<H256>>(),
-                // );
-                keys.push(account_update.address.as_bytes().to_vec());
-                for storage in account_update.added_storage.keys() {
-                    keys.push(storage.as_bytes().to_vec());
-                }
+                touched_account_storage_slots.insert(
+                    account_update.address,
+                    account_update
+                        .added_storage
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<H256>>(),
+                );
             }
 
             // Get the used block hashes from the logger
@@ -312,8 +307,7 @@ impl Blockchain {
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
-                keys.push(address.0.to_vec());
-                // touched_account_storage_slots.entry(address).or_default();
+                touched_account_storage_slots.entry(address).or_default();
             }
             trie = updated_trie;
         }
@@ -360,12 +354,8 @@ impl Blockchain {
         // Build account storage root hashes.
         // NOTE: This is not needed for building `RpcExecutionWitness`.
         let mut account_storage_root_hashes = HashMap::new();
-        for address in keys
-            .iter()
-            .filter(|key| key.len() == Address::len_bytes())
-            .map(|key| Address::from_slice(key))
-        {
-            let Some(account_state) = trie.get(&hash_address(&address)).map_err(|_e| {
+        for address in touched_account_storage_slots.keys() {
+            let Some(account_state) = trie.get(&hash_address(address)).map_err(|_e| {
                 ChainError::WitnessGeneration("Failed to access account from trie".to_string())
             })?
             else {
@@ -379,7 +369,7 @@ impl Blockchain {
                     ))
                 })?;
 
-            account_storage_root_hashes.insert(address, storage_root);
+            account_storage_root_hashes.insert(*address, storage_root);
         }
 
         let mut state_nodes = HashMap::new();
@@ -401,8 +391,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             account_storage_root_hashes,
-            // touched_account_storage_slots,
-            keys: keys.into_iter().map(Bytes::from).collect(),
+            touched_account_storage_slots,
         })
     }
 
