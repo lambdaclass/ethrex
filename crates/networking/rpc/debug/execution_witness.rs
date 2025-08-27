@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, serde_utils,
+    Address, H256, serde_utils,
     types::{
         AccountState, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
@@ -143,6 +143,21 @@ pub fn execution_witness_from_rpc_chain_config(
         account_storage_root_hashes.insert(address, storage_root);
     }
 
+    let mut touched_account_storage_slots = HashMap::new();
+    let mut address = Address::default();
+    for bytes in rpc_witness.keys {
+        if bytes.len() == Address::len_bytes() {
+            address = Address::from_slice(&bytes);
+        } else {
+            let slot = H256::from_slice(&bytes);
+            // Insert in the vec of the address value
+            touched_account_storage_slots
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(slot);
+        }
+    }
+
     let mut witness = ExecutionWitnessResult {
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
@@ -152,7 +167,7 @@ pub fn execution_witness_from_rpc_chain_config(
         parent_block_header: parent_header,
         state_nodes,
         account_storage_root_hashes,
-        touched_account_storage_slots: HashMap::new(),
+        touched_account_storage_slots,
     };
 
     witness.rebuild_state_trie()?;
