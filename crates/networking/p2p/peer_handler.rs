@@ -609,7 +609,6 @@ impl PeerHandler {
             tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
 
         info!("Starting to download account ranges from peers");
-        info!("Initial tasks amount {:?}", tasks_queue_not_started.len());
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -1211,7 +1210,7 @@ impl PeerHandler {
             }
 
             let Some(available_downloader) = self.get_best_available_downloader().await else {
-                debug!("No free downloaders available, waiting for a peer to finish, retrying");
+                debug!("No free downloaders available, waiting for a peer to be free, retrying");
                 continue;
             };
 
@@ -1612,9 +1611,6 @@ impl PeerHandler {
         *last_peer_timeout_check = now;
 
         let mut peers_info = self.peers_info.lock().await;
-        info!("Checking for timed out peers");
-        info!("Now: {:?}", now);
-        info!("Peers: {:?}", peers_info);
         peers_info
             .iter_mut()
             .filter(|(_, i)| {
@@ -1623,7 +1619,7 @@ impl PeerHandler {
                         > Duration::from_secs(2)
             })
             .for_each(|(peer_id, i)| {
-                info!("{peer_id} timed out, resetting it");
+                debug!("{peer_id} timed out, resetting it");
                 i.available = true;
                 i.request_time = None
             });
