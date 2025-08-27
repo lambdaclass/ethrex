@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756321620455,
+  "lastUpdate": 1756322989013,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10345,6 +10345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161326760312,
             "range": "± 985780681",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "895a6c210a970b611baadb974ee997fe8c2bb8ba",
+          "message": "chore(l1): create reusable build docker job. (#4120)\n\n**Motivation**\nBe able to leverage caching and not having rate limits\n\n**Description**\n- Adds a reusable docker build action\n- Removes the incorrect use of `make build-image` from the CI",
+          "timestamp": "2025-08-27T18:38:49Z",
+          "tree_id": "1c5e46be87dd274e34aa098f69f34bf0fbdf2c81",
+          "url": "https://github.com/lambdaclass/ethrex/commit/895a6c210a970b611baadb974ee997fe8c2bb8ba"
+        },
+        "date": 1756322971587,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161753356115,
+            "range": "± 216767237",
             "unit": "ns/iter"
           }
         ]
