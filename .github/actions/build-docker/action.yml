@@ -11,7 +11,7 @@ inputs:
   tags:
     description: "Comma-separated list of tags to apply to the built image"
     required: false
-    default: "ethrex:local"
+    default: "ethrex:ci"
   push:
     description: "Whether to push the built image to the registry"
     required: false
