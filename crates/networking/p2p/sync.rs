@@ -24,6 +24,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::cell::OnceCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::{
     array,
@@ -793,7 +794,7 @@ impl Syncer {
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
         let mut pivot_is_stale = true;
-        let mut storage_accounts = HashMap::new();
+        let mut storage_accounts = HashSet::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
             // The function request_account_range writes the leafs into files in
@@ -840,15 +841,7 @@ impl Syncer {
                 let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
                     account_states_snapshot.iter().cloned().unzip();
 
-                storage_accounts.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, state.storage_root))
-                        }),
-                );
+                storage_accounts.extend(account_hashes.iter());
 
                 let store_clone = store.clone();
                 let current_state_root =
