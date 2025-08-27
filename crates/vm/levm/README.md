@@ -126,9 +126,9 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 make download-evm-ef-tests run-evm-ef-tests QUIET=true
 ```
 
-For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).
+For more information on running EF state tests go [here](../../../tooling/ef_tests/state/README.md).
 
-For running EF blockchain tests go [here](../../../cmd/ef_tests/blockchain/README.md).
+For running EF blockchain tests go [here](../../../tooling/ef_tests/blockchain/README.md).
 
 ## Benchmarks
 
@@ -225,7 +225,7 @@ Run the tests
 make flamegraph-run-ef-tests
 ```
 
-This will create a folder inside `cmd/ef_tests/state/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
+This will create a folder inside `tooling/ef_tests/state/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
 
 ### To run Samply on the Ethereum Foundation tests
 
@@ -241,7 +241,7 @@ Run the tests
 make samply-run-ef-tests
 ```
 
-This will create a folder inside `cmd/ef_tests/state/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
+This will create a folder inside `tooling/ef_tests/state/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
 
 ```Shell
 samply load <path-to-perf-file.json>
