@@ -799,7 +799,7 @@ impl Syncer {
                 .request_account_range(
                     H256::zero(),
                     H256::repeat_byte(0xff),
-                    account_state_snapshots_dir,
+                    account_state_snapshots_dir.clone(),
                     &mut pivot_header,
                     block_sync_state,
                 )
@@ -817,8 +817,7 @@ impl Syncer {
                 .await
                 .replace(SystemTime::now()); */
 
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
-            let computed_state_root = *EMPTY_TRIE_HASH;
+            let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
@@ -846,9 +845,10 @@ impl Syncer {
                         }),
                 );
 
+                let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = trie;
+                        let mut trie = store_clone.open_state_trie(*EMPTY_TRIE_HASH)?;
 
                         for (account_hash, account) in account_states_snapshot {
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
@@ -998,7 +998,7 @@ impl Syncer {
                     );
                 }
             }
-
+            /*
             METRICS
                 .storage_tries_state_roots_end_time
                 .lock()
@@ -1006,8 +1006,8 @@ impl Syncer {
                 .replace(SystemTime::now());
 
             let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start);
-            info!("Finished storing storage tries in: {storages_store_time:?}");
+                Instant::now().saturating_duration_since(storages_store_start); */
+            info!("Finished storing storage tries");
         }
 
         if pivot_is_stale {
@@ -1027,7 +1027,7 @@ impl Syncer {
                     &self.peers,
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut global_state_leafs_healed,
-                    &mut dirty_accounts,
+                    &mut storage_accounts,
                 )
                 .await?;
                 if !healing_done {
@@ -1035,7 +1035,7 @@ impl Syncer {
                 }
                 healing_done = heal_storage_trie(
                     pivot_header.state_root,
-                    &dirty_accounts,
+                    &storage_accounts,
                     self.peers.clone(),
                     store.clone(),
                     HashMap::new(),
@@ -1043,23 +1043,6 @@ impl Syncer {
                     &mut global_storage_leafs_healed,
                 )
                 .await;
-                dirty_accounts.retain(|hashed_address, storage_root| {
-                    !store
-                        .contains_storage_node(*hashed_address, *storage_root)
-                        .expect("store error")
-                });
-            }
-            if !dirty_accounts.is_empty() {
-                error!("Some ({})  accounts are still dirty.", dirty_accounts.len());
-                let trie = store.open_state_trie(pivot_header.state_root).unwrap();
-                for (account, root) in dirty_accounts {
-                    let path = Nibbles::from_bytes(&account.0).encode_compact();
-                    let state = AccountState::decode(&trie.get(&path).unwrap().unwrap()).unwrap();
-                    error!(
-                        "Remaining dirty: account {account:?} expected root {root:?} got {:?}",
-                        state.storage_root
-                    );
-                }
             }
             // TODO: 💀💀💀 either remove or change to a debug flag
             validate_state_root(store.clone(), pivot_header.state_root).await;
