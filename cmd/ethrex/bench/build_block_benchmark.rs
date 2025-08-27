@@ -188,7 +188,8 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
     // Blockchain::initiate_payload_build eventually calls 'fill_transactions'
     // which should take transactions from the previously filled mempool
     let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
-    <Arc<Blockchain> as Clone>::clone(blockchain)
+    blockchain
+        .clone()
         .initiate_payload_build(payload_block, payload_id)
         .await;
     // 2. engine_getPayload is called, this code path ends up calling Blockchain::get_payload(id),
