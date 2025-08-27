@@ -237,6 +237,7 @@ fn execute_stateless(
 ) -> Result<StatelessResult, StatelessExecutionError> {
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+    dbg!("State trie rebuilt successfully");
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -275,6 +276,7 @@ fn execute_stateless(
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
+    dbg!("Initial state trie validated successfully");
 
     // Execute blocks
     let mut parent_block_header = parent_block_header;
