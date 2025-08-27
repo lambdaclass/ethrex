@@ -129,7 +129,18 @@ pub(crate) async fn perform(
             negotiated_eth_capability: None,
             negotiated_snap_capability: None,
             last_block_range_update_block: 0,
-            broadcasted_txs: HashSet::new(),
+            tx_bcast_state: {
+                let state = Arc::new(std::sync::Mutex::new((Vec::new(), HashSet::new())));
+                (
+                    Arc::clone(&state),
+                    context.blockchain.mempool.add_listener(move |&tx_hash| {
+                        let mut state = state.lock().expect("poisoned mutex");
+                        if state.1.insert(tx_hash) {
+                            state.0.push(tx_hash);
+                        }
+                    }),
+                )
+            },
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),

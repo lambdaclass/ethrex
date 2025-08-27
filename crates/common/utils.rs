@@ -1,6 +1,11 @@
 use ethereum_types::U256;
 use hex::FromHexError;
 use keccak_hash::H256;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    sync::{Arc, Mutex, Weak},
+};
 
 /// Converts a big endian slice to a u256, faster than `u256::from_big_endian`.
 pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
@@ -59,6 +64,58 @@ pub fn u256_to_h256(value: U256) -> H256 {
 pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
     hex::decode(trimmed)
+}
+
+#[derive(Default)]
+pub struct EventHandlerSet<T> {
+    handlers: Arc<Mutex<BTreeMap<usize, Box<dyn 'static + Send + Sync + Fn(&T)>>>>,
+}
+
+impl<T> EventHandlerSet<T> {
+    pub fn add(&self, f: impl 'static + Send + Sync + Fn(&T)) -> EventHandle<T> {
+        let mut handlers = self.handlers.lock().expect("poisoned mutex");
+        let index = handlers
+            .last_entry()
+            .map(|x| *x.key() + 1)
+            .unwrap_or_default();
+
+        handlers.insert(index, Box::new(f));
+        EventHandle {
+            handlers: Arc::downgrade(&self.handlers),
+            index,
+        }
+    }
+
+    pub fn send(&self, value: &T) {
+        for (_, handler) in self.handlers.lock().expect("poisoned mutex").iter() {
+            handler(value);
+        }
+    }
+}
+
+impl<T> Debug for EventHandlerSet<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EventHandlerSet").finish_non_exhaustive()
+    }
+}
+
+pub struct EventHandle<T> {
+    handlers: Weak<Mutex<BTreeMap<usize, Box<dyn 'static + Send + Sync + Fn(&T)>>>>,
+    index: usize,
+}
+
+impl<T> Debug for EventHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EventHandle").finish_non_exhaustive()
+    }
+}
+
+impl<T> Drop for EventHandle<T> {
+    fn drop(&mut self) {
+        if let Some(handlers) = self.handlers.upgrade() {
+            _ = handlers.lock().expect("poisoned mutex").remove(&self.index);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use crate::{
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
+    utils::{EventHandle, EventHandlerSet},
 };
 use ethrex_storage::error::StoreError;
 
@@ -22,7 +23,10 @@ pub struct Mempool {
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
+
+    event_handles: EventHandlerSet<H256>,
 }
+
 impl Mempool {
     pub fn new() -> Self {
         Self::default()
@@ -43,6 +47,7 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert(hash, transaction);
 
+        self.event_handles.send(&hash);
         Ok(())
     }
 
@@ -56,6 +61,8 @@ impl Mempool {
             .lock()
             .map_err(|error| StoreError::Custom(error.to_string()))?
             .insert(tx_hash, blobs_bundle);
+
+        self.event_handles.send(&tx_hash);
         Ok(())
     }
 
@@ -331,6 +338,10 @@ impl Mempool {
         }
 
         Ok(Some(tx_in_pool.hash()))
+    }
+
+    pub fn add_listener(&self, f: impl 'static + Send + Sync + Fn(&H256)) -> EventHandle<H256> {
+        self.event_handles.add(f)
     }
 }
 
