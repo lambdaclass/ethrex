@@ -126,6 +126,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
+	--no-monitor \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
 	--datadir ${ethrex_L2_DEV_DB} \

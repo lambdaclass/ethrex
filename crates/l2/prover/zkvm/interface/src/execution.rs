@@ -166,7 +166,8 @@ pub fn stateless_validation_l2(
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
         account_storage_root_hashes: db.account_storage_root_hashes.clone(),
-        touched_account_storage_slots: HashMap::new(),
+        // touched_account_storage_slots: db.touched_account_storage_slots.clone(),
+        keys: db.keys.clone(),
     };
 
     let StatelessResult {
@@ -273,6 +274,7 @@ fn execute_stateless(
     let initial_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;
+    dbg!(initial_state_hash, parent_block_header.state_root);
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }

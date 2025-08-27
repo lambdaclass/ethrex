@@ -4,6 +4,7 @@ use std::{collections::HashMap, str::FromStr};
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
+    serde_utils,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
@@ -58,12 +59,12 @@ pub struct ExecutionWitnessResult {
     /// recomputing it when rebuilding storage tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256Wrapper>)]
     pub account_storage_root_hashes: HashMap<Address, H256>,
-    /// This is a convenience map to track which accounts and storage slots were touched during execution.
-    /// It maps an account address to the last storage slot that was accessed for that account.
-    /// This is needed for building `RpcExecutionWitness`.
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub touched_account_storage_slots: HashMap<Address, Vec<H256>>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    #[rkyv(with=crate::rkyv_utils::BytesVecWrapper)]
+    pub keys: Vec<Bytes>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -317,10 +318,10 @@ impl ExecutionWitnessResult {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, ExecutionWitnessError> {
-        self.touched_account_storage_slots
-            .entry(address)
-            .or_default()
-            .push(key);
+        // self.touched_account_storage_slots
+        //     .entry(address)
+        //     .or_default()
+        //     .push(key);
 
         let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
             storage_trie

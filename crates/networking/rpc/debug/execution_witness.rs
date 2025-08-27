@@ -44,16 +44,16 @@ pub struct RpcExecutionWitness {
 
 impl From<ExecutionWitnessResult> for RpcExecutionWitness {
     fn from(value: ExecutionWitnessResult) -> Self {
-        let mut keys = Vec::new();
+        // let mut keys = Vec::new();
 
-        let touched_account_storage_slots = value.touched_account_storage_slots;
+        // let touched_account_storage_slots = value.touched_account_storage_slots;
 
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(Bytes::from(address.as_bytes().to_vec()));
-            for slot in touched_storage_slots.iter() {
-                keys.push(Bytes::from(slot.as_bytes().to_vec()));
-            }
-        }
+        // for (address, touched_storage_slots) in touched_account_storage_slots {
+        //     keys.push(Bytes::from(address.as_bytes().to_vec()));
+        //     for slot in touched_storage_slots.iter() {
+        //         keys.push(Bytes::from(slot.as_bytes().to_vec()));
+        //     }
+        // }
 
         Self {
             state: value
@@ -62,7 +62,7 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
                 .cloned()
                 .map(Into::into)
                 .collect(),
-            keys,
+            keys: value.keys,
             codes: value.codes.values().cloned().collect(),
             headers: value
                 .block_headers
@@ -143,20 +143,20 @@ pub fn execution_witness_from_rpc_chain_config(
         account_storage_root_hashes.insert(address, storage_root);
     }
 
-    let mut touched_account_storage_slots = HashMap::new();
-    let mut address = Address::default();
-    for bytes in rpc_witness.keys {
-        if bytes.len() == Address::len_bytes() {
-            address = Address::from_slice(&bytes);
-        } else {
-            let slot = H256::from_slice(&bytes);
-            // Insert in the vec of the address value
-            touched_account_storage_slots
-                .entry(address)
-                .or_insert_with(Vec::new)
-                .push(slot);
-        }
-    }
+    // let mut touched_account_storage_slots = HashMap::new();
+    // let mut address = Address::default();
+    // for bytes in rpc_witness.keys {
+    //     if bytes.len() == Address::len_bytes() {
+    //         address = Address::from_slice(&bytes);
+    //     } else {
+    //         let slot = H256::from_slice(&bytes);
+    //         // Insert in the vec of the address value
+    //         touched_account_storage_slots
+    //             .entry(address)
+    //             .or_insert_with(Vec::new)
+    //             .push(slot);
+    //     }
+    // }
 
     let mut witness = ExecutionWitnessResult {
         codes,
@@ -167,7 +167,7 @@ pub fn execution_witness_from_rpc_chain_config(
         parent_block_header: parent_header,
         state_nodes,
         account_storage_root_hashes,
-        touched_account_storage_slots,
+        keys: rpc_witness.keys,
     };
 
     witness.rebuild_state_trie()?;
