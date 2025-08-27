@@ -78,14 +78,14 @@ contract OnChainProposer is
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice True if a Risc0 proof is required for batch verification.
-    bool REQUIRE_RISC0_PROOF;
+    bool public REQUIRE_RISC0_PROOF;
     /// @notice True if a SP1 proof is required for batch verification.
-    bool REQUIRE_SP1_PROOF;
+    bool public REQUIRE_SP1_PROOF;
     /// @notice True if a TDX proof is required for batch verification.
-    bool REQUIRE_TDX_PROOF;
+    bool public REQUIRE_TDX_PROOF;
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
-    bool ALIGNED;
+    bool public ALIGNED_MODE;
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
@@ -142,7 +142,7 @@ contract OnChainProposer is
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         // Aligned Layer constants
-        ALIGNED = aligned;
+        ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         batchCommitments[0] = BatchCommitmentInfo(
@@ -281,7 +281,7 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
-        require(!ALIGNED, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
+        require(!ALIGNED_MODE, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
 
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
@@ -341,7 +341,7 @@ contract OnChainProposer is
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
     ) external override {
-        require(ALIGNED, "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.");
+        require(ALIGNED_MODE, "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.");
 
         require(
             alignedPublicInputsList.length == alignedMerkleProofsList.length,
