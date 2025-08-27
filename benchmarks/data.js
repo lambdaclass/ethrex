@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756309669893,
+  "lastUpdate": 1756311966518,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10255,6 +10255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162359917429,
             "range": "± 569724612",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "efa69e7c01013c7b773d0965347572f1c03a22dc",
+          "message": "perf(levm): improve calldatacopy further (#4150)\n\n**Motivation**\n\nAdded a specific memory function to zero fill, also simplified the code\n+ removed some unnecesary checked arithmetic.\n\n<img width=\"1350\" height=\"294\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/8747be0a-1c96-4fbc-b0a9-e9875b46058b\"\n/>",
+          "timestamp": "2025-08-27T15:35:07Z",
+          "tree_id": "c9e36e8cf205f11ee3afb5832ea191cd81143eec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/efa69e7c01013c7b773d0965347572f1c03a22dc"
+        },
+        "date": 1756311949863,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 163463782271,
+            "range": "± 868493233",
             "unit": "ns/iter"
           }
         ]
