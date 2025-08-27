@@ -211,8 +211,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         },
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
-
-        // fork_summary_shell(reports, Fork::Osaka),
+        fork_summary_shell(reports, Fork::Osaka),
         fork_summary_shell(reports, Fork::Prague),
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
