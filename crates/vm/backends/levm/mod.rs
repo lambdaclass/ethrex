@@ -52,6 +52,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            dbg!(tx);
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
@@ -65,6 +66,7 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        dbg!("Before processing withdrawals");
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
@@ -72,6 +74,7 @@ impl LEVM {
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
+        dbg!("Before extracting requests");
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2 => Default::default(),
