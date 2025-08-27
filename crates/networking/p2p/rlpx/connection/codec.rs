@@ -14,7 +14,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 // max RLPx Message size
 // Taken from https://github.com/ethereum/go-ethereum/blob/82e963e5c981e36dc4b607dd0685c64cf4aabea8/p2p/rlpx/rlpx.go#L152
-const MAX_MESSAGE_SIZE: usize = 0xFFFFFF;
+const MAX_MESSAGE_SIZE: u32 = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -141,10 +141,7 @@ impl Decoder for RLPxCodec {
         let mut temp_ingress_aes = self.ingress_aes.clone();
         temp_ingress_aes.apply_keystream(header_text);
 
-        let frame_size: usize =
-            u32::from_be_bytes([0, header_text[0], header_text[1], header_text[2]])
-                .try_into()
-                .map_err(|_| RLPxError::CryptographyError("Invalid frame size".to_owned()))?;
+        let frame_size = u32::from_be_bytes([0, header_text[0], header_text[1], header_text[2]]);
 
         let padded_size = frame_size.next_multiple_of(16);
 
@@ -154,7 +151,7 @@ impl Decoder for RLPxCodec {
             return Err(RLPxError::InvalidMessageLength());
         }
 
-        let total_message_size = 32 + padded_size + 16;
+        let total_message_size = (32 + padded_size + 16) as usize;
 
         if src.len() < total_message_size {
             // The full string has not yet arrived.
@@ -177,7 +174,7 @@ impl Decoder for RLPxCodec {
         self.ingress_mac = temp_ingress_mac;
         self.ingress_aes = temp_ingress_aes;
 
-        let (frame_ciphertext, frame_mac) = frame_data.split_at_mut(padded_size);
+        let (frame_ciphertext, frame_mac) = frame_data.split_at_mut(padded_size as usize);
 
         // check MAC
         self.ingress_mac.update(&frame_ciphertext);
@@ -203,7 +200,7 @@ impl Decoder for RLPxCodec {
         // decrypt frame
         self.ingress_aes.apply_keystream(frame_ciphertext);
 
-        let (frame_data, _padding) = frame_ciphertext.split_at(frame_size);
+        let (frame_data, _padding) = frame_ciphertext.split_at(frame_size as usize);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
         Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))

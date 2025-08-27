@@ -194,41 +194,53 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
     PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
 }
 
+#[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let result = match address {
-        address if address == ECRECOVER_ADDRESS => ecrecover(calldata, gas_remaining)?,
-        address if address == IDENTITY_ADDRESS => identity(calldata, gas_remaining)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(calldata, gas_remaining)?,
-        address if address == RIPEMD_160_ADDRESS => ripemd_160(calldata, gas_remaining)?,
-        address if address == MODEXP_ADDRESS => modexp(calldata, gas_remaining)?,
-        address if address == ECADD_ADDRESS => ecadd(calldata, gas_remaining)?,
-        address if address == ECMUL_ADDRESS => ecmul(calldata, gas_remaining)?,
-        address if address == ECPAIRING_ADDRESS => ecpairing(calldata, gas_remaining)?,
-        address if address == BLAKE2F_ADDRESS => blake2f(calldata, gas_remaining)?,
-        address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(calldata, gas_remaining)?
-        }
-        address if address == BLS12_G1ADD_ADDRESS => bls12_g1add(calldata, gas_remaining)?,
-        address if address == BLS12_G1MSM_ADDRESS => bls12_g1msm(calldata, gas_remaining)?,
-        address if address == BLS12_G2ADD_ADDRESS => bls12_g2add(calldata, gas_remaining)?,
-        address if address == BLS12_G2MSM_ADDRESS => bls12_g2msm(calldata, gas_remaining)?,
-        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
-            bls12_pairing_check(calldata, gas_remaining)?
-        }
-        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
-            bls12_map_fp_to_g1(calldata, gas_remaining)?
-        }
-        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
-            bls12_map_fp2_tp_g2(calldata, gas_remaining)?
-        }
-        _ => return Err(InternalError::InvalidPrecompileAddress.into()),
+    type PrecompileFn = fn(&Bytes, &mut u64) -> Result<Bytes, VMError>;
+
+    const PRECOMPILES: [Option<PrecompileFn>; 18] = const {
+        let mut precompiles = [const { None }; 18];
+        precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160_ADDRESS.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP_ADDRESS.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD_ADDRESS.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL_ADDRESS.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING_ADDRESS.0[19] as usize] = Some(ecpairing as PrecompileFn);
+        precompiles[BLAKE2F_ADDRESS.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION_ADDRESS.0[19] as usize] =
+            Some(point_evaluation as PrecompileFn);
+        precompiles[BLS12_G1ADD_ADDRESS.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM_ADDRESS.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD_ADDRESS.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM_ADDRESS.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK_ADDRESS.0[19] as usize] =
+            Some(bls12_pairing_check as PrecompileFn);
+        precompiles[BLS12_MAP_FP_TO_G1_ADDRESS.0[19] as usize] =
+            Some(bls12_map_fp_to_g1 as PrecompileFn);
+        precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
+            Some(bls12_map_fp2_tp_g2 as PrecompileFn);
+
+        precompiles
     };
 
-    Ok(result)
+    if address[0..18] != [0u8; 18] {
+        return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
+    }
+    let index = u16::from_be_bytes([address[18], address[19]]) as usize;
+
+    let precompile = PRECOMPILES
+        .get(index)
+        .copied()
+        .flatten()
+        .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
+
+    precompile(calldata, gas_remaining)
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.

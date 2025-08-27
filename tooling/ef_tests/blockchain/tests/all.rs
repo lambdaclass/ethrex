@@ -5,10 +5,10 @@ use std::path::Path;
 const TEST_FOLDER: &str = "vectors/";
 
 fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
-    let engine = if cfg!(feature = "levm") {
-        EvmEngine::LEVM
-    } else {
+    let engine = if cfg!(feature = "revm") {
         EvmEngine::REVM
+    } else {
+        EvmEngine::LEVM
     };
 
     parse_and_execute(path, engine, None, false)

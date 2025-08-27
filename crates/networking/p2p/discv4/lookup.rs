@@ -197,7 +197,7 @@ impl Discv4LookupHandler {
     fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target_node_id: H256, node: Node) {
         let distance = bucket_number(target_node_id, node.node_id());
 
-        if peers_to_ask.len() < MAX_NODES_PER_BUCKET {
+        if (peers_to_ask.len() as u64) < MAX_NODES_PER_BUCKET {
             peers_to_ask.push(node);
             return;
         }
@@ -247,7 +247,7 @@ impl Discv4LookupHandler {
             match tokio::time::timeout(Duration::from_secs(5), request_receiver.recv()).await {
                 Ok(Some(mut found_nodes)) => {
                     nodes.append(&mut found_nodes);
-                    if nodes.len() == MAX_NODES_PER_BUCKET {
+                    if nodes.len() as u64 == MAX_NODES_PER_BUCKET {
                         return Ok(nodes);
                     };
                 }
