@@ -1,3 +1,4 @@
 - client: ethrex
   build_args:
     baseimage: ethrex
+    tag: ci
