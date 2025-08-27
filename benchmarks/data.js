@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756307743326,
+  "lastUpdate": 1756309669893,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10225,6 +10225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161725435677,
             "range": "± 508206336",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f9fa22f0706975082b957ba08d4965edd387b99c",
+          "message": "ci(l2): use updated fork of get-solc action (#4178)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCI is broken due to move of Solidity's GH repositories.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nChange the CI to use lambda's fork of `get-solc` GH action, which has\nupdated links\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-08-27T14:47:46Z",
+          "tree_id": "19561695ae97c716a945f285641bedeb1342d96c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f9fa22f0706975082b957ba08d4965edd387b99c"
+        },
+        "date": 1756309652953,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162359917429,
+            "range": "± 569724612",
             "unit": "ns/iter"
           }
         ]
