@@ -795,6 +795,9 @@ impl Syncer {
         let mut pivot_is_stale = true;
         let mut storage_accounts = HashMap::new();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
+            // We start by downloading all of the leafs of the trie of accounts
+            // The function request_account_range writes the leafs into files in
+            // account_state_snapshots_dir
             self.peers
                 .request_account_range(
                     H256::zero(),
@@ -817,6 +820,8 @@ impl Syncer {
                 .await
                 .replace(SystemTime::now()); */
 
+            // We read the account leafs from the files in account_state_snapshots_dir, write it into
+            // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -848,7 +853,7 @@ impl Syncer {
                 let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(*EMPTY_TRIE_HASH)?;
+                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
@@ -884,6 +889,8 @@ impl Syncer {
             info!("Expected state root: {state_root:?}");
             info!("Computed state root: {computed_state_root:?}");
 
+            // We start downloading the storage leafs. To do so, we need to be sure that the storage root
+            // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut done = false;
             let mut healing_done = false;
