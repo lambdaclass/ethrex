@@ -496,9 +496,11 @@ impl StoreEngine for Store {
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let txn = self.db.begin_read().unwrap();
         let mut cursor = txn.cursor::<PendingBlocks>().unwrap();
-        while let Ok(Some((hash, block))) = cursor.next() {
-            tracing::info!("Pending block with number {}: {}", hash.to().unwrap(), block.to().unwrap().hash())
+        let mut counter = 0;
+        while let Ok(Some(_)) = cursor.next() {
+            counter += 1;
         }
+        tracing::info!("Have {counter} pending blocks in store");
         match self
             .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
             .await?
