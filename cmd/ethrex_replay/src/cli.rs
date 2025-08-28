@@ -20,21 +20,21 @@ use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
-pub const BACKEND: Backend = if cfg!(feature = "sp1") {
-    Backend::SP1
-} else if cfg!(feature = "risc0") {
-    Backend::RISC0
-} else {
-    Backend::Exec
-};
+#[cfg(feature = "sp1")]
+pub const BACKEND: Backend = Backend::SP1;
+#[cfg(all(feature = "risc0", not(feature = "sp1")))]
+pub const BACKEND: Backend = Backend::RISC0;
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
+pub const BACKEND: Backend = Backend::Exec;
 
-pub const REPLAYER_MODE: ReplayerMode = if cfg!(feature = "sp1") {
-    ReplayerMode::ExecuteSP1
-} else if cfg!(feature = "risc0") {
-    ReplayerMode::ExecuteRISC0
-} else {
-    ReplayerMode::Execute
-};
+#[cfg(feature = "sp1")]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::ExecuteSP1;
+
+#[cfg(all(feature = "risc0", not(feature = "sp1")))]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::ExecuteRISC0;
+
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::Execute;
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
