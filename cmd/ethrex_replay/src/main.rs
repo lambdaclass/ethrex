@@ -32,6 +32,9 @@ async fn main() {
         .add_directive(Directive::from_str("ethrex_storage::store=off").expect("this can't fail"))
         .add_directive(
             Directive::from_str("ethrex_storage_rollup::store=off").expect("this can't fail"),
+        )
+        .add_directive(
+            Directive::from_str("ethrex_blockchain::payload=off").expect("this can't fail"),
         );
 
     tracing::subscriber::set_global_default(
