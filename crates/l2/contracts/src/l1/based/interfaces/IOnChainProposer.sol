@@ -56,23 +56,18 @@ interface IOnChainProposer {
     /// @param batchNumber is the number of the batch to be verified.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// @param risc0Journal public_inputs aka journal
+    /// RISC0 journal/public inputs are reconstructed on-chain; no calldata arg.
     /// ----------------------------------------------------------------------
-    /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
-    /// @param tdxPublicValues Values used to perform the execution
     /// @param tdxSignature TDX signature
     function verifyBatch(
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
         //sp1
-        bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants

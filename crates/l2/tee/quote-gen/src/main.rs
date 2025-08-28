@@ -40,7 +40,8 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let output = zkvm_interface::execution::execution_program(input).map_err(|e| e.to_string())?;
 
-    Ok(output.encode())
+    // Return 256-byte contract public inputs for signing
+    Ok(output.encode_contract_pis())
 }
 
 fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
@@ -65,7 +66,7 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
         prover_type: ProverType::TDX,
-        calldata: vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
+        calldata: vec![Value::Bytes(signature.into())],
     };
 
     submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;

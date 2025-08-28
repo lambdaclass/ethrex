@@ -39,17 +39,21 @@ impl ProverType {
     }
 
     /// Used to get the empty_calldata structure for that specific prover
-    /// It has to match the `OnChainProposer.sol` verify() function
+    /// It has to match the `OnChainProposer.sol` verifyBatch() function
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![
+                    Value::Bytes(vec![].into()), // sp1ProofBytes only
+                ]
             }
             ProverType::TDX => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![
+                    Value::Bytes(vec![].into()), // signature only
+                ]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
             ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),

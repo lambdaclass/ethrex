@@ -310,14 +310,11 @@ contract OnChainProposer is
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
         //sp1
-        bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external {
+    ) external override {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
@@ -343,30 +340,33 @@ contract OnChainProposer is
             );
         }
 
+        // Reconstruct public inputs from commitments
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, risc0Journal);
+            _verifyPublicData(batchNumber, publicInputs);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 RISC0_VERIFICATION_KEY,
-                sha256(risc0Journal)
+                sha256(publicInputs)
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
+            _verifyPublicData(batchNumber, publicInputs);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 SP1_VERIFICATION_KEY,
-                sp1PublicValues,
+                publicInputs,
                 sp1ProofBytes
             );
         }
 
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            _verifyPublicData(batchNumber, publicInputs);
+            ITDXVerifier(TDXVERIFIER).verify(publicInputs, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -418,7 +418,7 @@ contract OnChainProposer is
             }
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
+            _verifyPublicData(batchNumber, alignedPublicInputsList[i]);
 
             bytes memory callData = abi.encodeWithSignature(
                 "verifyProofInclusion(bytes32[],bytes32,bytes)",
@@ -453,7 +453,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 224,
+            publicData.length == 256,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -480,23 +480,59 @@ contract OnChainProposer is
                 privilegedTransactionsHash,
             "OnChainProposer: privileged transaction hash public input does not match with committed transactions"
         );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[batchNumber].blobVersionedHash == blobVersionedHash,
+            "OnChainProposer: blob versioned hash public input does not match with committed hash"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
-        uint256 chainId = uint256(bytes32(publicData[160:192]));
+        uint256 chainId = uint256(bytes32(publicData[192:224]));
         require(
             chainId == CHAIN_ID,
             "OnChainProposer: given chain id does not correspond to this network"
         );
         uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
+            bytes32(publicData[224:256])
         );
         require(
             !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
                 nonPrivilegedTransactions == 0,
             "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
+        );
+    }
+
+    /// @notice Constructs public inputs from committed batch data for proof verification.
+    /// Layout:
+    /// - bytes 0-32: Initial state root (from the last verified batch)
+    /// - bytes 32-64: Final state root (from the current batch)
+    /// - bytes 64-96: Withdrawals merkle root (from the current batch)
+    /// - bytes 96-128: Processed privileged transactions rolling hash (from the current batch)
+    /// - bytes 128-160: Blob versioned hash (from the current batch)
+    /// - bytes 160-192: Last block hash (from the current batch)
+    /// - bytes 192-224: Chain ID
+    /// - bytes 224-256: Non-privileged transactions (set to 0)
+    function _getPublicInputsFromCommitment(
+        uint256 batchNumber
+    ) internal view returns (bytes memory) {
+        BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
+        BatchCommitmentInfo memory previousBatch = batchCommitments[lastVerifiedBatch];
+
+        // Note: the last 32 bytes encode the non-privileged transaction count and are intentionally set to zero.
+        // The privileged transaction count is encoded separately in the first two bytes of
+        // `processedPrivilegedTransactionsRollingHash` and is handled during verification.
+        return abi.encodePacked(
+            previousBatch.newStateRoot,
+            currentBatch.newStateRoot,
+            currentBatch.withdrawalsLogsMerkleRoot,
+            currentBatch.processedPrivilegedTransactionsRollingHash,
+            currentBatch.blobVersionedHash,
+            currentBatch.lastBlockHash,
+            bytes32(CHAIN_ID),
+            bytes32(0)
         );
     }
 
