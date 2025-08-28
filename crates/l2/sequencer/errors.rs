@@ -359,6 +359,4 @@ pub enum MonitorError {
     DecodingError(String),
     #[error("Error parsing secret key")]
     FromHexError(#[from] hex::FromHexError),
-    #[error("Error parsing secret key")]
-    SecretKeyError(#[from] secp256k1::Error),
 }

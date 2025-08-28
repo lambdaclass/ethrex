@@ -57,9 +57,8 @@ impl RichAccountsTable {
 
         let mut accounts = Vec::with_capacity(private_keys.len());
         for pk in private_keys.iter() {
-            let secret_key = parse_private_key(pk).map_err(|_| {
-                MonitorError::DecodingError("Error while parsing private key".to_string())
-            })?;
+            let secret_key = SecretKey::from_slice(&parse_hex(pk)?)
+                .map_err(|e| MonitorError::DecodingError(format!("Invalid private key: {e}")))?;
             let address = get_address_from_secret_key(&secret_key)?;
             let get_balance = rollup_client
                 .get_balance(
@@ -88,10 +87,6 @@ impl RichAccountsTable {
         self.last_block_fetched = latest_block;
         Ok(())
     }
-}
-
-pub fn parse_private_key(s: &str) -> Result<SecretKey, MonitorError> {
-    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
 }
 
 pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
