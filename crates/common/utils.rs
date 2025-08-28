@@ -66,9 +66,11 @@ pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     hex::decode(trimmed)
 }
 
+type EventHandleFn<T> = Box<dyn 'static + Send + Sync + Fn(&T)>;
+
 #[derive(Default)]
 pub struct EventHandlerSet<T> {
-    handlers: Arc<Mutex<BTreeMap<usize, Box<dyn 'static + Send + Sync + Fn(&T)>>>>,
+    handlers: Arc<Mutex<BTreeMap<usize, EventHandleFn<T>>>>,
 }
 
 impl<T> EventHandlerSet<T> {
@@ -100,7 +102,7 @@ impl<T> Debug for EventHandlerSet<T> {
 }
 
 pub struct EventHandle<T> {
-    handlers: Weak<Mutex<BTreeMap<usize, Box<dyn 'static + Send + Sync + Fn(&T)>>>>,
+    handlers: Weak<Mutex<BTreeMap<usize, EventHandleFn<T>>>>,
     index: usize,
 }
 

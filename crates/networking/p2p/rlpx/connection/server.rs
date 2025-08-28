@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, mempool::Mempool};
 use ethrex_common::{H256, utils::EventHandle};
 use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -105,10 +105,7 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    pub(crate) tx_bcast_state: (
-        Arc<std::sync::Mutex<(HashSet<H256>, HashSet<H256>)>>,
-        EventHandle<H256>,
-    ),
+    pub(crate) tx_bcast_state: TxBcastState,
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
@@ -139,6 +136,27 @@ impl Established {
             .close()
             .await
             .inspect_err(|err| debug!("Could not close the socket: {err}"));
+    }
+}
+
+#[derive(Debug)]
+pub struct TxBcastState {
+    queue_and_filter: Arc<std::sync::Mutex<(HashSet<H256>, HashSet<H256>)>>,
+    _listener: EventHandle<H256>,
+}
+
+impl TxBcastState {
+    pub fn new(mempool: &Mempool) -> Self {
+        let state = Arc::new(std::sync::Mutex::new((HashSet::new(), HashSet::new())));
+        Self {
+            queue_and_filter: Arc::clone(&state),
+            _listener: mempool.add_listener(move |&tx_hash| {
+                let mut state = state.lock().expect("poisoned mutex");
+                if !state.1.contains(&tx_hash) {
+                    state.0.insert(tx_hash);
+                }
+            }),
+        }
     }
 }
 
@@ -464,8 +482,14 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let mut tx_hashes =
-            mem::take(&mut state.tx_bcast_state.0.lock().expect("poisoned mutex").0);
+        let mut tx_hashes = mem::take(
+            &mut state
+                .tx_bcast_state
+                .queue_and_filter
+                .lock()
+                .expect("poisoned mutex")
+                .0,
+        );
         if !tx_hashes.is_empty() {
             let mut transactions = Vec::new();
             let mut iter = tx_hashes.drain().peekable();
@@ -779,8 +803,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
                     {
-                        let mut bcast_state =
-                            state.tx_bcast_state.0.lock().expect("poisoned mutex");
+                        let mut bcast_state = state
+                            .tx_bcast_state
+                            .queue_and_filter
+                            .lock()
+                            .expect("poisoned mutex");
                         bcast_state.0.remove(&tx.hash());
                         bcast_state.1.insert(tx.hash());
                     }
@@ -926,7 +953,11 @@ async fn handle_broadcast(
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
                 let filtered = {
-                    let mut bcast_state = state.tx_bcast_state.0.lock().expect("poisoned mutex");
+                    let mut bcast_state = state
+                        .tx_bcast_state
+                        .queue_and_filter
+                        .lock()
+                        .expect("poisoned mutex");
                     txs.transactions
                         .iter()
                         .filter(|&tx| {
