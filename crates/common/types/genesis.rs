@@ -300,9 +300,7 @@ impl ChainConfig {
         let mut output = String::new();
         let border = "-".repeat(80);
 
-        let network = NETWORK_NAMES
-            .get(&self.chain_id)
-            .unwrap_or(&"unknown");
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
 
         output.push_str(&format!("{}\n", border));
 
