@@ -18,13 +18,12 @@ hex.workspace = true
 keccak-hash.workspace = true
 thiserror.workspace = true
 clap.workspace = true
-clap_complete.workspace = true
 tokio = { workspace = true, features = ["full"] }
-colored = "2.1.0"
-alloy-rlp = "0.3.12"
+colored.workspace = true
+alloy-rlp.workspace = true
 
 [dev-dependencies]
-hex = "0.4.3"
+hex.workspace = true
 
 [features]
 default = ["c-kzg", "blst"]

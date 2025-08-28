@@ -1,0 +1,35 @@
+name: Unused Dependencies
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  unused-deps:
+    name: Check for unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check workspace-level unused dependencies
+        run: |
+          chmod +x .github/scripts/find_unused_deps.sh
+          .github/scripts/find_unused_deps.sh
+
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+
+      - name: Run cargo-udeps
+        run: cargo +nightly udeps --workspace --all-targets --features sql
+
+      - name: Check all dependencies are from workspace
+        run: |
+          chmod +x .github/scripts/use_workspace_dependencies.sh
+          .github/scripts/use_workspace_dependencies.sh
