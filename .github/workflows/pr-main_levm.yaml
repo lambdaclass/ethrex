@@ -6,10 +6,10 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - "cmd/ef_tests/state/**"
+      - "tooling/ef_tests/state/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
-      - "cmd/ef_tests/state"
+      - "tooling/ef_tests/state"
   workflow_dispatch:
 
 concurrency:
@@ -32,34 +32,34 @@ jobs:
 
       - name: Download EF Tests
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           make download-evm-ef-tests
 
       - name: Run tests
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           set -o pipefail
           make run-evm-ef-tests-ci | tee test_result_pr.txt
 
       - name: Show test summary -- full
         run: |
-          cd cmd/ef_tests/state && awk '/Summary: /,0' test_result_pr.txt
+          cd tooling/ef_tests/state && awk '/Summary: /,0' test_result_pr.txt
 
       - name: Show test summary -- short
         run: |
-          bash .github/scripts/parse_test_result.sh cmd/ef_tests/state/test_result_pr.txt | tee cmd/ef_tests/state/test_result_pr_short.txt
+          bash .github/scripts/parse_test_result.sh tooling/ef_tests/state/test_result_pr.txt | tee tooling/ef_tests/state/test_result_pr_short.txt
           echo "PR's test results:"
-          cat cmd/ef_tests/state/test_result_pr_short.txt
+          cat tooling/ef_tests/state/test_result_pr_short.txt
 
       - name: Upload PR branch EF-test results.
         uses: actions/upload-artifact@v4
         with:
           name: pr-ef-test-data
-          path: cmd/ef_tests/state/test_result_pr_short.txt
+          path: tooling/ef_tests/state/test_result_pr_short.txt
 
       - name: Check EF-TESTS status is 100%
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
@@ -77,30 +77,30 @@ jobs:
 
       - name: Download EF Tests
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           make download-evm-ef-tests
 
       - name: Run tests
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           set -o pipefail
           make run-evm-ef-tests-ci | tee test_result_main.txt
 
       - name: Show test summary -- full
         run: |
-          cd cmd/ef_tests/state && awk '/Summary: /,0' test_result_main.txt
+          cd tooling/ef_tests/state && awk '/Summary: /,0' test_result_main.txt
 
       - name: Show test summary -- short
         run: |
-          bash .github/scripts/parse_test_result.sh cmd/ef_tests/state/test_result_main.txt | tee cmd/ef_tests/state/test_result_main_short.txt
+          bash .github/scripts/parse_test_result.sh tooling/ef_tests/state/test_result_main.txt | tee tooling/ef_tests/state/test_result_main_short.txt
           echo "Main's test results:"
-          cat cmd/ef_tests/state/test_result_main_short.txt
+          cat tooling/ef_tests/state/test_result_main_short.txt
 
       - name: Upload main branch EF-test results.
         uses: actions/upload-artifact@v4
         with:
           name: main-ef-test-data
-          path: cmd/ef_tests/state/test_result_main_short.txt
+          path: tooling/ef_tests/state/test_result_main_short.txt
 
   compare-ef-tests:
     if: ${{ github.event_name != 'merge_group' }}
@@ -115,26 +115,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: main-ef-test-data
-          path: cmd/ef_tests/state/
+          path: tooling/ef_tests/state/
 
       - name: Download PR branch ef tests
         uses: actions/download-artifact@v4
         with:
           name: pr-ef-test-data
-          path: cmd/ef_tests/state/
+          path: tooling/ef_tests/state/
 
       # NOTE: diff will exit with a non 0 exit code when there are differences
       - name: Compare files
         id: branch_diffs
         continue-on-error: true
         run: |
-          cd cmd/ef_tests/state
+          cd tooling/ef_tests/state
           diff test_result_main_short.txt test_result_pr_short.txt
 
       - name: Compare results
         if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
         run: |
-          bash .github/scripts/compare_ef_tests.sh cmd/ef_tests/state/test_result_main_short.txt cmd/ef_tests/state/test_result_pr_short.txt | tee cmd/ef_tests/state/ef_tests_comparison.md
+          bash .github/scripts/compare_ef_tests.sh tooling/ef_tests/state/test_result_main_short.txt tooling/ef_tests/state/test_result_pr_short.txt | tee tooling/ef_tests/state/ef_tests_comparison.md
 
       - name: Find comment
         continue-on-error: true
@@ -154,7 +154,7 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: cmd/ef_tests/state/ef_tests_comparison.md
+          body-path: tooling/ef_tests/state/ef_tests_comparison.md
           edit-mode: replace
 
       # If we don't have a failure, means that there are no differences in EF-tests.
@@ -218,7 +218,7 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Install solc
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}

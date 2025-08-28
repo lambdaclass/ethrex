@@ -97,7 +97,7 @@ pub struct SequencerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_MONITOR",
+        env = "ETHREX_NO_MONITOR",
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
@@ -321,7 +321,7 @@ pub struct WatcherOptions {
     pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
-        default_value = "1000",
+        default_value = "12000", // One L1 slot
         value_name = "UINT64",
         env = "ETHREX_WATCHER_WATCH_INTERVAL",
         help = "How often the L1 watcher checks for new blocks in milliseconds.",
