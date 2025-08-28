@@ -630,7 +630,7 @@ pub enum SubcommandCustom {
         )]
         prove: bool,
     },
-    #[command(about = "Custom L2 batch.")]
+    #[command(about = "Custom batch of blocks.")]
     Batch {
         #[arg(long, help = "Number of blocks to include in the batch.")]
         n_blocks: u64,
