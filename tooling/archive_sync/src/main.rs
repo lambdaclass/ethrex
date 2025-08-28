@@ -149,6 +149,10 @@ async fn process_dump_storage(
     for (key, val) in dump_storage {
         info!("Adding key: {key}, value {val:#x}");
         // The key we receive is the preimage of the one stored in the trie
+        let valu = val;
+        let val_enc = val.encode_to_vec();
+        let val_dec = U256::decode(&val_enc).unwrap();
+        assert_eq!(valu, val_dec);
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
     if trie.hash()? != storage_root {
