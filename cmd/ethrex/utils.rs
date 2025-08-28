@@ -206,7 +206,7 @@ pub fn start_pruner_task(
     cancellation_token: CancellationToken,
 ) -> JoinHandle<Result<(), StoreError>> {
     // TODO: read from config
-    const KEEP_BLOCKS: u64 = 1024;
+    const KEEP_BLOCKS: u64 = 128;
 
     let store_clone = store.clone();
 

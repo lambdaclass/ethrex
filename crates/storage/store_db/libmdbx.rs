@@ -33,6 +33,7 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 type StateTriePruningLogEntry = [u8; 32];
 dupsort!(
@@ -323,6 +324,12 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
+        let start_time = Instant::now();
+        tracing::info!(
+            "[PRUNING STATS] Starting pruning (keeping last {} blocks)",
+            keep_blocks
+        );
+
         let tx = self
             .db
             .begin_readwrite()
@@ -372,7 +379,8 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?
         {
             let keep_from = last_num.saturating_sub(keep_blocks);
-            tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
+            tracing::info!("[PRUNING STATS] Block range analysis: latest_block={}, keep_from={}, will_process_blocks_before={}", 
+                last_num, keep_from, keep_from);
 
             let mut cursor_state_trie = tx
                 .cursor::<StateTrieNodes>()
@@ -409,6 +417,14 @@ impl StoreEngine for Store {
                         let refcnt_index = value.len() - 8;
                         let bytes = value[refcnt_index..].try_into().unwrap_or_default();
                         let mut refcnt = u64::from_be_bytes(bytes);
+
+                        tracing::info!(
+                            "[REFCNT] State node {} has refcnt {}, action: {}",
+                            hex::encode(node_hash.as_ref()),
+                            refcnt,
+                            if refcnt == 1 { "DELETE" } else { "DECREMENT" }
+                        );
+
                         if refcnt == 1 {
                             cursor_state_trie
                                 .delete_current()
@@ -485,6 +501,15 @@ impl StoreEngine for Store {
                         let refcnt_index = value.len() - 8;
                         let bytes = value[refcnt_index..].try_into().unwrap_or_default();
                         let mut refcnt = u64::from_be_bytes(bytes);
+
+                        tracing::info!(
+                            "[REFCNT] Storage node {}:{} has refcnt {}, action: {}",
+                            hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                            hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                            refcnt,
+                            if refcnt == 1 { "DELETE" } else { "DECREMENT" }
+                        );
+
                         if refcnt == 1 {
                             cursor_storage_trie
                                 .delete_current()
@@ -523,25 +548,156 @@ impl StoreEngine for Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))
             .map_err(StoreError::LibmdbxError)?;
 
-        // Get the delta of the total size of the tables
-        let state_trie_total_size_delta =
-            stats_post_state_nodes.total_size() - stats_pre_state_nodes.total_size();
-        let storage_trie_total_size_delta =
-            stats_post_storage_nodes.total_size() - stats_pre_storage_nodes.total_size();
+        // Calculate deltas
+        let state_trie_entries_delta =
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize;
+        let state_trie_log_entries_delta =
+            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize;
+        let storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
+            - stats_pre_storage_nodes.entries() as isize;
+        let storage_trie_log_entries_delta =
+            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize;
 
+        let state_trie_size_delta =
+            stats_post_state_nodes.total_size() as i64 - stats_pre_state_nodes.total_size() as i64;
+        let storage_trie_size_delta = stats_post_storage_nodes.total_size() as i64
+            - stats_pre_storage_nodes.total_size() as i64;
+        let state_trie_log_size_delta =
+            stats_post_state_log.total_size() as i64 - stats_pre_state_log.total_size() as i64;
+        let storage_trie_log_size_delta =
+            stats_post_storage_log.total_size() as i64 - stats_pre_storage_log.total_size() as i64;
+
+        let total_entries_removed = (state_trie_entries_delta
+            + storage_trie_entries_delta
+            + state_trie_log_entries_delta
+            + storage_trie_log_entries_delta)
+            .abs() as usize;
+        let total_space_freed = (state_trie_size_delta
+            + storage_trie_size_delta
+            + state_trie_log_size_delta
+            + storage_trie_log_size_delta)
+            .abs();
+
+        // Check if any pruning actually happened
+        let has_pruning_activity = state_trie_entries_delta != 0
+            || storage_trie_entries_delta != 0
+            || state_trie_log_entries_delta != 0
+            || storage_trie_log_entries_delta != 0;
+
+        if !has_pruning_activity {
+            tracing::info!(
+                "[PRUNING STATS] No entries to prune (all deltas are 0) - this is normal if no old blocks need cleanup"
+            );
+        } else {
+            tracing::info!("[PRUNING STATS] ============ Pre-Pruning State ============");
+            tracing::info!(
+                "[PRUNING STATS] State Trie:     {:>12} entries | {:>12}",
+                stats_pre_state_nodes.entries(),
+                format_size(stats_pre_state_nodes.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] State Log:      {:>12} entries | {:>12}",
+                stats_pre_state_log.entries(),
+                format_size(stats_pre_state_log.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] Storage Trie:   {:>12} entries | {:>12}",
+                stats_pre_storage_nodes.entries(),
+                format_size(stats_pre_storage_nodes.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] Storage Log:    {:>12} entries | {:>12}",
+                stats_pre_storage_log.entries(),
+                format_size(stats_pre_storage_log.total_size() as usize)
+            );
+
+            tracing::info!("[PRUNING STATS] ============ Pruning Results ============");
+            if state_trie_entries_delta != 0 {
+                tracing::info!(
+                    "[PRUNING STATS] State Trie:     {} entries (freed {})",
+                    if state_trie_entries_delta < 0 {
+                        format!("deleted {}", state_trie_entries_delta.abs())
+                    } else {
+                        format!("added {}", state_trie_entries_delta)
+                    },
+                    format_size_delta(state_trie_size_delta)
+                );
+            }
+            if storage_trie_entries_delta != 0 {
+                tracing::info!(
+                    "[PRUNING STATS] Storage Trie:   {} entries (freed {})",
+                    if storage_trie_entries_delta < 0 {
+                        format!("deleted {}", storage_trie_entries_delta.abs())
+                    } else {
+                        format!("added {}", storage_trie_entries_delta)
+                    },
+                    format_size_delta(storage_trie_size_delta)
+                );
+            }
+            if state_trie_log_entries_delta != 0 {
+                tracing::info!(
+                    "[PRUNING STATS] State Log:      {} entries (freed {})",
+                    if state_trie_log_entries_delta < 0 {
+                        format!("cleaned {}", state_trie_log_entries_delta.abs())
+                    } else {
+                        format!("added {}", state_trie_log_entries_delta)
+                    },
+                    format_size_delta(state_trie_log_size_delta)
+                );
+            }
+            if storage_trie_log_entries_delta != 0 {
+                tracing::info!(
+                    "[PRUNING STATS] Storage Log:    {} entries (freed {})",
+                    if storage_trie_log_entries_delta < 0 {
+                        format!("cleaned {}", storage_trie_log_entries_delta.abs())
+                    } else {
+                        format!("added {}", storage_trie_log_entries_delta)
+                    },
+                    format_size_delta(storage_trie_log_size_delta)
+                );
+            }
+
+            tracing::info!("[PRUNING STATS] ============ Post-Pruning State ============");
+            tracing::info!(
+                "[PRUNING STATS] State Trie:     {:>12} entries | {:>12}",
+                stats_post_state_nodes.entries(),
+                format_size(stats_post_state_nodes.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] State Log:      {:>12} entries | {:>12}",
+                stats_post_state_log.entries(),
+                format_size(stats_post_state_log.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] Storage Trie:   {:>12} entries | {:>12}",
+                stats_post_storage_nodes.entries(),
+                format_size(stats_post_storage_nodes.total_size() as usize)
+            );
+            tracing::info!(
+                "[PRUNING STATS] Storage Log:    {:>12} entries | {:>12}",
+                stats_post_storage_log.entries(),
+                format_size(stats_post_storage_log.total_size() as usize)
+            );
+
+            tracing::info!("[PRUNING STATS] ============ Summary ============");
+            tracing::info!(
+                "[PRUNING STATS] Total space freed: {}",
+                format_size_delta(-total_space_freed)
+            );
+            tracing::info!("[PRUNING STATS] Entries removed: {}", total_entries_removed);
+        }
+
+        let execution_time = start_time.elapsed();
         tracing::info!(
-            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
-                - stats_pre_state_nodes.entries() as isize,
-            state_trie_log_entries_delta =
-                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
-            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
-                - stats_pre_storage_nodes.entries() as isize,
-            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
-                - stats_pre_storage_log.entries() as isize,
-            state_trie_total_size_delta = state_trie_total_size_delta,
-            storage_trie_total_size_delta = storage_trie_total_size_delta,
-            "[PRUNING]",
+            "[PRUNING STATS] Execution time: {:.0}ms",
+            execution_time.as_millis()
         );
+
+        if has_pruning_activity {
+            tracing::info!("[PRUNING STATS] Status: Effective pruning completed");
+        } else {
+            tracing::info!("[PRUNING STATS] Status: No pruning needed");
+        }
 
         debug_assert_eq!(
             stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
@@ -1469,6 +1625,50 @@ impl StoreEngine for Store {
             .collect();
 
         self.write_batch::<AccountCodes>(account_codes).await
+    }
+}
+
+/// Helper function to format bytes with appropriate units (B, KB, MB, GB)
+fn format_size(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let bytes = bytes as f64;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes / GB)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes / MB)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes / KB)
+    } else {
+        format!("{} bytes", bytes as usize)
+    }
+}
+
+/// Helper function to format bytes delta with appropriate units and sign
+fn format_size_delta(bytes: i64) -> String {
+    let abs_bytes = bytes.abs() as f64;
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let formatted = if abs_bytes >= GB {
+        format!("{:.2} GB", abs_bytes / GB)
+    } else if abs_bytes >= MB {
+        format!("{:.2} MB", abs_bytes / MB)
+    } else if abs_bytes >= KB {
+        format!("{:.1} KB", abs_bytes / KB)
+    } else {
+        format!("{} bytes", abs_bytes as usize)
+    };
+
+    if bytes < 0 {
+        format!("-{}", formatted)
+    } else if bytes > 0 {
+        format!("+{}", formatted)
+    } else {
+        "0 bytes".to_string()
     }
 }
 

@@ -111,6 +111,9 @@ impl SyncManager {
     fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
+
+        // Should we prune when are syncing?
+
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
@@ -133,6 +136,7 @@ impl SyncManager {
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
+
                 // Start the sync cycle
                 syncer.start_sync(sync_head, store.clone()).await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
