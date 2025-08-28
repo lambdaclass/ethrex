@@ -9,10 +9,10 @@ use ethrex_storage::{Store, error::StoreError};
 use tokio::{
     sync::Mutex,
     task::{JoinHandle, spawn},
-    time::{Duration, sleep, interval},
+    time::{Duration, interval, sleep},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -43,7 +43,7 @@ impl SyncManager {
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
-            cancel_token,
+            cancel_token.clone(),
             blockchain,
         )));
         let sync_manager = Self {
@@ -51,7 +51,7 @@ impl SyncManager {
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
-            cancel_token: cancel_token.clone(),
+            cancel_token,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -166,14 +166,17 @@ impl SyncManager {
     }
 
     /// Start the pruning task in the background after sync completion
-    fn start_pruner_task(store: Store, cancellation_token: CancellationToken) -> JoinHandle<Result<(), StoreError>> {
+    fn start_pruner_task(
+        store: Store,
+        cancellation_token: CancellationToken,
+    ) -> JoinHandle<Result<(), StoreError>> {
         const KEEP_BLOCKS: u64 = 128;
         const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
 
         spawn(async move {
             let mut interval = interval(PRUNING_INTERVAL);
             info!("[PRUNING] Starting pruning task after sync completion");
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
