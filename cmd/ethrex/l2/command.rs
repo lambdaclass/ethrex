@@ -169,7 +169,7 @@ pub enum Command {
             env = "ETHREX_REMOTE_SIGNER_URL",
             help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
             requires = "remote_signer_public_key",
-            required_unless_present = "private_key"
+            conflicts_with = "private_key"
         )]
         remote_signer_url: Option<Url>,
         #[arg(
@@ -179,6 +179,7 @@ pub enum Command {
             env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
             help = "Public key to request the remote signature from.",
             requires = "remote_signer_url",
+            conflicts_with = "private_key"
         )]
         remote_signer_public_key: Option<PublicKey>,
     },
