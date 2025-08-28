@@ -4315,6 +4315,7 @@ dependencies = [
  "jemallocator",
  "lazy_static",
  "reqwest 0.12.20",
+ "rkyv",
  "serde",
  "serde_json",
  "serde_with",

@@ -4,28 +4,35 @@ use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
-    let engine = if cfg!(feature = "levm") {
-        EvmEngine::LEVM
-    } else {
+// If neither `sp1` nor `stateless` is enabled: run with whichever engine
+// the features imply (LEVM if `levm` is on; otherwise REVM).
+#[cfg(not(any(feature = "sp1", feature = "stateless")))]
+fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
+    let engine = if cfg!(feature = "revm") {
         EvmEngine::REVM
+    } else {
+        EvmEngine::LEVM
     };
 
-    parse_and_execute(path, engine, None, false)
+    parse_and_execute(path, engine, None, None)
 }
 
-#[cfg(feature = "levm")]
-fn parse_and_execute_stateless_runner(path: &Path) -> datatest_stable::Result<()> {
-    parse_and_execute(path, EvmEngine::LEVM, None, true)
+// If `sp1` or `stateless` is enabled: always use LEVM with the appropriate backend.
+#[cfg(any(feature = "sp1", feature = "stateless"))]
+fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
+    #[cfg(feature = "stateless")]
+    let backend = Some(ethrex_prover_lib::backends::Backend::Exec);
+    #[cfg(feature = "sp1")]
+    let backend = Some(ethrex_prover_lib::backends::Backend::SP1);
+
+    parse_and_execute(path, EvmEngine::LEVM, None, backend)
 }
-#[cfg(feature = "levm")]
-datatest_stable::harness!(
-    parse_and_execute_runner,
-    TEST_FOLDER,
-    r".*",
-    parse_and_execute_stateless_runner,
-    TEST_FOLDER,
-    r".*"
-);
-#[cfg(not(feature = "levm"))]
-datatest_stable::harness!(parse_and_execute_runner, TEST_FOLDER, r".*",);
+
+datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
+
+#[cfg(any(
+    all(feature = "sp1", feature = "stateless"),
+    all(feature = "sp1", feature = "revm"),
+    all(feature = "stateless", feature = "revm"),
+))]
+compile_error!("Only one of `sp1`, `stateless`, or `revm` can be enabled at a time.");
