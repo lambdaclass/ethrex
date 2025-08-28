@@ -148,7 +148,6 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
     };
 }
 
-#[allow(dead_code)]
 pub fn read_node_config_file(data_dir: &str) -> Result<Option<NodeConfigFile>, String> {
     const NODE_CONFIG_FILENAME: &str = "/node_config.json";
     let file_path = PathBuf::from(data_dir.to_owned() + NODE_CONFIG_FILENAME);

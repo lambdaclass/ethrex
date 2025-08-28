@@ -160,7 +160,6 @@ pub async fn init_rpc_api(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
     network: &Network,
@@ -244,7 +243,6 @@ pub fn get_network(opts: &Options) -> Network {
     opts.network.clone().unwrap_or(default)
 }
 
-#[allow(dead_code)]
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 

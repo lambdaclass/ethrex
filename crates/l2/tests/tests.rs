@@ -1622,8 +1622,7 @@ async fn test_call_to_contract_with_deposit(
     Ok(())
 }
 
-// FIXME: Remove this before merging
-#[allow(dead_code)]
+#[allow(dead_code)] // Test utility struct - fields may be used conditionally in different test scenarios
 #[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,

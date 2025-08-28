@@ -27,7 +27,6 @@ pub enum InMessage {
     Watch,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
