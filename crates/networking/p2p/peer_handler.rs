@@ -1635,7 +1635,7 @@ impl PeerHandler {
                     *downloader_is_free = true;
                 });
 
-                for account in current_account_hashes.iter() {
+                for account in &current_account_hashes[start_index..remaining_start] {
                     accounts_done.push(*account);
                 }
 
