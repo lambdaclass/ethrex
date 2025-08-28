@@ -346,7 +346,7 @@ contract OnChainProposer is
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             string memory reason = _verifyPublicData(batchNumber, risc0Journal);
-            if (reason.length != 0) {
+            if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid RISC0 proof: ",
@@ -373,7 +373,7 @@ contract OnChainProposer is
                 batchNumber,
                 sp1PublicValues[8:]
             );
-            if (reason.length != 0) {
+            if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid SP1 proof: ",
@@ -400,7 +400,7 @@ contract OnChainProposer is
                 batchNumber,
                 tdxPublicValues
             );
-            if (reason.length != 0) {
+            if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid TDX proof: ",
@@ -470,7 +470,7 @@ contract OnChainProposer is
                 batchNumber,
                 alignedPublicInputsList[i][8:]
             );
-            if (reason.length != 0) {
+            if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid ALIGNED proof: ",
