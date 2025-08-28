@@ -288,20 +288,6 @@ impl Syncer {
 
             // Execute aggressive pruning after snap sync completion
             info!("[SNAP SYNC] Completed! Running post-sync pruning to clean up accumulated state");
-            let pruning_start = std::time::Instant::now();
-            
-            if let Err(e) = tokio::task::spawn_blocking({
-                let store = store.clone();
-                move || {
-                    // Use more aggressive pruning (64 blocks vs normal 128) since we just completed snap sync
-                    store.prune_state_and_storage_log(64)
-                }
-            }).await {
-                warn!("[SNAP SYNC] Post-sync pruning task failed: {:?}", e);
-            } else {
-                info!("[SNAP SYNC] Post-sync pruning completed in {:.1}s", 
-                      pruning_start.elapsed().as_secs_f64());
-            }
 
             // Next sync will be full-sync
             block_sync_state.into_fullsync().await?;
