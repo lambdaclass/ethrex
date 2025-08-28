@@ -5,6 +5,7 @@
 ### 2025-08-28
 
 - Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+- Refactor P2P transaction broadcast filter [#4175](https://github.com/lambdaclass/ethrex/pull/4175)
 
 ### 2025-08-27
 
@@ -48,7 +49,6 @@
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
 - Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
-
 
 ### 2025-07-30
 
