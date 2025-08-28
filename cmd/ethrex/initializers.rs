@@ -251,18 +251,17 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 
     bootnodes.extend(network.get_bootnodes());
 
+    info!("Reading known peers from config file");
+
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => bootnodes.append(&mut config.known_peers),
+        Ok(None) => {} // No config file, nothing to do
+        Err(e) => warn!("Could not read from peers file: {e}"),
+    };
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
-
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    info!("Reading known peers from config file {:?}", config_file);
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
-        Err(e) => warn!("Could not read from peers file: {e}"),
-    };
 
     bootnodes
 }
@@ -324,14 +323,12 @@ pub fn get_local_node_record(
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => {
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => {
             NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
                 .expect("Node record could not be created from local node")
         }
-        Err(_) => {
+        _ => {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()

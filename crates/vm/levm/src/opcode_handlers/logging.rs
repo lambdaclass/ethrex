@@ -5,7 +5,6 @@ use crate::{
     utils::size_offset_to_usize,
     vm::VM,
 };
-use bytes::Bytes;
 use ethrex_common::{H256, U256, types::Log};
 
 // Logging Operations (5)
@@ -39,7 +38,7 @@ impl<'a> VM<'a> {
         let log = Log {
             address: current_call_frame.to,
             topics: topics.to_vec(),
-            data: Bytes::from(current_call_frame.memory.load_range(offset, size)?),
+            data: current_call_frame.memory.load_range(offset, size)?,
         };
 
         self.tracer.log(&log)?;

@@ -528,7 +528,7 @@ impl ConnectionHandler {
                 addr,
             })
             .await
-            .map_err(ConnectionHandlerError::GenServerError)
+            .map_err(ConnectionHandlerError::InternalError)
     }
 
     async fn handle_connection(

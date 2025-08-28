@@ -25,13 +25,13 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex:unstable .
+	docker build -t ethrex:local .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex:unstable --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex -- \
@@ -62,35 +62,18 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
+LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
 
+# If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and output the JSON-RPC requests ethrex exchanges with the consensus client
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
-	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
-
-localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
-localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_ethrex_only.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
-
-localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_multiple_cl.yaml
-	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
-
-localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
@@ -121,16 +104,13 @@ TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
-# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
-# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
-# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
+# Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
+# The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
+# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber, you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
-# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+# The simulation log level can be set using SIM_LOG_LEVEL (from 1 up to 4).
 
-HIVE_CLIENT_FILE := ../fixtures/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../fixtures/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../fixtures/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../fixtures/hive/clients.yaml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
@@ -146,7 +126,7 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 # EEST Hive
 TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat cmd/ef_tests/blockchain/.fixtures_url)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
 
 run-hive-eest-engine: ## Run hive EEST Engine tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
