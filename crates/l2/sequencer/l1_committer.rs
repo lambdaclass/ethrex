@@ -1,7 +1,10 @@
 use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::CommitterError,
+    sequencer::{
+        errors::CommitterError,
+        utils::{self, system_now_ms},
+    },
 };
 
 use bytes::Bytes;
@@ -47,6 +50,8 @@ use spawned_concurrency::{
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+/// Default wake up time for the committer to check if it should send a commit tx
+const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -72,11 +77,17 @@ pub struct L1Committer {
     signer: Signer,
     based: bool,
     sequencer_state: SequencerState,
+    /// Time to wait before checking if it should send a new batch
+    committer_wake_up_ms: u64,
+    /// Timestamp of last successful committed batch
+    last_committed_batch_timestamp: u128,
+    /// Last succesful committed batch number
+    last_committed_batch: u64,
 }
 
 impl L1Committer {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         blockchain: Arc<Blockchain>,
@@ -85,16 +96,20 @@ impl L1Committer {
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
+        let eth_client = EthClient::new_with_config(
+            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.max_number_of_retries,
+            eth_config.backoff_factor,
+            eth_config.min_retry_delay,
+            eth_config.max_retry_delay,
+            Some(eth_config.maximum_allowed_max_fee_per_gas),
+            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+        )?;
+        let last_committed_batch = eth_client
+            .get_last_committed_batch(committer_config.on_chain_proposer_address)
+            .await?;
         Ok(Self {
-            eth_client: EthClient::new_with_config(
-                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-                eth_config.max_number_of_retries,
-                eth_config.backoff_factor,
-                eth_config.min_retry_delay,
-                eth_config.max_retry_delay,
-                Some(eth_config.maximum_allowed_max_fee_per_gas),
-                Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-            )?,
+            eth_client,
             blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
@@ -105,6 +120,11 @@ impl L1Committer {
             signer: committer_config.signer.clone(),
             based,
             sequencer_state,
+            committer_wake_up_ms: committer_config
+                .commit_time_ms
+                .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
+            last_committed_batch_timestamp: 0,
+            last_committed_batch,
         })
     }
 
@@ -123,12 +143,15 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
-        )?;
-        let mut l1_committer = state.start();
-        l1_committer
-            .cast(InMessage::Commit)
-            .await
-            .map_err(CommitterError::InternalError)
+        )
+        .await?;
+        let l1_committer = state.start();
+        send_after(
+            random_duration(cfg.l1_committer.first_wake_up_time_ms),
+            l1_committer,
+            InMessage::Commit,
+        );
+        Ok(())
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
@@ -576,19 +599,50 @@ impl GenServer for L1Committer {
 
     type Error = CommitterError;
 
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .commit_next_batch_to_l1()
+            let current_last_committed_batch = self
+                .eth_client
+                .get_last_committed_batch(self.on_chain_proposer_address)
                 .await
-                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+                .unwrap_or(self.last_committed_batch);
+            let Some(current_time) = utils::system_now_ms() else {
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            };
+
+            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
+            if current_last_committed_batch > self.last_committed_batch {
+                self.last_committed_batch = current_last_committed_batch;
+                self.last_committed_batch_timestamp = current_time;
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            }
+
+            let commit_time: u128 = self.commit_time_ms.into();
+            let should_send_commitment =
+                current_time - self.last_committed_batch_timestamp > commit_time;
+            #[allow(clippy::collapsible_if)]
+            if should_send_commitment {
+                if self
+                    .commit_next_batch_to_l1()
+                    .await
+                    .inspect_err(|e| error!("L1 Committer Error: {e}"))
+                    .is_ok()
+                {
+                    self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time);
+                    self.last_committed_batch = current_last_committed_batch + 1;
+                }
+            }
         }
-        let check_interval = random_duration(self.commit_time_ms);
+        let check_interval = random_duration(self.committer_wake_up_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
         CastResponse::NoReply
     }
