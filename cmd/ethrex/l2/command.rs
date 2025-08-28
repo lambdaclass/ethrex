@@ -6,7 +6,7 @@ use crate::{
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::{Options, ProverClientOptions},
     },
-    utils::{default_datadir, init_datadir, parse_private_key},
+    utils::{self, default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_common::{
@@ -25,7 +25,7 @@ use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
 use reqwest::Url;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::{create_dir_all, read_dir},
     path::PathBuf,
@@ -163,6 +163,24 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
+        #[arg(
+            long = "remote-signer-url",
+            value_name = "URL",
+            env = "ETHREX_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            requires = "remote_signer_public_key",
+            required_unless_present = "private_key"
+        )]
+        remote_signer_url: Option<Url>,
+        #[arg(
+            long = "remote-signer-public-key",
+            value_name = "PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            requires = "remote_signer_url",
+        )]
+        remote_signer_public_key: Option<PublicKey>,
     },
     #[command(about = "Deploy in L1 all contracts needed by an L2.")]
     Deploy {
@@ -455,6 +473,8 @@ impl Command {
                 private_key,
                 datadir,
                 network,
+                remote_signer_public_key: _,
+                remote_signer_url: _,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
