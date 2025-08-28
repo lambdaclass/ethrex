@@ -409,7 +409,7 @@ pub async fn import_blocks(
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
-        info!("Importing blocks: directory={path}");
+        info!(path = %path, "Importing blocks from directory");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
@@ -422,12 +422,12 @@ pub async fn import_blocks(
             .iter()
             .map(|entry| {
                 let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!("Importing blocks: file={path_str}");
+                info!(path = %path_str, "Importing blocks from file");
                 utils::read_chain_file(path_str)
             })
             .collect()
     } else {
-        info!("Importing blocks: file={path}");
+        info!(path = %path, "Importing blocks from file");
         vec![utils::read_chain_file(path)]
     };
 
@@ -446,12 +446,9 @@ pub async fn import_blocks(
 
             // Log progress every 10 seconds
             if last_progress_log.elapsed() >= Duration::from_secs(10) {
-                info!(
-                    "Import progress: {}/{} blocks ({:.1}%)",
-                    index + 1,
-                    size,
-                    ((index + 1) as f64 / size as f64) * 100.0
-                );
+                let processed = index + 1;
+                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
+                info!(processed, total = size, percent, "Import progress");
                 last_progress_log = Instant::now();
             }
 
@@ -494,11 +491,7 @@ pub async fn import_blocks(
     }
 
     let total_duration = start_time.elapsed();
-    info!(
-        "Import completed: {} blocks imported in {:.2}s",
-        total_blocks_imported,
-        total_duration.as_secs_f64()
-    );
+    info!(blocks = total_blocks_imported, seconds = total_duration.as_secs_f64(), "Import completed");
     Ok(())
 }
 
@@ -537,6 +530,8 @@ pub async fn export_blocks(
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     let mut last_output = Instant::now();
+    // Denominator for percent completed; avoid division by zero
+    let denom = end.saturating_sub(start) + 1;
     for n in start..=end {
         let block = store
             .get_block_by_number(n)
@@ -547,11 +542,13 @@ pub async fn export_blocks(
         block.encode(&mut buffer);
         // Exporting the whole chain can take a while, so we need to show some output in the meantime
         if last_output.elapsed() > Duration::from_secs(5) {
-            info!("Exporting block {n}/{end}, {}% done", n * 100 / end);
+            let completed = n.saturating_sub(start) + 1;
+            let percent = (completed * 100) / denom;
+            info!(n, end, percent, "Exporting blocks");
             last_output = Instant::now();
         }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!("Exported {} blocks to file {path}", end - start);
+    info!(blocks = end.saturating_sub(start), path = %path, "Exported blocks to file");
 }

@@ -74,7 +74,7 @@ impl Store {
     }
 
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!("Opening storage engine: engine={engine_type:?}, path={path}");
+        info!(engine = ?engine_type, path = %path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
@@ -612,7 +612,7 @@ impl Store {
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
-        info!("Storing genesis block: hash={}", genesis_hash);
+        info!(hash = %genesis_hash, "Storing genesis block");
 
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
