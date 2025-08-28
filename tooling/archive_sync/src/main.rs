@@ -1,8 +1,6 @@
 lazy_static::lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
-
-use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
@@ -17,19 +15,17 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
-use hasher::HasherKeccak;
 use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::task::JoinSet;
-use tracing::{debug, info};
+use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 /// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
@@ -111,13 +107,6 @@ impl MaybeAddress {
             MaybeAddress::HashesAddress(hashed) => hashed,
         }
     }
-}
-
-fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {
-    let memdb = Arc::new(CitaMemoryDB::new(true));
-    let hasher = Arc::new(HasherKeccak::new());
-
-    CitaTrie::new(Arc::clone(&memdb), Arc::clone(&hasher))
 }
 
 pub async fn archive_sync(
@@ -203,29 +192,13 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    info!("processing dump storage: {dump_storage:?}");
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
-    let mut cita_trie = cita_trie();
     for (key, val) in dump_storage {
-        info!("Adding key: {key}, value {val:#x}");
-        // The key we receive is the preimage of the one stored in the trie
-        let valu = val;
-        let val_enc = val.encode_to_vec();
-        let val_dec = U256::decode(&val_enc).unwrap();
-        assert_eq!(valu, val_dec);
+        // The key we receive is NOT the preimage of the one stored in the trie
+        // This was changed in geth so that we can archive sync even if geth doesn't have the preimages (full node + archive instead of fully archive)
         trie.insert(key.0.to_vec(), val.encode_to_vec())?;
-        cita_trie
-            .insert(key.0.to_vec(), val.encode_to_vec())
-            .unwrap();
     }
-    let cita_hash = cita_trie.root().unwrap();
     if trie.hash()? != storage_root {
-        info!(
-            "storage hash mismatch: calced {} vs received {} vs cita {}",
-            trie.hash()?,
-            storage_root,
-            H256::from_slice(&cita_hash)
-        );
         Err(eyre::ErrReport::msg(
             "Storage root doesn't match the one in the account during archive sync",
         ))
@@ -551,7 +524,6 @@ impl DumpIpcReader {
         "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, true]
         });
         let response = send_ipc_json_request(&mut self.stream, request).await?;
-        info!("IPC res: {response}");
         let dump: Dump = serde_json::from_value(response)?;
         // Find the next hash
         let last_key = dump
@@ -666,37 +638,3 @@ pub async fn main() -> eyre::Result<()> {
     )
     .await
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn test() {
-        tracing::subscriber::set_global_default(FmtSubscriber::new())
-            .expect("setting default subscriber failed");
-        let ipc_input = r#"{"root":"3932ca77e85e06d8524fd2d456a427ef4938b6cd18c98d3a6159afe911c8396c","accounts":{"0xe3b30DE5Be5B32A1316D0686BBE54BC7F0FeF23c":{"balance":"0","nonce":1,"root":"0xbbad49c3e342b927f5ac7c041cfcf93b2910d2e6725428ba067952f896a4ef7e","codeHash":"0x337c29fd9976d67b66b28034c1414c04861ce13b19a267c6e01d66f2cdb6bfba","code":"0x60606040525b603c5b60006010603e565b9050593681016040523660008237602060003683856040603f5a0204f41560545760206000f35bfe5b50565b005b73c3b2ae46792547a96b9f84405e36d0e07edcd05c5b905600a165627a7a7230582062a884f947232ada573f95940cce9c8bfb7e4e14e21df5af4e884941afb55e590029","storage":{"0x0000000000000000000000000000000000000000000000000000000000000001":"7a30f7736e48d6599356464ba4c150d8da0302ff","0x0000000000000000000000000000000000000000000000000000000000000002":"3da25693590cc69abc4db528c9100274e47677df","0x0000000000000000000000000000000000000000000000000000000000000003":"01"},"address":"0xe3b30de5be5b32a1316d0686bbe54bc7f0fef23c","key":"0x00027f1d9e19e9285dad2dc6b3b37dfd7dfe5a25dfb1ce4521d4c1220e03bef4"}},"next":"AAJ/LjgV+1RZWRkAWfopljIQafWGPo6xdpDcKvs6biI="}"#;
-        let dump: Dump = serde_json::from_str(&ipc_input).unwrap();
-        let store = Store::new("uwu.memory", ethrex_storage::EngineType::InMemory).unwrap();
-        process_dump(dump, store, *EMPTY_TRIE_HASH).await.unwrap();
-    }
-}
-
-/*
-
-    IPC res: {"root":"3932ca77e85e06d8524fd2d456a427ef4938b6cd18c98d3a6159afe911c8396c","accounts":{"0xe3b30DE5Be5B32A1316D0686BBE54BC7F0FeF23c":{"balance":"0","nonce":1,"root":"0xbbad49c3e342b927f5ac7c041cfcf93b2910d2e6725428ba067952f896a4ef7e","codeHash":"0x337c29fd9976d67b66b28034c1414c04861ce13b19a267c6e01d66f2cdb6bfba","code":"0x60606040525b603c5b60006010603e565b9050593681016040523660008237602060003683856040603f5a0204f41560545760206000f35bfe5b50565b005b73c3b2ae46792547a96b9f84405e36d0e07edcd05c5b905600a165627a7a7230582062a884f947232ada573f95940cce9c8bfb7e4e14e21df5af4e884941afb55e590029",
-    "storage":{
-    "0x0000000000000000000000000000000000000000000000000000000000000001":"7a30f7736e48d6599356464ba4c150d8da0302ff"
-    "0x0000000000000000000000000000000000000000000000000000000000000002":"3da25693590cc69abc4db528c9100274e47677df"
-    "0x0000000000000000000000000000000000000000000000000000000000000003":"01"},
-    "address":"0xe3b30de5be5b32a1316d0686bbe54bc7f0fef23c","key":"0x00027f1d9e19e9285dad2dc6b3b37dfd7dfe5a25dfb1ce4521d4c1220e03bef4"}},"next":"AAJ/LjgV+1RZWRkAWfopljIQafWGPo6xdpDcKvs6biI="}
-    processing dump storage: {0x0000000000000000000000000000000000000000000000000000000000000003: 1, 0x0000000000000000000000000000000000000000000000000000000000000001: 697588865823728504998797776820623519631662056191, 0x0000000000000000000000000000000000000000000000000000000000000002: 351868699538881868049991907159917927825854068703}
-    Adding key: 0x0000…0003, value 0x1
-    Adding key: 0x0000…0001, value 0x7a30f7736e48d6599356464ba4c150d8da0302ff
-    Adding key: 0x0000…0002, value 0x3da25693590cc69abc4db528c9100274e47677df
-    storage hash mismatch: calced 0xd34d…8df0 vs received 0xbbad…ef7e vs cita 0xd34d…8df0
-*/
-
-/*
-IPC res: {"root":"3932ca77e85e06d8524fd2d456a427ef4938b6cd18c98d3a6159afe911c8396c","accounts":{"0xEA46927B4Fc92248d052299FBFCC6778421930C6":{"balance":"7931794000000000","nonce":1,"root":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","codeHash":"0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470","address":"0xea46927b4fc92248d052299fbfcc6778421930c6","key":"0x00000013653234c2d78dcdc645c5141e358ef2e590fe5278778ba729ff5ffd95"}},"next":"AAAAS07Z5IKDj98CtF3DFcBGhanjeEjmBlrpuAWSUZA="}
-
-IPC res: {"root":"3932ca77e85e06d8524fd2d456a427ef4938b6cd18c98d3a6159afe911c8396c","accounts":{"pre(0x0000004b4ed9e482838fdf02b45dc315c04685a9e37848e6065ae9b805925190)":{"balance":"0","nonce":1,"root":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","codeHash":"0x562d59a51820d47f520c975e0b2bcffac644a509749a3161f481f57b6e826d21","code":"0x363d3d373d3d3d363d730de8bf93da2f7eecb3d9169422413a9bef4ef6285af43d82803e903d91602b57fd5bf3","key":"0x0000004b4ed9e482838fdf02b45dc315c04685a9e37848e6065ae9b805925190"}},"next":"AAAAjDjXaddcGtHeZmDaUe3BA5TBHFD/mgyp6LizXcI="} */
