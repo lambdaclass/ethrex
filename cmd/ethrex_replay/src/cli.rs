@@ -1,25 +1,33 @@
-use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
+use std::{cmp::max, io::Write, time::SystemTime};
 
 use clap::{Parser, Subcommand};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    validate_block,
 };
 use ethrex_common::{
     Address, H256,
     types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
 };
-use ethrex_l2::sequencer::block_producer::build_payload;
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::{EngineType, Store};
-use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{BlockExecutionResult, EvmEngine};
+use ethrex_vm::EvmEngine;
 use reqwest::Url;
 use tracing::{error, info};
+
+#[cfg(feature = "l2")]
+use ethrex_blockchain::validate_block;
+#[cfg(feature = "l2")]
+use ethrex_l2::sequencer::block_producer::build_payload;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
+#[cfg(feature = "l2")]
+use ethrex_vm::BlockExecutionResult;
+#[cfg(feature = "l2")]
+use std::sync::Arc;
 
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
@@ -667,6 +675,19 @@ impl SubcommandCustom {
                     store_inner
                 };
 
+                #[cfg(feature = "l2")]
+                let rollup_store = {
+                    use ethrex_storage_rollup::EngineTypeRollup;
+
+                    let rollup_store = StoreRollup::new("./", EngineTypeRollup::InMemory)
+                        .expect("Failed to create StoreRollup");
+                    rollup_store
+                        .init()
+                        .await
+                        .expect("Failed to init rollup store");
+                    rollup_store
+                };
+
                 #[cfg(not(feature = "l2"))]
                 let mut blockchain =
                     Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
@@ -677,11 +698,13 @@ impl SubcommandCustom {
                     BlockchainType::L2,
                 ));
 
+                let genesis_hash = genesis.get_block().hash();
+
                 #[cfg(not(feature = "l2"))]
                 let block = produce_l1_block(
                     &mut blockchain,
                     &mut store,
-                    genesis.get_block().hash(),
+                    genesis_hash,
                     genesis.timestamp + 1,
                 )
                 .await?;
@@ -690,8 +713,8 @@ impl SubcommandCustom {
                     blockchain.clone(),
                     &mut store,
                     &rollup_store,
-                    head_block_hash,
-                    initial_timestamp + i,
+                    genesis_hash,
+                    genesis.timestamp + 1,
                 )
                 .await?;
 
@@ -700,7 +723,10 @@ impl SubcommandCustom {
                 let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
                 // Make cache mutable for L2 fields
-                #[expect(unused_mut)]
+                #[cfg_attr(
+                    not(feature = "l2"),
+                    expect(unused_mut, reason = "used in cfg feature l2")
+                )]
                 let mut cache = Cache::new(blocks, execution_witness);
 
                 #[cfg(feature = "l2")]
@@ -824,7 +850,10 @@ impl SubcommandCustom {
                 );
 
                 // Make cache mutable for L2 fields
-                #[expect(unused_mut)]
+                #[cfg_attr(
+                    not(feature = "l2"),
+                    expect(unused_mut, reason = "used in cfg feature l2")
+                )]
                 let mut cache = Cache::new(blocks, execution_witness);
 
                 #[cfg(feature = "l2")]
@@ -860,6 +889,7 @@ impl SubcommandCustom {
     }
 }
 
+#[cfg(not(feature = "l2"))]
 pub async fn produce_l1_block(
     blockchain: &mut Blockchain,
     store: &mut Store,
@@ -918,6 +948,7 @@ pub async fn produce_l1_block(
     Ok(completed_payload_bundle.block)
 }
 
+#[cfg(feature = "l2")]
 pub async fn produce_l2_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
