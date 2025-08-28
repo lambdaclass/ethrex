@@ -547,7 +547,7 @@ impl GenServer for Downloader {
                     return CastResponse::Stop;
                 }
 
-                if let Some(codes) = tokio::time::timeout(Duration::from_secs(2), async move {
+                if let Some(codes) = tokio::time::timeout(Duration::from_secs(4), async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
