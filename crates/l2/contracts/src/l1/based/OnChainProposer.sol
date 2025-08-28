@@ -509,32 +509,29 @@ contract OnChainProposer is
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
-    ) internal view returns (bool, string memory) {
+    ) internal view returns (string memory) {
         if (publicData.length != 224) {
-            return ("invalid public data length");
+            return "invalid public data length";
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         if (
             batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
         ) {
-            return (
-                "initial state root public inputs don't match with initial state root"
-            );
+            return
+                "initial state root public inputs don't match with initial state root";
         }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return (
-                "final state root public inputs don't match with final state root"
-            );
+            return
+                "final state root public inputs don't match with final state root";
         }
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         if (
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
             withdrawalsMerkleRoot
         ) {
-            return (
-                "withdrawals public inputs don't match with committed withdrawals"
-            );
+            return
+                "withdrawals public inputs don't match with committed withdrawals";
         }
         bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
         if (
@@ -542,19 +539,17 @@ contract OnChainProposer is
                 .processedPrivilegedTransactionsRollingHash !=
             privilegedTransactionsHash
         ) {
-            return (
-                "privileged transactions hash public input does not match with committed transactions"
-            );
+            return
+                "privileged transactions hash public input does not match with committed transactions";
         }
         bytes32 lastBlockHash = bytes32(publicData[128:160]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return (
-                "last block hash public inputs don't match with last block hash"
-            );
+            return
+                "last block hash public inputs don't match with last block hash";
         }
         uint256 chainId = uint256(bytes32(publicData[160:182]));
         if (chainId != CHAIN_ID) {
-            return ("given chain id does not correspond to this network");
+            return "given chain id does not correspond to this network";
         }
         uint256 nonPrivilegedTransactions = uint256(
             bytes32(publicData[192:224])
@@ -563,11 +558,10 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
             nonPrivilegedTransactions != 0
         ) {
-            return (
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
-            );
+            return
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
         }
-        return ("");
+        return "";
     }
 
     /// @notice Allow owner to upgrade the contract.
