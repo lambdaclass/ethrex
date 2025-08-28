@@ -215,7 +215,7 @@ impl L1ProofSender {
             };
 
             let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
-                return Err(ProofSenderError::InternalError(format!(
+                return Err(ProofSenderError::UnexpectedError(format!(
                     "no vm_program_code for {prover_type}"
                 )));
             };
@@ -246,7 +246,7 @@ impl L1ProofSender {
 
             nonce = nonce
                 .checked_add(1.into())
-                .ok_or(ProofSenderError::InternalError(
+                .ok_or(ProofSenderError::UnexpectedError(
                     "aligned batcher nonce overflow".to_string(),
                 ))?;
 
