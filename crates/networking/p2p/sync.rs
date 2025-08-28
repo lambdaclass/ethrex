@@ -1,5 +1,10 @@
+mod state_healing;
+mod storage_healing;
+
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::sync::state_healing::heal_state_trie_wrap;
+use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
 };
@@ -15,8 +20,11 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, TrieError};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use ethrex_trie::Nibbles;
+use ethrex_trie::{NodeHash, Trie, TrieError};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use std::cell::OnceCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::{
     array,
@@ -776,234 +784,290 @@ impl Syncer {
             (pivot_header, staleness_timestamp) =
                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
         }
-
-        let pivot_number = pivot_header.number;
-        let pivot_hash = pivot_header.hash();
-        debug!("Selected block {pivot_number} as pivot for snap sync");
+        debug!(
+            "Selected block {} as pivot for snap sync",
+            pivot_header.number
+        );
 
         let state_root = pivot_header.state_root;
         let account_state_snapshots_dir =
             get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
-        self.peers
-            .request_account_range(
-                state_root,
-                H256::zero(),
-                H256::repeat_byte(0xff),
-                account_state_snapshots_dir,
-            )
-            .await?;
 
-        let empty = *EMPTY_TRIE_HASH;
-
-        let mut chunk_index = 0;
-
-        let account_state_snapshots_dir =
-            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-
-        info!("Starting to download storage ranges from peers");
-
-        let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
-        *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-        let mut downloaded_account_storages = 0;
-
-        METRICS
-            .storage_tries_download_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        for entry in std::fs::read_dir(&account_state_snapshots_dir)
-            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        {
-            let entry = entry.map_err(|_| {
-                SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
-            })?;
-
-            let snapshot_path = entry.path();
-
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
-
-            let account_states_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-            let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                account_states_snapshot.iter().cloned().unzip();
-
-            let account_storage_roots: Vec<(H256, H256)> = account_hashes
-                .iter()
-                .zip(account_states.iter())
-                .filter_map(|(hash, state)| {
-                    (state.storage_root != empty).then_some((*hash, state.storage_root))
-                })
-                .collect();
-
-            chunk_index = self
-                .peers
-                .request_storage_ranges(
+        let mut pivot_is_stale = true;
+        let mut storage_accounts = AccountStorageRoots::default();
+        if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
+            self.peers
+                .request_account_range(
                     state_root,
-                    account_storage_roots.clone(),
-                    account_storages_snapshots_dir.clone(),
-                    chunk_index,
-                    &mut downloaded_account_storages,
+                    H256::zero(),
+                    H256::repeat_byte(0xff),
+                    account_state_snapshots_dir,
+                    staleness_timestamp,
                 )
+                .await;
+
+            let empty = *EMPTY_TRIE_HASH;
+
+            let mut chunk_index = 0;
+
+            let account_state_snapshots_dir = get_account_state_snapshots_dir()
+                .ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
+
+            info!("Starting to download storage ranges from peers");
+
+            let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
+            *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
+            let mut downloaded_account_storages = 0;
+
+            METRICS
+                .storage_tries_download_start_time
+                .lock()
                 .await
-                .map_err(SyncError::PeerHandler)?;
-            dbg!(&downloaded_account_storages);
-        }
-        info!("All account storages downloaded successfully");
-        info!(
-            "Finished downloading account ranges, total storage slots: {}",
-            *METRICS.downloaded_storage_slots.lock().await
-        );
-        METRICS
-            .storage_tries_download_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-        info!("Starting to compute the state root...");
+                .replace(SystemTime::now());
 
-        let account_store_start = Instant::now();
+            for entry in std::fs::read_dir(&account_state_snapshots_dir)
+                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+            {
+                let entry = entry.map_err(|_| {
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+                })?;
 
-        let mut computed_state_root = *EMPTY_TRIE_HASH;
-        let mut bytecode_hashes = Vec::new();
+                let snapshot_path = entry.path();
 
-        for entry in std::fs::read_dir(&account_state_snapshots_dir)
-            .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        {
-            let entry = entry.map_err(|_| {
-                SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
-            })?;
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
 
-            let snapshot_path = entry.path();
+                let account_states_snapshot: Vec<(H256, AccountState)> =
+                    RLPDecode::decode(&snapshot_contents)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
+                    account_states_snapshot.iter().cloned().unzip();
 
-            let account_state_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                storage_accounts.accounts_with_storage_root.extend(
+                    account_hashes
+                        .iter()
+                        .zip(account_states.iter())
+                        .filter_map(|(hash, state)| {
+                            (state.storage_root != empty).then_some((*hash, state.storage_root))
+                        }),
+                );
 
-            let trie = store.open_state_trie(computed_state_root)?;
+                chunk_index = self
+                    .peers
+                    .request_storage_ranges(
+                        state_root,
+                        account_states_snapshot
+                            .iter()
+                            .filter(|(_, acc)| acc.storage_root != empty)
+                            .map(|(k, v)| (*k, v.storage_root))
+                            .collect(),
+                        account_storages_snapshots_dir.clone(),
+                        chunk_index,
+                        &mut downloaded_account_storages,
+                        staleness_timestamp,
+                    )
+                    .await
+                    .map_err(SyncError::PeerHandler)?;
+                dbg!(&downloaded_account_storages);
+            }
+            info!("All account storages downloaded successfully");
+            pivot_is_stale = current_unix_time() > staleness_timestamp;
+            info!(
+                "Finished downloading account ranges, total storage slots: {}",
+                *METRICS.downloaded_storage_slots.lock().await
+            );
+            METRICS
+                .storage_tries_download_end_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+            info!("Starting to compute the state root...");
 
-            let (current_state_root, current_bytecode_hashes) =
-                tokio::task::spawn_blocking(move || -> Result<(H256, Vec<H256>), SyncError> {
-                    let mut bytecode_hashes = vec![];
-                    let mut trie = trie;
+            let account_store_start = Instant::now();
 
-                    for (account_hash, account) in account_state_snapshot {
-                        if account.code_hash != *EMPTY_KECCACK_HASH {
-                            bytecode_hashes.push(account.code_hash);
+            let mut computed_state_root = *EMPTY_TRIE_HASH;
+
+            for entry in std::fs::read_dir(&account_state_snapshots_dir)
+                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+            {
+                let entry = entry.map_err(|_| {
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+                })?;
+
+                let snapshot_path = entry.path();
+
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+
+                let account_state_snapshot: Vec<(H256, AccountState)> =
+                    RLPDecode::decode(&snapshot_contents)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+                let trie = store.open_state_trie(computed_state_root)?;
+
+                let current_state_root =
+                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+                        let mut trie = trie;
+
+                        for (account_hash, account) in account_state_snapshot {
+                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
-                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                    }
-                    let current_state_root = trie.hash()?;
-                    bytecode_hashes.sort();
-                    bytecode_hashes.dedup();
-                    Ok((current_state_root, bytecode_hashes))
+                        let current_state_root = trie.hash()?;
+                        Ok(current_state_root)
+                    })
+                    .await??;
+
+                computed_state_root = current_state_root;
+            }
+
+            *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+
+            let account_store_time = Instant::now().saturating_duration_since(account_store_start);
+
+            info!("Expected state root: {state_root:?}");
+            info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+            let storages_store_start = Instant::now();
+
+            METRICS
+                .storage_tries_state_roots_start_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+
+            *METRICS.storage_tries_state_roots_to_compute.lock().await =
+                downloaded_account_storages;
+
+            let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+                Arc::new(Mutex::new(HashMap::new()));
+
+            let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
+                .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+            for entry in std::fs::read_dir(&account_storages_snapshots_dir)
+                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+            {
+                let entry = entry.map_err(|_| {
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
+                })?;
+
+                let snapshot_path = entry.path();
+
+                let snapshot_contents = std::fs::read(&snapshot_path)
+                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+
+                let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+                    RLPDecode::decode(&snapshot_contents)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+                let maybe_big_account_storage_state_roots_clone =
+                    maybe_big_account_storage_state_roots.clone();
+                let store_clone = store.clone();
+                let pivot_hash_moved = pivot_header.hash();
+                let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+                    let store: Store = store_clone;
+
+                    // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
+                    // We need to fix this issue in request_storage_ranges and remove this filter.
+                    account_storages_snapshot
+                        .into_par_iter()
+                        .filter(|(_account_hash, storage)| !storage.is_empty())
+                        .map(|(account_hash, key_value_pairs)| {
+                            compute_storage_roots(
+                                maybe_big_account_storage_state_roots_clone.clone(),
+                                store.clone(),
+                                account_hash,
+                                key_value_pairs,
+                                pivot_hash_moved,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, SyncError>>()
                 })
                 .await??;
 
-            computed_state_root = current_state_root;
-            bytecode_hashes.extend(&current_bytecode_hashes);
-        }
-
-        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
-
-        let account_store_time = Instant::now().saturating_duration_since(account_store_start);
-
-        info!("Expected state root: {state_root:?}");
-        info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
-
-        let storages_store_start = Instant::now();
-
-        METRICS
-            .storage_tries_state_roots_start_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
-
-        *METRICS.storage_tries_state_roots_to_compute.lock().await = downloaded_account_storages;
-
-        let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
-        for entry in std::fs::read_dir(&account_storages_snapshots_dir)
-            .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        {
-            let entry = entry.map_err(|_| {
-                SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
-            })?;
-
-            let snapshot_path = entry.path();
-
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
-
-            let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-            let maybe_big_account_storage_state_roots_clone =
-                maybe_big_account_storage_state_roots.clone();
-            let store_clone = store.clone();
-            let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-                let store: Store = store_clone;
-
-                // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
-                // We need to fix this issue in request_storage_ranges and remove this filter.
-                account_storages_snapshot
-                    .into_par_iter()
-                    .filter(|(_account_hash, storage)| !storage.is_empty())
-                    .map(|(account_hash, key_value_pairs)| {
-                        compute_storage_roots(
-                            maybe_big_account_storage_state_roots_clone.clone(),
-                            store.clone(),
-                            account_hash,
-                            key_value_pairs,
-                            pivot_hash,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, SyncError>>()
-            })
-            .await??;
-
-            store
-                .write_storage_trie_nodes_batch(storage_trie_node_changes)
-                .await?;
-        }
-
-        for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
-            .lock()
-            .map_err(|_| SyncError::MaybeBigAccount)?
-            .iter()
-        {
-            let account_state = store
-                .get_account_state_by_acc_hash(pivot_hash, *account_hash)?
-                .ok_or(SyncError::AccountState(pivot_hash, *account_hash))?;
-
-            if *computed_storage_root != account_state.storage_root {
-                return Err(SyncError::DifferentStateRoots(
-                    *account_hash,
-                    account_state.storage_root,
-                    *computed_storage_root,
-                ));
+                store
+                    .write_storage_trie_nodes_batch(storage_trie_node_changes)
+                    .await?;
             }
+
+            for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
+                .lock()
+                .map_err(|_| SyncError::MaybeBigAccount)?
+                .iter()
+            {
+                let account_state = store
+                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
+                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
+
+                if *computed_storage_root != account_state.storage_root {
+                    debug!(
+                        "Incomplete or incorrect download for account hash {:?}, expected: {:?}, computed: {:?}",
+                        *account_hash, account_state.storage_root, *computed_storage_root,
+                    );
+                }
+            }
+
+            METRICS
+                .storage_tries_state_roots_end_time
+                .lock()
+                .await
+                .replace(SystemTime::now());
+
+            let storages_store_time =
+                Instant::now().saturating_duration_since(storages_store_start);
+            info!("Finished storing storage tries in: {storages_store_time:?}");
         }
 
-        METRICS
-            .storage_tries_state_roots_end_time
-            .lock()
-            .await
-            .replace(SystemTime::now());
+        if pivot_is_stale {
+            info!("Starting Fast Sync");
+            let mut global_state_leafs_healed: u64 = 0;
+            let mut global_storage_leafs_healed: u64 = 0;
+            let mut healing_done = false;
+            while !healing_done {
+                // This if is an edge case for the skip snap sync scenario
+                if current_unix_time() > staleness_timestamp {
+                    (pivot_header, staleness_timestamp) =
+                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                }
+                healing_done = heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    &self.peers,
+                    staleness_timestamp,
+                    &mut global_state_leafs_healed,
+                    &mut storage_accounts,
+                )
+                .await?;
+                if !healing_done {
+                    continue;
+                }
+                healing_done = heal_storage_trie(
+                    pivot_header.state_root,
+                    &storage_accounts,
+                    self.peers.clone(),
+                    store.clone(),
+                    HashMap::new(),
+                    staleness_timestamp,
+                    &mut global_storage_leafs_healed,
+                )
+                .await;
+            }
+            // TODO: 💀💀💀 either remove or change to a debug flag
+            validate_state_root(store.clone(), pivot_header.state_root).await;
+            validate_storage_root(store.clone(), pivot_header.state_root).await;
+            info!("Finished healing");
+        }
 
-        let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
-        info!("Finished storing storage tries in: {storages_store_time:?}");
+        let mut bytecode_hashes: Vec<H256> = store
+            .iter_accounts(pivot_header.state_root)
+            .expect("we couldn't iterate over accounts")
+            .map(|(_, state)| state.code_hash)
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
+            .collect();
+        bytecode_hashes.sort();
+        bytecode_hashes.dedup();
 
         // Download bytecodes
         info!(
@@ -1021,10 +1085,10 @@ impl Syncer {
             .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
             .await?;
 
-        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
-            .get_block_by_hash(pivot_hash)
+            .get_block_by_hash(pivot_header.hash())
             .await?
             .ok_or(SyncError::CorruptDB)?;
 
@@ -1036,14 +1100,14 @@ impl Syncer {
             .into_iter()
             .rev()
             .enumerate()
-            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
             .collect::<Vec<_>>();
 
         store
             .forkchoice_update(
                 Some(numbers_and_hashes),
-                pivot_number,
-                pivot_hash,
+                pivot_header.number,
+                pivot_header.hash(),
                 None,
                 None,
             )
@@ -1133,7 +1197,7 @@ async fn update_pivot(
 ) -> Result<(BlockHeader, u64), SyncError> {
     // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
     // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 3;
+    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
@@ -1179,6 +1243,17 @@ async fn update_pivot(
         }
         return Ok((pivot.clone(), pivot.timestamp + (SNAP_LIMIT as u64 * 12)));
     }
+}
+
+#[derive(Debug, Default)]
+/// We store for optimization the accounts that need to heal storage
+pub struct AccountStorageRoots {
+    /// The accounts that have not been healed are guaranteed to have the original storage root
+    /// we can read this storage root
+    pub accounts_with_storage_root: HashMap<H256, H256>,
+    /// If an account has been healed, it may return to a previous state, so we just store the account
+    /// in a hashset
+    pub healed_accounts: HashSet<H256>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -1231,10 +1306,67 @@ enum SyncError {
     NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
+    #[error("Corrupt Path")]
+    CorruptPath,
 }
 
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
     }
+}
+
+pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_state_root");
+    let computed_state_root = tokio::task::spawn_blocking(move || {
+        Trie::compute_hash_from_unsorted_iter(
+            store
+                .iter_accounts(state_root)
+                .expect("we couldn't iterate over accounts")
+                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+        )
+    })
+    .await
+    .expect("We should be able to create threads");
+
+    let tree_validated = state_root == computed_state_root;
+    if tree_validated {
+        info!("Succesfully validated tree, {state_root} found");
+    } else {
+        error!(
+            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
+        );
+    }
+    tree_validated
+}
+
+pub async fn validate_storage_root(store: Store, state_root: H256) {
+    info!("Starting validate_storage_root");
+    store
+        .clone()
+        .iter_accounts(state_root)
+        .expect("We should be able to open the store")
+        .par_bridge()
+        .for_each(|(hashed_address, account_state)|
+    {
+        let store_clone = store.clone();
+        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+                store_clone
+                    .iter_storage(state_root, hashed_address)
+                    .expect("we couldn't iterate over accounts")
+                    .expect("This address should be valid")
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+            );
+
+        let tree_validated = account_state.storage_root == computed_storage_root;
+        if tree_validated {
+            //info!("Succesfully validated tree, {computed_storage_root} found");
+        } else {
+            error!(
+                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
+                account_state.storage_root
+            );
+        }
+    });
+    info!("Finished validate_storage_root");
 }

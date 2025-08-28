@@ -69,7 +69,7 @@ pub struct SnapState {
     /// Accounts which storage needs healing
     storage_heal_paths: Option<Vec<(H256, Vec<Nibbles>)>>,
     /// State trie Paths in need of healing
-    state_heal_paths: Option<Vec<Nibbles>>,
+    state_heal_paths: Option<Vec<(Nibbles, H256)>>,
     /// Storage tries waiting rebuild
     storage_trie_rebuild_pending: Option<Vec<(H256, H256)>>,
     // Latest root of the rebuilt state trie + the last inserted keys for each state trie segment
@@ -615,12 +615,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
         self.inner()?.snap_state.state_heal_paths = Some(paths);
         Ok(())
     }
 
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         Ok(self.inner()?.snap_state.state_heal_paths.clone())
     }
 

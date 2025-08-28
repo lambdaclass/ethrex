@@ -9,6 +9,8 @@ use crate::rlp::{
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
+use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
@@ -586,6 +588,29 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, state_root))
     }
 
+    fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(
+            LibmdbxLockedTrieDB::<StateTrieNodes>::new(self.db.clone())
+                .map_err(StoreError::Trie)?,
+        );
+        Ok(Trie::open(db, state_root))
+    }
+
+    fn open_locked_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(
+            LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+                self.db.clone(),
+                hashed_address.0,
+            )
+            .map_err(StoreError::Trie)?,
+        );
+        Ok(Trie::open(db, storage_root))
+    }
+
     async fn get_canonical_block_hash(
         &self,
         number: BlockNumber,
@@ -880,15 +905,15 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
             .await
     }
 
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::StateHealPaths)
             .await?
-            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .map(|ref h| <Vec<(Nibbles, H256)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }

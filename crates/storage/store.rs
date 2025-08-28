@@ -933,7 +933,7 @@ impl Store {
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
         Ok(self
             .engine
-            .open_state_trie(state_root)?
+            .open_locked_state_trie(state_root)?
             .into_iter()
             .content()
             .map_while(|(path, value)| {
@@ -948,14 +948,14 @@ impl Store {
         state_root: H256,
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root)?;
+        let state_trie = self.engine.open_locked_state_trie(state_root)?;
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         Ok(Some(
             self.engine
-                .open_storage_trie(hashed_address, storage_root)?
+                .open_locked_storage_trie(hashed_address, storage_root)?
                 .into_iter()
                 .content()
                 .map_while(|(path, value)| {
@@ -1087,6 +1087,12 @@ impl Store {
         self.engine.open_state_trie(state_root)
     }
 
+    /// Obtain a read-locked state trie from the given state root.
+    /// Doesn't check if the state root is valid
+    pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        self.engine.open_locked_state_trie(state_root)
+    }
+
     /// Obtain a storage trie from the given address and storage_root.
     /// Doesn't check if the account is stored
     pub fn open_storage_trie(
@@ -1095,6 +1101,17 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         self.engine.open_storage_trie(account_hash, storage_root)
+    }
+
+    /// Obtain a read-locked storage trie from the given address and storage_root.
+    /// Doesn't check if the account is stored
+    pub fn open_locked_storage_trie(
+        &self,
+        account_hash: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        self.engine
+            .open_locked_storage_trie(account_hash, storage_root)
     }
 
     /// Returns true if the given node is part of the state trie's internal storage
@@ -1169,12 +1186,15 @@ impl Store {
     }
 
     /// Sets the state trie paths in need of healing
-    pub async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    pub async fn set_state_heal_paths(
+        &self,
+        paths: Vec<(Nibbles, H256)>,
+    ) -> Result<(), StoreError> {
         self.engine.set_state_heal_paths(paths).await
     }
 
     /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         self.engine.get_state_heal_paths().await
     }
 

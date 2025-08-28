@@ -73,11 +73,16 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(node: Node, record: Option<NodeRecord>, channels: PeerChannels) -> Self {
+    pub fn new(
+        node: Node,
+        record: Option<NodeRecord>,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    ) -> Self {
         Self {
             node,
             record,
-            supported_capabilities: Vec::new(),
+            supported_capabilities: capabilities,
             is_connection_inbound: false,
             channels: Some(channels),
         }
@@ -122,12 +127,17 @@ impl Kademlia {
         Self::default()
     }
 
-    pub async fn set_connected_peer(&mut self, node: Node, channels: PeerChannels) {
+    pub async fn set_connected_peer(
+        &mut self,
+        node: Node,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    ) {
         debug!("New peer connected");
 
         let new_peer_id = node.node_id();
 
-        let new_peer = PeerData::new(node, None, channels);
+        let new_peer = PeerData::new(node, None, channels, capabilities);
 
         self.peers.lock().await.insert(new_peer_id, new_peer);
     }
@@ -147,6 +157,12 @@ impl Kademlia {
                     .map(|peer_channels| (*peer_id, peer_channels))
             })
             .collect()
+    }
+
+    pub async fn get_peer_channel(&self, peer_id: H256) -> Option<PeerChannels> {
+        let peers = self.peers.lock().await;
+        let peer_data = peers.get(&peer_id)?;
+        peer_data.channels.clone()
     }
 }
 

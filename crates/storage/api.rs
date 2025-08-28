@@ -240,6 +240,24 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
+    /// Obtain a state trie locked for reads from the given state root
+    /// Doesn't check if the state root is valid
+    /// Used for internal store operations
+    fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        self.open_state_trie(state_root)
+    }
+
+    /// Obtain a read-locked storage trie from the given address and storage_root
+    /// Doesn't check if the account is stored
+    /// Used for internal store operations
+    fn open_locked_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        self.open_storage_trie(hashed_address, storage_root)
+    }
+
     async fn forkchoice_update(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
@@ -297,10 +315,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
 
     /// Sets the state trie paths in need of healing
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError>;
 
     /// Gets the state trie paths in need of healing
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
