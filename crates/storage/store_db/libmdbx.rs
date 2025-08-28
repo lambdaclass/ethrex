@@ -523,6 +523,12 @@ impl StoreEngine for Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))
             .map_err(StoreError::LibmdbxError)?;
 
+        // Get the delta of the total size of the tables
+        let state_trie_total_size_delta =
+            stats_post_state_nodes.total_size() - stats_pre_state_nodes.total_size();
+        let storage_trie_total_size_delta =
+            stats_post_storage_nodes.total_size() - stats_pre_storage_nodes.total_size();
+
         tracing::info!(
             state_trie_entries_delta = stats_post_state_nodes.entries() as isize
                 - stats_pre_state_nodes.entries() as isize,
@@ -532,7 +538,9 @@ impl StoreEngine for Store {
                 - stats_pre_storage_nodes.entries() as isize,
             storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
                 - stats_pre_storage_log.entries() as isize,
-            "[PRUNING METRICS]",
+            state_trie_total_size_delta = state_trie_total_size_delta,
+            storage_trie_total_size_delta = storage_trie_total_size_delta,
+            "[PRUNING]",
         );
 
         debug_assert_eq!(
