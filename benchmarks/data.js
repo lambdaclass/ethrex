@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756390558164,
+  "lastUpdate": 1756391773569,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -23919,6 +23919,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0002548186638388123,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "1b6d10d635c28db2b22d6326e021f71b72cf8626",
+          "message": "fix: recompile to rkyv",
+          "timestamp": "2025-08-28T10:37:59Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4195/commits/1b6d10d635c28db2b22d6326e021f71b72cf8626"
+        },
+        "date": 1756391755425,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.001922352,
             "unit": "Mgas/s"
           }
         ]
