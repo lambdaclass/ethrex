@@ -769,8 +769,18 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
+                let is_l2_mode = state.l2_state.is_supported();
                 let mut valid_txs = vec![];
                 for tx in txs.transactions {
+                    // Reject blob transactions in L2 mode
+                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
+                        log_peer_warn(
+                            &state.node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
+                    }
+                    
                     // Mark as broadcasted for the sender so we don't include it in the next
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
@@ -859,7 +869,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
-                msg.handle(&state.node, &state.blockchain).await?;
+                let is_l2_mode = state.l2_state.is_supported();
+                msg.handle(&state.node, &state.blockchain, is_l2_mode).await?;
             }
         }
         Message::GetStorageRanges(req) => {
