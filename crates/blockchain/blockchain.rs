@@ -15,16 +15,15 @@ use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
+    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -351,27 +350,6 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        // // Build account storage root hashes.
-        // // NOTE: This is not needed for building `RpcExecutionWitness`.
-        // let mut account_storage_root_hashes = HashMap::new();
-        // for address in touched_account_storage_slots.keys() {
-        //     let Some(account_state) = trie.get(&hash_address(address)).map_err(|_e| {
-        //         ChainError::WitnessGeneration("Failed to access account from trie".to_string())
-        //     })?
-        //     else {
-        //         continue;
-        //     };
-
-        //     let AccountState { storage_root, .. } =
-        //         AccountState::decode(&account_state).map_err(|_| {
-        //             ChainError::WitnessGeneration(format!(
-        //                 "Invalid account state for address: {address:#x}"
-        //             ))
-        //         })?;
-
-        //     account_storage_root_hashes.insert(*address, storage_root);
-        // }
-
         let mut state_nodes = HashMap::new();
         for node in used_trie_nodes.into_iter() {
             let hash = Keccak256::digest(&node);
@@ -390,7 +368,6 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
-            // account_storage_root_hashes,
             touched_account_storage_slots,
         })
     }

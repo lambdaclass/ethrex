@@ -4,13 +4,11 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        AccountState, BlockHeader, ChainConfig,
+        BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::hash_address;
-use ethrex_trie::{NodeHash, Trie};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -112,37 +110,6 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes.insert(keccak(&node), node.to_vec());
     }
 
-    let state_trie = Trie::from_nodes(
-        NodeHash::Hashed(parent_header.state_root),
-        state_nodes
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (NodeHash::Hashed(k), v))
-            .collect(),
-    )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))?;
-
-    let mut account_storage_root_hashes = HashMap::new();
-    for address in rpc_witness
-        .keys
-        .iter()
-        .filter(|key| key.len() == Address::len_bytes())
-        .map(|key| Address::from_slice(key))
-    {
-        let Ok(Some(account_state)) = state_trie.get(&hash_address(&address)) else {
-            continue;
-        };
-
-        let AccountState { storage_root, .. } =
-            AccountState::decode(&account_state).map_err(|_| {
-                ExecutionWitnessError::RebuildTrie(format!(
-                    "Invalid account state for address: {address:#x}"
-                ))
-            })?;
-
-        account_storage_root_hashes.insert(address, storage_root);
-    }
-
     let mut touched_account_storage_slots = HashMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
@@ -166,7 +133,6 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: parent_header,
         state_nodes,
-        // account_storage_root_hashes,
         touched_account_storage_slots,
     };
 

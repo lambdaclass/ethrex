@@ -52,12 +52,6 @@ pub struct ExecutionWitnessResult {
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: HashMap<H256, NodeRLP>,
-    // /// This maps account addresses to their storage root hashes.
-    // /// It is used to quickly find the root hash of an account's storage trie.
-    // /// This is precomputed during ExecutionWitness construction to avoid to avoid
-    // /// recomputing it when rebuilding storage tries.
-    // #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256Wrapper>)]
-    // pub account_storage_root_hashes: HashMap<Address, H256>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to the last storage slot that was accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -115,7 +109,6 @@ impl ExecutionWitnessResult {
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
     pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
-        // let account_storage_root_hash = self.account_storage_root_hashes.get(address)?;
         let account_state_rlp = self
             .state_trie
             .as_ref()?
