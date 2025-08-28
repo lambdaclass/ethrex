@@ -32,7 +32,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
@@ -65,11 +65,10 @@ jobs:
           cp target/release/rex /usr/local/bin
 
       - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+        uses: ./.github/actions/build-docker
         with:
-          context: .
-          tags: ethrex:unstable
-          push: false
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Start L1 & Deploy contracts
         run: |
