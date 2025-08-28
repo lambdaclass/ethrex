@@ -112,6 +112,10 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
+        info!(
+            "[DEBUG DB ISSUE] Inside execute_block for block {}",
+            block.header.number
+        );
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone()).await?;
@@ -120,20 +124,24 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config()?;
 
+        info!("[DEBUG DB ISSUE] VALIDATING BLOCK");
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
+        info!("[DEBUG DB ISSUE] Creating VM");
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
-
+        info!("[DEBUG DB ISSUE] VM created");
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
+        info!("[DEBUG DB ISSUE] Account updates");
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
+        info!("[DEBUG DB ISSUE] FINISHED EXECUTING BLOCK");
         Ok((execution_result, account_updates))
     }
 
@@ -387,9 +395,15 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        info!("[DEBUG DB ISSUE] Adding block {}", block.header.number);
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
+
+        info!(
+            "[DEBUG DB ISSUE] execute_block completed for block {}",
+            block.header.number
+        );
 
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
@@ -398,10 +412,13 @@ impl Blockchain {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        info!("[DEBUG DB ISSUE] Finished applying account updates");
+
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        info!("[DEBUG DB ISSUE] Finished storing block");
         result
     }
 
