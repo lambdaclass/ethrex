@@ -501,7 +501,7 @@ impl DumpIpcReader {
         "id": 1,
         "jsonrpc": "2.0",
         "method": "debug_accountRange",
-        "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, false]
+        "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, true]
         });
         let response = send_ipc_json_request(&mut self.stream, request).await?;
         info!("IPC res: {response}");
