@@ -325,7 +325,7 @@ pub struct WatcherOptions {
     pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
-        default_value = "1000",
+        default_value = "12000", // One L1 slot
         value_name = "UINT64",
         env = "ETHREX_WATCHER_WATCH_INTERVAL",
         help = "How often the L1 watcher checks for new blocks in milliseconds.",
