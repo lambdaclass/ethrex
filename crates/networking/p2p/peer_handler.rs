@@ -30,7 +30,7 @@ use crate::{
     utils::{dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file},
 };
 use tracing::{debug, error, info, trace, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);

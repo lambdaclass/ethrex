@@ -14,8 +14,7 @@ use tokio::sync::mpsc::Sender;
 use crate::{
     kademlia::PeerChannels,
     peer_handler::{
-        BlockRequestOrder, BytecodeRequestTaskResult, HASH_MAX, PEER_REPLY_TIMEOUT,
-        StorageRequestTaskResult,
+        BlockRequestOrder, BytecodeRequestTaskResult, HASH_MAX, StorageRequestTaskResult,
     },
     rlpx::{
         Message as RLPxMessage,
@@ -33,6 +32,14 @@ use crate::{
 };
 
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+
+pub const RECEIPTS_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const BLOCK_BODIES_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+pub const BLOCK_HEADERS_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+pub const BYTECODE_REPLY_TIMEOUT: Duration = Duration::from_secs(4);
+pub const ACCOUNT_RANGE_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+pub const STORAGE_RANGE_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+pub const CURRENT_HEAD_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
 use tracing::{debug, error, warn};
 
@@ -156,7 +163,7 @@ impl GenServer for Downloader {
                 }
 
                 let peer_id = self.peer_id;
-                match tokio::time::timeout(Duration::from_millis(100), async move {
+                match tokio::time::timeout(CURRENT_HEAD_REPLY_TIMEOUT, async move {
                     self.peer_channels.receiver.lock().await.recv().await
                 })
                 .await
@@ -207,7 +214,7 @@ impl GenServer for Downloader {
                 }
 
                 let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                if let Some(receipts) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::Receipts(receipts)) => {
@@ -254,7 +261,7 @@ impl GenServer for Downloader {
                 }
 
                 if let Some(block_bodies) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
+                    tokio::time::timeout(BLOCK_BODIES_REPLY_TIMEOUT, async move {
                         loop {
                             match receiver.recv().await {
                                 Some(RLPxMessage::BlockBodies(BlockBodies {
@@ -302,7 +309,7 @@ impl GenServer for Downloader {
                     debug!("Failed to send message to peer: {err:?}");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
                 }
-                if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                if let Some(nodes) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
@@ -372,29 +379,31 @@ impl GenServer for Downloader {
                     return CastResponse::Stop;
                 };
 
-                let block_headers = match tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                                if id == request_id =>
-                            {
-                                return Some(block_headers);
+                let block_headers =
+                    match tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::BlockHeaders(BlockHeaders {
+                                    id,
+                                    block_headers,
+                                })) if id == request_id => {
+                                    return Some(block_headers);
+                                }
+                                // Ignore replies that don't match the expected id (such as late responses)
+                                Some(_) => continue,
+                                None => return None, // EOF
                             }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None, // EOF
                         }
-                    }
-                })
-                .await
-                {
-                    Ok(Some(headers)) => headers,
-                    _ => {
-                        let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
-                        self.send_through_response_channel(task_sender, msg).await;
-                        return CastResponse::Stop;
-                    }
-                };
+                    })
+                    .await
+                    {
+                        Ok(Some(headers)) => headers,
+                        _ => {
+                            let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                            self.send_through_response_channel(task_sender, msg).await;
+                            return CastResponse::Stop;
+                        }
+                    };
 
                 if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                     let msg = (
@@ -442,7 +451,7 @@ impl GenServer for Downloader {
                     return CastResponse::Stop;
                 }
                 if let Some((accounts, proof)) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
+                    tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
                         loop {
                             match receiver.recv().await {
                                 Some(RLPxMessage::AccountRange(AccountRange {
@@ -547,7 +556,7 @@ impl GenServer for Downloader {
                     return CastResponse::Stop;
                 }
 
-                if let Some(codes) = tokio::time::timeout(Duration::from_secs(4), async move {
+                if let Some(codes) = tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
@@ -629,22 +638,23 @@ impl GenServer for Downloader {
                         .await;
                     return CastResponse::Stop;
                 }
-                let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::StorageRanges(StorageRanges {
-                                id,
-                                slots,
-                                proof,
-                            })) if id == request_id => return Some((slots, proof)),
-                            Some(_) => continue,
-                            None => return None,
+                let request_result =
+                    tokio::time::timeout(STORAGE_RANGE_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::StorageRanges(StorageRanges {
+                                    id,
+                                    slots,
+                                    proof,
+                                })) if id == request_id => return Some((slots, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
                         }
-                    }
-                })
-                .await
-                .ok()
-                .flatten();
+                    })
+                    .await
+                    .ok()
+                    .flatten();
                 let Some((slots, proof)) = request_result else {
                     tracing::debug!("Failed to get storage range");
                     self.send_through_response_channel(task_sender, empty_task_result)
