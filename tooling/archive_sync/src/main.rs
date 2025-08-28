@@ -19,7 +19,6 @@ use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
 use hasher::HasherKeccak;
 use keccak_hash::keccak;
-use num_bigint::BigUint;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -42,9 +41,15 @@ const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 struct Dump {
     #[serde(rename = "root")]
     state_root: H256,
-    accounts: HashMap<Address, DumpAccount>,
+    accounts: HashMap<MaybeAddress, DumpAccount>,
     #[serde(default)]
     next: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+enum MaybeAddress {
+    Address(Address),
+    HashesAddress(H256),
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -60,18 +65,53 @@ struct DumpAccount {
     code: Bytes,
     #[serde(default)]
     storage: HashMap<H256, U256>,
-    #[serde(deserialize_with = "deser_address")]
     address: Option<Address>,
     #[serde(rename = "key")]
     hashed_address: Option<H256>,
 }
 
-fn deser_address<'de, D>(d: D) -> Result<Option<Address>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            Ok(Address::deserialize(d).ok())
+use serde::de::Error;
+use std::str::FromStr;
+
+impl<'de> Deserialize<'de> for MaybeAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Check if it is an address or a pre(hashed_address)
+        let str = String::deserialize(deserializer)?;
+        if let Some(str) = str.strip_prefix("pre(") {
+            Ok(MaybeAddress::HashesAddress(
+                H256::from_str(str.trim_end_matches(")")).map_err(|err| D::Error::custom(err))?,
+            ))
+        } else {
+            Ok(MaybeAddress::Address(
+                Address::from_str(&str).map_err(|err| D::Error::custom(err))?,
+            ))
         }
+    }
+}
+
+impl Serialize for MaybeAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            MaybeAddress::Address(address) => address.serialize(serializer),
+            MaybeAddress::HashesAddress(hash) => serializer.serialize_str(&format!("pre({hash})")),
+        }
+    }
+}
+
+impl MaybeAddress {
+    fn to_hashed(self) -> H256 {
+        match self {
+            MaybeAddress::Address(address) => keccak(address),
+            MaybeAddress::HashesAddress(hashed) => hashed,
+        }
+    }
+}
 
 fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {
     let memdb = Arc::new(CitaMemoryDB::new(true));
@@ -128,7 +168,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
-            .unwrap_or_else(|| keccak(address));
+            .unwrap_or_else(|| address.to_hashed());
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -518,7 +558,10 @@ impl DumpIpcReader {
         let last_key = dump
             .accounts
             .iter()
-            .map(|(addr, acc)| acc.hashed_address.unwrap_or_else(|| keccak(addr)))
+            .map(|(addr, acc)| {
+                acc.hashed_address
+                    .unwrap_or_else(|| addr.clone().to_hashed())
+            })
             .max()
             .unwrap_or_default();
         self.start = hash_next(last_key);
