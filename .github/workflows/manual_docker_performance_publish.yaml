@@ -1,4 +1,4 @@
-name: Publish Docker
+name: Publish Performance tag Docker
 
 on:
   workflow_dispatch:
@@ -33,8 +33,10 @@ jobs:
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v6
+        uses: ./.github/actions/build-docker
         with:
-          context: .
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance

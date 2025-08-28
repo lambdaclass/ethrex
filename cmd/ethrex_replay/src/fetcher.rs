@@ -37,7 +37,7 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{requested_block_number}.json");
+    let file_name = format!("cache_{network}_{requested_block_number}.bin");
 
     if let Ok(cache) = load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
@@ -243,7 +243,7 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{from}-{to}.json");
+    let file_name = format!("cache_{network}_{from}-{to}.bin");
 
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting block range data from cache");
@@ -264,7 +264,7 @@ pub async fn get_batchdata(
     chain_config: ChainConfig,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_batch_{batch_number}.json");
+    let file_name = format!("cache_batch_{batch_number}.bin");
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);

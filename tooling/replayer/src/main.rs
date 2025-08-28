@@ -4,7 +4,7 @@ use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::{
     block_run_report::{BlockRunReport, ReplayerMode},
-    cli::{SubcommandExecute, SubcommandProve},
+    cli::{REPLAYER_MODE, SubcommandExecute, SubcommandProve},
     slack::{SlackWebHookBlock, SlackWebHookRequest},
 };
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
@@ -14,6 +14,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 #[derive(Parser)]
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
+#[clap(group = clap::ArgGroup::new("modes").required(true))]
 pub struct Options {
     #[arg(
         long,
@@ -50,7 +51,7 @@ pub struct Options {
         long,
         default_value_t = false,
         value_name = "BOOLEAN",
-        conflicts_with = "prove",
+        group = "modes",
         help = "Replayer will execute blocks",
         help_heading = "Replayer options"
     )]
@@ -59,7 +60,7 @@ pub struct Options {
         long,
         default_value_t = false,
         value_name = "BOOLEAN",
-        conflicts_with = "execute",
+        group = "modes",
         help = "Replayer will prove blocks",
         help_heading = "Replayer options"
     )]
@@ -71,6 +72,22 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub start_block: Option<usize>,
+    #[arg(
+        long,
+        short = 'l',
+        value_name = "LEVEL",
+        default_value = "all",
+        help = "Block cache level: off, failed, all (default: all)",
+        help_heading = "Replayer options"
+    )]
+    pub cache_level: CacheLevel,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
+pub enum CacheLevel {
+    Off,
+    Failed,
+    All,
 }
 
 #[tokio::main]
@@ -78,11 +95,6 @@ async fn main() {
     init_tracing();
 
     let opts = Options::parse();
-
-    if !opts.execute && !opts.prove {
-        tracing::error!("You must specify either --execute or --prove.");
-        std::process::exit(1);
-    }
 
     if opts.slack_webhook_url.is_none() {
         tracing::warn!(
@@ -109,20 +121,14 @@ async fn main() {
         ] {
             let slack_webhook_url = opts.slack_webhook_url.clone();
 
-            #[cfg(feature = "sp1")]
-            let replayer_mode = ReplayerMode::ExecuteSP1;
-            #[cfg(feature = "risc0")]
-            let replayer_mode = ReplayerMode::ExecuteRISC0;
-            #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-            let replayer_mode = ReplayerMode::Execute;
-
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
                     replay_execution(
-                        replayer_mode,
+                        REPLAYER_MODE,
                         network,
                         rpc_url,
                         slack_webhook_url,
+                        opts.cache_level,
                         opts.start_block,
                     )
                     .await
@@ -137,16 +143,9 @@ async fn main() {
         let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
         let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
 
-        #[cfg(feature = "sp1")]
-        let replayer_mode = ReplayerMode::ProveSP1;
-        #[cfg(feature = "risc0")]
-        let replayer_mode = ReplayerMode::ProveRISC0;
-        #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-        let replayer_mode = ReplayerMode::Execute;
-
         let handle = tokio::spawn(async move {
             replay_proving(
-                replayer_mode,
+                REPLAYER_MODE,
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (
@@ -159,6 +158,7 @@ async fn main() {
                     ),
                 ],
                 slack_webhook_url,
+                opts.cache_level,
                 opts.start_block,
             )
             .await
@@ -225,6 +225,7 @@ async fn replay_execution(
     network: Network,
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
     from: Option<usize>,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
@@ -250,6 +251,7 @@ async fn replay_execution(
             rpc_url.clone(),
             &eth_client,
             slack_webhook_url.clone(),
+            cache_level,
             block_number,
         )
         .await?;
@@ -265,6 +267,7 @@ async fn replay_proving(
     replayer_mode: ReplayerMode,
     rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
     from: Option<usize>,
 ) -> Result<(), EthClientError> {
     let eth_client = EthClient::new(rpc_urls[0].0.clone().unwrap().as_str()).unwrap();
@@ -295,6 +298,7 @@ async fn replay_proving(
                 rpc_url.clone(),
                 &eth_client,
                 slack_webhook_url.clone(),
+                cache_level,
                 block_number,
             )
             .await?;
@@ -316,6 +320,7 @@ async fn replay_block(
     rpc_url: Url,
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
+    cache_level: CacheLevel,
     block_number: usize,
 ) -> Result<Duration, EthClientError> {
     if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
@@ -371,6 +376,32 @@ async fn replay_block(
         tracing::error!("{block_run_report}");
     } else {
         tracing::info!("{block_run_report}");
+    }
+
+    // Caching logic: In replay every block is cached. So here we decide whether to keep the cache or not
+    match cache_level {
+        CacheLevel::Off => {
+            // We don't want any cache
+            tracing::info!("Deleting cache: Caching is disabled");
+            delete_cache(network, latest_block as u64);
+        }
+        CacheLevel::Failed => {
+            // We only want caches that failed
+            if block_run_report.run_result.is_ok() {
+                tracing::info!(
+                    "Deleting cache: Execution was successful and Cache Level is 'failed'"
+                );
+                delete_cache(network, latest_block as u64);
+            } else {
+                // I prefer to be explicit about keeping the cache file
+                tracing::info!(
+                    "Keeping cache file for block {} on network {} because execution failed.",
+                    latest_block,
+                    network
+                );
+            }
+        }
+        CacheLevel::All => {}
     }
 
     if replayer_mode.is_proving_mode()
@@ -472,6 +503,16 @@ fn shutdown(handles: Vec<JoinHandle<Result<(), EthClientError>>>) {
     for handle in handles {
         if !handle.is_finished() {
             handle.abort();
+        }
+    }
+}
+
+fn delete_cache(network: Network, block_number: u64) {
+    // This file_name is the same used in ethrex_replay, this is a quick and simple solution but not ideal. Be aware that if we decide to change the name we have to do it in both places.
+    let file_name = format!("cache_{network}_{block_number}.bin");
+    if let Err(e) = std::fs::remove_file(&file_name) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::error!("Failed to delete cache file {}: {}", file_name, e);
         }
     }
 }

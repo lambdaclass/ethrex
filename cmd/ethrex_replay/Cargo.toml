@@ -32,7 +32,7 @@ reqwest.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 eyre.workspace = true
-tokio = { version = "1.21", default-features = false, features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
@@ -41,6 +41,7 @@ bytes.workspace = true
 again = "0.1.2"
 futures-util = "0.3.31"
 tokio-utils = "0.1.2"
+rkyv.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 

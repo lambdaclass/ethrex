@@ -17,7 +17,7 @@ reqwest.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 eyre.workspace = true
-tokio = { version = "1.21", default-features = false, features = ["full"] }
+tokio = { workspace = true, default-features = false, features = ["full"] }
 clap.workspace = true
 futures.workspace = true
 
