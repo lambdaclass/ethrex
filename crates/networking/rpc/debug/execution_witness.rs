@@ -47,9 +47,9 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
         let touched_account_storage_slots = value.touched_account_storage_slots;
 
         for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(Bytes::from(address.as_bytes().to_vec()));
+            keys.push(Bytes::copy_from_slice(address.as_bytes()));
             for slot in touched_storage_slots.iter() {
-                keys.push(Bytes::from(slot.as_bytes().to_vec()));
+                keys.push(Bytes::copy_from_slice(slot.as_bytes()));
             }
         }
 
