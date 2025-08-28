@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756401832912,
+  "lastUpdate": 1756406342086,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10585,6 +10585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160904292171,
             "range": "± 256255125",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a4de96d6c60293d357a0ab36bcaf43f35a45d263",
+          "message": "feat(l1, l2): preprocess execution witness data (#4172)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nBlock execution and proving replay using SP1 is currently very slow due\nto some computation being done inside the zkVM that can be avoided.\n\n**Description**\n\nThis PR aims to perform said zkVM-expensive computation prior to zkVM\nexecution.\n\nThis PR adds 3 convenient fields to `ExecutionWitnessResult`:\n- `state_nodes: HashMap<H256, NodeRLP>`: A map that associates a MPT\nnode hash to its raw RLP-encoded form. This is convenient because by\nhaving this generated before execution inside the zkVM we avoid some\nprover-expensive computation like hashing each node.\n- `account_storage_root_hashes: HashMap<Address, H256>`: A map that\nassociates an account address to its storage root hash. It is convenient\nto have this precomputed before execution inside the zkVM because we\navoid doing this association inside the zkVM (which is expensive, mainly\nbecause of the hashing and recurrent iteration over all the MPT nodes).\n- `touched_account_storage_slots: HashMap<Address, Vec<H256>>`: This\nstructure that it's only purpose is to track the accessed account\nstorage slots. It is necessary to serve the `debug_executionWitness`\nrequests properly.\n\n**Samply Results**\n\n**Before**\n\n<img width=\"1920\" height=\"583\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/f14fd34c-3a4b-4a2e-b3fa-5804aa818da4\"\n/>\n\n**After**\n\n<img width=\"1918\" height=\"433\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/9cdf0dc1-904d-40d2-9bbd-d8bad0aee1d9\"\n/>\n\n---------\n\nCo-authored-by: Tomás Paradelo <tomas.paradelo@lambdaclass.com>",
+          "timestamp": "2025-08-28T17:36:50Z",
+          "tree_id": "fe6390c580ce64abbc18f1a3dee38eb33e5916cd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a4de96d6c60293d357a0ab36bcaf43f35a45d263"
+        },
+        "date": 1756406325835,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 158950567483,
+            "range": "± 244948525",
             "unit": "ns/iter"
           }
         ]
