@@ -2,6 +2,7 @@ lazy_static::lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
+use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
@@ -16,12 +17,14 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
+use hasher::HasherKeccak;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -59,6 +62,13 @@ struct DumpAccount {
     address: Option<Address>,
     #[serde(rename = "key")]
     hashed_address: Option<H256>,
+}
+
+fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {
+    let memdb = Arc::new(CitaMemoryDB::new(true));
+    let hasher = Arc::new(HasherKeccak::new());
+
+    CitaTrie::new(Arc::clone(&memdb), Arc::clone(&hasher))
 }
 
 pub async fn archive_sync(
@@ -146,6 +156,7 @@ async fn process_dump_storage(
 ) -> eyre::Result<()> {
     info!("processing dump storage: {dump_storage:?}");
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    let mut cita_trie = cita_trie();
     for (key, val) in dump_storage {
         info!("Adding key: {key}, value {val:#x}");
         // The key we receive is the preimage of the one stored in the trie
@@ -154,9 +165,18 @@ async fn process_dump_storage(
         let val_dec = U256::decode(&val_enc).unwrap();
         assert_eq!(valu, val_dec);
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
+        cita_trie
+            .insert(keccak(key.0).0.to_vec(), val.encode_to_vec())
+            .unwrap();
     }
+    let cita_hash = cita_trie.root().unwrap();
     if trie.hash()? != storage_root {
-        info!("storage hash mismatch: calced {} vs received {}", trie.hash()?, storage_root);
+        info!(
+            "storage hash mismatch: calced {} vs received {} vs cita {}",
+            trie.hash()?,
+            storage_root,
+            H256::from_slice(&cita_hash)
+        );
         Err(eyre::ErrReport::msg(
             "Storage root doesn't match the one in the account during archive sync",
         ))
