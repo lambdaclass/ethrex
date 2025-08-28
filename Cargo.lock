@@ -575,7 +575,6 @@ dependencies = [
 name = "archive_sync"
 version = "0.1.0"
 dependencies = [
- "cita_trie",
  "clap 4.5.40",
  "clap_complete",
  "ethrex",
@@ -584,7 +583,6 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-storage",
  "eyre",
- "hasher",
  "hex",
  "keccak-hash",
  "lazy_static",
