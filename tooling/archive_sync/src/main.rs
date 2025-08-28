@@ -147,6 +147,7 @@ async fn process_dump_storage(
     info!("processing dump storage: {dump_storage:?}");
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
+        info!("Adding key: {key}, value {val:#x}");
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
