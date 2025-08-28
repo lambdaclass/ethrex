@@ -379,8 +379,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?
         {
             let keep_from = last_num.saturating_sub(keep_blocks);
-            tracing::info!("[PRUNING STATS] Block range analysis: latest_block={}, keep_from={}, will_process_blocks_before={}", 
-                last_num, keep_from, keep_from);
+            tracing::info!(
+                "[PRUNING STATS] Block range analysis: latest_block={}, keep_from={}, will_process_blocks_before={}",
+                last_num,
+                keep_from,
+                keep_from
+            );
 
             let mut cursor_state_trie = tx
                 .cursor::<StateTrieNodes>()
@@ -394,7 +398,7 @@ impl StoreEngine for Store {
                 // If the block number is higher than the keep from, we can stop
                 // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::debug!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
+                    tracing::info!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
                     break;
                 }
 
@@ -474,7 +478,7 @@ impl StoreEngine for Store {
                 // If the block number is higher than the keep from, we can stop
                 // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::debug!(
+                    tracing::info!(
                         keep_from = keep_from,
                         last_num = last_num,
                         "[STOPPING STORAGE TRIE PRUNING]"
@@ -571,7 +575,7 @@ impl StoreEngine for Store {
             + storage_trie_entries_delta
             + state_trie_log_entries_delta
             + storage_trie_log_entries_delta)
-            .abs() as usize;
+            .unsigned_abs();
         let total_space_freed = (state_trie_size_delta
             + storage_trie_size_delta
             + state_trie_log_size_delta
