@@ -133,6 +133,7 @@ impl Blockchain {
         let mut vm = self.new_evm(vm_db)?;
         info!("[DEBUG DB ISSUE] VM created");
         let execution_result = vm.execute_block(block)?;
+        info!("[DEBUG DB ISSUE] Execution result");
         let account_updates = vm.get_state_transitions()?;
 
         info!("[DEBUG DB ISSUE] Account updates");

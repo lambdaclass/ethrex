@@ -3,6 +3,7 @@ use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
+use tracing::{debug, error};
 
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
@@ -33,16 +34,26 @@ impl DatabaseLogger {
 
 impl LevmDatabase for DatabaseLogger {
     fn get_account_info(&self, address: CoreAddress) -> Result<AccountInfo, DatabaseError> {
+        debug!("[DEBUG DB ISSUE] Getting account info for address: {:?}", address);
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        let info = self
+        let info = match self
             .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_info(address)?;
+            .get_account_info(address) {
+            Ok(info) => {
+                debug!("[DEBUG DB ISSUE] Successfully got account info for: {:?}", address);
+                info
+            },
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Failed to get account info for {:?}: {:?}", address, e);
+                return Err(e);
+            }
+        };
         Ok(info)
     }
 
@@ -51,16 +62,26 @@ impl LevmDatabase for DatabaseLogger {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<CoreU256, DatabaseError> {
+        debug!("[DEBUG DB ISSUE] Getting storage value for address: {:?}, key: {:?}", address, key);
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .and_modify(|keys| keys.push(key))
             .or_insert(vec![key]);
-        self.store
+        match self.store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_storage_value(address, key)
+            .get_storage_value(address, key) {
+            Ok(value) => {
+                debug!("[DEBUG DB ISSUE] Successfully got storage value for {:?}:{:?}", address, key);
+                Ok(value)
+            },
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Failed to get storage value for {:?}:{:?}: {:?}", address, key, e);
+                Err(e)
+            }
+        }
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
@@ -77,15 +98,26 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        self.store
+        debug!("[DEBUG DB ISSUE] Getting chain config from database wrapper");
+        match self.store
             .lock()
             .map_err(|_| {
                 DatabaseError::Custom("Could not lock mutex and get chain config".to_string())
             })?
-            .get_chain_config()
+            .get_chain_config() {
+            Ok(config) => {
+                debug!("[DEBUG DB ISSUE] Successfully got chain config from database wrapper");
+                Ok(config)
+            },
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Failed to get chain config from database wrapper: {:?}", e);
+                Err(e)
+            }
+        }
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
+        debug!("[DEBUG DB ISSUE] Getting account code for hash: {:?}", code_hash);
         if code_hash != *EMPTY_KECCACK_HASH {
             let mut code_accessed = self
                 .code_accessed
@@ -93,10 +125,19 @@ impl LevmDatabase for DatabaseLogger {
                 .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
             code_accessed.push(code_hash);
         }
-        self.store
+        match self.store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_code(code_hash)
+            .get_account_code(code_hash) {
+            Ok(code) => {
+                debug!("[DEBUG DB ISSUE] Successfully got account code for hash: {:?}", code_hash);
+                Ok(code)
+            },
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Failed to get account code for hash {:?}: {:?}", code_hash, e);
+                Err(e)
+            }
+        }
     }
 }
 

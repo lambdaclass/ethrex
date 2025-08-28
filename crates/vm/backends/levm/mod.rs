@@ -7,6 +7,7 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
+use ::tracing::{error, info};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -51,7 +52,12 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            info!("[DEBUG DB ISSUE] Executing transaction: {:?}", tx.hash());
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            info!(
+                "[DEBUG DB ISSUE] Transaction completed successfully: {:?}",
+                tx.hash()
+            );
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -85,7 +91,17 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
     ) -> Result<Environment, EvmError> {
-        let chain_config = db.store.get_chain_config()?;
+        info!("[DEBUG DB ISSUE] Getting chain config from database");
+        let chain_config = match db.store.get_chain_config() {
+            Ok(config) => {
+                info!("[DEBUG DB ISSUE] Successfully got chain config");
+                config
+            }
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Failed to get chain config: {:?}", e);
+                return Err(e.into());
+            }
+        };
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::TxValidation(
@@ -130,10 +146,32 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        info!("[DEBUG DB ISSUE] Setting up environment for transaction");
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
-        vm.execute().map_err(VMError::into)
+        info!("[DEBUG DB ISSUE] Creating VM instance");
+        let mut vm = match VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type) {
+            Ok(vm) => {
+                info!("[DEBUG DB ISSUE] VM created successfully");
+                vm
+            }
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] VM creation failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
+
+        info!("[DEBUG DB ISSUE] Executing transaction in VM");
+        match vm.execute() {
+            Ok(report) => {
+                info!("[DEBUG DB ISSUE] Transaction executed successfully");
+                Ok(report)
+            }
+            Err(e) => {
+                error!("[DEBUG DB ISSUE] Transaction execution failed: {:?}", e);
+                Err(e.into())
+            }
+        }
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
