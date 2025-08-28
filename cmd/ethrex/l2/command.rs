@@ -302,6 +302,7 @@ impl Command {
             } => {
                 cfg_if::cfg_if! {
                     if #[cfg(feature = "libmdbx")] {
+
                         let store_type = EngineType::Libmdbx;
                     } else {
                         eyre::bail!("Expected libmdbx store engine");
@@ -385,6 +386,7 @@ impl Command {
                         blocks: vec![],
                         receipts: vec![],
                         code_updates: vec![],
+                        invalidated_state_nodes: vec![],
                     };
 
                     store

@@ -1183,7 +1183,7 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_state_root, changes) = storage_trie.collect_changes_since_last_hash();
+    let (computed_state_root, changes, _) = storage_trie.collect_changes_since_last_hash();
 
     maybe_big_account_storage_state_roots_clone
         .lock()

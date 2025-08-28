@@ -10,12 +10,20 @@ use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 
+/// The number of blocks to keep when pruning, we keep the last `KEEP_BLOCKS` of the state and
+/// storage tries.
+
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+
+    /// Prune the state and storage trie from the pruning log
+    /// It will iterate over the pruning log and remove nodes from the state and storage tries
+    /// that are older than the `keep_blocks` value.
+    fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
