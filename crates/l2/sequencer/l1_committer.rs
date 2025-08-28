@@ -576,7 +576,7 @@ impl GenServer for L1Committer {
                 .get_last_committed_batch(self.on_chain_proposer_address)
                 .await
                 .unwrap_or(self.last_committed_batch);
-            let Some(current_time_ms) = utils::system_now_ms() else {
+            let Some(current_time) = utils::system_now_ms() else {
                 let check_interval = random_duration(self.committer_wake_up_ms);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
                 return CastResponse::NoReply;
@@ -585,15 +585,15 @@ impl GenServer for L1Committer {
             // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
             if current_last_committed_batch > self.last_committed_batch {
                 self.last_committed_batch = current_last_committed_batch;
-                self.last_committed_batch_timestamp = current_time_ms;
+                self.last_committed_batch_timestamp = current_time;
                 let check_interval = random_duration(self.committer_wake_up_ms);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
                 return CastResponse::NoReply;
             }
 
-            let commit_time_ms: u128 = self.commit_time_ms.into();
+            let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
-                current_time_ms - self.last_committed_batch_timestamp > commit_time_ms;
+                current_time - self.last_committed_batch_timestamp > commit_time;
             #[allow(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
@@ -602,8 +602,7 @@ impl GenServer for L1Committer {
                     .inspect_err(|e| error!("L1 Committer Error: {e}"))
                     .is_ok()
                 {
-                    self.last_committed_batch_timestamp =
-                        system_now_ms().unwrap_or(current_time_ms);
+                    self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time);
                     self.last_committed_batch = current_last_committed_batch + 1;
                 }
             }
