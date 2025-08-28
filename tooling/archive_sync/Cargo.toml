@@ -22,4 +22,5 @@ serde_json.workspace = true
 hex.workspace = true
 ethrex.workspace = true
 cita_trie = "4.0.0" 
-hasher = "0.1.4" 
+hasher = "0.1.4"
+num-bigint = "0.4.6" 
