@@ -6,6 +6,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
@@ -39,6 +40,7 @@ use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
+use std::borrow::Cow;
 use std::ops::Mul;
 
 use crate::{
@@ -256,12 +258,15 @@ pub(crate) fn increase_precompile_consumed_gas(
 }
 
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
-/// more than `target_len`, the excess bytes are discarded.
+/// more than `target_len`, the excess bytes are kept.
+#[inline(always)]
 pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
-    let mut padded_calldata = calldata.to_vec();
-    if padded_calldata.len() < target_len {
-        padded_calldata.resize(target_len, 0);
+    if calldata.len() >= target_len {
+        // this clone is cheap (Arc)
+        return calldata.clone();
     }
+    let mut padded_calldata = calldata.to_vec();
+    padded_calldata.resize(target_len, 0);
     padded_calldata.into()
 }
 
@@ -321,18 +326,19 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
     let uncompressed = vk.to_encoded_point(false);
+    let mut uncompressed = uncompressed.to_bytes();
     #[allow(clippy::indexing_slicing)]
-    let mut xy = uncompressed.as_bytes()[1..65].to_vec();
+    let xy = &mut uncompressed[1..65];
 
     // keccak256(X||Y).
-    keccak256(&mut xy);
+    keccak256(xy);
 
     // Address is the last 20 bytes of the hash.
-    let mut out = vec![0u8; 12];
+    let mut out = [0u8; 32];
     #[allow(clippy::indexing_slicing)]
-    out.extend_from_slice(&xy[12..32]);
+    out[12..32].copy_from_slice(&xy[12..32]);
 
-    Ok(Bytes::from(out))
+    Ok(Bytes::copy_from_slice(&out))
 }
 
 /// Returns the calldata received
@@ -350,9 +356,10 @@ pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let result = sha2::Sha256::digest(calldata).to_vec();
+    let digest = sha2::Sha256::digest(calldata);
+    let result = digest.as_slice();
 
-    Ok(Bytes::from(result))
+    Ok(Bytes::copy_from_slice(result))
 }
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
@@ -376,37 +383,32 @@ pub fn ripemd_160(
 }
 
 /// Returns the result of the module-exponentiation operation
+#[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
 pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = U256::from_big_endian(calldata.get(0..32).ok_or(InternalError::Slicing)?);
-    let exponent_size = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
-    let modulus_size = U256::from_big_endian(calldata.get(64..96).ok_or(InternalError::Slicing)?);
+    // Defer converting to a U256 after the zero check.
+    let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
+    let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
+    const ZERO_BYTES: [u8; 32] = [0u8; 32];
 
-    if fork == Fork::Osaka
-        && (base_size > U256::from(1024)
-            || exponent_size > U256::from(1024)
-            || modulus_size > U256::from(1024))
-    {
-        // Since Osaka if any of these inputs are larger than the limit, the precompile execution stops, returns an error, and consumes all gas
-        *gas_remaining = 0;
-
-        return Err(VMError::ExceptionalHalt(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        )));
-    }
-
-    if base_size == U256::zero() && modulus_size == U256::zero() {
+    if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
-
         return Ok(Bytes::new());
     }
 
-    if base_size > U256::from(1024)
-        || exponent_size > U256::from(1024)
-        || modulus_size > U256::from(1024)
+    // The try_into are infallible and the compiler optimizes them out, even without unsafe.
+    // https://godbolt.org/z/h8rW8M3c4
+    let base_size = u256_from_big_endian_const::<32>(calldata[0..32].try_into()?);
+    let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
+    let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
+
+    if fork == Fork::Osaka
+        && (base_size > U256::from(1024)
+            || modulus_size > U256::from(1024)
+            || exponent_size > U256::from(1024))
     {
         // Since Osaka if any of these inputs are larger than the limit, the precompile execution stops, returns an error, and consumes all gas
         *gas_remaining = 0;
@@ -433,15 +435,14 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         .checked_add(exponent_limit)
         .ok_or(InternalError::Overflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
+
     let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
-
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
     let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
-
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
     let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
         .ok_or(InternalError::TypeConversion)?;
 
@@ -461,30 +462,35 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let result = mod_exp(base, exponent, modulus);
 
     let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
+    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size);
 
     Ok(res_bytes.slice(..modulus_size))
 }
 
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
-fn get_slice_or_default(
-    calldata: &Bytes,
+///
+/// Uses Cow so that the best case of no resizing doesn't require an allocation.
+#[expect(clippy::indexing_slicing, reason = "bounds checked")]
+fn get_slice_or_default<'c>(
+    calldata: &'c Bytes,
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Result<Vec<u8>, VMError> {
+) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit) {
         if !data.is_empty() {
-            let mut extended = vec![0u8; size_to_expand];
-            for (dest, data) in extended.iter_mut().zip(data.iter()) {
-                *dest = *data;
+            if data.len() == size_to_expand {
+                return data.into();
             }
-            return Ok(extended);
+            let mut extended = vec![0u8; size_to_expand];
+            let copy_size = size_to_expand.min(data.len());
+            extended[..copy_size].copy_from_slice(&data[..copy_size]);
+            return extended.into();
         }
     }
-    Ok(Default::default())
+    Vec::new().into()
 }
 
 #[allow(clippy::arithmetic_side_effects)]
@@ -501,20 +507,22 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
 }
 
 /// If the result size is less than needed, pads left with zeros.
-pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
-    let mut padded_result = vec![0u8; m_size];
+#[inline(always)]
+pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing,
+        reason = "overflow checked with the if condition, bounds checked"
+    )]
     if result.len() < m_size {
-        let size_diff = m_size
-            .checked_sub(result.len())
-            .ok_or(InternalError::Underflow)?;
-        padded_result
-            .get_mut(size_diff..)
-            .ok_or(InternalError::Slicing)?
-            .copy_from_slice(result);
+        let mut padded_result = vec![0u8; m_size];
+        let size_diff = m_size - result.len();
+        padded_result[size_diff..].copy_from_slice(result);
 
-        Ok(padded_result.into())
+        padded_result.into()
     } else {
-        Ok(result.clone())
+        // this clone is cheap (Arc)
+        result.clone()
     }
 }
 
