@@ -35,18 +35,26 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub struct Store {
-    db: Arc<Database>,
+    history_db: Arc<Database>,
+    trie_db: Arc<Database>,
 }
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
+            history_db: Arc::new(
+                init_history_db(Some(Path::new(path).join("history")))
+                    .map_err(StoreError::LibmdbxError)?,
+            ),
+            trie_db: Arc::new(
+                init_trie_db(Some(Path::new(path).join("trie")))
+                    .map_err(StoreError::LibmdbxError)?,
+            ),
         })
     }
 
     // Helper method to write into a libmdbx table
     async fn write<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
             txn.upsert::<T>(key, value)
@@ -62,7 +70,7 @@ impl Store {
         &self,
         key_values: Vec<(T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
@@ -80,7 +88,7 @@ impl Store {
 
     // Helper method to read from a libmdbx table
     async fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
             txn.get::<T>(key).map_err(StoreError::LibmdbxError)
@@ -91,7 +99,7 @@ impl Store {
 
     // Helper method to read from a libmdbx table
     async fn read_bulk<T: Table>(&self, keys: Vec<T::Key>) -> Result<Vec<T::Value>, StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let mut res = Vec::new();
             let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
@@ -110,7 +118,10 @@ impl Store {
 
     // Helper method to read from a libmdbx table
     fn read_sync<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
     }
 
@@ -128,58 +139,79 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let history_db = self.history_db.clone();
+        let trie_db = self.trie_db.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // Handle trie database updates
+            let trie_tx = trie_db
+                .begin_readwrite()
+                .map_err(StoreError::LibmdbxError)?;
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                trie_tx
+                    .upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
+            // store storage updates
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                    trie_tx
+                        .upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
+
+            trie_tx.commit().map_err(StoreError::LibmdbxError)?;
+
+            // Handle history database updates
+            let history_tx = history_db
+                .begin_readwrite()
+                .map_err(StoreError::LibmdbxError)?;
+
+            // store code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                history_tx
+                    .upsert::<AccountCodes>(hashed_address.into(), code.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                    history_tx
+                        .upsert::<TransactionLocations>(
+                            transaction.hash().into(),
+                            (number, hash, index as u64).into(),
+                        )
+                        .map_err(StoreError::LibmdbxError)?;
                 }
 
-                tx.upsert::<Bodies>(
-                    hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                history_tx
+                    .upsert::<Bodies>(
+                        hash.into(),
+                        BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
 
-                tx.upsert::<Headers>(
-                    hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                history_tx
+                    .upsert::<Headers>(
+                        hash.into(),
+                        BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)
+                history_tx
+                    .upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
@@ -197,7 +229,9 @@ impl StoreEngine for Store {
                 {
                     key_values.append(&mut entries);
                 }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+                let mut cursor = history_tx
+                    .cursor::<Receipts>()
+                    .map_err(StoreError::LibmdbxError)?;
                 for (key, value) in key_values {
                     cursor
                         .upsert(key, value)
@@ -205,7 +239,7 @@ impl StoreEngine for Store {
                 }
             }
 
-            tx.commit().map_err(StoreError::LibmdbxError)
+            history_tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
@@ -252,7 +286,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
@@ -306,7 +340,7 @@ impl StoreEngine for Store {
             return Ok(());
         };
         let txn = self
-            .db
+            .history_db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
@@ -425,7 +459,10 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let txn = self
+                .history_db
+                .begin_read()
+                .map_err(StoreError::LibmdbxError)?;
             let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
             let key = (hash, index).into();
             IndexedChunk::read_from_db(&mut cursor, key)
@@ -452,7 +489,10 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<TransactionLocations>()
             .map_err(StoreError::LibmdbxError)?;
@@ -570,14 +610,14 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
-            self.db.clone(),
+            self.trie_db.clone(),
             hashed_address.0,
         ));
         Ok(Trie::open(db, storage_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.trie_db.clone()));
         Ok(Trie::open(db, state_root))
     }
 
@@ -670,7 +710,7 @@ impl StoreEngine for Store {
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
@@ -769,7 +809,10 @@ impl StoreEngine for Store {
         let mut receipts = vec![];
         let mut receipt_index = 0;
         let mut key = (*block_hash, 0).into();
-        let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
             .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
@@ -849,7 +892,10 @@ impl StoreEngine for Store {
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageHealPaths>()
             .map_err(StoreError::LibmdbxError)?;
@@ -864,7 +910,7 @@ impl StoreEngine for Store {
 
         // Delete fetched entries from the table
         let txn = self
-            .db
+            .history_db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
         for (hash, _) in res.iter() {
@@ -889,7 +935,7 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
             txn.clear_table::<SnapState>()
@@ -923,7 +969,7 @@ impl StoreEngine for Store {
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
@@ -944,7 +990,7 @@ impl StoreEngine for Store {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
             for (account_hash, (storage_keys, storage_values)) in account_hashes
@@ -1014,7 +1060,7 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snapshot(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.history_db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
             txn.clear_table::<StateSnapShot>()
@@ -1029,7 +1075,10 @@ impl StoreEngine for Store {
     }
 
     fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
@@ -1051,7 +1100,10 @@ impl StoreEngine for Store {
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let txn = self
+            .history_db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
@@ -1380,7 +1432,7 @@ const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 8; // 8 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
+pub fn init_history_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
     let tables = [
         table_info!(BlockNumbers),
         table_info!(Headers),
@@ -1389,8 +1441,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(Receipts),
         table_info!(TransactionLocations),
         table_info!(ChainData),
-        table_info!(StateTrieNodes),
-        table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
         table_info!(Payloads),
         table_info!(PendingBlocks),
@@ -1402,6 +1452,22 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
     ]
     .into_iter()
     .collect();
+    let path = path.map(|p| p.as_ref().to_path_buf());
+    let options = DatabaseOptions {
+        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+        mode: Mode::ReadWrite(ReadWriteOptions {
+            max_size: Some(MAX_MAP_SIZE),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    Database::create_with_options(path, options, &tables)
+}
+
+pub fn init_trie_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
+    let tables = [table_info!(StateTrieNodes), table_info!(StorageTriesNodes)]
+        .into_iter()
+        .collect();
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
