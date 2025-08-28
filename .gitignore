@@ -50,7 +50,7 @@ loc_report_github.txt
 loc_report.json
 
 # used by Flamegraph and Samply
-cmd/ef_tests/state/levm_perfgraphs
+tooling/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json
