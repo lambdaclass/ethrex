@@ -294,11 +294,8 @@ contract OnChainProposer is
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            (bool success, string memory reason) = _verifyPublicData(
-                batchNumber,
-                risc0Journal
-            );
-            if (!success) {
+            string memory reason = _verifyPublicData(batchNumber, risc0Journal);
+            if (reason.length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid RISC0 proof: ",
@@ -321,11 +318,11 @@ contract OnChainProposer is
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            (bool success, string memory reason) = _verifyPublicData(
+            string memory reason = _verifyPublicData(
                 batchNumber,
                 sp1PublicValues[8:]
             );
-            if (!success) {
+            if (reason.length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid SP1 proof: ",
@@ -348,11 +345,11 @@ contract OnChainProposer is
 
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            (bool success, string memory reason) = _verifyPublicData(
+            string memory reason = _verifyPublicData(
                 batchNumber,
                 tdxPublicValues
             );
-            if (!success) {
+            if (reason.length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid TDX proof: ",
@@ -418,11 +415,11 @@ contract OnChainProposer is
             }
 
             // Verify public data for the batch
-            (bool success, string memory reason) = _verifyPublicData(
+            string memory reason = _verifyPublicData(
                 batchNumber,
                 alignedPublicInputsList[i][8:]
             );
-            if (!success) {
+            if (reason.length != 0) {
                 revert(
                     string.concat(
                         "OnChainProposer: Invalid ALIGNED proof: ",
@@ -461,23 +458,21 @@ contract OnChainProposer is
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
-    ) internal view returns (bool, string memory) {
+    ) internal view returns (string memory) {
         if (publicData.length != 256) {
-            return (false, "invalid public data length");
+            return ("invalid public data length");
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         if (
             batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
         ) {
             return (
-                false,
                 "initial state root public inputs don't match with initial state root"
             );
         }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
             return (
-                false,
                 "final state root public inputs don't match with final state root"
             );
         }
@@ -487,7 +482,6 @@ contract OnChainProposer is
             withdrawalsMerkleRoot
         ) {
             return (
-                false,
                 "withdrawals public inputs don't match with committed withdrawals"
             );
         }
@@ -498,7 +492,6 @@ contract OnChainProposer is
             privilegedTransactionsHash
         ) {
             return (
-                false,
                 "privileged transactions hash public input does not match with committed transactions"
             );
         }
@@ -508,23 +501,18 @@ contract OnChainProposer is
             blobVersionedHash
         ) {
             return (
-                false,
                 "blob versioned hash public input does not match with committed hash"
             );
         }
         bytes32 lastBlockHash = bytes32(publicData[160:192]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
             return (
-                false,
                 "last block hash public inputs don't match with last block hash"
             );
         }
         uint256 chainId = uint256(bytes32(publicData[192:224]));
         if (chainId != CHAIN_ID) {
-            return (
-                false,
-                "given chain id does not correspond to this network"
-            );
+            return ("given chain id does not correspond to this network");
         }
         uint256 nonPrivilegedTransactions = uint256(
             bytes32(publicData[224:256])
@@ -534,11 +522,10 @@ contract OnChainProposer is
             nonPrivilegedTransactions != 0
         ) {
             return (
-                false,
                 "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
             );
         }
-        return (true, "ok");
+        return ("");
     }
 
     /// @inheritdoc IOnChainProposer
