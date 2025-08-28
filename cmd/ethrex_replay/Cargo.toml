@@ -35,6 +35,7 @@ eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
+futures.workspace = true
 lazy_static.workspace = true
 bytes.workspace = true
 again = "0.1.2"
