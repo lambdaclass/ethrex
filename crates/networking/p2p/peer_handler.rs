@@ -138,8 +138,13 @@ impl PeerHandler {
     /// Helper function called in between syncing steps.
     /// Guarantees that no peer is left as unavailable.
     async fn refresh_peers_availability(&self) {
-        for peer_id in self.peers_info.lock().await.keys() {
-            self.mark_peer_as_free(*peer_id).await;
+        for peer_info in self.peers_info.lock().await.values_mut() {
+            peer_info.available = true;
+            peer_info.request_time = None;
+            // Give badly scoring peers a new chance
+            if peer_info.score <= MIN_PEER_SCORE_THRESHOLD {
+                peer_info.score = 0;
+            }
         }
     }
 
@@ -1541,6 +1546,7 @@ impl PeerHandler {
             return None;
         };
 
+        drop(peers_info);
         self.mark_peer_as_busy(*free_peer_id).await;
 
         // Create and spawn Downloader Actor
@@ -1603,6 +1609,7 @@ impl PeerHandler {
             return None;
         };
 
+        drop(peers_info);
         self.mark_peer_as_busy(*free_peer_id).await;
 
         // Create and spawn Downloader Actor
