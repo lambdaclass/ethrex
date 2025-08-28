@@ -48,7 +48,7 @@ pub struct ExecutionWitnessResult {
     pub chain_config: ChainConfig,
     /// This maps node hashes to their corresponding RLP-encoded nodes.
     /// It is used to rebuild the state trie and storage tries.
-    /// This is precomputed during ExecutionWitness construction to avoid to avoid
+    /// This is precomputed during ExecutionWitness construction to avoid
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: HashMap<H256, NodeRLP>,
