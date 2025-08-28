@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756409405549,
+  "lastUpdate": 1756410063444,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10615,6 +10615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 158950567483,
             "range": "± 244948525",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f648d769c4a8b5f0a7afb83d154b4cc059e2f481",
+          "message": "feat(l1): `ethrex_replay` add tooling for periodic replay runs (#4108)\n\n**Motivation**\n\nWe urge the need for a tool for internal usage that replays L1 blocks\nfrom public networks like Hoodi, Sepolia, and Mainnet periodically\n(either execution with or without SP1, or proving with SP1) to ensure\n`ethrex-replay` works correctly and also to find potential bugs in\n`ethrex`.\n\n**Description**\n\nReplayer script that executes or proves the latest public network blocks\nin a loop and notifies to a Slack channel through a slack web hook if\nthe flag --slack-web-hook is passed.\n\n**Usage**\n\n```\nUsage: ethrex-replayer [OPTIONS] <--hoodi-rpc-url <URL>|--sepolia-rpc-url <URL>|--mainnet-rpc-url <URL>>\n\nOptions:\n  -h, --help  Print help\n\nReplayer options:\n      --slack-webhook-url <URL>  [env: SLACK_WEBHOOK_URL=]\n      --hoodi-rpc-url <URL>      [env: HOODI_RPC_URL=]\n      --sepolia-rpc-url <URL>    [env: SEPOLIA_RPC_URL=]\n      --mainnet-rpc-url <URL>    [env: MAINNET_RPC_URL=]\n      --execute                  Replayer will execute blocks\n      --prove                    Replayer will prove blocks\n```\n\n**How to test**\n\nTo periodically execute the latest Hoodi blocks, run:\n```\ncargo run --release -p ethrex-replayer --bin ethrex-replayer -- --hoodi-rpc-url http://65.108.69.58:8545 --execute\n```\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-08-28T18:40:50Z",
+          "tree_id": "a89f74bf2910077daf21dde394d653186f7683e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f648d769c4a8b5f0a7afb83d154b4cc059e2f481"
+        },
+        "date": 1756410046856,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161883324916,
+            "range": "± 301843254",
             "unit": "ns/iter"
           }
         ]
