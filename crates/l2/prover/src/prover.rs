@@ -53,15 +53,11 @@ impl Prover {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
 
             for endpoint in &self.proof_coordinator_endpoints {
-                let Ok(prover_data) = self
+                let Ok(Some(prover_data)) = self
                     .request_new_input(endpoint)
                     .await
                     .inspect_err(|e| error!(%endpoint, "Failed to request new data from: {e}"))
                 else {
-                    continue;
-                };
-
-                let Some(prover_data) = prover_data else {
                     continue;
                 };
 
