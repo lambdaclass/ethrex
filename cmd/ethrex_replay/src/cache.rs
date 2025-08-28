@@ -1,6 +1,5 @@
 use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
 use ethrex_vm::prover_db::PreExecutionState;
 use eyre::Context;
 use rkyv::rancor::Error;

@@ -518,6 +518,8 @@ enum SubcommandCache {
             default_value_t = Network::default(),
         )]
         network: Network,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Cache multiple blocks.")]
     Blocks {
@@ -532,6 +534,8 @@ enum SubcommandCache {
             default_value_t = Network::default(),
         )]
         network: Network,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Cache a range of blocks")]
     BlockRange {
@@ -558,10 +562,11 @@ impl SubcommandCache {
                 block,
                 rpc_url,
                 network,
+                l2,
             } => {
                 let eth_client = EthClient::new(rpc_url.as_ref())?;
                 let block_identifier = or_latest(block)?;
-                let _ = get_blockdata(eth_client, network.clone(), block_identifier).await?;
+                let _ = get_blockdata(eth_client, network.clone(), block_identifier, l2).await?;
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
                 } else {
@@ -572,6 +577,7 @@ impl SubcommandCache {
                 mut blocks,
                 rpc_url,
                 network,
+                l2,
             } => {
                 blocks.sort();
                 let eth_client = EthClient::new(rpc_url.as_ref())?;
@@ -580,6 +586,7 @@ impl SubcommandCache {
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
+                        l2,
                     )
                     .await?;
                 }
