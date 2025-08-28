@@ -202,12 +202,12 @@ pub struct ChainConfig {
 
 lazy_static::lazy_static! {
     pub static ref NETWORK_NAMES: HashMap<String, &'static str> = {
-        let mut m = HashMap::new();
-        m.insert(1.to_string(), "mainnet");
-        m.insert(11155111.to_string(), "sepolia");
-        m.insert(17000.to_string(), "holesky");
-        m.insert(560048.to_string(), "hoodi");
-        m
+        HashMap::from([
+            (1, "mainnet")
+            (11155111, "sepolia")
+            (17000, "holesky")
+            (560048, "hoodi")
+        ])
     };
 }
 
