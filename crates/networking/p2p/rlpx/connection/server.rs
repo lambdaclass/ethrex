@@ -106,7 +106,7 @@ pub struct Established {
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
     pub(crate) tx_bcast_state: (
-        Arc<std::sync::Mutex<(Vec<H256>, HashSet<H256>)>>,
+        Arc<std::sync::Mutex<(HashSet<H256>, HashSet<H256>)>>,
         EventHandle<H256>,
     ),
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
@@ -464,14 +464,19 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let tx_hashes = mem::take(&mut state.tx_bcast_state.0.lock().expect("poisoned mutex").0);
+        let mut tx_hashes =
+            mem::take(&mut state.tx_bcast_state.0.lock().expect("poisoned mutex").0);
         if !tx_hashes.is_empty() {
             let mut transactions = Vec::new();
-            for tx_chunk in tx_hashes.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                transactions.reserve(tx_chunk.len());
+            let mut iter = tx_hashes.drain().peekable();
+            while iter.peek().is_some() {
+                let tx_chunk = (&mut iter).take(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT);
+                let tx_chunk_len = tx_chunk.len();
+
+                transactions.reserve(tx_chunk_len);
                 for tx in tx_chunk {
                     transactions.push(
-                        match state.blockchain.mempool.get_transaction_by_hash(*tx)? {
+                        match state.blockchain.mempool.get_transaction_by_hash(tx)? {
                             Some(tx) => tx,
                             None => continue,
                         },
@@ -488,7 +493,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
                 .await?;
                 log_peer_debug(
                     &state.node,
-                    &format!("Sent {} transaction hashes to peer", tx_chunk.len()),
+                    &format!("Sent {tx_chunk_len} transaction hashes to peer"),
                 );
 
                 transactions.clear();
@@ -773,13 +778,12 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     // Mark as broadcasted for the sender so we don't include it in the next
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
-                    state
-                        .tx_bcast_state
-                        .0
-                        .lock()
-                        .expect("poisoned mutex")
-                        .1
-                        .insert(tx.hash());
+                    {
+                        let mut bcast_state =
+                            state.tx_bcast_state.0.lock().expect("poisoned mutex");
+                        bcast_state.0.remove(&tx.hash());
+                        bcast_state.1.insert(tx.hash());
+                    }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
@@ -922,10 +926,13 @@ async fn handle_broadcast(
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
                 let filtered = {
-                    let bcast_state = state.tx_bcast_state.0.lock().expect("poisoned mutex");
+                    let mut bcast_state = state.tx_bcast_state.0.lock().expect("poisoned mutex");
                     txs.transactions
                         .iter()
-                        .filter(|&tx| bcast_state.1.contains(&tx.hash()))
+                        .filter(|&tx| {
+                            bcast_state.0.remove(&tx.hash());
+                            bcast_state.1.insert(tx.hash())
+                        })
                         .cloned()
                         .collect::<Vec<_>>()
                 };
