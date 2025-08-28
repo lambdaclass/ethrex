@@ -7,6 +7,7 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
+use ::tracing::info;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -43,6 +44,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
+        info!("Inside LEVM execute block");
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
@@ -51,6 +53,11 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            info!(
+                "Running tx number {}, with hash {}",
+                receipts.len(),
+                hex::encode(tx.hash())
+            );
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
