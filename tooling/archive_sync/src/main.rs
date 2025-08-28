@@ -215,7 +215,7 @@ async fn process_dump_storage(
         assert_eq!(valu, val_dec);
         trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         cita_trie
-            .insert(key.0.0.to_vec(), val.encode_to_vec())
+            .insert(key.0.to_vec(), val.encode_to_vec())
             .unwrap();
     }
     let cita_hash = cita_trie.root().unwrap();
