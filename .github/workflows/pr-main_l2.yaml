@@ -71,7 +71,7 @@ jobs:
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          tags: ethrex:unstable
+          tags: ethrex:main
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
