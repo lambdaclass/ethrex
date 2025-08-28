@@ -141,108 +141,131 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let history_db = self.history_db.clone();
         let trie_db = self.trie_db.clone();
-        tokio::task::spawn_blocking(move || {
-            let _span = tracing::trace_span!("Block DB update").entered();
 
-            // Handle trie database updates
-            let trie_tx = trie_db
-                .begin_readwrite()
-                .map_err(StoreError::LibmdbxError)?;
+        // Split update_batch data for parallel processing
+        let account_updates = update_batch.account_updates;
+        let storage_updates = update_batch.storage_updates;
+        let code_updates = update_batch.code_updates;
+        let blocks = update_batch.blocks;
+        let receipts = update_batch.receipts;
 
-            // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
-                trie_tx
-                    .upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            // store storage updates
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    trie_tx
-                        .upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+        // Run trie and history database updates in parallel
+        let (trie_result, history_result) = tokio::join!(
+            // Trie database updates task
+            tokio::task::spawn_blocking({
+                let trie_db = trie_db.clone();
+                move || -> Result<(), StoreError> {
+                    let _span = tracing::trace_span!("Trie DB update").entered();
+                    let trie_tx = trie_db
+                        .begin_readwrite()
                         .map_err(StoreError::LibmdbxError)?;
+
+                    // store account updates
+                    for (node_hash, node_data) in account_updates {
+                        trie_tx
+                            .upsert::<StateTrieNodes>(node_hash, node_data)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+
+                    // store storage updates
+                    for (hashed_address, nodes) in storage_updates {
+                        for (node_hash, node_data) in nodes {
+                            let key_1: [u8; 32] = hashed_address.into();
+                            let key_2 = node_hash_to_fixed_size(node_hash);
+
+                            trie_tx
+                                .upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+                    }
+
+                    trie_tx.commit().map_err(StoreError::LibmdbxError)
                 }
-            }
-
-            trie_tx.commit().map_err(StoreError::LibmdbxError)?;
-
-            // Handle history database updates
-            let history_tx = history_db
-                .begin_readwrite()
-                .map_err(StoreError::LibmdbxError)?;
-
-            // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                history_tx
-                    .upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            for block in update_batch.blocks {
-                // store block
-                let number = block.header.number;
-                let hash = block.hash();
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    history_tx
-                        .upsert::<TransactionLocations>(
-                            transaction.hash().into(),
-                            (number, hash, index as u64).into(),
-                        )
+            }),
+            // History database updates task
+            tokio::task::spawn_blocking({
+                let history_db = history_db.clone();
+                move || -> Result<(), StoreError> {
+                    let _span = tracing::trace_span!("History DB update").entered();
+                    let history_tx = history_db
+                        .begin_readwrite()
                         .map_err(StoreError::LibmdbxError)?;
+
+                    // store code updates
+                    for (hashed_address, code) in code_updates {
+                        history_tx
+                            .upsert::<AccountCodes>(hashed_address.into(), code.into())
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+
+                    for block in blocks {
+                        // store block
+                        let number = block.header.number;
+                        let hash = block.hash();
+
+                        for (index, transaction) in block.body.transactions.iter().enumerate() {
+                            history_tx
+                                .upsert::<TransactionLocations>(
+                                    transaction.hash().into(),
+                                    (number, hash, index as u64).into(),
+                                )
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+
+                        history_tx
+                            .upsert::<Bodies>(
+                                hash.into(),
+                                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                            )
+                            .map_err(StoreError::LibmdbxError)?;
+
+                        history_tx
+                            .upsert::<Headers>(
+                                hash.into(),
+                                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                            )
+                            .map_err(StoreError::LibmdbxError)?;
+
+                        history_tx
+                            .upsert::<BlockNumbers>(hash.into(), number)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                    for (block_hash, receipts) in receipts {
+                        // store receipts
+                        let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                        for mut entries in
+                            receipts
+                                .into_iter()
+                                .enumerate()
+                                .filter_map(|(index, receipt)| {
+                                    let key = (block_hash, index as u64).into();
+                                    let receipt_rlp = receipt.encode_to_vec();
+                                    IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                                })
+                        {
+                            key_values.append(&mut entries);
+                        }
+                        let mut cursor = history_tx
+                            .cursor::<Receipts>()
+                            .map_err(StoreError::LibmdbxError)?;
+                        for (key, value) in key_values {
+                            cursor
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+                    }
+
+                    history_tx.commit().map_err(StoreError::LibmdbxError)
                 }
+            })
+        );
 
-                history_tx
-                    .upsert::<Bodies>(
-                        hash.into(),
-                        BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+        // Handle results and propagate any errors
+        trie_result.map_err(|e| StoreError::Custom(format!("trie task panicked: {e}")))??;
 
-                history_tx
-                    .upsert::<Headers>(
-                        hash.into(),
-                        BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+        history_result.map_err(|e| StoreError::Custom(format!("history task panicked: {e}")))??;
 
-                history_tx
-                    .upsert::<BlockNumbers>(hash.into(), number)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-            for (block_hash, receipts) in update_batch.receipts {
-                // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                        })
-                {
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = history_tx
-                    .cursor::<Receipts>()
-                    .map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-
-            history_tx.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        Ok(())
     }
 
     async fn add_block_header(
