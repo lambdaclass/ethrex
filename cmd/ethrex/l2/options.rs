@@ -165,10 +165,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
-                first_wake_up_time_ms: opts
-                    .committer_opts
-                    .first_wake_up_time_ms
-                    .unwrap_or(opts.committer_opts.commit_time_ms),
+                first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
