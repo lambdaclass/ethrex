@@ -450,7 +450,7 @@ impl EthrexMonitorWidget {
                 );
 
                 let help =
-                    Line::raw("tab: switch tab |  Q: quit | ↑/↓: select table | w/s: scroll table")
+                    Line::raw("↑/↓: select table | w/s: scroll table | tab: switch tab | Q: quit")
                         .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
@@ -475,7 +475,7 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("tab: switch tab | Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
+                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | tab: switch tab | Q: quit").centered();
 
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -488,7 +488,7 @@ impl EthrexMonitorWidget {
                     buf,
                     &mut accounts,
                 );
-                let help = Line::raw("tab: switch tab | Q: quit | w/s: scroll table").centered();
+                let help = Line::raw("w/s: scroll table | tab: switch tab | Q: quit").centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };
