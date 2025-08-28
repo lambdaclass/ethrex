@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756379526232,
+  "lastUpdate": 1756390485492,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10495,6 +10495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161995963371,
             "range": "± 339855110",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d8796eb086d8a7dc98f166ca5fee62b00b08a1b2",
+          "message": "fix(l1): update references to moved folder (tooling/ef_tests) (#4193)\n\n**Motivation**\nFixing the leftovers from\nhttps://github.com/lambdaclass/ethrex/pull/4143\n\n**Description**\n- Fixes missing reference updates after moving.",
+          "timestamp": "2025-08-28T13:25:22Z",
+          "tree_id": "250de603cfdb56401d882d04b3a70be3a8549044",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d8796eb086d8a7dc98f166ca5fee62b00b08a1b2"
+        },
+        "date": 1756390468990,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 158904164053,
+            "range": "± 439123976",
             "unit": "ns/iter"
           }
         ]
