@@ -244,11 +244,8 @@ fn execute_stateless(
                 .is_none_or(|withdrawals| withdrawals.is_empty())
     });
 
-    if !is_batch_empty {
-        // this validates that the execution witness corresponds to a pruned trie
-        db.rebuild_state_trie()
-            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
-    }
+    db.rebuild_state_trie()
+        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
