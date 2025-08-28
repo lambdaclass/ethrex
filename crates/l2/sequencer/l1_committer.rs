@@ -87,7 +87,7 @@ pub struct L1Committer {
 
 impl L1Committer {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         blockchain: Arc<Blockchain>,
@@ -96,16 +96,20 @@ impl L1Committer {
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
+        let eth_client = EthClient::new_with_config(
+            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.max_number_of_retries,
+            eth_config.backoff_factor,
+            eth_config.min_retry_delay,
+            eth_config.max_retry_delay,
+            Some(eth_config.maximum_allowed_max_fee_per_gas),
+            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+        )?;
+        let last_committed_batch = eth_client
+            .get_last_committed_batch(committer_config.on_chain_proposer_address)
+            .await?;
         Ok(Self {
-            eth_client: EthClient::new_with_config(
-                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-                eth_config.max_number_of_retries,
-                eth_config.backoff_factor,
-                eth_config.min_retry_delay,
-                eth_config.max_retry_delay,
-                Some(eth_config.maximum_allowed_max_fee_per_gas),
-                Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-            )?,
+            eth_client,
             blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
@@ -120,7 +124,7 @@ impl L1Committer {
                 .commit_time_ms
                 .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
             last_committed_batch_timestamp: 0,
-            last_committed_batch: 0,
+            last_committed_batch,
         })
     }
 
@@ -131,7 +135,7 @@ impl L1Committer {
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
-        let mut state = Self::new(
+        let state = Self::new(
             &cfg.l1_committer,
             &cfg.eth,
             blockchain,
@@ -139,12 +143,8 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
-        )?;
-        // Set the initial last committed batch
-        state.last_committed_batch = state
-            .eth_client
-            .get_last_committed_batch(state.on_chain_proposer_address)
-            .await?;
+        )
+        .await?;
         let l1_committer = state.start();
         send_after(
             random_duration(cfg.l1_committer.first_wake_up_time_ms),
