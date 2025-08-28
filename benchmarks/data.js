@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756418500288,
+  "lastUpdate": 1756421019886,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10675,6 +10675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161155049993,
             "range": "± 160285591",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f06595020db5a6f0ebd5ce5291dfe25edac25213",
+          "message": "feat(l2): rich accounts monitor tab (#4197)\n\n**Motivation**\n\nWhen launching an L2 with `ethrex l2 --dev`, one of the main things you\nwant to have at hand is the set of rich accounts on the localnet.\n\n**Description**\n\n- Adds a new `Rich Accounts` tab to the ethrex monitor.\n- Loads the private keys from `LOCAL_DEVNET_PRIVATE_KEYS` and\nperiodically updates their balances.\n\n<img width=\"1507\" height=\"946\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/ff100d1b-fe61-4b3c-a3f4-d0418d20ea44\"\n/>\n\n\n\n#4198 and #4200 where created to be addressed in future PRs.\n\nCloses None",
+          "timestamp": "2025-08-28T21:47:59Z",
+          "tree_id": "6a8bdb4aa89e9b55147276399bfb46742106c928",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f06595020db5a6f0ebd5ce5291dfe25edac25213"
+        },
+        "date": 1756421003292,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160701000590,
+            "range": "± 316808515",
             "unit": "ns/iter"
           }
         ]
