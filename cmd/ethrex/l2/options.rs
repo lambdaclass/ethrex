@@ -459,7 +459,7 @@ pub struct CommitterOptions {
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_FIRST_WAKE_UP_TIME",
         help_heading = "L1 Committer options",
-        help = "Time to wait before the sequencer commits new blocks for the first time. Defaults to commit_time_ms. After sending the first commit `committer.commit-time` will be used."
+        help = "Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used."
     )]
     pub first_wake_up_time_ms: Option<u64>,
     #[arg(

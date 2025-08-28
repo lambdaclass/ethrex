@@ -50,7 +50,7 @@ use spawned_concurrency::{
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
-// Default wake up time for the committer to check if it should send a commit tx
+/// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
@@ -77,11 +77,11 @@ pub struct L1Committer {
     signer: Signer,
     based: bool,
     sequencer_state: SequencerState,
-    /// L1 Committer time to wait before checking if it should send a new batch
+    /// Time to wait before checking if it should send a new batch
     committer_wake_up_ms: u64,
     /// Timestamp of last successful committed batch
     last_committed_batch_timestamp: u128,
-    /// Last succesful committed batch
+    /// Last succesful committed batch number
     last_committed_batch: u64,
 }
 
