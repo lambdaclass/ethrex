@@ -243,7 +243,7 @@
 <p>The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
 See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/state_test/">docs</a>.</p>
 <p>To run the test first:</p>
-<pre><code class="language-sh">cd cmd/ef_tests/state
+<pre><code class="language-sh">cd tooling/ef_tests/state
 </code></pre>
 <p>then download the test vectors:</p>
 <pre><code class="language-sh">make download-evm-ef-tests
@@ -255,7 +255,7 @@ See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/state_test/">docs<
 <p>The blockchain tests test block validation and the consensus rules of the Ethereum blockchain. Tests are usually run for multiple forks.
 See <a href="https://eest.ethereum.org/v4.1.0/consuming_tests/blockchain_test">docs</a>.</p>
 <p>To run the tests first:</p>
-<pre><code class="language-sh">cd cmd/ef_tests/blockchain
+<pre><code class="language-sh">cd tooling/ef_tests/blockchain
 </code></pre>
 <p>then run the tests:</p>
 <pre><code class="language-sh">make test-levm
