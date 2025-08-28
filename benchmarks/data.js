@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756391773569,
+  "lastUpdate": 1756392686871,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10525,6 +10525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 158904164053,
             "range": "± 439123976",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "95fe9b75cea2ce303120ed36e7bcda717980739a",
+          "message": "build(l1, l2): tag `ethrex:main` instead of `ethrex:unstable`. (#4192)\n\n**Motivation**\nthe term `unstable` is confusing. `main` is much clearer imo and it's\nthe default other clients use\n\n**Description**\n- Changed the docker tag on merge from `unstable` to `main`\n- Updated references to `unstable` across the codebase.",
+          "timestamp": "2025-08-28T13:59:29Z",
+          "tree_id": "deea1cd7d0d030687c1f354133d80f0e2175c714",
+          "url": "https://github.com/lambdaclass/ethrex/commit/95fe9b75cea2ce303120ed36e7bcda717980739a"
+        },
+        "date": 1756392670872,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161296463827,
+            "range": "± 292497374",
             "unit": "ns/iter"
           }
         ]
