@@ -51,6 +51,11 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            println!(
+                "Executing transaction {} with hash {}",
+                receipts.len() + 1,
+                hex::encode(tx.hash())
+            );
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
