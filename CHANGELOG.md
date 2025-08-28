@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-08-26
+### 2025-08-28
 
 - Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+
+### 2025-08-27
+
+- Improve memory resize performance [#4117](https://github.com/lambdaclass/ethrex/pull/4177)
 
 ### 2025-08-25
 
