@@ -78,6 +78,8 @@ pub enum SubcommandExecute {
         bench: bool,
         #[arg(long, required = false)]
         to_csv: bool,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Executes a range of blocks")]
     BlockRange {
@@ -157,6 +159,7 @@ impl SubcommandExecute {
                 network,
                 bench,
                 to_csv,
+                l2,
             } => {
                 blocks.sort();
 
@@ -177,7 +180,7 @@ impl SubcommandExecute {
                             rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
-                            l2: false,
+                            l2,
                         }
                         .run()
                         .await
@@ -331,6 +334,8 @@ pub enum SubcommandProve {
         bench: bool,
         #[arg(long, required = false)]
         to_csv: bool,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Proves a range of blocks")]
     BlockRange {
@@ -394,6 +399,7 @@ impl SubcommandProve {
                 network,
                 bench,
                 to_csv,
+                l2,
             } => {
                 blocks.sort();
 
@@ -414,7 +420,7 @@ impl SubcommandProve {
                             rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
-                            l2: false,
+                            l2,
                         }
                         .run()
                         .await
@@ -511,6 +517,8 @@ pub enum SubcommandCache {
             default_value_t = Network::default(),
         )]
         network: Network,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Cache multiple blocks.")]
     Blocks {
@@ -525,6 +533,8 @@ pub enum SubcommandCache {
             default_value_t = Network::default(),
         )]
         network: Network,
+        #[arg(long, required = false)]
+        l2: bool,
     },
     #[command(about = "Cache a range of blocks")]
     BlockRange {
@@ -551,10 +561,11 @@ impl SubcommandCache {
                 block,
                 rpc_url,
                 network,
+                l2,
             } => {
                 let eth_client = EthClient::new(rpc_url.as_ref())?;
                 let block_identifier = or_latest(block)?;
-                let _ = get_blockdata(eth_client, network.clone(), block_identifier).await?;
+                let _ = get_blockdata(eth_client, network.clone(), block_identifier, l2).await?;
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
                 } else {
@@ -565,6 +576,7 @@ impl SubcommandCache {
                 mut blocks,
                 rpc_url,
                 network,
+                l2,
             } => {
                 blocks.sort();
                 let eth_client = EthClient::new(rpc_url.as_ref())?;
@@ -573,6 +585,7 @@ impl SubcommandCache {
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
+                        l2,
                     )
                     .await?;
                 }
