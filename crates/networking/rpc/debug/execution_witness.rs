@@ -106,8 +106,8 @@ pub fn execution_witness_from_rpc_chain_config(
     )?;
 
     let mut state_nodes = HashMap::new();
-    for node in rpc_witness.state.into_iter() {
-        state_nodes.insert(keccak(&node), node.to_vec());
+    for node in rpc_witness.state.iter() {
+        state_nodes.insert(keccak(node), node.to_vec());
     }
 
     let mut touched_account_storage_slots = HashMap::new();
