@@ -63,9 +63,9 @@ jobs:
       - name: Pull image
         if: ${{ inputs.job_type == 'main' }}
         run: |
-          docker pull ghcr.io/lambdaclass/ethrex:unstable
+          docker pull ghcr.io/lambdaclass/ethrex:main
           # Tests use ethrex:latest so we retag it
-          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:ci
+          docker tag ghcr.io/lambdaclass/ ethrex:ci
 
       - name: Setup Go
         uses: actions/setup-go@v5
