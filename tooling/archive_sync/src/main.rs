@@ -20,7 +20,7 @@ use ethrex_storage::Store;
 use hasher::HasherKeccak;
 use keccak_hash::keccak;
 use num_bigint::BigUint;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -60,10 +60,18 @@ struct DumpAccount {
     code: Bytes,
     #[serde(default)]
     storage: HashMap<H256, U256>,
+    #[serde(deserialize_with = "deser_address")]
     address: Option<Address>,
     #[serde(rename = "key")]
     hashed_address: Option<H256>,
 }
+
+fn deser_address<'de, D>(d: D) -> Result<Option<Address>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            Ok(Address::deserialize(d).ok())
+        }
 
 fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {
     let memdb = Arc::new(CitaMemoryDB::new(true));
