@@ -213,9 +213,9 @@ async fn process_dump_storage(
         let val_enc = val.encode_to_vec();
         let val_dec = U256::decode(&val_enc).unwrap();
         assert_eq!(valu, val_dec);
-        trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
+        trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         cita_trie
-            .insert(keccak(key.0).0.to_vec(), val.encode_to_vec())
+            .insert(key.0.0.to_vec(), val.encode_to_vec())
             .unwrap();
     }
     let cita_hash = cita_trie.root().unwrap();
