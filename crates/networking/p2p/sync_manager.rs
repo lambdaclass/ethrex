@@ -5,13 +5,14 @@ use std::sync::{
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 use tokio::{
     sync::Mutex,
-    time::{Duration, sleep},
+    task::{JoinHandle, spawn},
+    time::{Duration, sleep, interval},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -27,6 +28,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    cancel_token: CancellationToken,
 }
 
 impl SyncManager {
@@ -49,6 +51,7 @@ impl SyncManager {
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            cancel_token: cancel_token.clone(),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -71,6 +74,7 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -111,8 +115,9 @@ impl SyncManager {
     fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
+        let cancel_token = self.cancel_token.clone();
 
-        // Should we prune when are syncing?
+        // Should we prune when are syncing? NO - we'll prune AFTER syncing is complete
 
         let sync_head = self.last_fcu_head.clone();
 
@@ -147,6 +152,9 @@ impl SyncManager {
                     .flatten()
                     .is_none()
                 {
+                    // Sync is complete, start the pruning task
+                    info!("[SYNC] Sync process completed, starting background pruning task");
+                    Self::start_pruner_task(store.clone(), cancel_token.clone());
                     break;
                 }
             }
@@ -155,5 +163,38 @@ impl SyncManager {
 
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
+    }
+
+    /// Start the pruning task in the background after sync completion
+    fn start_pruner_task(store: Store, cancellation_token: CancellationToken) -> JoinHandle<Result<(), StoreError>> {
+        const KEEP_BLOCKS: u64 = 128;
+        const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
+
+        spawn(async move {
+            let mut interval = interval(PRUNING_INTERVAL);
+            info!("[PRUNING] Starting pruning task after sync completion");
+            
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let result = tokio::task::spawn_blocking({
+                            let store = store.clone();
+                            move || store.prune_state_and_storage_log(KEEP_BLOCKS)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(())) => debug!("[PRUNING] Pruning completed"),
+                            Ok(Err(e)) => error!("[PRUNING] Pruning error: {:?}", e),
+                            Err(e) => error!("[PRUNING] Task join error: {:?}", e),
+                        }
+                    }
+                    _ = cancellation_token.cancelled() => {
+                        info!("[PRUNING] Pruner task shutting down");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 }

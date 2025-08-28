@@ -383,7 +383,7 @@ pub async fn init_l1(
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
-    start_pruner_task(store.clone(), cancel_token.clone());
+    // Note: Pruning will be started by SyncManager after sync completion
 
     let signer = get_signer(&data_dir);
 
