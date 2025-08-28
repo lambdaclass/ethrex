@@ -2,10 +2,7 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_config::networks::LOCAL_DEVNET_PRIVATE_KEYS;
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::{
-    EthClient,
-    types::block_identifier::{BlockIdentifier, BlockTag},
-};
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use hex::FromHexError;
 use ratatui::{
     buffer::Buffer,
@@ -28,19 +25,29 @@ pub type RichAccountRow = (Address, SecretKey, U256);
 pub struct RichAccountsTable {
     pub state: TableState,
     pub items: Vec<RichAccountRow>,
+    last_block_fetched: U256,
 
     selected: bool,
 }
 
 impl RichAccountsTable {
     pub async fn new(rollup_client: &EthClient) -> Result<Self, MonitorError> {
-        let items = Self::get_accounts(rollup_client).await?;
+        let last_block_fetched = rollup_client
+            .get_block_number()
+            .await
+            .map_err(|_| MonitorError::GetLatestBlock)?;
+        let items = Self::get_accounts(rollup_client, last_block_fetched).await?;
         Ok(Self {
             items,
+            last_block_fetched,
+            selected: true,
             ..Default::default()
         })
     }
-    async fn get_accounts(rollup_client: &EthClient) -> Result<Vec<RichAccountRow>, MonitorError> {
+    async fn get_accounts(
+        rollup_client: &EthClient,
+        last_block_fetched: U256,
+    ) -> Result<Vec<RichAccountRow>, MonitorError> {
         // TODO: enable custom private keys
         let private_keys: Vec<String> = LOCAL_DEVNET_PRIVATE_KEYS
             .lines()
@@ -55,7 +62,10 @@ impl RichAccountsTable {
             })?;
             let address = get_address_from_secret_key(&secret_key)?;
             let get_balance = rollup_client
-                .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
+                .get_balance(
+                    address,
+                    BlockIdentifier::Number(last_block_fetched.as_u64()),
+                )
                 .await?;
             accounts.push((address, secret_key, get_balance));
         }
@@ -63,11 +73,19 @@ impl RichAccountsTable {
     }
 
     pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {
+        let latest_block = rollup_client
+            .get_block_number()
+            .await
+            .map_err(|_| MonitorError::GetLatestBlock)?;
+        if latest_block == self.last_block_fetched {
+            return Ok(());
+        }
         for (address, _private_key, balance) in self.items.iter_mut() {
             *balance = rollup_client
-                .get_balance(*address, BlockIdentifier::Tag(BlockTag::Latest))
+                .get_balance(*address, BlockIdentifier::Number(latest_block.as_u64()))
                 .await?;
         }
+        self.last_block_fetched = latest_block;
         Ok(())
     }
 }
@@ -96,16 +114,28 @@ impl StatefulWidget for &mut RichAccountsTable {
             Constraint::Fill(1),
         ];
 
-        let rows = self.items.iter().map(|(address, private_key, balance)| {
-            Row::new(vec![
-                Span::styled(format!("{address}"), Style::default()),
-                Span::styled(
-                    format!("{}", private_key.display_secret()),
-                    Style::default(),
-                ),
-                Span::styled(balance.to_string(), Style::default()),
-            ])
-        });
+        let selected_index = state.selected();
+
+        let rows = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, (address, private_key, balance))| {
+                let mut row = Row::new(vec![
+                    Span::styled(format!("0x{address:x}"), Style::default()),
+                    Span::styled(
+                        format!("0x{}", private_key.display_secret()),
+                        Style::default(),
+                    ),
+                    Span::styled(balance.to_string(), Style::default()),
+                ]);
+
+                if Some(i) == selected_index {
+                    row = row.style(Style::default().bg(Color::Blue));
+                }
+
+                row
+            });
 
         let rich_accounts_table = Table::new(rows, constraints)
             .header(Row::new(vec!["Address", "Private Key", "Balance"]).style(Style::default()))
@@ -117,7 +147,7 @@ impl StatefulWidget for &mut RichAccountsTable {
                         Color::Cyan
                     }))
                     .title(Span::styled(
-                        "L1 to L2 Messages",
+                        "Rich Accounts",
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
             );

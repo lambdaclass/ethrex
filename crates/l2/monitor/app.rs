@@ -278,8 +278,19 @@ impl EthrexMonitorWidget {
             (TabsState::Overview, KeyCode::Char('s')) => {
                 self.selected_table().scroll_down();
             }
-            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
-            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
+            (
+                TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
+                KeyCode::Char('Q'),
+            ) => self.should_quit = true,
+            (TabsState::Overview | TabsState::Logs | TabsState::RichAccounts, KeyCode::Tab) => {
+                self.tabs.next()
+            }
+            (TabsState::RichAccounts, KeyCode::Char('w')) => {
+                self.rich_accounts.scroll_up();
+            }
+            (TabsState::RichAccounts, KeyCode::Char('s')) => {
+                self.rich_accounts.scroll_down();
+            }
             _ => {}
         }
     }
@@ -321,6 +332,7 @@ impl EthrexMonitorWidget {
         self.l2_to_l1_messages
             .on_tick(&self.eth_client, &self.rollup_client)
             .await?;
+        self.rich_accounts.on_tick(&self.rollup_client).await?;
 
         Ok(())
     }
@@ -334,7 +346,7 @@ impl EthrexMonitorWidget {
             .titles([
                 TabsState::Overview.to_string(),
                 TabsState::Logs.to_string(),
-                TabsState::Accounts.to_string(),
+                TabsState::RichAccounts.to_string(),
             ])
             .block(
                 Block::bordered()
@@ -463,20 +475,20 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
+                let help = Line::raw("tab: switch tab | Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
 
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
-            TabsState::Accounts => {
+            TabsState::RichAccounts => {
+                let chunks = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+                    .split(*chunks.get(1).ok_or(MonitorError::Chunks)?);
                 let mut accounts = self.rich_accounts.state.clone();
                 self.rich_accounts.render(
                     *chunks.first().ok_or(MonitorError::Chunks)?,
                     buf,
                     &mut accounts,
                 );
-
-                // TODO: help doesn't apply
-                let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
+                let help = Line::raw("tab: switch tab | Q: quit | w/s: scroll table").centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };
