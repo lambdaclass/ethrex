@@ -1,20 +1,23 @@
-use std::{cmp::max, io::Write, time::SystemTime};
+use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
 
 use clap::{Parser, Subcommand};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
+    validate_block,
 };
 use ethrex_common::{
     Address, H256,
     types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
 };
+use ethrex_l2::sequencer::block_producer::build_payload;
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
+use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::{BlockExecutionResult, EvmEngine};
 use reqwest::Url;
 use tracing::{error, info};
 
@@ -664,14 +667,31 @@ impl SubcommandCustom {
                     store_inner
                 };
 
+                #[cfg(not(feature = "l2"))]
                 let mut blockchain =
                     Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                #[cfg(feature = "l2")]
+                let blockchain = Arc::new(Blockchain::new(
+                    EvmEngine::LEVM,
+                    store.clone(),
+                    BlockchainType::L2,
+                ));
 
-                let block = produce_block(
+                #[cfg(not(feature = "l2"))]
+                let block = produce_l1_block(
                     &mut blockchain,
                     &mut store,
                     genesis.get_block().hash(),
                     genesis.timestamp + 1,
+                )
+                .await?;
+                #[cfg(feature = "l2")]
+                let block = produce_l2_block(
+                    blockchain.clone(),
+                    &mut store,
+                    &rollup_store,
+                    head_block_hash,
+                    initial_timestamp + i,
                 )
                 .await?;
 
@@ -746,16 +766,46 @@ impl SubcommandCustom {
                     store_inner
                 };
 
+                #[cfg(feature = "l2")]
+                let rollup_store = {
+                    use ethrex_storage_rollup::EngineTypeRollup;
+
+                    let rollup_store = StoreRollup::new("./", EngineTypeRollup::InMemory)
+                        .expect("Failed to create StoreRollup");
+                    rollup_store
+                        .init()
+                        .await
+                        .expect("Failed to init rollup store");
+                    rollup_store
+                };
+
+                #[cfg(not(feature = "l2"))]
                 let mut blockchain =
                     Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                #[cfg(feature = "l2")]
+                let blockchain = Arc::new(Blockchain::new(
+                    EvmEngine::LEVM,
+                    store.clone(),
+                    BlockchainType::L2,
+                ));
 
                 let mut blocks = Vec::new();
                 let mut head_block_hash = genesis.get_block().hash();
                 let initial_timestamp = genesis.get_block().header.timestamp;
                 for i in 1..=max(1, n_blocks) {
-                    let block = produce_block(
+                    #[cfg(not(feature = "l2"))]
+                    let block = produce_l1_block(
                         &mut blockchain,
                         &mut store,
+                        head_block_hash,
+                        initial_timestamp + i,
+                    )
+                    .await?;
+                    #[cfg(feature = "l2")]
+                    let block = produce_l2_block(
+                        blockchain.clone(),
+                        &mut store,
+                        &rollup_store,
                         head_block_hash,
                         initial_timestamp + i,
                     )
@@ -810,14 +860,12 @@ impl SubcommandCustom {
     }
 }
 
-pub async fn produce_block(
+pub async fn produce_l1_block(
     blockchain: &mut Blockchain,
     store: &mut Store,
     head_block_hash: H256,
     timestamp: u64,
 ) -> eyre::Result<Block> {
-    apply_fork_choice(store, head_block_hash, head_block_hash, head_block_hash).await?;
-
     let build_payload_args = BuildPayloadArgs {
         parent: head_block_hash,
         timestamp,
@@ -829,14 +877,14 @@ pub async fn produce_block(
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
 
-    let payload_id = build_payload_args.id()?;
-
     let payload = create_payload(&build_payload_args, store)?;
 
-    store.add_payload(build_payload_args.id()?, payload).await?;
+    let payload_id = build_payload_args.id()?;
+
+    store.add_payload(payload_id, payload).await?;
 
     let incompleted_payload_bundle = store
-        .get_payload(build_payload_args.id()?)
+        .get_payload(payload_id)
         .await?
         .expect("Storage returned None for existing payload");
 
@@ -863,7 +911,76 @@ pub async fn produce_block(
 
     blockchain.add_block(&final_payload.block).await?;
 
+    let new_block_hash = final_payload.block.hash();
+
+    apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
+
     Ok(completed_payload_bundle.block)
+}
+
+pub async fn produce_l2_block(
+    blockchain: Arc<Blockchain>,
+    store: &mut Store,
+    rollup_store: &StoreRollup,
+    head_block_hash: H256,
+    timestamp: u64,
+) -> eyre::Result<Block> {
+    let build_payload_args = BuildPayloadArgs {
+        parent: head_block_hash,
+        timestamp,
+        fee_recipient: Address::zero(),
+        random: H256::zero(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::zero()),
+        version: 3,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    };
+
+    let payload = create_payload(&build_payload_args, store)?;
+
+    let payload_build_result =
+        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+
+    let new_block = payload_build_result.payload;
+
+    let chain_config = store.get_chain_config()?;
+
+    validate_block(
+        &new_block,
+        &store
+            .get_block_header_by_hash(new_block.header.parent_hash)?
+            .ok_or(eyre::Error::msg("Parent block header not found"))?,
+        &chain_config,
+        build_payload_args.elasticity_multiplier,
+    )?;
+
+    let account_updates = payload_build_result.account_updates;
+
+    let execution_result = BlockExecutionResult {
+        receipts: payload_build_result.receipts,
+        requests: Vec::new(),
+    };
+
+    let account_updates_list = store
+        .apply_account_updates_batch(new_block.header.parent_hash, &account_updates)
+        .await?
+        .ok_or(eyre::Error::msg(
+            "Failed to apply account updates: parent block not found",
+        ))?;
+
+    blockchain
+        .store_block(&new_block, account_updates_list, execution_result)
+        .await?;
+
+    rollup_store
+        .store_account_updates_by_block_number(new_block.header.number, account_updates)
+        .await?;
+
+    let new_block_hash = new_block.hash();
+
+    apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
+
+    Ok(new_block)
 }
 
 #[derive(Subcommand)]
