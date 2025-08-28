@@ -621,6 +621,7 @@ type FirstPointCoordinates = (
 );
 
 /// Parses first point coordinates and makes verification of invalid infinite
+#[inline]
 fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
     let first_point_x = UnsignedInteger::from_bytes_be(&input_data[..32])
         .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
