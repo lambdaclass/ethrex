@@ -158,10 +158,10 @@ impl SyncManager {
                     .is_none()
                 {
                     // Sync is complete, start the pruning task only once
-                    if !pruning_started.swap(true, Ordering::SeqCst) {
-                        info!("[SYNC] Sync process completed, starting background pruning task");
-                        Self::start_pruner_task(store.clone(), cancel_token.clone());
-                    }
+                    // if !pruning_started.swap(true, Ordering::SeqCst) {
+                    //     info!("[SYNC] Sync process completed, starting background pruning task");
+                    //     Self::start_pruner_task(store.clone(), cancel_token.clone());
+                    // }
                     break;
                 }
             }
@@ -172,39 +172,38 @@ impl SyncManager {
         Ok(*self.last_fcu_head.try_lock()?)
     }
 
-    /// Start the pruning task in the background after sync completion
-    fn start_pruner_task(
-        store: Store,
-        cancellation_token: CancellationToken,
-    ) -> JoinHandle<Result<(), StoreError>> {
-        const KEEP_BLOCKS: u64 = 128;
-        const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
+    // fn start_pruner_task(
+    //     store: Store,
+    //     cancellation_token: CancellationToken,
+    // ) -> JoinHandle<Result<(), StoreError>> {
+    //     const KEEP_BLOCKS: u64 = 128;
+    //     const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
 
-        spawn(async move {
-            let mut interval = interval(PRUNING_INTERVAL);
-            info!("[PRUNING] Starting pruning task after sync completion");
+    //     spawn(async move {
+    //         let mut interval = interval(PRUNING_INTERVAL);
+    //         info!("[PRUNING] Starting pruning task after sync completion");
 
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        let result = tokio::task::spawn_blocking({
-                            let store = store.clone();
-                            move || store.prune_state_and_storage_log(KEEP_BLOCKS)
-                        }).await;
+    //         loop {
+    //             tokio::select! {
+    //                 _ = interval.tick() => {
+    //                     let result = tokio::task::spawn_blocking({
+    //                         let store = store.clone();
+    //                         move || store.prune_state_and_storage_log(KEEP_BLOCKS)
+    //                     }).await;
 
-                        match result {
-                            Ok(Ok(())) => debug!("[PRUNING] Pruning completed"),
-                            Ok(Err(e)) => error!("[PRUNING] Pruning error: {:?}", e),
-                            Err(e) => error!("[PRUNING] Task join error: {:?}", e),
-                        }
-                    }
-                    _ = cancellation_token.cancelled() => {
-                        info!("[PRUNING] Pruner task shutting down");
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        })
-    }
+    //                     match result {
+    //                         Ok(Ok(())) => debug!("[PRUNING] Pruning completed"),
+    //                         Ok(Err(e)) => error!("[PRUNING] Pruning error: {:?}", e),
+    //                         Err(e) => error!("[PRUNING] Task join error: {:?}", e),
+    //                     }
+    //                 }
+    //                 _ = cancellation_token.cancelled() => {
+    //                     info!("[PRUNING] Pruner task shutting down");
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //         Ok(())
+    //     })
+    // }
 }

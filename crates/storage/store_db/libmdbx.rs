@@ -325,7 +325,9 @@ impl StoreEngine for Store {
         })
         .await
         .inspect(|_| tracing::info!("[DEBUG DB ISSUE] Updates applied"))
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
+
+        Self::prune_state_and_storage_log(self, 128)
     }
 
     fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {

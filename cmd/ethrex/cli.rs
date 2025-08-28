@@ -22,7 +22,7 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    utils::{self, default_datadir, get_client_version, init_datadir, start_pruner_task},
+    utils::{self, default_datadir, get_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
 

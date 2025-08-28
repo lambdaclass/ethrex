@@ -286,9 +286,6 @@ impl Syncer {
         if let SyncMode::Snap = sync_mode {
             self.snap_sync(store.clone(), &mut block_sync_state).await?;
 
-            // Execute aggressive pruning after snap sync completion
-            info!("[SNAP SYNC] Completed! Running post-sync pruning to clean up accumulated state");
-
             // Next sync will be full-sync
             block_sync_state.into_fullsync().await?;
             self.snap_enabled.store(false, Ordering::Relaxed);
