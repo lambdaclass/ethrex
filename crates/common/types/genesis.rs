@@ -201,12 +201,14 @@ pub struct ChainConfig {
 }
 
 lazy_static::lazy_static! {
-    pub static ref NETWORK_NAMES: HashMap<String, &'static str> = {
+    pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
         HashMap::from([
-            (1, "mainnet")
-            (11155111, "sepolia")
-            (17000, "holesky")
-            (560048, "hoodi")
+            (1, "mainnet"),
+            (11155111, "sepolia"),
+            (17000, "holesky"),
+            (560048, "hoodi"),
+            (9, "L1 local dev network"),
+            (65536999, "L2 local dev network"),
         ])
     };
 }
@@ -293,112 +295,40 @@ impl ChainConfig {
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
+
     pub fn display_config(&self) -> String {
         let mut output = String::new();
+        let border = "-".repeat(80);
 
         let network = NETWORK_NAMES
-            .get(&self.chain_id.to_string())
+            .get(&self.chain_id)
             .unwrap_or(&"unknown");
+
+        output.push_str(&format!("{}\n", border));
 
         output.push_str(&format!("Chain ID:  {} ({})\n", self.chain_id, network));
 
-        // Pre-Merge hard forks
-        output.push_str("Pre-Merge hard forks (block based):\n");
+        output.push_str("Network is post-merge\n");
 
-        if let Some(block) = self.homestead_block {
-            output.push_str(&format!(" - Homestead:                   #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/homestead.md)\n", block));
-        }
-
-        if let Some(block) = self.dao_fork_block {
-            output.push_str(&format!(" - DAO Fork:                    #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/dao-fork.md)\n", block));
-        }
-
-        if let Some(block) = self.eip150_block {
-            output.push_str(&format!(" - Tangerine Whistle (EIP 150): #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/tangerine-whistle.md)\n", block));
-        }
-
-        if let Some(block) = self.eip155_block {
-            output.push_str(&format!(" - Spurious Dragon/1 (EIP 155): #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/spurious-dragon.md)\n", block));
-        }
-
-        if let Some(block) = self.eip158_block {
-            output.push_str(&format!(" - Spurious Dragon/2 (EIP 158): #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/spurious-dragon.md)\n", block));
-        }
-
-        if let Some(block) = self.byzantium_block {
-            output.push_str(&format!(" - Byzantium:                   #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/byzantium.md)\n", block));
-        }
-
-        if let Some(block) = self.constantinople_block {
-            output.push_str(&format!(" - Constantinople:              #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/constantinople.md)\n", block));
-        }
-
-        if let Some(block) = self.petersburg_block {
-            output.push_str(&format!(" - Petersburg:                  #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/petersburg.md)\n", block));
-        }
-
-        if let Some(block) = self.istanbul_block {
-            output.push_str(&format!(" - Istanbul:                    #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/istanbul.md)\n", block));
-        }
-
-        if let Some(block) = self.muir_glacier_block {
-            output.push_str(&format!(" - Muir Glacier:                #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/muir-glacier.md)\n", block));
-        }
-
-        if let Some(block) = self.berlin_block {
-            output.push_str(&format!(" - Berlin:                      #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/berlin.md)\n", block));
-        }
-
-        if let Some(block) = self.london_block {
-            output.push_str(&format!(" - London:                      #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/london.md)\n", block));
-        }
-
-        if let Some(block) = self.arrow_glacier_block {
-            output.push_str(&format!(" - Arrow Glacier:               #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/arrow-glacier.md)\n", block));
-        }
-
-        if let Some(block) = self.gray_glacier_block {
-            output.push_str(&format!(" - Gray Glacier:                #{:<8} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/gray-glacier.md)\n", block));
-        }
-
-        output.push('\n');
-
-        // Merge
-        output.push_str("Merge configured:\n");
-        output.push_str(" - Hard-fork specification:    https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/paris.md\n");
-        if self.terminal_total_difficulty_passed {
-            output.push_str(" - Network known to be merged\n");
-        }
-
-        if let Some(difficulty) = self.terminal_total_difficulty {
-            output.push_str(&format!(" - Total terminal difficulty:  {}\n", difficulty));
-        }
-
-        if let Some(block) = self.merge_netsplit_block {
-            output.push_str(&format!(" - Merge netsplit block:       #{:<8}\n", block));
-        }
-
-        output.push('\n');
-
-        // Post-Merge hard forks
         output.push_str("Post-Merge hard forks (timestamp based):\n");
 
         if let Some(time) = self.shanghai_time {
-            output.push_str(&format!(" - Shanghai:                    @{:<10} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/shanghai.md)\n", time));
+            output.push_str(&format!("- Shanghai: @{:<10}\n", time));
         }
 
         if let Some(time) = self.cancun_time {
-            output.push_str(&format!(" - Cancun:                      @{:<10} (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/cancun.md)\n", time));
+            output.push_str(&format!("- Cancun: @{:<10}\n", time));
         }
 
         if let Some(time) = self.prague_time {
-            output.push_str(&format!(" - Prague:                      @{:<10}\n", time));
+            output.push_str(&format!("- Prague: @{:<10}\n", time));
         }
 
         if let Some(time) = self.verkle_time {
-            output.push_str(&format!(" - Verkle:                      @{:<10}\n", time));
+            output.push_str(&format!("- Verkle: @{:<10}\n", time));
         }
 
+        output.push_str(&format!("{}\n", border));
         output
     }
 
@@ -498,10 +428,6 @@ pub struct GenesisAccount {
 impl Genesis {
     pub fn get_block(&self) -> Block {
         Block::new(self.get_block_header(), self.get_block_body())
-    }
-
-    pub fn display_chain_config(&self) -> String {
-        self.config.display_config()
     }
 
     fn get_block_header(&self) -> BlockHeader {
