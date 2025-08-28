@@ -100,7 +100,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
-            perf_logs_enabled: perf_logs_enabled,
+            perf_logs_enabled,
         }
     }
 
