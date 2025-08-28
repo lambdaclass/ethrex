@@ -139,9 +139,19 @@ impl Established {
     }
 }
 
+/// Utility to manage transaction broadcasting to a peer.
 #[derive(Debug)]
 pub struct TxBcastState {
+    /// Queue of transactions to broadcast, followed by the transaction filter.
+    ///
+    /// The queue keeps contains all transactions that are ready to be sent to the peer, while the
+    /// filter keeps track of all transactions known by the peer. This means that the filter should
+    /// never have anything on the queue and viceversa.
     queue_and_filter: Arc<std::sync::Mutex<(HashSet<H256>, HashSet<H256>)>>,
+    /// Event handle on new transactions on the mempool.
+    ///
+    /// The handle is unused but it has to be alive for it to be effective. Once dropped, the handle
+    /// will be unregistered.
     _listener: EventHandle<H256>,
 }
 
