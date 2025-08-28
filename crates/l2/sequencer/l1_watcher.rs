@@ -283,7 +283,7 @@ impl GenServer for L1Watcher {
             .clone()
             .cast(Self::CastMsg::Watch)
             .await
-            .map_err(Self::Error::GenServerError)?;
+            .map_err(Self::Error::InternalError)?;
         Ok(Success(self))
     }
 
