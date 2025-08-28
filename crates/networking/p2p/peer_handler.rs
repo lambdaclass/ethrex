@@ -124,12 +124,22 @@ impl PeerHandler {
             });
     }
 
+    async fn mark_peer_as_busy(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| {
+                info.available = false;
+                info.request_time = Some(Instant::now())
+            });
+    }
+
     /// Helper function called in between syncing steps.
     /// Guarantees that no peer is left as unavailable.
     async fn refresh_peers_availability(&self) {
-        for peer_info in self.peers_info.lock().await.values_mut() {
-            peer_info.available = true;
-            peer_info.request_time = None;
+        for peer_id in self.peers_info.lock().await.keys() {
+            self.mark_peer_as_free(*peer_id).await;
         }
     }
 
@@ -152,10 +162,15 @@ impl PeerHandler {
             .and_modify(|info| info.score = info.score.saturating_sub(1));
     }
 
-    // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
-    async fn record_peer_critical_failure(&self, _peer_id: H256) {}
+    async fn record_peer_critical_failure(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| info.score = info.score.saturating_sub(MIN_PEER_SCORE_THRESHOLD));
+    }
 
     /// TODO: docs
     pub async fn get_peer_channel_with_highest_score(
@@ -371,7 +386,7 @@ impl PeerHandler {
                 continue;
             };
 
-            available_downloader
+            if let Err(_) = available_downloader
                 .start()
                 .cast(DownloaderCastRequest::Headers {
                     task_sender: task_sender.clone(),
@@ -379,7 +394,9 @@ impl PeerHandler {
                     chunk_limit,
                 })
                 .await
-                .unwrap(); // TODO: handle unwrap
+            {
+                tasks_queue_not_started.push_front((start_block, chunk_limit));
+            }
 
             // 4) assign the tasks to the peers
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
@@ -741,7 +758,7 @@ impl PeerHandler {
                 continue;
             };
 
-            available_downloader
+            if let Err(_) = available_downloader
                 .start()
                 .cast(DownloaderCastRequest::AccountRange {
                     task_sender: task_sender.clone(),
@@ -750,14 +767,15 @@ impl PeerHandler {
                     limit_hash: chunk_end,
                 })
                 .await
-                .unwrap(); // TODO: handle unwrap
+            {
+                tasks_queue_not_started.push_front((chunk_start, chunk_end));
+            }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 info!("{:?} pending account tasks", tasks_queue_not_started.len());
                 info!("completed tasks {completed_tasks} chunk count {chunk_count}");
                 last_metrics_update = SystemTime::now();
             }
-            // tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         // TODO: This is repeated code, consider refactoring
@@ -906,7 +924,7 @@ impl PeerHandler {
                 .copied()
                 .collect();
 
-            available_downloader
+            if let Err(_) = available_downloader
                 .start()
                 .cast(DownloaderCastRequest::ByteCode {
                     task_sender: tx.clone(),
@@ -915,7 +933,9 @@ impl PeerHandler {
                     chunk_end,
                 })
                 .await
-                .unwrap(); // TODO: handle unwrap
+            {
+                tasks_queue_not_started.push_front((chunk_start, chunk_end));
+            }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -1238,7 +1258,7 @@ impl PeerHandler {
                 );
             }
 
-            available_downloader
+            if let Err(_) = available_downloader
                 .start()
                 .cast(DownloaderCastRequest::StorageRanges {
                     task_sender: tx.clone(),
@@ -1251,7 +1271,9 @@ impl PeerHandler {
                     chunk_storage_roots,
                 })
                 .await
-                .unwrap(); // TODO: handle unwrap
+            {
+                tasks_queue_not_started.push_front(task);
+            }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -1456,8 +1478,7 @@ impl PeerHandler {
             .transpose()
         else {
             warn!("The RLPxConnection closed the backend channel");
-            // TODO: critically penalize peer?
-            self.record_peer_failure(peer_id).await;
+            self.record_peer_critical_failure(peer_id).await;
             return Ok(None);
         };
 
@@ -1520,11 +1541,7 @@ impl PeerHandler {
             return None;
         };
 
-        // Mark the downloader as busy
-        peers_info.entry(*free_peer_id).and_modify(|peer_info| {
-            peer_info.available = false;
-            peer_info.request_time = Some(Instant::now());
-        });
+        self.mark_peer_as_busy(*free_peer_id).await;
 
         // Create and spawn Downloader Actor
         let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
@@ -1549,7 +1566,6 @@ impl PeerHandler {
             debug!("{peer_id} added as downloader");
         }
 
-        // TODO: check if downloaders can be instantiated here instead of reciving it as a parameter
         let free_downloaders = peers_info
             .clone()
             .into_iter()
@@ -1564,7 +1580,7 @@ impl PeerHandler {
         let (free_peer_id, peer_info) = free_downloaders
             .iter()
             .max_by_key(|(_, peer_info)| peer_info.score)
-            .unwrap(); // TODO: remove unwrap
+            .expect("Infallible");
 
         if peer_info.score < MIN_PEER_SCORE_THRESHOLD {
             debug!("Best available peer doesn't meet minimun scoring, skipping it");
@@ -1587,11 +1603,7 @@ impl PeerHandler {
             return None;
         };
 
-        // Mark the downloader as busy
-        peers_info.entry(*free_peer_id).and_modify(|peer_info| {
-            peer_info.available = false;
-            peer_info.request_time = Some(Instant::now());
-        });
+        self.mark_peer_as_busy(*free_peer_id).await;
 
         // Create and spawn Downloader Actor
         let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
