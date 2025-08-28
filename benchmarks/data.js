@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756392686871,
+  "lastUpdate": 1756395023045,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10555,6 +10555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161296463827,
             "range": "± 292497374",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c40ac146c116c26d7a61b252cafeef37e5faee2d",
+          "message": "ci(l1,l2): recompile replay caches to rkyv (#4195)\n\n**Motivation**\n\nCI was failing due to old cache serialization.\n\n**Description**\n\nRecompile cache that runs on the CI to use `rkyv`\nSucceeded\n[here](https://github.com/lambdaclass/ethrex/actions/runs/17297071969/job/49097875868?pr=4195)",
+          "timestamp": "2025-08-28T14:38:39Z",
+          "tree_id": "bf3e244f107158f2c31ac3c577cd6949400420f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c40ac146c116c26d7a61b252cafeef37e5faee2d"
+        },
+        "date": 1756395005237,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160904292171,
+            "range": "± 256255125",
             "unit": "ns/iter"
           }
         ]
