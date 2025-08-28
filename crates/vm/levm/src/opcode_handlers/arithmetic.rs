@@ -266,18 +266,14 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CLZ)?;
 
-        let [value] = *current_call_frame.stack.pop()?;
+        let value = self.current_call_frame.stack.pop1()?;
 
-        if value != U256::from(0) {
-            current_call_frame
-                .stack
-                .push1(U256::from(value.leading_zeros()))?;
-        } else {
-            current_call_frame.stack.push1(U256::from(256))?;
-        }
+        self.current_call_frame
+            .stack
+            .push1(U256::from(value.leading_zeros()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
