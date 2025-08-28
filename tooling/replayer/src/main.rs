@@ -14,6 +14,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 #[derive(Parser)]
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
+#[clap(group = clap::ArgGroup::new("modes").required(true))]
 pub struct Options {
     #[arg(
         long,
@@ -50,7 +51,7 @@ pub struct Options {
         long,
         default_value_t = false,
         value_name = "BOOLEAN",
-        conflicts_with = "prove",
+        group = "modes",
         help = "Replayer will execute blocks",
         help_heading = "Replayer options"
     )]
@@ -59,7 +60,7 @@ pub struct Options {
         long,
         default_value_t = false,
         value_name = "BOOLEAN",
-        conflicts_with = "execute",
+        group = "modes",
         help = "Replayer will prove blocks",
         help_heading = "Replayer options"
     )]
@@ -87,11 +88,6 @@ async fn main() {
     init_tracing();
 
     let opts = Options::parse();
-
-    if !opts.execute && !opts.prove {
-        tracing::error!("You must specify either --execute or --prove.");
-        std::process::exit(1);
-    }
 
     if opts.slack_webhook_url.is_none() {
         tracing::warn!(
