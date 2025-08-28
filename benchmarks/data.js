@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756410063444,
+  "lastUpdate": 1756418500288,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10645,6 +10645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161883324916,
             "range": "± 301843254",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "867e34f00cb1969cfa7162a0adb1e7774d667cf8",
+          "message": "feat(l2): revert batch subcommand with web3signer (#4194)\n\n**Motivation**\n\nMost L2 chains are deployed with the private keys hidden under a\nweb3signer, we want the `ethrex l2 revert-batch` subcommand to support\nweb3signer\n\n**Description**\n\n- Add 2 flags\n   - `remote-signer-url`: the url of the web3signer server\n- `remote-signer-public-key`: the public key to send to the web3server\nto ask for a signature\n- Modify `call_contract` to get a `Signer` as an argument instead of\nonly a private key\n- Modify `revert-batch` subcommand to parse either a `RemoteSigner` or a\n`LocalSigner` then use that value when calling `call_contract`\n\nCloses #4189",
+          "timestamp": "2025-08-28T21:11:41Z",
+          "tree_id": "b1fdad526a2fe09027de0d7a876ed576cfa8fefb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/867e34f00cb1969cfa7162a0adb1e7774d667cf8"
+        },
+        "date": 1756418483620,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161155049993,
+            "range": "± 160285591",
             "unit": "ns/iter"
           }
         ]
