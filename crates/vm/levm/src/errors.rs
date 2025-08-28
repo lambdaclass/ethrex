@@ -41,6 +41,14 @@ impl From<PrecompileError> for VMError {
     }
 }
 
+/// Useful to use ? in try_into, specially when slicing with known bounds to fixed size arrays,
+/// which is a error that never really happens.
+impl From<std::array::TryFromSliceError> for VMError {
+    fn from(_: std::array::TryFromSliceError) -> Self {
+        VMError::Internal(InternalError::TypeConversion)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum ExceptionalHalt {
     #[error("Stack Underflow")]
