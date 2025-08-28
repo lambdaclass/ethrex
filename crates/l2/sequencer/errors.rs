@@ -144,6 +144,8 @@ pub enum ProofSenderError {
     AlignedSubmitProofError(String),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
+    #[error("Conversion Error: {0}")]
+    ConversionError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -254,6 +256,8 @@ pub enum CommitterError {
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
+    #[error("Unexpected Error: {0}")]
+    UnexpectedError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
