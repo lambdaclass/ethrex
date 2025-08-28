@@ -236,6 +236,10 @@ impl PeerHandler {
         let mut retries = 1;
 
         while sync_head_number == 0 {
+            if retries > 10 {
+                // sync_head might be invalid
+                return None;
+            }
             let peers_table = self
                 .peer_table
                 .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
