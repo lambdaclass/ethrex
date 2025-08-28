@@ -4,7 +4,7 @@ use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::{
     block_run_report::{BlockRunReport, ReplayerMode},
-    cli::{SubcommandExecute, SubcommandProve},
+    cli::{REPLAYER_MODE, SubcommandExecute, SubcommandProve},
     slack::{SlackWebHookBlock, SlackWebHookRequest},
 };
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
@@ -118,17 +118,10 @@ async fn main() {
         ] {
             let slack_webhook_url = opts.slack_webhook_url.clone();
 
-            #[cfg(feature = "sp1")]
-            let replayer_mode = ReplayerMode::ExecuteSP1;
-            #[cfg(feature = "risc0")]
-            let replayer_mode = ReplayerMode::ExecuteRISC0;
-            #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-            let replayer_mode = ReplayerMode::Execute;
-
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
                     replay_execution(
-                        replayer_mode,
+                        REPLAYER_MODE,
                         network,
                         rpc_url,
                         slack_webhook_url,
@@ -146,16 +139,9 @@ async fn main() {
         let sepolia_rpc_url = opts.sepolia_rpc_url.clone();
         let mainnet_rpc_url = opts.mainnet_rpc_url.clone();
 
-        #[cfg(feature = "sp1")]
-        let replayer_mode = ReplayerMode::ProveSP1;
-        #[cfg(feature = "risc0")]
-        let replayer_mode = ReplayerMode::ProveRISC0;
-        #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-        let replayer_mode = ReplayerMode::Execute;
-
         let handle = tokio::spawn(async move {
             replay_proving(
-                replayer_mode,
+                REPLAYER_MODE,
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (

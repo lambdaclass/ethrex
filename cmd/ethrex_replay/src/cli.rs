@@ -20,12 +20,21 @@ use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(feature = "sp1")]
-const BACKEND: Backend = Backend::SP1;
-#[cfg(feature = "risc0")]
-const BACKEND: Backend = Backend::RISC0;
-#[cfg(not(any(feature = "risc0", feature = "sp1")))]
-const BACKEND: Backend = Backend::Exec;
+pub const BACKEND: Backend = if cfg!(feature = "sp1") {
+    Backend::SP1
+} else if cfg!(feature = "risc0") {
+    Backend::RISC0
+} else {
+    Backend::Exec
+};
+
+pub const REPLAYER_MODE: ReplayerMode = if cfg!(feature = "sp1") {
+    ReplayerMode::ExecuteSP1
+} else if cfg!(feature = "risc0") {
+    ReplayerMode::ExecuteRISC0
+} else {
+    ReplayerMode::Execute
+};
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
@@ -152,13 +161,6 @@ impl SubcommandExecute {
 
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
-                #[cfg(feature = "sp1")]
-                let replay_mode = ReplayerMode::ExecuteSP1;
-                #[cfg(feature = "risc0")]
-                let replay_mode = ReplayerMode::ExecuteRISC0;
-                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-                let replay_mode = ReplayerMode::Execute;
-
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
 
@@ -186,7 +188,7 @@ impl SubcommandExecute {
                         block,
                         network.clone(),
                         res,
-                        replay_mode.clone(),
+                        REPLAYER_MODE,
                         elapsed,
                     );
 
@@ -197,7 +199,7 @@ impl SubcommandExecute {
                     }
 
                     if to_csv {
-                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+                        let file_name = format!("ethrex_replay_{network}_{}.csv", REPLAYER_MODE);
 
                         let mut file = std::fs::OpenOptions::new()
                             .append(true)
