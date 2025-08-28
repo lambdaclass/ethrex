@@ -477,6 +477,7 @@ impl DumpIpcReader {
         "params": [format!("{:#x}", self.block_number), format!("{:#x}", self.start), MAX_ACCOUNTS, false, false, false]
         });
         let response = send_ipc_json_request(&mut self.stream, request).await?;
+        info!("IPC res: {response}");
         let dump: Dump = serde_json::from_value(response)?;
         // Find the next hash
         let last_key = dump
