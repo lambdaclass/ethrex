@@ -157,7 +157,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     let store = init_store(&data_dir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
+    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2, true);
 
     let signer = get_signer(&data_dir);
 

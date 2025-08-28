@@ -115,9 +115,10 @@ pub fn init_blockchain(
     evm_engine: EvmEngine,
     store: Store,
     blockchain_type: BlockchainType,
+    perf_logs_endabled: bool,
 ) -> Arc<Blockchain> {
-    info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store, blockchain_type).into()
+    info!("Initiating blockchain: evm={}", evm_engine);
+    Blockchain::new(evm_engine, store, blockchain_type, perf_logs_endabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -384,7 +385,7 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1, true);
 
     let signer = get_signer(&data_dir);
 

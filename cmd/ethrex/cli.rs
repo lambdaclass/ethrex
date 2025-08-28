@@ -401,14 +401,15 @@ pub async fn import_blocks(
     evm: EvmEngine,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
+    let start_time = Instant::now();
     let data_dir = init_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
+    let blockchain = init_blockchain(evm, store.clone(), blockchain_type, false);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
-        info!("Importing blocks from directory: {path}");
+        info!("Importing blocks: directory={path}");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
@@ -421,15 +422,16 @@ pub async fn import_blocks(
             .iter()
             .map(|entry| {
                 let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!("Importing blocks from chain file: {path_str}");
+                info!("Importing blocks: file={path_str}");
                 utils::read_chain_file(path_str)
             })
             .collect()
     } else {
-        info!("Importing blocks from chain file: {path}");
+        info!("Importing blocks: file={path}");
         vec![utils::read_chain_file(path)]
     };
 
+    let mut total_blocks_imported = 0;
     for blocks in chains {
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
@@ -437,10 +439,22 @@ pub async fn import_blocks(
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
         // Execute block by block
-        for block in &blocks {
+        let mut last_progress_log = Instant::now();
+        for (index, block) in blocks.iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
-            info!("Adding block {number} with hash {hash:#x}.");
+
+            // Log progress every 10 seconds
+            if last_progress_log.elapsed() >= Duration::from_secs(10) {
+                info!(
+                    "Import progress: {}/{} blocks ({:.1}%)",
+                    index + 1,
+                    size,
+                    ((index + 1) as f64 / size as f64) * 100.0
+                );
+                last_progress_log = Instant::now();
+            }
+
             // Check if the block is already in the blockchain, if it is do nothing, if not add it
             let block_number = store.get_block_number(hash).await.map_err(|_e| {
                 ChainError::Custom(String::from(
@@ -476,8 +490,15 @@ pub async fn import_blocks(
                 .await?;
         }
 
-        info!("Added {size} blocks to blockchain");
+        total_blocks_imported += size;
     }
+
+    let total_duration = start_time.elapsed();
+    info!(
+        "Import completed: {} blocks imported in {:.2}s",
+        total_blocks_imported,
+        total_duration.as_secs_f64()
+    );
     Ok(())
 }
 
