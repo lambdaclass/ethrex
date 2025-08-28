@@ -32,6 +32,11 @@ const FIBO_CODE: &str = "6080604052348015600e575f5ffd5b506103198061001c5f395ff3f
 // See `fixtures/contracts/load_test/IOHeavyContract.sol` for the code.
 const IO_HEAVY_CODE: &str = "6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033";
 
+// Contract with operations that are asymmetrically costly for a prover based on their gas cost
+// See `fixtures/contracts/zkarnage/ZKarnage.sol` for the code.
+const ZKARNAGE: &str =
+    include_str!("../../../fixtures/contracts/zkarnage/ZKarnage.bin").trim_ascii();
+
 #[derive(Parser)]
 #[command(name = "load_test")]
 #[command(about = "A CLI tool with a single test flag", long_about = None)]
@@ -92,6 +97,7 @@ pub enum TestType {
     Erc20Transfers,
     Fibonacci,
     IOHeavy,
+    ZKarnage,
 }
 
 const RETRIES: u64 = 1000;
@@ -126,6 +132,11 @@ async fn deploy_fibo(client: EthClient, deployer: &Signer) -> eyre::Result<Addre
 async fn deploy_io_heavy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
     let io_heavy_bytecode = hex::decode(IO_HEAVY_CODE).expect("Failed to decode IO Heavy bytecode");
     deploy_contract(client, deployer, io_heavy_bytecode).await
+}
+
+async fn deploy_zkarnage(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
+    let zkarnage_bytecode = hex::decode(ZKARNAGE).expect("Failed to decode ZKarnage bytecode");
+    deploy_contract(client, deployer, zkarnage_bytecode).await
 }
 
 // Given an account vector and the erc20 contract address, claim balance for all accounts.
@@ -186,6 +197,7 @@ enum TxBuilder {
     IOHeavy(Address),
     Deploy(Vec<u8>),
     Noop,
+    ZKarnage(Address),
 }
 
 impl TxBuilder {
@@ -216,6 +228,12 @@ impl TxBuilder {
                 (None, io_heavy_calldata, *contract_address)
             }
             TxBuilder::Deploy(code) => (None, code.clone(), Address::zero()),
+            TxBuilder::ZKarnage(contract_address) => {
+                let zkarnage_calldata =
+                    calldata::encode_calldata("executeJumpdestAttack()", &[Value::Uint(10.into())])
+                        .unwrap();
+                (None, zkarnage_calldata, *contract_address)
+            }
             TxBuilder::Noop => unreachable!(),
         }
     }
@@ -387,6 +405,15 @@ async fn main() {
                 .await
                 .expect("Failed to deploy IO Heavy contract");
             TxBuilder::IOHeavy(contract_address)
+        }
+        TestType::ZKarnage => {
+            println!("ZKarnage starting");
+            println!("Deploying ZKarnage contract...");
+            let contract_address = deploy_zkarnage(client.clone(), &deployer)
+                .await
+                .expect("Failed to deploy ZKarnage contract");
+            println!("deployed at {contract_address:?}");
+            TxBuilder::ZKarnage(contract_address)
         }
     };
 
