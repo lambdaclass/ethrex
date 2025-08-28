@@ -29,6 +29,8 @@ pub struct SyncManager {
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
     cancel_token: CancellationToken,
+    /// Flag to ensure pruning task is only started once after sync completion
+    pruning_started: Arc<AtomicBool>,
 }
 
 impl SyncManager {
@@ -52,6 +54,7 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
             cancel_token,
+            pruning_started: Arc::new(AtomicBool::new(false)),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -75,6 +78,7 @@ impl SyncManager {
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
             cancel_token: CancellationToken::new(),
+            pruning_started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -116,6 +120,7 @@ impl SyncManager {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let cancel_token = self.cancel_token.clone();
+        let pruning_started = self.pruning_started.clone();
 
         // Should we prune when are syncing? NO - we'll prune AFTER syncing is complete
 
@@ -152,9 +157,11 @@ impl SyncManager {
                     .flatten()
                     .is_none()
                 {
-                    // Sync is complete, start the pruning task
-                    info!("[SYNC] Sync process completed, starting background pruning task");
-                    Self::start_pruner_task(store.clone(), cancel_token.clone());
+                    // Sync is complete, start the pruning task only once
+                    if !pruning_started.swap(true, Ordering::SeqCst) {
+                        info!("[SYNC] Sync process completed, starting background pruning task");
+                        Self::start_pruner_task(store.clone(), cancel_token.clone());
+                    }
                     break;
                 }
             }
