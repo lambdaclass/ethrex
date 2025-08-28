@@ -137,7 +137,13 @@ def block_production_loop(
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 break
         except Exception as e:
-            pass
+            print(f"⚠️ Node did stopped. Stopping.")
+            send_slack_message_failed(
+                f"⚠️ Node on {hostname} stopped. Network: {args.network}. Log File: {logs_file}_{start_time}.log"
+            )
+            with open("sync_logs.txt", "a") as f:
+                f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
+            break
         time.sleep(args.block_wait_time)
 
 
