@@ -144,12 +144,14 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
+    info!("processing dump storage: {dump_storage:?}");
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
     if trie.hash()? != storage_root {
+        info!("storage hash mismatch: calced {} vs received {}", trie.hash()?, storage_root);
         Err(eyre::ErrReport::msg(
             "Storage root doesn't match the one in the account during archive sync",
         ))
