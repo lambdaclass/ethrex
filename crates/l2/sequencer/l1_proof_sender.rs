@@ -70,7 +70,7 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
-            ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
+            ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
 
@@ -109,7 +109,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)
+            .map_err(ProofSenderError::InternalError)
     }
 
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
@@ -190,13 +190,13 @@ impl L1ProofSender {
                 })?;
 
         let Signer::Local(local_signer) = &self.signer else {
-            return Err(ProofSenderError::InternalError(
+            return Err(ProofSenderError::UnexpectedError(
                 "Aligned mode only supports local signer".to_string(),
             ));
         };
 
         let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
-            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+            .map_err(|_| ProofSenderError::UnexpectedError("Failed to create wallet".to_owned()))?;
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
 

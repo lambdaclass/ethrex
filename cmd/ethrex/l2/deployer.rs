@@ -38,7 +38,9 @@ use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
 
-use ethrex_config::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
+use ethrex_config::networks::{
+    LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
+};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
@@ -353,7 +355,7 @@ impl Default for DeployerOptions {
             .unwrap(),
             env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
-            private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
+            private_keys_file_path: None,
             genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
             genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
@@ -976,10 +978,13 @@ async fn make_deposits(
                 .ok_or(DeployerError::FailedToGetStringFromPath)?,
         )
     };
-    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
-        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
-    )?)
-    .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
+
+    let pks = if let Some(path) = &opts.private_keys_file_path {
+        &read_to_string(path).map_err(|_| DeployerError::FailedToGetStringFromPath)?
+    } else {
+        LOCAL_DEVNET_PRIVATE_KEYS
+    };
+
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())

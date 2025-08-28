@@ -10,7 +10,7 @@ use ethrex_rpc::{
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
 use rand::Rng;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 
@@ -24,6 +24,13 @@ pub fn random_duration(sleep_amount: u64) -> Duration {
         rng.gen_range(0..400)
     };
     Duration::from_millis(sleep_amount + random_noise)
+}
+
+pub fn system_now_ms() -> Option<u128> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis())
 }
 
 pub async fn send_verify_tx(

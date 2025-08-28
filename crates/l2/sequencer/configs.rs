@@ -28,6 +28,7 @@ pub struct BlockProducerConfig {
 #[derive(Clone, Debug)]
 pub struct CommitterConfig {
     pub on_chain_proposer_address: Address,
+    pub first_wake_up_time_ms: u64,
     pub commit_time_ms: u64,
     pub arbitrary_base_blob_gas_price: u64,
     pub validium: bool,
