@@ -439,8 +439,10 @@ impl Syncer {
                     .add_block(&block)
                     .await
                     .inspect_err(|e| {
-                        error!("FAILED TO ADD BLOCK: {:?}", e);
-                        error!("BLOCK: {:?}", block);
+                        error!("[DEBUG DB ISSUE] Failed block details - Number: {}, Hash: {:?}, Parent: {:?}, State Root: {:?}", 
+                               block.header.number, block.hash(), block.header.parent_hash, block.header.state_root);
+                        error!("[DEBUG DB ISSUE] Block header: {:?}", block.header);
+                        error!("[DEBUG DB ISSUE] Block transactions count: {}", block.body.transactions.len());
                     })
                     .map_err(|e| {
                         (
@@ -451,6 +453,10 @@ impl Syncer {
                             }),
                         )
                     })?;
+                info!(
+                    "[DEBUG DB ISSUE] Successfully added block {}",
+                    block.header.number
+                );
                 last_valid_hash = block.hash();
             }
             Ok(())

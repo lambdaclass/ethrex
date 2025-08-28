@@ -147,6 +147,7 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        tracing::info!("[DEBUG DB ISSUE] Applying updates");
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
@@ -175,6 +176,7 @@ impl StoreEngine for Store {
                 // For each block in the update batch, we iterate over the account updates (by index)
                 // we store account info changes in the table StateWriteBatch
                 // store account updates
+                tracing::info!("[DEBUG DB ISSUE] Iterating over account updates");
                 for (node_hash, mut node_data) in update_batch.account_updates {
                     tracing::debug!(
                         node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
@@ -197,6 +199,7 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
 
+                tracing::info!("[DEBUG DB ISSUE] Iterating over invalidated state nodes");
                 for node_hash in update_batch.invalidated_state_nodes {
                     // Before inserting, we insert the node into the pruning log
                     cursor_state_trie_pruning_log
@@ -204,6 +207,7 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
 
+                tracing::info!("[DEBUG DB ISSUE] Iterating over storage updates");
                 for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
                     let key_1: [u8; 32] = hashed_address.into();
                     for (node_hash, mut node_data) in nodes {
@@ -320,6 +324,7 @@ impl StoreEngine for Store {
             tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
+        .inspect(|_| tracing::info!("[DEBUG DB ISSUE] Updates applied"))
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
