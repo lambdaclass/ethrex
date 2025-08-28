@@ -4,7 +4,7 @@ use crate::{
     l2::{
         self,
         deployer::{DeployerOptions, deploy_l1_contracts},
-        options::{Options, ProverClientOptions},
+        options::{Options, ProverClientOptions, parse_signer},
     },
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
@@ -473,21 +473,21 @@ impl Command {
                 private_key,
                 datadir,
                 network,
-                remote_signer_public_key: _,
-                remote_signer_url: _,
+                remote_signer_public_key,
+                remote_signer_url,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                let signer = parse_signer(private_key, remote_signer_url, remote_signer_public_key);
 
                 let client = EthClient::new(rpc_url.as_str())?;
-                if let Some(private_key) = private_key {
+                if let Ok(signer) = signer.as_ref() {
                     info!("Pausing OnChainProposer...");
-                    call_contract(&client, &private_key, contract_address, "pause()", vec![])
-                        .await?;
+                    call_contract(&client, signer, contract_address, "pause()", vec![]).await?;
                     info!("Doing revert on OnChainProposer...");
                     call_contract(
                         &client,
-                        &private_key,
+                        signer,
                         contract_address,
                         "revertBatch(uint256)",
                         vec![Value::Uint(batch.into())],
@@ -525,10 +525,9 @@ impl Command {
                     .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
                     .await?;
 
-                if let Some(private_key) = private_key {
+                if let Ok(signer) = signer.as_ref() {
                     info!("Unpausing OnChainProposer...");
-                    call_contract(&client, &private_key, contract_address, "unpause()", vec![])
-                        .await?;
+                    call_contract(&client, signer, contract_address, "unpause()", vec![]).await?;
                 }
             }
             Command::Deploy { options } => {
