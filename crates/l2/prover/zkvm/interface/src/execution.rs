@@ -234,8 +234,21 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_state_trie()
-        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+    // if there are no transactions and no withdrawals, the batch is empty
+    let is_batch_empty = !blocks.iter().any(|block| {
+        !block.body.transactions.is_empty()
+            || !block
+                .body
+                .withdrawals
+                .as_ref()
+                .is_none_or(|withdrawals| withdrawals.is_empty())
+    });
+
+    if !is_batch_empty {
+        // this validates that the execution witness corresponds to a pruned trie
+        db.rebuild_state_trie()
+            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+    }
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -290,46 +303,48 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
-        // Execute block
-        #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
-        #[cfg(not(feature = "l2"))]
-        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
-        let result = vm
-            .execute_block(block)
-            .map_err(StatelessExecutionError::EvmError)?;
-        let receipts = result.receipts;
-        let account_updates = vm
-            .get_state_transitions()
-            .map_err(StatelessExecutionError::EvmError)?;
+        if !is_batch_empty {
+            // Execute block
+            #[cfg(feature = "l2")]
+            let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
+            #[cfg(not(feature = "l2"))]
+            let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
+            let result = vm
+                .execute_block(block)
+                .map_err(StatelessExecutionError::EvmError)?;
+            let receipts = result.receipts;
+            let account_updates = vm
+                .get_state_transitions()
+                .map_err(StatelessExecutionError::EvmError)?;
 
-        // Update db for the next block
-        wrapped_db
-            .apply_account_updates(&account_updates)
-            .map_err(StatelessExecutionError::ExecutionWitness)?;
+            // Update db for the next block
+            wrapped_db
+                .apply_account_updates(&account_updates)
+                .map_err(StatelessExecutionError::ExecutionWitness)?;
 
-        // Update acc_account_updates
-        for account in account_updates {
-            let address = account.address;
-            if let Some(existing) = acc_account_updates.get_mut(&address) {
-                existing.merge(account);
-            } else {
-                acc_account_updates.insert(address, account);
+            // Update acc_account_updates
+            for account in account_updates {
+                let address = account.address;
+                if let Some(existing) = acc_account_updates.get_mut(&address) {
+                    existing.merge(account);
+                } else {
+                    acc_account_updates.insert(address, account);
+                }
             }
+
+            non_privileged_count += block.body.transactions.len()
+                - get_block_privileged_transactions(&block.body.transactions).len();
+
+            validate_gas_used(&receipts, &block.header)
+                .map_err(StatelessExecutionError::GasValidationError)?;
+            validate_receipts_root(&block.header, &receipts)
+                .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+            // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
+            validate_requests_hash(&block.header, &chain_config, &result.requests)
+                .map_err(StatelessExecutionError::RequestsRootValidationError)?;
+            acc_receipts.push(receipts);
         }
-
-        non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions).len();
-
-        validate_gas_used(&receipts, &block.header)
-            .map_err(StatelessExecutionError::GasValidationError)?;
-        validate_receipts_root(&block.header, &receipts)
-            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
-        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
-        validate_requests_hash(&block.header, &chain_config, &result.requests)
-            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_block_header = &block.header;
-        acc_receipts.push(receipts);
     }
 
     // Calculate final state root hash and check
@@ -345,6 +360,9 @@ fn execute_stateless(
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
+
+    // could add a sanity check that, if is_empty_batch is true,
+    // then final_state_hash should equal initial_state_hash
 
     Ok(StatelessResult {
         receipts: acc_receipts,
