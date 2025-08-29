@@ -56,7 +56,6 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         {
             continue;
         }
-        //dbg!(test.name.clone());
 
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
