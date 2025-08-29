@@ -37,6 +37,7 @@ where
         if let Some(v) = &mut res {
             // Nodes are stored with 8 extra bytes at the end to store the block number
             // Remove the last 8 bytes that contain the block number
+            tracing::info!("[DB ISSUE] Truncating node value");
             v.truncate(v.len() - 8);
         }
         Ok(res)

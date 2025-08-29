@@ -126,7 +126,9 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
+        info!("[DB ISSUE] Executing block");
         let execution_result = vm.execute_block(block)?;
+        info!("[DB ISSUE] Get State Transitions");
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright

@@ -49,6 +49,7 @@ where
             .map_err(TrieError::DbError)?;
         if let Some(v) = &mut res {
             // Remove the last 8 bytes that contain the block number
+            tracing::info!("[DB ISSUE] Truncating node value");
             v.truncate(v.len() - 8);
         }
         Ok(res)
