@@ -135,17 +135,6 @@ pub enum Command {
     RevertBatch {
         #[arg(help = "ID of the batch to revert to")]
         batch: u64,
-        #[arg(help = "The address of the OnChainProposer contract")]
-        contract_address: Address,
-        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
-        private_key: Option<SecretKey>,
-        #[arg(
-            long,
-            default_value = "http://localhost:8545",
-            env = "RPC_URL",
-            help = "URL of the L1 RPC"
-        )]
-        rpc_url: Url,
         #[arg(
             long = "network",
             default_value_t = Network::default(),
@@ -163,25 +152,18 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
-        #[arg(
-            long = "remote-signer-url",
-            value_name = "URL",
-            env = "ETHREX_REMOTE_SIGNER_URL",
-            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
-            requires = "remote_signer_public_key",
-            conflicts_with = "private_key"
-        )]
-        remote_signer_url: Option<Url>,
-        #[arg(
-            long = "remote-signer-public-key",
-            value_name = "PUBLIC_KEY",
-            value_parser = utils::parse_public_key,
-            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
-            help = "Public key to request the remote signature from.",
-            requires = "remote_signer_url",
-            conflicts_with = "private_key"
-        )]
-        remote_signer_public_key: Option<PublicKey>,
+        #[command(flatten)]
+        contract_pause_options: ContractPauseOptions,
+    },
+    #[command(about = "Pause L1 contracts")]
+    Pause {
+        #[command(flatten)]
+        contract_pause_options: ContractPauseOptions,
+    },
+    #[command(about = "Unpause L1 contracts")]
+    UnPause {
+        #[command(flatten)]
+        contract_pause_options: ContractPauseOptions,
     },
     #[command(about = "Deploy in L1 all contracts needed by an L2.")]
     Deploy {
@@ -469,27 +451,27 @@ impl Command {
             }
             Command::RevertBatch {
                 batch,
-                contract_address,
-                rpc_url,
-                private_key,
                 datadir,
                 network,
-                remote_signer_public_key,
-                remote_signer_url,
+                contract_pause_options: opts,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
-                let signer = parse_signer(private_key, remote_signer_url, remote_signer_public_key);
-
-                let client = EthClient::new(rpc_url.as_str())?;
+                let signer = parse_signer(
+                    opts.private_key,
+                    opts.remote_signer_url,
+                    opts.remote_signer_public_key,
+                );
+                let client = EthClient::new(opts.rpc_url.as_str())?;
                 if let Ok(signer) = signer.as_ref() {
                     info!("Pausing OnChainProposer...");
-                    call_contract(&client, signer, contract_address, "pause()", vec![]).await?;
+                    call_contract(&client, signer, opts.contract_address, "pause()", vec![])
+                        .await?;
                     info!("Doing revert on OnChainProposer...");
                     call_contract(
                         &client,
                         signer,
-                        contract_address,
+                        opts.contract_address,
                         "revertBatch(uint256)",
                         vec![Value::Uint(batch.into())],
                     )
@@ -528,13 +510,56 @@ impl Command {
 
                 if let Ok(signer) = signer.as_ref() {
                     info!("Unpausing OnChainProposer...");
-                    call_contract(&client, signer, contract_address, "unpause()", vec![]).await?;
+                    call_contract(&client, signer, opts.contract_address, "unpause()", vec![])
+                        .await?;
                 }
             }
+            Command::Pause {
+                contract_pause_options: _,
+            } => {
+                todo!("implement ethrex l2 pause")
+            }
+            Command::UnPause {
+                contract_pause_options: _,
+            } => todo!("implement ethrex l2 unpause"),
             Command::Deploy { options } => {
                 deploy_l1_contracts(options).await?;
             }
         }
         Ok(())
     }
+}
+
+#[derive(Parser)]
+pub struct ContractPauseOptions {
+    #[arg(help = "The address of the target contract")]
+    contract_address: Address,
+    #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
+    private_key: Option<SecretKey>,
+    #[arg(
+        long,
+        default_value = "http://localhost:8545",
+        env = "RPC_URL",
+        help = "URL of the L1 RPC"
+    )]
+    rpc_url: Url,
+    #[arg(
+        long = "remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_REMOTE_SIGNER_URL",
+        help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+        requires = "remote_signer_public_key",
+        conflicts_with = "private_key"
+    )]
+    remote_signer_url: Option<Url>,
+    #[arg(
+            long = "remote-signer-public-key",
+            value_name = "PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            requires = "remote_signer_url",
+            conflicts_with = "private_key"
+        )]
+    remote_signer_public_key: Option<PublicKey>,
 }
