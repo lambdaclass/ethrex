@@ -252,14 +252,7 @@ fn execute_stateless(
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
-    // Validate block hashes, except parent block hash (latest block hash)
-    if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
-        return Err(StatelessExecutionError::InvalidBlockHash(
-            invalid_block_header,
-        ));
-    }
-
-    // Validate parent block header
+    // Validate the initial state
     let parent_block_header = &wrapped_db
         .get_block_parent_header(
             blocks
@@ -269,15 +262,6 @@ fn execute_stateless(
                 .number,
         )
         .map_err(StatelessExecutionError::ExecutionWitness)?;
-    let first_block_header = &blocks
-        .first()
-        .ok_or(StatelessExecutionError::EmptyBatchError)?
-        .header;
-    if parent_block_header.hash() != first_block_header.parent_hash {
-        return Err(StatelessExecutionError::InvalidParentBlockHeader);
-    }
-
-    // Validate the initial state
     let initial_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;

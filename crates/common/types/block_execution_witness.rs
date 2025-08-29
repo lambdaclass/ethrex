@@ -220,42 +220,6 @@ impl ExecutionWitnessResult {
         Ok(state_trie.hash_no_commit())
     }
 
-    /// Returns Some(block_number) if the hash for block_number is not the parent
-    /// hash of block_number + 1. None if there's no such hash.
-    ///
-    /// Keep in mind that the last block hash (which is a batch's parent hash)
-    /// can't be validated against the next header, because it has no successor.
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
-        // Enforces there's at least one block header, so windows() call doesn't panic.
-        if self.block_headers.is_empty() {
-            return Err(ExecutionWitnessError::NoBlockHeaders);
-        };
-
-        // Sort in ascending order
-        let mut block_headers: Vec<_> = self.block_headers.iter().collect();
-        block_headers.sort_by_key(|(number, _)| *number);
-
-        // Validate hashes
-        for window in block_headers.windows(2) {
-            let (Some((number, header)), Some((next_number, next_header))) =
-                (window.first().cloned(), window.get(1).cloned())
-            else {
-                // windows() returns an empty iterator in this case.
-                return Err(ExecutionWitnessError::Unreachable(
-                    "block header window len is < 2".to_string(),
-                ));
-            };
-            if *next_number != *number + 1 {
-                return Err(ExecutionWitnessError::NoncontiguousBlockHeaders);
-            }
-            if next_header.parent_hash != header.hash() {
-                return Ok(Some(*number));
-            }
-        }
-
-        Ok(None)
-    }
-
     /// Retrieves the parent block header for the specified block number
     /// Searches within `self.block_headers`
     pub fn get_block_parent_header(
