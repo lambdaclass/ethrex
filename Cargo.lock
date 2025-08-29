@@ -4180,6 +4180,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-trie",
+ "ethrex-vm",
  "futures",
  "hex",
  "hex-literal",
