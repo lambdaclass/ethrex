@@ -45,7 +45,7 @@ impl RLPxInitiator {
             context,
             initial_lookup_interval: Duration::from_secs(3),
             lookup_interval: Duration::from_secs(5 * 60),
-            target_peers: 50,
+            target_peers: 500,
             last_log_time: Instant::now(),
         }
     }
@@ -77,9 +77,6 @@ impl RLPxInitiator {
     async fn look_for_peer(&mut self) -> bool {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
-        if peer_number > self.target_peers {
-            return false;
-        }
 
         if self.last_log_time.elapsed() > self.lookup_interval {
             info!(
@@ -88,6 +85,10 @@ impl RLPxInitiator {
             );
             self.last_log_time = Instant::now();
             already_tried_peers.clear();
+        }
+
+        if peer_number > self.target_peers {
+            return false;
         }
 
         for contact in self.context.table.table.lock().await.values() {
