@@ -415,7 +415,8 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     let data_dir = init_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    start_pruner_task(store.clone(), cancel_token);
+    // For CLI mode, we don't wait for snap sync (likely full sync from start)
+    start_pruner_task(store.clone(), cancel_token, None);
 
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");

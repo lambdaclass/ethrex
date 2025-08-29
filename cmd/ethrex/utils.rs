@@ -200,10 +200,12 @@ pub fn get_client_version() -> String {
 }
 
 /// Start the pruning task in the background, it will run every [`PRUNING_INTERVAL`]
-/// seconds
+/// seconds. If snap_sync_complete_rx is provided, the pruner will wait for snap sync
+/// to complete before starting periodic pruning.
 pub fn start_pruner_task(
     store: Store,
     cancellation_token: CancellationToken,
+    snap_sync_complete_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> JoinHandle<Result<(), StoreError>> {
     // TODO: read from config
     const KEEP_BLOCKS: u64 = 1024;
@@ -212,6 +214,21 @@ pub fn start_pruner_task(
 
     // Start the pruning task in the background
     tokio::spawn(async move {
+        // If we have a snap sync completion receiver, wait for snap sync to complete
+        if let Some(rx) = snap_sync_complete_rx {
+            tracing::info!("[PRUNING] Waiting for snap sync to complete before starting pruning");
+            
+            tokio::select! {
+                _ = rx => {
+                    tracing::info!("[PRUNING] Snap sync completed, starting periodic pruning");
+                }
+                _ = cancellation_token.cancelled() => {
+                    tracing::info!("[PRUNING] Pruner task shutting down during snap sync wait");
+                    return Ok(());
+                }
+            }
+        }
+
         let mut interval = tokio::time::interval(PRUNING_INTERVAL);
 
         loop {

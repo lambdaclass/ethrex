@@ -36,6 +36,7 @@ impl SyncManager {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         store: Store,
+        snap_sync_complete_tx: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
@@ -43,6 +44,7 @@ impl SyncManager {
             snap_enabled.clone(),
             cancel_token,
             blockchain,
+            snap_sync_complete_tx,
         )));
         let sync_manager = Self {
             snap_enabled,

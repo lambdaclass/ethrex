@@ -1502,7 +1502,7 @@ impl StoreEngine for Store {
                     // Add reference count (initialize to 1 for nodes written during snap sync)
                     // This should be done to match the behavior introduced with pruning
                     // TODO: Are nodes always new? Should the refcount be 1 or count the number of times the node is written?
-                    tracing::info!(
+                    tracing::debug!(
                         hashed_address = hex::encode(key_1),
                         node_hash = hex::encode(key_2),
                         original_len = node_data.len(),

@@ -84,6 +84,8 @@ pub struct Syncer {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
+    // Channel to notify when snap sync completes
+    snap_sync_complete_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Syncer {
@@ -92,12 +94,14 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
+        snap_sync_complete_tx: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Self {
         Self {
             snap_enabled,
             peers,
             cancel_token,
             blockchain,
+            snap_sync_complete_tx,
         }
     }
 
@@ -112,6 +116,7 @@ impl Syncer {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
+            snap_sync_complete_tx: None,
         }
     }
 
@@ -285,6 +290,12 @@ impl Syncer {
 
         if let SyncMode::Snap = sync_mode {
             self.snap_sync(store, &mut block_sync_state).await?;
+
+            // Signal that snap sync has completed
+            if let Some(tx) = self.snap_sync_complete_tx.take() {
+                tracing::info!("[PRUNING] Snap sync completed, signaling pruner to start");
+                let _ = tx.send(()); // Signal pruner to start
+            }
 
             // Next sync will be full-sync
             block_sync_state.into_fullsync().await?;

@@ -130,6 +130,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    snap_sync_complete_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -140,6 +141,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        snap_sync_complete_tx,
     )
     .await;
 
@@ -383,7 +385,14 @@ pub async fn init_l1(
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
-    start_pruner_task(store.clone(), cancel_token.clone());
+    // Create channel to signal when snap sync completes
+    let (snap_sync_complete_tx, snap_sync_complete_rx) = tokio::sync::oneshot::channel();
+
+    start_pruner_task(
+        store.clone(),
+        cancel_token.clone(),
+        Some(snap_sync_complete_rx),
+    );
 
     let signer = get_signer(&data_dir);
 
@@ -409,6 +418,7 @@ pub async fn init_l1(
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        Some(snap_sync_complete_tx),
     )
     .await;
 

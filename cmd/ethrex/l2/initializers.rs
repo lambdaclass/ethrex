@@ -57,6 +57,7 @@ async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        None, // L2 doesn't need snap sync completion signaling  
     )
     .await;
 
