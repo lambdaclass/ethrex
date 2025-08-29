@@ -112,11 +112,6 @@ where
                 "BlockException.INVALID_REQUESTS" => BlockChainExpectedException::BlockException(
                     BlockExpectedException::InvalidRequest,
                 ),
-                "BlockException.SYSTEM_CONTRACT_EMPTY" => {
-                    BlockChainExpectedException::BlockException(
-                        BlockExpectedException::SystemContractEmpty,
-                    )
-                }
                 "BlockException.SYSTEM_CONTRACT_CALL_FAILED" => {
                     BlockChainExpectedException::BlockException(
                         BlockExpectedException::SystemContractCallFailed,

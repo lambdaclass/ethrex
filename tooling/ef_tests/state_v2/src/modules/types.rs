@@ -6,12 +6,19 @@ use crate::modules::{
     },
     error::RunnerError,
 };
+use std::str::FromStr;
 
 use ::bytes::Bytes;
-use ethrex_common::serde_utils::{bytes, u64, u256};
 use ethrex_common::{
-    Address, H256, U256,
-    types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
+    Address, H160, H256, U256,
+    constants::GAS_PER_BLOB,
+    types::{
+        AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
+    },
+};
+use ethrex_common::{
+    serde_utils::{bytes, u64, u256},
+    types::{BlobSchedule, ChainConfig},
 };
 
 use serde::Deserialize;
@@ -223,25 +230,89 @@ pub struct Test {
     pub test_cases: Vec<TestCase>, // A vector of specific cases to be tested under these conditions (transactions).
 }
 
-impl From<&Test> for Genesis {
-    fn from(test: &Test) -> Self {
-        Genesis {
-            alloc: {
-                let mut alloc = BTreeMap::new();
-                for (account, account_state) in &test.pre {
-                    alloc.insert(*account, GenesisAccount::from(account_state));
-                }
-                alloc
-            },
-            coinbase: test.env.current_coinbase,
-            difficulty: test.env.current_difficulty,
-            gas_limit: test.env.current_gas_limit,
-            mix_hash: test.env.current_random.unwrap_or_default(),
-            timestamp: test.env.current_timestamp.as_u64(),
-            base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
-            excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
-            ..Default::default()
-        }
+fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
+    let mut basic_chain_config = ChainConfig {
+        chain_id: 1,
+        homestead_block: Some(0),
+        dao_fork_block: Some(0),
+        dao_fork_support: true,
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        muir_glacier_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        arrow_glacier_block: Some(0),
+        gray_glacier_block: Some(0),
+        merge_netsplit_block: Some(0),
+        shanghai_time: None, // Time for forks will be set.
+        cancun_time: None,
+        prague_time: None,
+        verkle_time: None,
+        osaka_time: None,
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        blob_schedule: BlobSchedule::default(),
+        deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+            .unwrap(), // Doesn't matter
+    };
+
+        panic!("Pre-Merge forks are not supported in this context. Please use a fork at or after Paris (the Merge).");
+    }
+    if *fork >= Fork::Shanghai {
+        basic_chain_config.shanghai_time = Some(0);
+    }
+    if *fork >= Fork::Cancun {
+        basic_chain_config.cancun_time = Some(0);
+    }
+    if *fork >= Fork::Prague {
+        basic_chain_config.prague_time = Some(0);
+    }
+    if *fork >= Fork::Osaka {
+        basic_chain_config.osaka_time = Some(0);
+    }
+
+    basic_chain_config
+}
+
+pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
+    let chain_config = get_chain_config_from_fork(fork);
+
+    let genesis_excess_blob_gas = if let Some(excess_blob_gas) = test.env.current_excess_blob_gas {
+        let schedule = BlobSchedule::default();
+        let target = if *fork == Fork::Cancun {
+            schedule.cancun.target
+        } else if *fork == Fork::Prague {
+            schedule.prague.target
+        } else {
+            0
+        };
+
+        Some(excess_blob_gas.as_u64() + target as u64 * GAS_PER_BLOB as u64)
+    } else {
+        None
+    };
+
+    Genesis {
+        alloc: {
+            let mut alloc = BTreeMap::new();
+            for (account, account_state) in &test.pre {
+                alloc.insert(*account, GenesisAccount::from(account_state));
+            }
+            alloc
+        },
+        coinbase: test.env.current_coinbase,
+        difficulty: U256::zero(),
+        timestamp: 0,
+        config: chain_config,
+        gas_limit: test.env.current_gas_limit,
+            .checked_div(7), // The base fee per gas in the genesis block must be set so that, after applying the base fee adjustment logic (as defined in EIP-1559 and implemented in `calculate_base_fee_per_gas`), the resulting base fee matches the expected value for the first block. The division by 7 is chosen to reverse the protocol's adjustment formula, ensuring the header passes validation according to the Ethereum specification.
+        excess_blob_gas: genesis_excess_blob_gas,
+        ..Default::default()
     }
 }
 
