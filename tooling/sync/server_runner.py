@@ -138,6 +138,7 @@ def block_production_loop(
                 break
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
+            print("Error:", e)
             send_slack_message_failed(
                 f"⚠️ Node on {hostname} stopped. Network: {args.network}. Log File: {logs_file}_{start_time}.log"
             )
