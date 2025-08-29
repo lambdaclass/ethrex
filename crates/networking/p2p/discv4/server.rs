@@ -4,14 +4,18 @@ use std::{
     sync::Arc,
 };
 
+use bytes::BytesMut;
 use ethrex_common::{H512, U256};
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle},
+    tasks::{CastResponse, GenServer, GenServerHandle, InitResult::Success, spawn_listener},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
+use tokio_util::codec::BytesCodec;
+use tokio_util::udp::UdpFramed;
+
 use tracing::{debug, error, info, trace, warn};
 
 use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
@@ -26,15 +30,12 @@ use crate::{
     utils::{get_msg_expiration_from_seconds, node_id},
 };
 
-const MAX_DISC_PACKET_SIZE: usize = 1280;
 const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-    #[error("Failed to spawn connection handler")]
-    ConnectionError(#[from] ConnectionHandlerError),
     #[error("Failed to decode packet")]
     InvalidPacket(#[from] PacketDecodeErr),
     #[error("Failed to send message")]
@@ -44,6 +45,16 @@ pub enum DiscoveryServerError {
 }
 
 #[derive(Debug, Clone)]
+pub enum InMessage {
+    Message(Discv4Message),
+}
+
+#[derive(Debug, Clone)]
+pub enum OutMessage {
+    Done,
+}
+
+#[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -53,41 +64,216 @@ pub struct DiscoveryServer {
 }
 
 impl DiscoveryServer {
-    pub fn new(
+    pub async fn spawn(
         local_node: Node,
-        local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
-    ) -> Self {
-        Self {
+        bootnodes: Vec<Node>,
+    ) -> Result<(), DiscoveryServerError> {
+        info!("Starting Discovery Server");
+
+        let local_node_record = Arc::new(Mutex::new(
+            NodeRecord::from_node(&local_node, 1, &signer)
+                .expect("Failed to create local node record"),
+        ));
+        let discovery_server = Self {
             local_node,
             local_node_record,
             signer,
             udp_socket,
-            kademlia,
+            kademlia: kademlia.clone(),
+        };
+
+        info!("Pinging {} bootnodes", bootnodes.len());
+
+        let mut table = kademlia.table.lock().await;
+
+        for bootnode in &bootnodes {
+            let _ = discovery_server.ping(&bootnode).await.inspect_err(|e| {
+                error!("Failed to ping bootnode: {e}");
+            });
+
+            table.insert(bootnode.node_id(), bootnode.clone().into());
         }
+
+        discovery_server.start();
+
+        Ok(())
     }
 
-    async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
-        let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
-        loop {
-            let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
-            let Ok(packet) = Packet::decode(&buf[..read])
-                .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
-            else {
-                continue;
-            };
-            if packet.get_node_id() == self.local_node.node_id() {
-                // Ignore packets sent by ourselves
-                continue;
+    async fn handle_message(&mut self, message: Discv4Message) -> CastResponse {
+        match message {
+            Discv4Message::Ping {
+                from,
+                message: msg,
+                hash,
+                sender_public_key,
+            } => {
+                trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+
+                if is_msg_expired(msg.expiration) {
+                    trace!("Ping expired");
+                    return CastResponse::Stop;
+                }
+
+                let sender_ip = unmap_ipv4in6_address(from.ip());
+                let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
+
+                let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
+                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                });
             }
-            let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
-            let _ = conn_handle
-                .cast(ConnectionHandlerInMessage::from(packet, from))
-                .await;
+            Discv4Message::Pong {
+                message,
+                sender_public_key,
+            } => {
+                trace!(received = "Pong", msg = ?message, from = %format!("{:#x}", sender_public_key));
+
+                let node_id = node_id(&sender_public_key);
+
+                self.handle_pong(message, node_id).await;
+            }
+            Discv4Message::FindNode {
+                from,
+                message,
+                sender_public_key,
+            } => {
+                trace!(received = "FindNode", msg = ?message, from = %format!("{:#x}", sender_public_key));
+
+                if is_msg_expired(message.expiration) {
+                    trace!("FindNode expired");
+                    return CastResponse::Stop;
+                }
+                let node_id = node_id(&sender_public_key);
+
+                let table = self.kademlia.table.lock().await;
+
+                let Some(contact) = table.get(&node_id) else {
+                    return CastResponse::Stop;
+                };
+                if !contact.was_validated() {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return CastResponse::Stop;
+                }
+                let node = contact.node.clone();
+
+                // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
+                // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
+                // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
+                // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+                if from.ip() != node.ip {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
+                    return CastResponse::Stop;
+                }
+
+                let neighbors = get_closest_nodes(node_id, table.clone());
+
+                drop(table);
+
+                // we are sending the neighbors in 2 different messages to avoid exceeding the
+                // maximum packet size
+                for chunk in neighbors.chunks(8) {
+                    let _ = self.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
+                        error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    });
+                }
+            }
+            Discv4Message::Neighbors {
+                message: msg,
+                sender_public_key,
+            } => {
+                trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+
+                if is_msg_expired(msg.expiration) {
+                    trace!("Neighbors expired");
+                    return CastResponse::Stop;
+                }
+
+                // TODO(#3746): check that we requested neighbors from the node
+
+                let mut contacts = self.kademlia.table.lock().await;
+                let discarded_contacts = self.kademlia.discarded_contacts.lock().await;
+
+                for node in msg.nodes {
+                    let node_id = node.node_id();
+                    if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
+                        if !discarded_contacts.contains(&node_id)
+                            && node_id != self.local_node.node_id()
+                        {
+                            vacant_entry.insert(Contact::from(node));
+                            METRICS.record_new_discovery().await;
+                        }
+                    };
+                }
+            }
+            Discv4Message::ENRRequest {
+                message: msg,
+                from,
+                hash,
+                sender_public_key,
+            } => {
+                trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+
+                if is_msg_expired(msg.expiration) {
+                    trace!("ENRRequest expired");
+                    return CastResponse::Stop;
+                }
+                let node_id = node_id(&sender_public_key);
+
+                let mut table = self.kademlia.table.lock().await;
+
+                let Some(contact) = table.get(&node_id) else {
+                    return CastResponse::Stop;
+                };
+                if !contact.was_validated() {
+                    debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return CastResponse::Stop;
+                }
+
+                if let Err(err) = self.send_enr_response(hash, from).await {
+                    error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
+                    return CastResponse::Stop;
+                }
+
+                table.entry(node_id).and_modify(|c| c.knows_us = true);
+            }
+            Discv4Message::ENRResponse {
+                message: msg,
+                sender_public_key,
+            } => {
+                /*
+                    - Look up in kademlia the peer associated with this message
+                    - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
+                    - Check that the seq number matches the one we have in our table (this requires setting it).
+                    - Check valid signature
+                    - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
+                */
+                trace!(received = "ENRResponse", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+            }
         }
+        CastResponse::Stop
     }
+
+    // async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
+    //     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+    //     loop {
+    //         let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
+    //         let Ok(packet) = Packet::decode(&buf[..read])
+    //             .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
+    //         else {
+    //             continue;
+    //         };
+    //         if packet.get_node_id() == self.local_node.node_id() {
+    //             // Ignore packets sent by ourselves
+    //             continue;
+    //         }
+    //         let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
+    //         let _ = conn_handle
+    //             .cast(ConnectionHandlerInMessage::from(packet, from))
+    //             .await;
+    //     }
+    // }
 
     async fn ping(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
         let mut buf = Vec::new();
@@ -248,64 +434,22 @@ impl DiscoveryServer {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum InMessage {
-    Listen,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutMessage {
-    Done,
-}
-
-impl DiscoveryServer {
-    pub async fn spawn(
-        local_node: Node,
-        signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
-        kademlia: Kademlia,
-        bootnodes: Vec<Node>,
-    ) -> Result<(), DiscoveryServerError> {
-        info!("Starting Discovery Server");
-
-        let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
-                .expect("Failed to create local node record"),
-        ));
-
-        let state = DiscoveryServer::new(
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket,
-            kademlia.clone(),
-        );
-
-        let mut server = DiscoveryServer::start(state.clone());
-
-        let _ = server.cast(InMessage::Listen).await;
-
-        info!("Pinging {} bootnodes", bootnodes.len());
-
-        let mut table = kademlia.table.lock().await;
-
-        for bootnode in bootnodes {
-            let _ = state.ping(&bootnode).await.inspect_err(|e| {
-                error!("Failed to ping bootnode: {e}");
-            });
-
-            table.insert(bootnode.node_id(), bootnode.into());
-        }
-
-        Ok(())
-    }
-}
-
 impl GenServer for DiscoveryServer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = DiscoveryServerError;
+
+    async fn init(
+        self,
+        handle: &GenServerHandle<Self>,
+    ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
+        let stream = UdpFramed::new(self.udp_socket.clone(), BytesCodec::new());
+
+        spawn_listener(handle.clone(), |(msg, addr)| decode(msg, addr), stream);
+
+        Ok(Success(self))
+    }
 
     async fn handle_cast(
         &mut self,
@@ -313,21 +457,24 @@ impl GenServer for DiscoveryServer {
         _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::Listen => {
-                let _ = self.handle_listens().await.inspect_err(|e| {
-                    error!("Failed to handle listens: {e}");
-                });
-                CastResponse::Stop
+            Self::CastMsg::Message(message) => {
+                self.handle_message(message).await;
+                CastResponse::NoReply
             }
         }
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConnectionHandlerError {}
+//TODO this should be transparently handled by a Discv4Codec, instead of using BytesCodec
+fn decode(buf: BytesMut, addr: SocketAddr) -> InMessage {
+    match Packet::decode(&buf).inspect_err(|e| warn!(err = ?e, "Failed to decode packet")) {
+        Ok(packet) => InMessage::Message(Discv4Message::from(packet, addr)),
+        Err(_) => todo!(),
+    }
+}
 
 #[derive(Debug, Clone)]
-pub enum ConnectionHandlerInMessage {
+pub enum Discv4Message {
     Ping {
         from: SocketAddr,
         message: PingMessage,
@@ -359,7 +506,7 @@ pub enum ConnectionHandlerInMessage {
     },
 }
 
-impl ConnectionHandlerInMessage {
+impl Discv4Message {
     pub fn from(packet: Packet, from: SocketAddr) -> Self {
         match packet.get_message() {
             Message::Ping(msg) => Self::Ping {
@@ -398,197 +545,6 @@ impl ConnectionHandlerInMessage {
 #[derive(Debug, Clone)]
 pub enum ConnectionHandlerOutMessage {
     Done,
-}
-
-#[derive(Debug)]
-pub struct ConnectionHandler {
-    discovery_server: DiscoveryServer,
-}
-
-impl ConnectionHandler {
-    pub fn new(discovery_server: DiscoveryServer) -> Self {
-        Self { discovery_server }
-    }
-}
-
-impl ConnectionHandler {
-    pub async fn spawn(discovery_server: DiscoveryServer) -> GenServerHandle<Self> {
-        let inner = Self::new(discovery_server);
-        inner.start()
-    }
-}
-
-impl GenServer for ConnectionHandler {
-    type CallMsg = Unused;
-    type CastMsg = ConnectionHandlerInMessage;
-    type OutMsg = ConnectionHandlerOutMessage;
-    type Error = ConnectionHandlerError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::Ping {
-                from,
-                message: msg,
-                hash,
-                sender_public_key,
-            } => {
-                trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-
-                if is_msg_expired(msg.expiration) {
-                    trace!("Ping expired");
-                    return CastResponse::Stop;
-                }
-
-                let sender_ip = unmap_ipv4in6_address(from.ip());
-                let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
-
-                let _ = self
-                    .discovery_server
-                    .handle_ping(hash, node)
-                    .await
-                    .inspect_err(|e| {
-                        error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
-                    });
-            }
-            Self::CastMsg::Pong {
-                message,
-                sender_public_key,
-            } => {
-                trace!(received = "Pong", msg = ?message, from = %format!("{:#x}", sender_public_key));
-
-                let node_id = node_id(&sender_public_key);
-
-                self.discovery_server.handle_pong(message, node_id).await;
-            }
-            Self::CastMsg::FindNode {
-                from,
-                message,
-                sender_public_key,
-            } => {
-                trace!(received = "FindNode", msg = ?message, from = %format!("{:#x}", sender_public_key));
-
-                if is_msg_expired(message.expiration) {
-                    trace!("FindNode expired");
-                    return CastResponse::Stop;
-                }
-                let node_id = node_id(&sender_public_key);
-
-                let table = self.discovery_server.kademlia.table.lock().await;
-
-                let Some(contact) = table.get(&node_id) else {
-                    return CastResponse::Stop;
-                };
-                if !contact.was_validated() {
-                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                    return CastResponse::Stop;
-                }
-                let node = contact.node.clone();
-
-                // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-                // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-                // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-                // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-                if from.ip() != node.ip {
-                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
-                    return CastResponse::Stop;
-                }
-
-                let neighbors = get_closest_nodes(node_id, table.clone());
-
-                drop(table);
-
-                // we are sending the neighbors in 2 different messages to avoid exceeding the
-                // maximum packet size
-                for chunk in neighbors.chunks(8) {
-                    let _ = self.discovery_server.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
-                        error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
-                    });
-                }
-            }
-            Self::CastMsg::Neighbors {
-                message: msg,
-                sender_public_key,
-            } => {
-                trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-
-                if is_msg_expired(msg.expiration) {
-                    trace!("Neighbors expired");
-                    return CastResponse::Stop;
-                }
-
-                // TODO(#3746): check that we requested neighbors from the node
-
-                let mut contacts = self.discovery_server.kademlia.table.lock().await;
-                let discarded_contacts = self
-                    .discovery_server
-                    .kademlia
-                    .discarded_contacts
-                    .lock()
-                    .await;
-
-                for node in msg.nodes {
-                    let node_id = node.node_id();
-                    if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                        if !discarded_contacts.contains(&node_id)
-                            && node_id != self.discovery_server.local_node.node_id()
-                        {
-                            vacant_entry.insert(Contact::from(node));
-                            METRICS.record_new_discovery().await;
-                        }
-                    };
-                }
-            }
-            Self::CastMsg::ENRRequest {
-                message: msg,
-                from,
-                hash,
-                sender_public_key,
-            } => {
-                trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-
-                if is_msg_expired(msg.expiration) {
-                    trace!("ENRRequest expired");
-                    return CastResponse::Stop;
-                }
-                let node_id = node_id(&sender_public_key);
-
-                let mut table = self.discovery_server.kademlia.table.lock().await;
-
-                let Some(contact) = table.get(&node_id) else {
-                    return CastResponse::Stop;
-                };
-                if !contact.was_validated() {
-                    debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                    return CastResponse::Stop;
-                }
-
-                if let Err(err) = self.discovery_server.send_enr_response(hash, from).await {
-                    error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
-                    return CastResponse::Stop;
-                }
-
-                table.entry(node_id).and_modify(|c| c.knows_us = true);
-            }
-            Self::CastMsg::ENRResponse {
-                message: msg,
-                sender_public_key,
-            } => {
-                /*
-                    - Look up in kademlia the peer associated with this message
-                    - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
-                    - Check that the seq number matches the one we have in our table (this requires setting it).
-                    - Check valid signature
-                    - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
-                */
-                trace!(received = "ENRResponse", msg = ?msg, from = %format!("{sender_public_key:#x}"));
-            }
-        }
-        CastResponse::Stop
-    }
 }
 
 // TODO: SNAP SYNC: REIMPL TESTS
