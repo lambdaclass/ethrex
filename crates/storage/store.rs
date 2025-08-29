@@ -583,7 +583,7 @@ impl Store {
             .config
             .display_config()
             .lines()
-            .for_each(|line| info!("{}", line));
+            .for_each(|line| info!("{line}"));
 
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
