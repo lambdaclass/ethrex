@@ -439,4 +439,14 @@ contract CommonBridge is
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}
+
+    /// @inheritdoc ICommonBridge
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unpause() external override onlyOwner {
+        _unpause();
+    }
 }
