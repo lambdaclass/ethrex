@@ -105,6 +105,6 @@ services:
     command: >
       l2 prover
       --backend exec
-      --proof-coordinator tcp://ethrex_l2:3900
+      --proof-coordinators tcp://ethrex_l2:3900
     depends_on:
       - ethrex_l2
