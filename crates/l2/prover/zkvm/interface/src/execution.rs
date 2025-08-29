@@ -252,6 +252,15 @@ fn execute_stateless(
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
+    // Validate execution witness' block hashes, except parent block hash (latest block hash).
+    // this will also initialize hashes in the `blocks` slice so that we don't hash twice
+    // (which is expensive in zkVMs).
+    if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash(blocks) {
+        return Err(StatelessExecutionError::InvalidBlockHash(
+            invalid_block_header,
+        ));
+    }
+
     // Validate the initial state
     let parent_block_header = &wrapped_db
         .get_block_parent_header(
