@@ -6,9 +6,10 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, AccountUpdate, ChainConfig},
 };
-use ethrex_trie::{NodeRLP, Trie, TrieError};
+use ethrex_trie::{NodeHash, NodeRLP, Trie, TrieError};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::errors::ProverDBError;
@@ -73,14 +74,25 @@ impl ProverDB {
     /// Recreates the state trie and storage tries from the encoded nodes.
     pub fn get_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ProverDBError> {
         let (state_trie_root, state_trie_nodes) = &self.state_proofs;
-        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_trie_nodes)?;
+        let mut state_nodes = HashMap::new();
+        for node in state_trie_nodes.iter() {
+            let hash = Keccak256::digest(node);
+            state_nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
+        }
+
+        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_nodes)?;
 
         let storage_trie = self
             .storage_proofs
             .iter()
-            .map(|(address, nodes)| {
-                let (storage_trie_root, storage_trie_nodes) = nodes;
-                let trie = Trie::from_nodes(storage_trie_root.as_ref(), storage_trie_nodes)?;
+            .map(|(address, (storage_trie_root, storage_trie_nodes))| {
+                let mut nodes = HashMap::new();
+                for node in storage_trie_nodes.iter() {
+                    let hash = Keccak256::digest(node);
+                    nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
+                }
+
+                let trie = Trie::from_nodes(storage_trie_root.as_ref(), nodes)?;
                 Ok((*address, trie))
             })
             .collect::<Result<_, TrieError>>()?;

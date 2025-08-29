@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use lazy_static::lazy_static;
+use sha3::Digest;
 
 pub mod db;
 
@@ -146,8 +147,17 @@ pub async fn get_account(
     let root = account_proof
         .first()
         .ok_or(eyre::Error::msg("account proof is empty".to_string()))?;
-    let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
-    let trie = Trie::from_nodes(Some(root), &other)?;
+
+    let mut state_nodes = HashMap::new();
+    for node in &account_proof {
+        let hash = sha3::Keccak256::digest(node);
+        state_nodes.insert(
+            ethrex_trie::NodeHash::Hashed(H256::from_slice(&hash)),
+            node.clone(),
+        );
+    }
+
+    let trie = Trie::from_nodes(Some(root), state_nodes)?;
     if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,

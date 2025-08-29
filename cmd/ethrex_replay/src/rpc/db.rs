@@ -15,10 +15,11 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{Node, PathRLP, Trie};
+use ethrex_trie::{Node, NodeHash, PathRLP, Trie};
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
+use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
 use tracing::debug;
 
@@ -542,15 +543,18 @@ impl LevmDatabase for RpcDB {
 /// replaced by its child, whose prefix is possibly modified by appending some nibbles to it.
 /// If we don't have this child node (because we're modifying a partial trie), then we can't
 /// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
-/// calculate all posible child nodes.
+/// calculate all possible child nodes.
 pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones?.
     // TODO: https://github.com/lambdaclass/ethrex/issues/2938
-    let trie = Trie::from_nodes(
-        proof.first(),
-        &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
-    )
-    .ok()?;
+
+    let mut state_nodes = HashMap::new();
+    for node in proof.iter().skip(1) {
+        let hash = Keccak256::digest(node);
+        state_nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
+    }
+
+    let trie = Trie::from_nodes(proof.first(), state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {

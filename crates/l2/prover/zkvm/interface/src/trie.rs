@@ -132,7 +132,7 @@ pub fn update_tries(
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
                 let storage_trie = if is_account_new {
-                    let trie = Trie::from_nodes(None, &[])?;
+                    let trie = Trie::empty_in_memory();
                     storage_tries.insert(update.address, trie);
                     storage_tries.get_mut(&update.address).unwrap()
                 } else {
