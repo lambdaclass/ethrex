@@ -157,8 +157,7 @@ pub async fn get_account(
         );
     }
 
-    let root_hash = Keccak256::digest(root).to_vec();
-    let trie = Trie::from_nodes(Some(&root_hash), state_nodes)?;
+    let trie = Trie::from_nodes(None, Some(root), state_nodes)?;
     if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,

@@ -89,7 +89,8 @@ impl ExecutionWitnessResult {
         }
 
         let state_trie = Trie::from_nodes(
-            Some(&self.parent_block_header.state_root.as_bytes().to_vec()),
+            Some(NodeHash::Hashed(self.parent_block_header.state_root)),
+            None,
             self.state_nodes
                 .clone()
                 .into_iter()
@@ -118,7 +119,8 @@ impl ExecutionWitnessResult {
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
         Trie::from_nodes(
-            Some(&account_state.storage_root.as_bytes().to_vec()),
+            Some(NodeHash::Hashed(account_state.storage_root)),
+            None,
             self.state_nodes
                 .iter()
                 .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
