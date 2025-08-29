@@ -116,11 +116,11 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            info!(
-                parent = hex::encode(block.header.parent_hash),
-                block = hex::encode(block.hash()),
-                "BLOCKCHAIN: PARENT NOT FOUND"
-            );
+            // info!(
+            //     parent = hex::encode(block.header.parent_hash),
+            //     block = hex::encode(block.hash()),
+            //     "BLOCKCHAIN: PARENT NOT FOUND"
+            // );
             self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
@@ -389,12 +389,12 @@ impl Blockchain {
                     .ok_or(ChainError::ParentStateNotFound)?,
             ),
         };
-        info!(
-            block_state_root = hex::encode(block.header.state_root),
-            parent_state_root = hex::encode(parent_state_root),
-            computed_state_root = hex::encode(state_trie_root_hash),
-            "VALIDATE ROOT"
-        );
+        // info!(
+        //     block_state_root = hex::encode(block.header.state_root),
+        //     parent_state_root = hex::encode(parent_state_root),
+        //     computed_state_root = hex::encode(state_trie_root_hash),
+        //     "VALIDATE ROOT"
+        // );
         validate_state_root(&block.header, state_trie_root_hash)?;
 
         let update_batch = UpdateBatch {
