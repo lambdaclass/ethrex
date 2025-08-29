@@ -152,12 +152,12 @@ impl GenServer for Downloader {
     type CallMsg = DownloaderCallRequest;
     type CastMsg = DownloaderCastRequest;
     type OutMsg = DownloaderCallResponse;
-    
+
     async fn handle_call(
-            &mut self,
-            message: Self::CallMsg,
-            _handle: &GenServerHandle<Self>,
-        ) -> CallResponse<Self> {
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
         match message {
             DownloaderCallRequest::CurrentHead { sync_head } => {
                 let request_id = rand::random();
@@ -211,7 +211,100 @@ impl GenServer for Downloader {
 
                 CallResponse::Stop(DownloaderCallResponse::NotFound)
             }
-            _ => todo!()
+            _ => todo!(),
         }
     }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            DownloaderCastRequest::Headers {
+                task_sender,
+                start_block,
+                chunk_limit,
+            } => {
+                debug!("Requesting block headers from peer {}", self.peer_id);
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(start_block),
+                    limit: chunk_limit,
+                    skip: 0,
+                    reverse: false,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    warn!("Failed to send message to peer: {err:?}");
+                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                    self.send_through_response_channel(task_sender, msg).await;
+                    return CastResponse::Stop;
+                };
+
+                let block_headers =
+                    match tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::BlockHeaders(BlockHeaders {
+                                    id,
+                                    block_headers,
+                                })) if id == request_id => {
+                                    return Some(block_headers);
+                                }
+                                // Ignore replies that don't match the expected id (such as late responses)
+                                Some(_) => continue,
+                                None => return None, // EOF
+                            }
+                        }
+                    })
+                    .await
+                    {
+                        Ok(Some(headers)) => headers,
+                        _ => {
+                            let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                            self.send_through_response_channel(task_sender, msg).await;
+                            return CastResponse::Stop;
+                        }
+                    };
+
+                if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                    let msg = (
+                        block_headers.clone(),
+                        self.peer_id,
+                        start_block,
+                        chunk_limit,
+                    );
+                    self.send_through_response_channel(task_sender, msg).await;
+                } else {
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer: {}",
+                        self.peer_id
+                    );
+                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
+                    self.send_through_response_channel(task_sender, msg).await;
+                }
+
+                // Nothing to do after completion, stop actor
+                CastResponse::Stop
+            }
+            _ => todo!(),
+        }
+    }
+}
+
+/// Validates the block headers received from a peer by checking that the parent hash of each header
+/// matches the hash of the previous one, i.e. the headers are chained
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }
