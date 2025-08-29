@@ -1235,6 +1235,11 @@ impl Store {
         self.engine.get_storage_trie_rebuild_pending().await
     }
 
+    /// Clears all checkpoint data created during the last snap sync
+    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state().await
+    }
+
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
     pub async fn read_storage_snapshot(
         &self,

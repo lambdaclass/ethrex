@@ -1033,6 +1033,18 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            txn.clear_table::<SnapState>()
+                .map_err(StoreError::LibmdbxError)?;
+            txn.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,

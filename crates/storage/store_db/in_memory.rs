@@ -204,6 +204,11 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.inner()?.snap_state = Default::default();
+        Ok(())
+    }
+
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.inner()?.pending_blocks.insert(block.hash(), block);
         Ok(())
