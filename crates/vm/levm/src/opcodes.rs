@@ -35,6 +35,7 @@ pub enum Opcode {
     SHL = 0x1B,
     SHR = 0x1C,
     SAR = 0x1D,
+    CLZ = 0x1E,
 
     // KECCAK256
     KECCAK256 = 0x20,
@@ -193,6 +194,7 @@ impl From<u8> for Opcode {
             table[0x1B] = Opcode::SHL;
             table[0x1C] = Opcode::SHR;
             table[0x1D] = Opcode::SAR;
+            table[0x1E] = Opcode::CLZ;
             table[0x02] = Opcode::MUL;
             table[0x03] = Opcode::SUB;
             table[0x04] = Opcode::DIV;
@@ -481,6 +483,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::CALLVALUE as usize] = OpCodeFn(VM::op_callvalue);
         opcode_table[Opcode::CODECOPY as usize] = OpCodeFn(VM::op_codecopy);
         opcode_table[Opcode::SIGNEXTEND as usize] = OpCodeFn(VM::op_signextend);
+        opcode_table[Opcode::CLZ as usize] = OpCodeFn(VM::op_clz);
         opcode_table[Opcode::LT as usize] = OpCodeFn(VM::op_lt);
         opcode_table[Opcode::GT as usize] = OpCodeFn(VM::op_gt);
         opcode_table[Opcode::SLT as usize] = OpCodeFn(VM::op_slt);
