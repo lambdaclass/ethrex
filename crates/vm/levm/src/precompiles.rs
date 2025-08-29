@@ -401,7 +401,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    if matches!(fork, Fork::Osaka) {
+    if fork >= Fork::Osaka {
         if base_size > 1024 {
             return Err(PrecompileError::ModExpBaseTooLarge.into());
         }

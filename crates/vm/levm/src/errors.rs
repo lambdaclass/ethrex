@@ -203,7 +203,7 @@ pub enum PrecompileError {
     #[error("Mod-exp exponent length is too large")]
     ModExpExpTooLarge,
     #[error("Mod-exp modulus length is too large")]
-    ModExpModulusTooLarge
+    ModExpModulusTooLarge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

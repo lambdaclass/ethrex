@@ -860,22 +860,22 @@ pub fn modexp(
 
     let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
 
-    let multiplication_complexity = match fork {
-        Fork::Osaka => {
-            if max_length > 32 {
-                2_u64
-                    .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
-                    .ok_or(OutOfGas)?
-            } else {
-                16
-            }
+    let multiplication_complexity = if fork >= Fork::Osaka {
+        if max_length > 32 {
+            2_u64
+                .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
+                .ok_or(OutOfGas)?
+        } else {
+            16
         }
-        _ => words.checked_pow(2).ok_or(OutOfGas)?,
+    } else {
+        words.checked_pow(2).ok_or(OutOfGas)?
     };
 
-    let modexp_exponent_factor = match fork {
-        Fork::Osaka => MODEXP_EXPONENT_FACTOR_OSAKA,
-        _ => MODEXP_EXPONENT_FACTOR,
+    let modexp_exponent_factor = if fork >= Fork::Osaka {
+        MODEXP_EXPONENT_FACTOR_OSAKA
+    } else {
+        MODEXP_EXPONENT_FACTOR
     };
 
     let calculate_iteration_count =
@@ -900,14 +900,16 @@ pub fn modexp(
         }
         .max(1);
 
-    let modexp_static_cost = match fork {
-        Fork::Osaka => MODEXP_STATIC_COST_OSAKA,
-        _ => MODEXP_STATIC_COST,
+    let modexp_static_cost = if fork >= Fork::Osaka {
+        MODEXP_STATIC_COST_OSAKA
+    } else {
+        MODEXP_STATIC_COST
     };
 
-    let modexp_dynamic_quotient = match fork {
-        Fork::Osaka => MODEXP_DYNAMIC_QUOTIENT_OSAKA,
-        _ => MODEXP_DYNAMIC_QUOTIENT,
+    let modexp_dynamic_quotient = if fork >= Fork::Osaka {
+        MODEXP_DYNAMIC_QUOTIENT_OSAKA
+    } else {
+        MODEXP_DYNAMIC_QUOTIENT
     };
 
     let cost = modexp_static_cost.max(
