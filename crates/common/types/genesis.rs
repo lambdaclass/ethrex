@@ -207,8 +207,8 @@ lazy_static::lazy_static! {
             (11155111, "sepolia"),
             (17000, "holesky"),
             (560048, "hoodi"),
-            (9, "L1 local dev network"),
-            (65536999, "L2 local dev network"),
+            (9, "L1 local devnet"),
+            (65536999, "L2 local devnet"),
         ])
     };
 }
