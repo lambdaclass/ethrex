@@ -442,7 +442,7 @@ impl Store {
             return Err(StoreError::Trie(TrieError::InconsistentTree));
         };
         self.blob_engine
-            .apply_account_updates(root_handle, account_updates)
+            .apply_account_updates(block_header.state_root, root_handle, account_updates)
             .await
     }
 
@@ -539,7 +539,7 @@ impl Store {
             .collect();
         let Some(account_updates_list) = self
             .blob_engine
-            .apply_account_updates(NodeHandle(0), account_updates)
+            .apply_account_updates(*EMPTY_TRIE_HASH, NodeHandle(0), account_updates)
             .await?
         else {
             return Ok(*EMPTY_TRIE_HASH);
@@ -907,7 +907,10 @@ impl Store {
             status = "HANDLE FOUND",
             "OPEN STATE TRIE"
         );
-        Ok(Some(self.blob_engine.open_state_trie(state_root_handle)?))
+        Ok(Some(
+            self.blob_engine
+                .open_state_trie(header.state_root, state_root_handle)?,
+        ))
     }
 
     // Witness generation and internal
@@ -943,6 +946,7 @@ impl Store {
             "OPEN STORAGE TRIE"
         );
         Ok(Some(self.blob_engine.open_storage_trie(
+            header.state_root,
             state_root_handle,
             H256::from_slice(&hashed_address),
         )?))
@@ -1189,7 +1193,7 @@ impl Store {
             .engine
             .get_state_trie_root_handle(state_root)?
             .ok_or(StoreError::Trie(TrieError::InconsistentTree))?;
-        self.blob_engine.open_state_trie(root_handle)
+        self.blob_engine.open_state_trie(state_root, root_handle)
     }
 
     /// Obtain a storage trie from the given address and storage_root.
@@ -1208,7 +1212,7 @@ impl Store {
             .get_state_trie_root_handle(state_root)?
             .ok_or(StoreError::Trie(TrieError::InconsistentTree))?;
         self.blob_engine
-            .open_storage_trie(root_handle, account_hash)
+            .open_storage_trie(state_root, root_handle, account_hash)
     }
 
     // tracing

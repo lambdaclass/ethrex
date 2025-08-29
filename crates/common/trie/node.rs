@@ -77,7 +77,7 @@ impl NodeRef {
     }
 
     pub fn commit(&mut self, acc: &mut Vec<NodeRef>) -> NodeHash {
-        if !self.is_dirty() && self.is_valid() {
+        if !self.is_dirty() && self.hash.is_valid() {
             info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
             return self.hash;
         }

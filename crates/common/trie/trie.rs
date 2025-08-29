@@ -70,11 +70,13 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Box<dyn TrieDB>, root: H256, root_handle: NodeHandle) -> Self {
         Self {
             db,
             root: if root != *EMPTY_TRIE_HASH {
-                NodeHash::from(root).into()
+                let mut node: NodeRef = NodeHash::from(root).into();
+                node.handle = root_handle;
+                node
             } else {
                 Default::default()
             },
@@ -223,7 +225,7 @@ impl Trie {
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<NodeRef> {
         let mut acc = Vec::new();
-        if self.root.is_valid() {
+        if self.root.is_valid() && !self.root.hash.is_valid() {
             self.root.commit(&mut acc);
         }
 

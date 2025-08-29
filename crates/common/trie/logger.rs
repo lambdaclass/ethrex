@@ -26,7 +26,10 @@ impl TrieLogger {
             inner_db: db,
             witness: witness.clone(),
         };
-        (witness, Trie::open(Box::new(logger), root))
+        (
+            witness,
+            Trie::open(Box::new(logger), root, trie.root.handle),
+        )
     }
 }
 
