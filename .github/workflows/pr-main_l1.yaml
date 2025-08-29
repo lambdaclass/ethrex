@@ -267,11 +267,6 @@ jobs:
           auto-push: true
           comment-on-alert: true
 
-      - name: Ensure admin permissions in _work
-        if: always()
-        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-
-
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
