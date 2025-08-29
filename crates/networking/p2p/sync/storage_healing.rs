@@ -203,18 +203,6 @@ pub async fn heal_storage_trie(
             state.failed_downloads = 0;
             state.empty_count = 0;
             state.disconnected_count = 0;
-
-            if state.download_queue.len() < 350 {
-                info!(
-                    "Logging the inflight requests at the end {:?}, taskset len {}",
-                    state
-                        .requests
-                        .iter()
-                        .map(|(key, value)| { (key, value.peer_id, value.sent_time) })
-                        .collect::<Vec<_>>(),
-                    requests_task_joinset.len()
-                );
-            }
         }
 
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
@@ -259,11 +247,6 @@ pub async fn heal_storage_trie(
         .await;
 
         let result = requests_task_joinset.try_join_next();
-        if let Some(res) = result {
-            if state.download_queue.len() < 350 {
-                info!("Tracking what happened to the tasks at the end {res:?}")
-            }
-        }
 
         let trie_nodes_result = match task_receiver.try_recv() {
             Ok(trie_nodes) => trie_nodes,
@@ -287,11 +270,6 @@ pub async fn heal_storage_trie(
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 ) else {
-                    if state.download_queue.len() < 350 {
-                        info!(
-                            "We received none from zip_requeue_node_responses_score_peer while low download value {trie_nodes:?}"
-                        )
-                    }
                     continue;
                 };
 
@@ -311,9 +289,6 @@ pub async fn heal_storage_trie(
             Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
-                if state.download_queue.len() < 350 {
-                    info!("In request {id} found error {err:?}");
-                }
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
@@ -371,27 +346,14 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
-        let logging_flag = download_queue.len() < 350;
-
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            if logging_flag {
-                info!("the task {req_id} has been started");
-            }
-            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn, logging_flag).await;
-            if logging_flag {
-                info!(
-                    "the task {req_id} has finished getting the request_storage_trienodes {response:?}"
-                );
-            }
+            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
             })?;
-            if logging_flag {
-                info!("the task {req_id} has finished sending the thing");
-            }
             Ok(req_id)
         });
     }
@@ -453,9 +415,6 @@ fn zip_requeue_node_responses_score_peer(
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
-        if download_queue.len() < 350 {
-            info!("We are receiving empty responses at the end of the download queue {request:?}");
-        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
@@ -496,9 +455,6 @@ fn zip_requeue_node_responses_score_peer(
         }
         Some(nodes)
     } else {
-        if download_queue.len() < 350 {
-            info!("This should get logged already {request:?}");
-        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
