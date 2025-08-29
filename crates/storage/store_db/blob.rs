@@ -17,7 +17,7 @@ use ethrex_trie::{
     BranchNode, ExtensionNode, LeafNode, Nibbles, Node, NodeHandle, NodeHash, NodeRef, Trie,
     TrieDB, TrieError,
 };
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapOptions};
 use sha3::{Digest, Keccak256};
 
 use crate::{AccountUpdatesList, UpdateBatch, error::StoreError};
@@ -341,8 +341,7 @@ impl BlobDbEngine {
             None => tempfile::tempfile(),
         }
         .map_err(|e| StoreError::Custom(format!("open error: {e}")))?;
-        let reader = unsafe { Mmap::map(&writer).expect("") };
-        reader.advise(memmap2::Advice::Random).expect("");
+        let reader = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
         Ok(Self {
             writer: Mutex::new(writer),
             reader: Mutex::new(Bytes::from_owner(reader)),
@@ -605,9 +604,7 @@ impl BlobDbEngine {
         buffer.flush().expect("");
         let writer = buffer.into_inner().expect("");
         writer.sync_data().expect("");
-        let map = unsafe { Mmap::map(&*writer).expect("") };
-        map.advise(memmap2::Advice::Random).expect("");
-        map.advise(memmap2::Advice::WillNeed).expect("");
+        let map = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
         let new_reader = Bytes::from_owner(map);
         let len = new_reader.len() as u64;
         *self.reader.lock().expect("") = new_reader;
