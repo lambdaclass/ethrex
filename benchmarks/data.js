@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756491797106,
+  "lastUpdate": 1756495747415,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10735,6 +10735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162724515031,
             "range": "± 441436467",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9fae4fd6cd7344964c78ae17854fc2f8dfd860d3",
+          "message": "feat(l2): add support for multiple networks on a single prover (#4186)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nProver may be idle for a long time if batch generation frequency is low,\nwasting resources.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAllow the prover to have multiple proof coordinator endpoints. This can\nbe used both for multiple networks as for redundancy. Since the prover\nis stateless, it doesn't matter if the endpoints are from different\nnetworks.\nThe prover will try to get a task sequentially on each endpoint. After\nall endpoints are checked and proofs generated (in case there's anyone\nto generate), the prover will sleep `--proving-time` milliseconds and\nstart again\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-08-29T18:38:25Z",
+          "tree_id": "1220314e7be0d19aded70859afec36816ccd7fee",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9fae4fd6cd7344964c78ae17854fc2f8dfd860d3"
+        },
+        "date": 1756495730144,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159896159055,
+            "range": "± 262857246",
             "unit": "ns/iter"
           }
         ]
