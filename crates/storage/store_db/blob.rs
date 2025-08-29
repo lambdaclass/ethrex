@@ -196,6 +196,12 @@ impl BlobCodec for Node {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
+        #[inline(always)]
+        fn to_fixed<const N: usize>(bytes: &[u8]) -> [u8; N] {
+            debug_assert_eq!(bytes.len(), N);
+            unsafe { *bytes.as_ptr().cast() }
+        }
+
         let len = bytes.len();
         if len < 1 {
             return Err(StoreError::Custom("empty buffer".to_string()));
@@ -206,8 +212,8 @@ impl BlobCodec for Node {
                 if len < 5 {
                     return Err(StoreError::Custom("missing branch flags".to_string()));
                 }
-                let valid = u16::from_le_bytes(bytes[1..3].try_into().expect(""));
-                let inline = u16::from_le_bytes(bytes[3..5].try_into().expect(""));
+                let valid = u16::from_le_bytes(to_fixed(&bytes[1..3]));
+                let inline = u16::from_le_bytes(to_fixed(&bytes[3..5]));
                 let child_count = valid.count_ones() as usize;
                 let inline_count = inline.count_ones() as usize;
                 if len < 5 + child_count * 40 - inline_count * 8 {
@@ -232,18 +238,15 @@ impl BlobCodec for Node {
                     if bit & inline != 0 {
                         // info!(child = i, status = "INLINE", "DECODE BRANCH");
                         children[i].hash = NodeHash::Inline((
-                            bytes[hash_cursor..hash_cursor + 31].try_into().expect(""),
+                            to_fixed(&bytes[hash_cursor..hash_cursor + 31]),
                             bytes[hash_cursor + 31],
                         ));
                     } else {
-                        children[i].hash = NodeHash::Hashed(H256(
-                            bytes[hash_cursor..hash_cursor + 32].try_into().expect(""),
-                        ));
-                        children[i].handle = NodeHandle(u64::from_le_bytes(
-                            bytes[handle_cursor..handle_cursor + 8]
-                                .try_into()
-                                .expect(""),
-                        ));
+                        children[i].hash =
+                            NodeHash::Hashed(H256(to_fixed(&bytes[hash_cursor..hash_cursor + 32])));
+                        children[i].handle = NodeHandle(u64::from_le_bytes(to_fixed(
+                            &bytes[handle_cursor..handle_cursor + 8],
+                        )));
                         // info!(
                         //     child = i,
                         //     hash = hex::encode(children[i].hash.finalize()),
@@ -262,8 +265,8 @@ impl BlobCodec for Node {
                     return Err(StoreError::Custom("missing extension child".to_string()));
                 }
                 let encoded_path_len = bytes[1] as usize;
-                let hash = H256(bytes[2..34].try_into().expect("")).into();
-                let handle = NodeHandle(u64::from_le_bytes(bytes[34..42].try_into().expect("")));
+                let hash = H256(to_fixed(&bytes[2..34])).into();
+                let handle = NodeHandle(u64::from_le_bytes(to_fixed(&bytes[34..42])));
                 if len < 42 + encoded_path_len {
                     return Err(StoreError::Custom("missing extension prefix".to_string()));
                 }
@@ -292,7 +295,7 @@ impl BlobCodec for Node {
                 let encoded_path_len = bytes[1] as usize;
                 let value_len = bytes[2] as usize;
                 let handle = (flags == 0x20)
-                    .then(|| NodeHandle(u64::from_le_bytes(bytes[3..11].try_into().expect(""))));
+                    .then(|| NodeHandle(u64::from_le_bytes(to_fixed(&bytes[3..11]))));
                 if len < metadata_len + encoded_path_len + value_len {
                     return Err(StoreError::Custom("missing leaf data".to_string()));
                 }
