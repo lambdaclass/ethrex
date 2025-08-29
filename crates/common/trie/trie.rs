@@ -318,6 +318,87 @@ impl Trie {
         Ok(trie)
     }
 
+    /// Builds a trie from a set of nodes stored in shared Arcs with an InMemoryTrieDB as a backend.
+    /// This variant avoids deep-cloning node bytes when assembling the node map and only materializes
+    /// Vec<u8> copies when populating the backing DB.
+    pub fn from_nodes_shared(
+        root_hash: NodeHash,
+        mut state_nodes: HashMap<NodeHash, Arc<NodeRLP>>,
+    ) -> Result<Self, TrieError> {
+        // Try to get the encoded root without cloning the entire map eagerly.
+        let Some(root) = state_nodes.get(&root_hash).cloned() else {
+            // Populate DB with the provided nodes.
+            let db_map: HashMap<NodeHash, Vec<u8>> = state_nodes
+                .into_iter()
+                .map(|(k, v)| {
+                    let v = match Arc::try_unwrap(v) {
+                        Ok(vec) => vec,
+                        Err(arc) => (*arc).clone(),
+                    };
+                    (k, v)
+                })
+                .collect();
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(db_map))));
+            return Ok(Trie::new(in_memory_trie));
+        };
+
+        fn inner(
+            storage: &mut HashMap<NodeHash, Arc<Vec<u8>>>,
+            node_rlp: &Arc<NodeRLP>,
+        ) -> Result<Node, TrieError> {
+            Ok(match Node::decode_raw(node_rlp.as_ref())? {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match storage.remove(&hash) {
+                                Some(rlp_arc) => inner(storage, &rlp_arc)?.into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    node.child = match storage.remove(&hash) {
+                        Some(rlp_arc) => inner(storage, &rlp_arc)?.into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let root = inner(&mut state_nodes, &root)?.into();
+        // Convert remaining shared nodes into owned Vec<u8> for the backing DB.
+        let db_map: HashMap<NodeHash, Vec<u8>> = state_nodes
+            .into_iter()
+            .map(|(k, v)| {
+                let v = match Arc::try_unwrap(v) {
+                    Ok(vec) => vec,
+                    Err(arc) => (*arc).clone(),
+                };
+                (k, v)
+            })
+            .collect();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(db_map))));
+
+        let mut trie = Trie::new(in_memory_trie);
+        trie.root = root;
+
+        Ok(trie)
+    }
+
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,

@@ -57,8 +57,7 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
             state: value
                 .state_nodes
                 .values()
-                .cloned()
-                .map(Into::into)
+                .map(|v| Bytes::from(v.as_ref().clone()))
                 .collect(),
             keys,
             codes: value.codes.values().cloned().collect(),
@@ -107,7 +106,7 @@ pub fn execution_witness_from_rpc_chain_config(
 
     let mut state_nodes = HashMap::new();
     for node in rpc_witness.state.into_iter() {
-        state_nodes.insert(keccak(&node), node.to_vec());
+        state_nodes.insert(keccak(&node), node.to_vec().into());
     }
 
     let mut touched_account_storage_slots = HashMap::new();

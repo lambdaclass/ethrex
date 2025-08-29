@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 use std::{collections::HashMap, str::FromStr};
 
 use crate::{
@@ -50,8 +51,12 @@ pub struct ExecutionWitnessResult {
     /// It is used to rebuild the state trie and storage tries.
     /// This is precomputed during ExecutionWitness construction to avoid to avoid
     /// recomputing it when rebuilding tries.
-    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
-    pub state_nodes: HashMap<H256, NodeRLP>,
+    #[serde(
+        serialize_with = "serialize_state_nodes",
+        deserialize_with = "deserialize_state_nodes"
+    )]
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::ArcVecU8Wrapper>)]
+    pub state_nodes: HashMap<H256, Arc<NodeRLP>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to the last storage slot that was accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -88,12 +93,11 @@ impl ExecutionWitnessResult {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(
+        let state_trie = Trie::from_nodes_shared(
             NodeHash::Hashed(self.parent_block_header.state_root),
             self.state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
+                .iter()
+                .map(|(k, v)| (NodeHash::Hashed(*k), Arc::clone(v)))
                 .collect(),
         )
         .map_err(|e| {
@@ -117,11 +121,11 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
+        Trie::from_nodes_shared(
             NodeHash::Hashed(account_state.storage_root),
             self.state_nodes
                 .iter()
-                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
+                .map(|(k, v)| (NodeHash::Hashed(*k), Arc::clone(v)))
                 .collect(),
         )
         .ok()
@@ -434,6 +438,74 @@ where
     }
 
     deserializer.deserialize_seq(BytesVecVisitor)
+}
+
+pub fn serialize_state_nodes<S>(
+    map: &HashMap<H256, Arc<NodeRLP>>,
+    serializer: S,
+) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+where
+    S: Serializer,
+{
+    let mut seq_serializer = serializer.serialize_seq(Some(map.len()))?;
+    for (node_hash, node) in map {
+        let node_hash = format!("0x{}", hex::encode(node_hash));
+        let node = format!("0x{}", hex::encode(node.as_ref()));
+
+        let mut obj = serde_json::Map::new();
+        obj.insert(node_hash, serde_json::Value::String(node));
+
+        seq_serializer.serialize_element(&obj)?;
+    }
+    seq_serializer.end()
+}
+
+pub fn deserialize_state_nodes<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<H256, Arc<NodeRLP>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct NodesVisitor;
+
+    impl<'de> Visitor<'de> for NodesVisitor {
+        type Value = HashMap<H256, Arc<NodeRLP>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a list of hex-encoded state nodes")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut map = HashMap::new();
+
+            #[derive(Deserialize)]
+            struct NodeEntry(HashMap<String, String>);
+
+            while let Some(NodeEntry(entry)) = seq.next_element::<NodeEntry>()? {
+                if entry.len() != 1 {
+                    return Err(de::Error::custom(
+                        "Each object must contain exactly one key",
+                    ));
+                }
+
+                for (k, v) in entry {
+                    let node_hash =
+                        H256::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
+
+                    let node_bytes =
+                        decode_hex(v.trim_start_matches("0x")).map_err(de::Error::custom)?;
+
+                    map.insert(node_hash, Arc::new(node_bytes));
+                }
+            }
+            Ok(map)
+        }
+    }
+
+    deserializer.deserialize_seq(NodesVisitor)
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {

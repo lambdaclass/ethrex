@@ -353,7 +353,7 @@ impl Blockchain {
         let mut state_nodes = HashMap::new();
         for node in used_trie_nodes.into_iter() {
             let hash = Keccak256::digest(&node);
-            state_nodes.insert(H256::from_slice(hash.as_slice()), node);
+            state_nodes.insert(H256::from_slice(hash.as_slice()), node.into());
         }
 
         Ok(ExecutionWitnessResult {

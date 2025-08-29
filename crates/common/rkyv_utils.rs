@@ -10,6 +10,7 @@ use rkyv::{
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 
 #[derive(Archive, Serialize, Deserialize)]
@@ -155,6 +156,21 @@ impl From<OptionStorageWrapper> for Option<HashMap<H160, Vec<Vec<u8>>>> {
         } else {
             None
         }
+    }
+}
+
+// Wrapper to (de)serialize Arc<Vec<u8>> with rkyv.
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Arc<Vec<u8>>)]
+pub struct ArcVecU8Wrapper(#[rkyv(getter = arc_vec_getter)] Vec<u8>);
+
+fn arc_vec_getter(value: &Arc<Vec<u8>>) -> Vec<u8> {
+    value.as_ref().clone()
+}
+
+impl From<ArcVecU8Wrapper> for Arc<Vec<u8>> {
+    fn from(value: ArcVecU8Wrapper) -> Self {
+        Arc::new(value.0)
     }
 }
 pub struct AccessListItemWrapper;
