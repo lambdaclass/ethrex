@@ -401,6 +401,18 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    if matches!(fork, Fork::Osaka) {
+        if base_size > 1024 {
+            return Err(PrecompileError::ModExpBaseTooLarge.into());
+        }
+        if exponent_size > 1024 {
+            return Err(PrecompileError::ModExpExpTooLarge.into());
+        }
+        if modulus_size > 1024 {
+            return Err(PrecompileError::ModExpModulusTooLarge.into());
+        }
+    }
+
     let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
