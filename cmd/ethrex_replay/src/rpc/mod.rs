@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use lazy_static::lazy_static;
-use sha3::{Digest, Keccak256};
+use sha3::Digest;
 
 pub mod db;
 
