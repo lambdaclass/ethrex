@@ -19,7 +19,7 @@ use crate::utils::{RpcRequest, parse_json_hex};
 // Must support rquest sizes of at least 32 blocks
 // Chosen an arbitrary x4 value
 // -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
-const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: usize = 128;
+const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: u64 = 128;
 
 // NewPayload V1-V2-V3 implementations
 pub struct NewPayloadV1Request {
@@ -377,7 +377,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         let mut bodies = Vec::new();
@@ -413,7 +413,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;

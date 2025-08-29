@@ -92,11 +92,11 @@ impl BlockProducer {
             blockchain,
             sequencer_state,
         )
-        .start();
+        .start_blocking();
         block_producer
             .cast(InMessage::Produce)
             .await
-            .map_err(BlockProducerError::GenServerError)?;
+            .map_err(BlockProducerError::InternalError)?;
         Ok(())
     }
 

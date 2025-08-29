@@ -11,9 +11,9 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
-pub const MAX_NODES_PER_BUCKET: usize = 16;
-const NUMBER_OF_BUCKETS: usize = 256;
-const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+pub const MAX_NODES_PER_BUCKET: u64 = 16;
+const NUMBER_OF_BUCKETS: u32 = 256;
+const MAX_NUMBER_OF_REPLACEMENTS: u32 = 10;
 
 /// Maximum Peer Score to avoid overflows upon weigh calculations
 const PEER_SCORE_UPPER_BOUND: i32 = 500;
@@ -34,7 +34,7 @@ pub struct KademliaTable {
 
 impl KademliaTable {
     pub fn new(local_node_id: H256) -> Self {
-        let buckets: Vec<Bucket> = vec![Bucket::default(); NUMBER_OF_BUCKETS];
+        let buckets: Vec<Bucket> = vec![Bucket::default(); NUMBER_OF_BUCKETS as usize];
         Self {
             local_node_id,
             buckets,
@@ -117,7 +117,7 @@ impl KademliaTable {
         let peer = PeerData::new(node, NodeRecord::default(), false);
 
         // If bucket is full push to replacements. Unless forced
-        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET && !force_push {
+        if self.buckets[bucket_idx].peers.len() as u64 >= MAX_NODES_PER_BUCKET && !force_push {
             self.insert_as_replacement(&peer, bucket_idx);
             (Some(peer), false)
         } else {
@@ -129,7 +129,7 @@ impl KademliaTable {
 
     fn insert_as_replacement(&mut self, node: &PeerData, bucket_idx: usize) {
         let bucket = &mut self.buckets[bucket_idx];
-        if bucket.replacements.len() >= MAX_NUMBER_OF_REPLACEMENTS {
+        if bucket.replacements.len() >= MAX_NUMBER_OF_REPLACEMENTS as usize {
             bucket.replacements.remove(0);
         }
         bucket.replacements.push(node.clone());
@@ -153,7 +153,7 @@ impl KademliaTable {
         for bucket in &self.buckets {
             for peer in &bucket.peers {
                 let distance = bucket_number(node_id, peer.node.node_id());
-                if nodes.len() < MAX_NODES_PER_BUCKET {
+                if (nodes.len() as u64) < MAX_NODES_PER_BUCKET {
                     nodes.push((peer.node.clone(), distance));
                 } else {
                     for (i, (_, dis)) in &mut nodes.iter().enumerate() {
@@ -676,7 +676,7 @@ mod tests {
         );
         assert_eq!(
             last.node.public_key,
-            bucket.replacements[MAX_NUMBER_OF_REPLACEMENTS - 1]
+            bucket.replacements[MAX_NUMBER_OF_REPLACEMENTS as usize - 1]
                 .node
                 .public_key
         );
