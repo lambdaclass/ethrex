@@ -49,6 +49,7 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
+        initiator::{INITIATOR, RLPxInitiator},
         l2::{
             self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
             l2_connection::{
@@ -375,6 +376,16 @@ impl GenServer for RLPxConnection {
                 // Nothing to do if the connection was not established
             }
         };
+        match INITIATOR.get() {
+            Some(handle) => {
+                RLPxInitiator::down(&mut handle.clone()).await;
+            }
+            None => {
+                error!(
+                    "We stopped an RLPxConnection without the Initiator online to ask for more peers"
+                );
+            }
+        }
         Ok(())
     }
 }
