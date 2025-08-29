@@ -18,7 +18,7 @@ const MAX_MESSAGE_SIZE: u32 = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
-pub(crate) struct RLPxCodec {
+pub struct RLPxCodec {
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,
     pub(crate) egress_mac: Keccak256,
