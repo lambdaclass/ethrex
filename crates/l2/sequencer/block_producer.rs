@@ -52,6 +52,7 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    max_gas_limit: u64,
 }
 
 impl BlockProducer {
@@ -66,6 +67,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
+            max_gas_limit,
         } = config;
         Self {
             store,
@@ -75,6 +77,7 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            max_gas_limit,
         }
     }
 
@@ -128,7 +131,11 @@ impl BlockProducer {
             version,
             elasticity_multiplier: self.elasticity_multiplier,
         };
-        let payload = create_payload(&args, &self.store)?;
+        let mut payload = create_payload(&args, &self.store)?;
+
+        if payload.header.gas_limit > self.max_gas_limit {
+            payload.header.gas_limit = self.max_gas_limit;
+        }
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(
