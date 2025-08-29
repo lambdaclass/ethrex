@@ -9,7 +9,6 @@ use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
-use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::{
@@ -101,7 +100,7 @@ pub async fn send_message_and_wait_for_response(
     message: Message,
     request_id: u64,
 ) -> Result<Vec<Node>, SendMessageError> {
-    let mut receiver = peer_channel.receiver.lock().await;
+    let receiver = peer_channel.receiver.lock().await;
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
@@ -133,7 +132,7 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
     if logging_flag {
         info!("send_trie_nodes_messages_and_wait_for_reply started");
     }
-    let mut receiver = peer_channel
+    let receiver = peer_channel
         .receiver
         .try_lock()
         .map_err(|_| SendMessageError::PeerBusy)?;

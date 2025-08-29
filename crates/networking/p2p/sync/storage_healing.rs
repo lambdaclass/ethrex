@@ -19,7 +19,7 @@ use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, VecDeque},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
 use tokio::{
@@ -28,9 +28,7 @@ use tokio::{
 };
 use tracing::{error, info, trace};
 
-pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
-const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -55,26 +53,6 @@ pub struct MembatchEntry {
 type MembatchKey = (Nibbles, Nibbles);
 
 type Membatch = HashMap<MembatchKey, MembatchEntry>;
-
-#[derive(Debug, Clone)]
-pub enum StorageHealerCallMsg {
-    IsFinished,
-}
-#[derive(Debug, Clone)]
-pub enum StorageHealerOutMsg {
-    FinishedStale { is_finished: bool, is_stale: bool },
-}
-
-#[derive(Debug, Clone)]
-pub enum StorageHealerMsg {
-    /// Overloaded msg, checkup does two things
-    /// It prints the status of the connection
-    /// And if a request is timed out, we also clean it up
-    CheckUp,
-    /// This message is sent by a peer indicating what is needed to download
-    /// We process the request
-    TrieNodes(TrieNodes),
-}
 
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
@@ -558,14 +536,9 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(
-                &node_response,
-                store.clone(),
-                membatch,
-                roots_healed,
-                to_write,
-            )
-            .inspect_err(|err| error!("{err} in commit node while committing {node_response:?}"))?;
+            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
+                error!("{err} in commit node while committing {node_response:?}")
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -715,7 +688,6 @@ pub fn determine_missing_children(
 
 fn commit_node(
     node: &NodeResponse,
-    store: Store,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
@@ -749,7 +721,6 @@ fn commit_node(
     if parent_entry.missing_children_count == 0 {
         commit_node(
             &parent_entry.node_response,
-            store,
             membatch,
             roots_healed,
             to_write,

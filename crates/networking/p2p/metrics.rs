@@ -77,7 +77,6 @@ pub struct Metrics {
     // Storage tries
     pub storage_tries_to_download: Arc<Mutex<u64>>,
     pub downloaded_storage_tries: Arc<Mutex<u64>>,
-    pub total_storages_downloaders: Arc<Mutex<u64>>,
     pub free_storages_downloaders: Arc<Mutex<u64>>,
     pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
@@ -571,7 +570,6 @@ impl Default for Metrics {
             // Storage tries
             storage_tries_to_download: Arc::new(Mutex::new(0)),
             downloaded_storage_tries: Arc::new(Mutex::new(0)),
-            total_storages_downloaders: Arc::new(Mutex::new(0)),
             free_storages_downloaders: Arc::new(Mutex::new(0)),
             storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
