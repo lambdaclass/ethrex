@@ -107,9 +107,9 @@ impl L1Committer {
             Some(eth_config.maximum_allowed_max_fee_per_gas),
             Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
         )?;
-        let last_committed_batch = eth_client
-            .get_last_committed_batch(committer_config.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
+                .await?;
         Ok(Self {
             eth_client,
             blockchain,
@@ -571,11 +571,10 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let current_last_committed_batch = self
-                .eth_client
-                .get_last_committed_batch(self.on_chain_proposer_address)
-                .await
-                .unwrap_or(self.last_committed_batch);
+            let current_last_committed_batch =
+                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                    .await
+                    .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {
                 let check_interval = random_duration(self.committer_wake_up_ms);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
