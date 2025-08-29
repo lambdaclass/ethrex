@@ -342,6 +342,7 @@ impl BlobDbEngine {
         }
         .map_err(|e| StoreError::Custom(format!("open error: {e}")))?;
         let reader = unsafe { Mmap::map(&writer).expect("") };
+        reader.advise(memmap2::Advice::Random).expect("");
         Ok(Self {
             writer: Mutex::new(writer),
             reader: Mutex::new(Bytes::from_owner(reader)),
@@ -605,6 +606,8 @@ impl BlobDbEngine {
         let writer = buffer.into_inner().expect("");
         writer.sync_data().expect("");
         let map = unsafe { Mmap::map(&*writer).expect("") };
+        map.advise(memmap2::Advice::Random).expect("");
+        map.advise(memmap2::Advice::WillNeed).expect("");
         let new_reader = Bytes::from_owner(map);
         let len = new_reader.len() as u64;
         *self.reader.lock().expect("") = new_reader;
