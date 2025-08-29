@@ -66,7 +66,7 @@ jobs:
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1105864.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=974567 NETWORK=hoodi
+          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1105864 NETWORK=hoodi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
