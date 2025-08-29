@@ -270,6 +270,13 @@ impl Trie {
             let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
+        let Some(root) = state_nodes
+            .get(&NodeHash::Hashed(H256::from_slice(&root)))
+            .cloned()
+        else {
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+            return Ok(Trie::new(in_memory_trie));
+        };
 
         fn inner(
             storage: &mut HashMap<NodeHash, Vec<u8>>,
@@ -308,7 +315,7 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut state_nodes, root)?.into();
+        let root = inner(&mut state_nodes, &root)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);

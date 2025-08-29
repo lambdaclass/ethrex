@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use lazy_static::lazy_static;
-use sha3::Digest;
+use sha3::{Digest, Keccak256};
 
 pub mod db;
 
@@ -157,7 +157,8 @@ pub async fn get_account(
         );
     }
 
-    let trie = Trie::from_nodes(Some(root), state_nodes)?;
+    let root_hash = Keccak256::digest(root).to_vec();
+    let trie = Trie::from_nodes(Some(&root_hash), state_nodes)?;
     if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,

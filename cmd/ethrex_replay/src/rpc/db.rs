@@ -553,8 +553,8 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
         let hash = Keccak256::digest(node);
         state_nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
     }
-
-    let trie = Trie::from_nodes(proof.first(), state_nodes).ok()?;
+    let root_hash = proof.first().map(|node| Keccak256::digest(node).to_vec());
+    let trie = Trie::from_nodes(root_hash.as_ref(), state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {
