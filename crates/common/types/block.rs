@@ -47,6 +47,9 @@ impl Block {
         Block {
             header,
             body,
+
+            // Cache these to avoid doing repeat calculations, since we need the RLP encoded size when checking for the size limit
+            // We cache the RLP encodes of the body and the header rather than the entire block because these are the ones that are stored
             cached_body_rlp_encode: body_rlp,
             cached_header_rlp_encode: header_rlp,
         }
@@ -54,6 +57,27 @@ impl Block {
 
     pub fn hash(&self) -> BlockHash {
         self.header.hash()
+    }
+
+    // Calculate the size of the RLP encode of the block
+    // We need the RLP encode in two places: in the block validation to check its size doesn't exceed the maximum, and in the store to save it
+    // However, the store uses the encode of the body and the header, whereas for the max size we need the size of the encode of the block as a whole
+    // So we cache the body and header, and calculate the size of the block encode based off of them
+    pub fn get_rlp_encode_size(&self) -> u64 {
+        let body_fields_rlp_size = if self.cached_body_rlp_encode[0] <= 0xf7 {
+            self.cached_body_rlp_encode.len() - 1
+        } else {
+            self.cached_body_rlp_encode.len() - (self.cached_body_rlp_encode[0] as usize - 0xf7) - 1
+        };
+        let header_rlp_size = self.cached_header_rlp_encode.len();
+
+        let block_rlp_payload_length = header_rlp_size + body_fields_rlp_size;
+        if block_rlp_payload_length > 55 {
+            1 + (block_rlp_payload_length as f64).log(256.0).ceil() as u64
+                + block_rlp_payload_length as u64
+        } else {
+            1 + block_rlp_payload_length as u64
+        }
     }
 }
 

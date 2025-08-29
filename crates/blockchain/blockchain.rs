@@ -12,7 +12,9 @@ use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MAX_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{
+    GAS_PER_BLOB, MAX_BLOCK_SIZE, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS,
+};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
@@ -25,6 +27,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -952,10 +955,8 @@ pub fn validate_block(
         .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let mut buf: Vec<u8> = Vec::new();
-        let block_rlp_size =
-            block.cached_body_rlp_encode.len() as u64 + block.cached_header_rlp_encode.len() as u64;
-        if block_rlp_size > MAX_BLOCK_SIZE {
+        let block_rlp_size = block.get_rlp_encode_size();
+        if block_rlp_size as u64 > MAX_RLP_BLOCK_SIZE {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumSizeExceeded(MAX_BLOCK_SIZE, block_rlp_size),
             ));
