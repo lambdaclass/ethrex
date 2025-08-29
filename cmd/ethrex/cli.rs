@@ -491,7 +491,11 @@ pub async fn import_blocks(
     }
 
     let total_duration = start_time.elapsed();
-    info!(blocks = total_blocks_imported, seconds = total_duration.as_secs_f64(), "Import completed");
+    info!(
+        blocks = total_blocks_imported,
+        seconds = total_duration.as_secs_f64(),
+        "Import completed"
+    );
     Ok(())
 }
 
