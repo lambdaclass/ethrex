@@ -208,7 +208,7 @@ pub fn start_pruner_task(
     snap_sync_complete_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> JoinHandle<Result<(), StoreError>> {
     // TODO: read from config
-    const KEEP_BLOCKS: u64 = 1024;
+    const KEEP_BLOCKS: u64 = 128;
 
     let store_clone = store.clone();
 
@@ -217,7 +217,7 @@ pub fn start_pruner_task(
         // If we have a snap sync completion receiver, wait for snap sync to complete
         if let Some(rx) = snap_sync_complete_rx {
             tracing::info!("[PRUNING] Waiting for snap sync to complete before starting pruning");
-            
+
             tokio::select! {
                 _ = rx => {
                     tracing::info!("[PRUNING] Snap sync completed, starting periodic pruning");
