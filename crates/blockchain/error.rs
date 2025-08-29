@@ -24,6 +24,8 @@ pub enum ChainError {
     WitnessGeneration(String),
     #[error("{0}")]
     Custom(String),
+    #[error("Unknown Payload")]
+    UnknownPayload,
 }
 
 #[cfg(feature = "metrics")]
@@ -38,6 +40,7 @@ impl ChainError {
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",
             ChainError::Custom(_) => "custom_error",
+            ChainError::UnknownPayload => "unknown_payload",
         }
     }
 }
