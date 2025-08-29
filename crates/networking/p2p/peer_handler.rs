@@ -2145,23 +2145,15 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
-        logging_flag: bool,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        if logging_flag {
-            info!("request_storage_trienodes {id} started");
-        }
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        if logging_flag {
-            info!("request_storage_trienodes {id} has finished creating the get trie nodes");
-        }
         super::utils::send_trie_nodes_messages_and_wait_for_reply(
             peer_channel,
             request,
-            id,
-            logging_flag,
+            id
         )
         .await
         .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
