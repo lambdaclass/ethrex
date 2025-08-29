@@ -1215,7 +1215,7 @@ pub async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
-        let mut scores = peers.peer_scores.lock().await;
+        let mut scores = peers.peers_info.lock().await;
 
         let (peer_id, mut peer_channel) = peers
             .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
@@ -1223,7 +1223,7 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+        let peer_score = scores.get(&peer_id).unwrap().score;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1233,8 +1233,13 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 1);
-            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            scores
+                .entry(peer_id)
+                .and_modify(|peer_info| peer_info.score -= 1);
+            let peer_score = match scores.get(&peer_id) {
+                Some(peer_info) => peer_info.score,
+                None => i64::MIN,
+            };
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1242,9 +1247,9 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        scores.entry(peer_id).and_modify(|score| {
-            if *score < 10 {
-                *score += 1;
+        scores.entry(peer_id).and_modify(|peer_info| {
+            if peer_info.score < 10 {
+                peer_info.score += 1;
             }
         });
         info!("Succesfully updated pivot");

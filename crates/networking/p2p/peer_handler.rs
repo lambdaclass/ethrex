@@ -14,13 +14,15 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
-use tokio::sync::Mutex;
+use spawned_concurrency::tasks::GenServer;
+use tokio::{sync::Mutex, time::Instant};
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
+        downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse},
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
@@ -60,7 +62,25 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: Kademlia,
-    pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
+    pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
+}
+
+/// Holds information about connected peers, their performance and availability
+#[derive(Debug, Clone)]
+pub struct PeerInformation {
+    pub score: i64,
+    pub available: bool,
+    pub request_time: Option<Instant>,
+}
+
+impl Default for PeerInformation {
+    fn default() -> Self {
+        Self {
+            score: 0,
+            available: true,
+            request_time: None,
+        }
+    }
 }
 
 pub enum BlockRequestOrder {
@@ -145,7 +165,7 @@ impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {
             peer_table,
-            peer_scores: Default::default(),
+            peers_info: Default::default(),
         }
     }
 
@@ -189,7 +209,7 @@ impl PeerHandler {
     pub async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
-        scores: &mut HashMap<H256, i64>,
+        scores: &mut HashMap<H256, PeerInformation>,
     ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
         let (mut free_peer_id, mut free_peer_channel) = self
             .peer_table
@@ -201,10 +221,10 @@ impl PeerHandler {
 
         let mut max_peer_id_score = i64::MIN;
         for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
-            let peer_id_score = scores.entry(*peer_id).or_default();
-            if *peer_id_score >= max_peer_id_score {
+            let peer_id_info = scores.entry(*peer_id).or_default();
+            if peer_id_info.score >= max_peer_id_score {
                 free_peer_id = *peer_id;
-                max_peer_id_score = *peer_id_score;
+                max_peer_id_score = peer_id_info.score;
                 free_peer_channel = channel.clone();
             }
         }
@@ -224,6 +244,85 @@ impl PeerHandler {
         peer_channels.shuffle(&mut rand::rngs::OsRng);
 
         peer_channels.first().cloned()
+    }
+
+    async fn mark_peer_as_busy(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| {
+                info.available = false;
+                info.request_time = Some(Instant::now())
+            });
+    }
+
+    async fn mark_peer_as_free(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| {
+                info.available = true;
+                info.request_time = None
+            });
+    }
+
+    // Creates a Downloader Actor from a random peer
+    // Returns None if no peer is available
+    async fn get_random_available_downloader(&self) -> Option<Downloader> {
+        let peer_channels = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await;
+
+        let mut peers_info = self.peers_info.lock().await;
+
+        for (peer_id, _peer_channels) in &peer_channels {
+            if peers_info.contains_key(peer_id) {
+                continue;
+            }
+            peers_info.insert(*peer_id, PeerInformation::default());
+            debug!("{peer_id} added as downloader");
+        }
+
+        let free_downloaders = peers_info
+            .clone()
+            .into_iter()
+            .filter(|(_, peer_info)| peer_info.available)
+            .collect::<Vec<_>>();
+
+        if free_downloaders.is_empty() {
+            // No available downloaders to offer
+            return None;
+        }
+
+        let (free_peer_id, _) = free_downloaders
+            .get(random::<usize>() % free_downloaders.len())
+            .expect("There should be at least one free downloader");
+
+        let Some(free_downloader_channels) = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+            .await
+            .iter()
+            .find_map(|(peer_id, peer_channels)| {
+                peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+            })
+        else {
+            debug!(
+                "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+            );
+            peers_info.remove(&free_peer_id);
+            return None;
+        };
+
+        drop(peers_info);
+        self.mark_peer_as_busy(*free_peer_id).await;
+
+        // Create and spawn Downloader Actor
+        let downloader = Downloader::new(*free_peer_id, free_downloader_channels);
+        Some(downloader)
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -259,26 +358,32 @@ impl PeerHandler {
                 // sync_head might be invalid
                 return None;
             }
-            let peers_table = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-                .await;
 
-            for (peer_id, mut peer_channel) in peers_table {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
-                    Ok(number) => {
-                        sync_head_number = number;
-                        if number != 0 {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        debug!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
-                        );
-                    }
+            let available_downloader = loop {
+                if let Some(downloader) = self.get_random_available_downloader().await {
+                    break downloader;
+                } else {
+                    debug!("No peers available to retrieve sync head");
+                }
+            };
+            let peer_id = available_downloader.peer_id();
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::CurrentHead { sync_head })
+                .await
+            {
+                Ok(DownloaderCallResponse::CurrentHead(current_head_number)) => {
+                    sync_head_number = current_head_number;
+                    self.record_peer_success(peer_id).await;
+                    self.mark_peer_as_free(peer_id).await;
+                    break;
+                }
+                _ => {
+                    trace!("Failed to retrieve sync head block number from peer {peer_id}");
+                    self.record_peer_failure(peer_id).await;
                 }
             }
+            self.mark_peer_as_free(peer_id).await;
 
             retries += 1;
         }
@@ -858,7 +963,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
+        let mut scores = self.peers_info.lock().await;
         let mut chunk_file = 0;
 
         loop {
@@ -928,12 +1033,12 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    let peer_info = scores.entry(peer_id).or_default();
+                    peer_info.score -= 1;
                     continue;
                 }
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                let peer_info = scores.entry(peer_id).or_default();
+                peer_info.score += 1;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -1004,8 +1109,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap().score; // TODO: remove unwrap
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap().score; // TODO: remove unwrap
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
@@ -1274,7 +1379,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
+        let mut scores = self.peers_info.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update
@@ -1307,15 +1412,15 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    let peer_info = scores.entry(peer_id).or_default();
+                    peer_info.score -= 1;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                let peer_info = scores.entry(peer_id).or_default();
+                peer_info.score += 1;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1356,8 +1461,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap().score;
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap().score;
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
@@ -1560,7 +1665,7 @@ impl PeerHandler {
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
-        let mut scores = self.peer_scores.lock().await;
+        let mut scores = self.peers_info.lock().await;
         // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
         let current_account_hashes = account_storage_roots
@@ -1725,8 +1830,8 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    let peer_info = scores.entry(peer_id).or_default();
+                    peer_info.score -= 1;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1736,9 +1841,9 @@ impl PeerHandler {
                     }
                 }
 
-                let peer_score = scores.entry(peer_id).or_default();
-                if *peer_score < 10 {
-                    *peer_score += 1;
+                let peer_info = scores.entry(peer_id).or_default();
+                if peer_info.score < 10 {
+                    peer_info.score += 1;
                 }
 
                 /*                 *downloaded_count += account_storages.len() as u64;
@@ -1800,8 +1905,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap().score; // TODO: Handle unwrap
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap().score; // TODO: Handle unwrap
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
