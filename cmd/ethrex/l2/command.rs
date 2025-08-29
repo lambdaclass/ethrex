@@ -504,7 +504,7 @@ impl Command {
                 info!("Pausing contract {}", opts.contract_address);
                 opts.call_contract("pause()", vec![])
                     .await
-                    .inspect(|_| info!("Succesfully unpaused contract"))?;
+                    .inspect(|_| info!("Succesfully paused contract"))?;
             }
             Command::Unpause {
                 contract_pause_options: opts,
