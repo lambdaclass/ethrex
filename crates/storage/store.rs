@@ -219,6 +219,12 @@ impl Store {
         self.engine.remove_block(block_number).await
     }
 
+    /// Removes Block and all asociated data (receipts, transaction locations, etc)
+    /// Doesn't fail if the block doesn't exist or has missing data
+    pub async fn purge_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.engine.purge_block(block_number).await
+    }
+
     pub async fn get_block_bodies(
         &self,
         from: BlockNumber,
