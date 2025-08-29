@@ -371,6 +371,10 @@ impl StoreEngine for Store {
         let mut blocks_to_prune_state = 0u64;
         let mut blocks_to_prune_storage = 0u64;
 
+        // Fix for MDBX assertion failure: "Assertion `mc->mc_db->md_entries > 0' failed"
+        // The issue occurred when calling delete_current() while iterating over the same cursor,
+        // causing MDBX to attempt rebalancing on potentially empty tables.
+        // Solution: Collect nodes to prune first, then delete them in a separate phase.
         let mut cursor_state_trie_pruning_log = tx
             .cursor::<StateTriePruningLog>()
             .map_err(StoreError::LibmdbxError)?;
@@ -388,63 +392,90 @@ impl StoreEngine for Store {
             let keep_from = last_num.saturating_sub(keep_blocks);
             blocks_to_prune_state = last_num - keep_from;
 
-            let mut cursor_state_trie = tx
-                .cursor::<StateTrieNodes>()
-                .map_err(StoreError::LibmdbxError)?;
+            // Collect all entries to prune
+            let mut nodes_to_prune = Vec::new();
             let mut kv_state_trie_pruning = cursor_state_trie_pruning_log
                 .first()
                 .map_err(StoreError::LibmdbxError)?;
-            // Iterate over the first entries of the pruning log and delete the nodes from the trie
-            // until we reach the keep from block number
+            // Collect entries from the pruning log that should be deleted
             while let Some((block, node_hash)) = kv_state_trie_pruning {
                 // If the block number is higher than the keep from, we can stop
-                // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::debug!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
+                    tracing::debug!(
+                        keep_from,
+                        last_num,
+                        "[STOPPING STATE TRIE PRUNING COLLECTION]"
+                    );
                     break;
                 }
-
-                // Delete the node from the state trie and the pruning log
-                let k_delete = NodeHash::Hashed(node_hash.into());
-                if let Some((key, mut value)) = cursor_state_trie
-                    .seek_exact(k_delete)
-                    .map_err(StoreError::LibmdbxError)?
-                {
-                    if key == k_delete {
-                        tracing::debug!(
-                            node = hex::encode(node_hash.as_ref()),
-                            block_number = block.block_number,
-                            block_hash = hex::encode(block.block_hash.0.as_ref()),
-                            "[DELETING STATE NODE]"
-                        );
-                        cursor_state_trie_pruning_log
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                        let refcnt_index = value.len() - 8;
-                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
-                        let mut refcnt = u64::from_be_bytes(bytes);
-                        if refcnt == 1 {
-                            cursor_state_trie
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                            state_nodes_deleted += 1;
-                        } else {
-                            refcnt -= 1;
-                            let bytes = refcnt.to_be_bytes();
-                            value[refcnt_index..].copy_from_slice(&bytes);
-                            cursor_state_trie
-                                .upsert(key, value)
-                                .map_err(StoreError::LibmdbxError)?;
-                            state_refcnt_decremented += 1;
-                        }
-                    }
-                }
+                nodes_to_prune.push((block, node_hash));
                 kv_state_trie_pruning = cursor_state_trie_pruning_log
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
             }
+
+            // Process collected nodes and update/delete them
+            if !nodes_to_prune.is_empty() {
+                let mut cursor_state_trie = tx
+                    .cursor::<StateTrieNodes>()
+                    .map_err(StoreError::LibmdbxError)?;
+
+                for (block, node_hash) in nodes_to_prune {
+                    let k_delete = NodeHash::Hashed(node_hash.into());
+                    if let Some((key, mut value)) = cursor_state_trie
+                        .seek_exact(k_delete)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        if key == k_delete {
+                            tracing::debug!(
+                                node = hex::encode(node_hash.as_ref()),
+                                block_number = block.block_number,
+                                block_hash = hex::encode(block.block_hash.0.as_ref()),
+                                "[DELETING STATE NODE]"
+                            );
+                            let refcnt_index = value.len() - 8;
+                            let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                            let mut refcnt = u64::from_be_bytes(bytes);
+                            if refcnt == 1 {
+                                cursor_state_trie
+                                    .delete_current()
+                                    .map_err(StoreError::LibmdbxError)?;
+                                state_nodes_deleted += 1;
+                            } else {
+                                refcnt -= 1;
+                                let bytes = refcnt.to_be_bytes();
+                                value[refcnt_index..].copy_from_slice(&bytes);
+                                cursor_state_trie
+                                    .upsert(key, value)
+                                    .map_err(StoreError::LibmdbxError)?;
+                                state_refcnt_decremented += 1;
+                            }
+                        }
+                    }
+                }
+
+                // Delete pruning log entries using a fresh cursor
+                let mut cursor_state_trie_pruning_log_delete = tx
+                    .cursor::<StateTriePruningLog>()
+                    .map_err(StoreError::LibmdbxError)?;
+                let mut kv_state_trie_pruning_delete = cursor_state_trie_pruning_log_delete
+                    .first()
+                    .map_err(StoreError::LibmdbxError)?;
+                while let Some((block, _)) = kv_state_trie_pruning_delete {
+                    if block.block_number >= keep_from {
+                        break;
+                    }
+                    cursor_state_trie_pruning_log_delete
+                        .delete_current()
+                        .map_err(StoreError::LibmdbxError)?;
+                    kv_state_trie_pruning_delete = cursor_state_trie_pruning_log_delete
+                        .next()
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
         }
 
+        // Apply same fix pattern for storage trie pruning
         let mut cursor_storage_trie_pruning_log = tx
             .cursor::<StorageTriesPruningLog>()
             .map_err(StoreError::LibmdbxError)?;
@@ -462,64 +493,86 @@ impl StoreEngine for Store {
             let keep_from = last_num.saturating_sub(keep_blocks);
             blocks_to_prune_storage = last_num - keep_from;
 
-            let mut cursor_storage_trie = tx
-                .cursor::<StorageTriesNodes>()
-                .map_err(StoreError::LibmdbxError)?;
+            // Collect all storage entries to prune
+            let mut storage_nodes_to_prune = Vec::new();
             let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log
                 .first()
                 .map_err(StoreError::LibmdbxError)?;
-            // Iterate over the first entries of the pruning log and delete the nodes from the trie
-            // until we reach the keep from block number
+            // Collect entries from the storage pruning log that should be deleted
             while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
                 // If the block number is higher than the keep from, we can stop
-                // since we reached the keep from block number
                 if block.block_number >= keep_from {
                     tracing::debug!(
                         keep_from = keep_from,
                         last_num = last_num,
-                        "[STOPPING STORAGE TRIE PRUNING]"
+                        "[STOPPING STORAGE TRIE PRUNING COLLECTION]"
                     );
                     break;
                 }
-
-                // If the storage trie hash is found, delete it from the trie and the pruning log
-                if let Some((key, mut value)) = cursor_storage_trie
-                    .seek_exact(storage_trie_pruning_hash)
-                    .map_err(StoreError::LibmdbxError)?
-                {
-                    if key == storage_trie_pruning_hash {
-                        tracing::debug!(
-                            hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
-                            node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
-                            block_number = block.block_number,
-                            block_hash = hex::encode(block.block_hash.0.as_ref()),
-                            "[DELETING STORAGE NODE]"
-                        );
-                        cursor_storage_trie_pruning_log
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                        let refcnt_index = value.len() - 8;
-                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
-                        let mut refcnt = u64::from_be_bytes(bytes);
-                        if refcnt == 1 {
-                            cursor_storage_trie
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                            storage_nodes_deleted += 1;
-                        } else {
-                            refcnt -= 1;
-                            let bytes = refcnt.to_be_bytes();
-                            value[refcnt_index..].copy_from_slice(&bytes);
-                            cursor_storage_trie
-                                .upsert(key, value)
-                                .map_err(StoreError::LibmdbxError)?;
-                            storage_refcnt_decremented += 1;
-                        }
-                    }
-                }
+                storage_nodes_to_prune.push((block, storage_trie_pruning_hash));
                 kv_storage_trie_pruning = cursor_storage_trie_pruning_log
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // Process collected storage nodes and update/delete them
+            if !storage_nodes_to_prune.is_empty() {
+                let mut cursor_storage_trie = tx
+                    .cursor::<StorageTriesNodes>()
+                    .map_err(StoreError::LibmdbxError)?;
+
+                for (block, storage_trie_pruning_hash) in storage_nodes_to_prune {
+                    if let Some((key, mut value)) = cursor_storage_trie
+                        .seek_exact(storage_trie_pruning_hash)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        if key == storage_trie_pruning_hash {
+                            tracing::debug!(
+                                hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                                node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                                block_number = block.block_number,
+                                block_hash = hex::encode(block.block_hash.0.as_ref()),
+                                "[DELETING STORAGE NODE]"
+                            );
+                            let refcnt_index = value.len() - 8;
+                            let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                            let mut refcnt = u64::from_be_bytes(bytes);
+                            if refcnt == 1 {
+                                cursor_storage_trie
+                                    .delete_current()
+                                    .map_err(StoreError::LibmdbxError)?;
+                                storage_nodes_deleted += 1;
+                            } else {
+                                refcnt -= 1;
+                                let bytes = refcnt.to_be_bytes();
+                                value[refcnt_index..].copy_from_slice(&bytes);
+                                cursor_storage_trie
+                                    .upsert(key, value)
+                                    .map_err(StoreError::LibmdbxError)?;
+                                storage_refcnt_decremented += 1;
+                            }
+                        }
+                    }
+                }
+
+                // Delete storage pruning log entries using a fresh cursor
+                let mut cursor_storage_trie_pruning_log_delete = tx
+                    .cursor::<StorageTriesPruningLog>()
+                    .map_err(StoreError::LibmdbxError)?;
+                let mut kv_storage_trie_pruning_delete = cursor_storage_trie_pruning_log_delete
+                    .first()
+                    .map_err(StoreError::LibmdbxError)?;
+                while let Some((block, _)) = kv_storage_trie_pruning_delete {
+                    if block.block_number >= keep_from {
+                        break;
+                    }
+                    cursor_storage_trie_pruning_log_delete
+                        .delete_current()
+                        .map_err(StoreError::LibmdbxError)?;
+                    kv_storage_trie_pruning_delete = cursor_storage_trie_pruning_log_delete
+                        .next()
+                        .map_err(StoreError::LibmdbxError)?;
+                }
             }
         }
 
