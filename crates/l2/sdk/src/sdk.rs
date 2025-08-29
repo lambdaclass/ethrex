@@ -28,7 +28,6 @@ use tracing::{error, warn};
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
 
-pub use calldata::from_hex_string_to_u256;
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
 // Reexport the contracts module
@@ -928,14 +927,14 @@ pub async fn get_last_committed_batch(
     client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<u64, EthClientError> {
-    _call_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
+    _call_u64_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
 }
 
 pub async fn get_last_verified_batch(
     client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<u64, EthClientError> {
-    _call_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
+    _call_u64_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
 }
 
 pub async fn get_sp1_vk(
@@ -949,7 +948,7 @@ pub async fn get_last_fetched_l1_block(
     client: &EthClient,
     common_bridge_address: Address,
 ) -> Result<u64, EthClientError> {
-    _call_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
+    _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
 pub async fn get_pending_privileged_transactions(
@@ -989,14 +988,14 @@ async fn _generic_call(
     Ok(hex_string)
 }
 
-async fn _call_variable(
+async fn _call_u64_variable(
     client: &EthClient,
     selector: &[u8],
-    on_chain_proposer_address: Address,
+    contract_address: Address,
 ) -> Result<u64, EthClientError> {
-    let hex_string = _generic_call(client, selector, on_chain_proposer_address).await?;
+    let hex_string = _generic_call(client, selector, contract_address).await?;
 
-    let value = from_hex_string_to_u256(&hex_string)?
+    let value = U256::from_str_radix(hex_string.trim_start_matches("0x"), 16)?
         .try_into()
         .map_err(|_| {
             EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())

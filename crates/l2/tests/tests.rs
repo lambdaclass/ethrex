@@ -17,8 +17,7 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, from_hex_string_to_u256, get_last_verified_batch, send_generic_transaction,
-    wait_for_message_proof,
+    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -809,7 +808,7 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         )
         .await
         .unwrap();
-    from_hex_string_to_u256(&res).unwrap()
+    U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
 }
 
 async fn test_send(

@@ -1,5 +1,5 @@
 use crate::utils::RpcRequest;
-use ethrex_common::types::transaction::GenericTransactionError;
+use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
@@ -67,6 +67,8 @@ pub enum EthClientError {
     FailedAllRPC(String),
     #[error("Generic transaction error: {0}")]
     GenericTransactionError(#[from] GenericTransactionError),
+    #[error("Failed to parse hex string: {0}")]
+    FromStrRadixError(#[from] FromStrRadixErr),
 }
 
 #[derive(Debug, thiserror::Error)]

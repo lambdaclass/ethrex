@@ -545,25 +545,6 @@ pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthC
         .collect()
 }
 
-pub fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
-    let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
-        "Couldn't strip prefix from request.".to_owned(),
-    ))?;
-
-    if hex_string.is_empty() {
-        return Err(EthClientError::Custom(
-            "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
-        ));
-    }
-
-    let value = U256::from_str_radix(hex_string, 16).map_err(|_| {
-        EthClientError::Custom(
-            "Failed to parse after call, U256::from_str_radix failed.".to_owned(),
-        )
-    })?;
-    Ok(value)
-}
-
 #[test]
 fn fixed_array_encoding_test() {
     use bytes::{BufMut, BytesMut};
