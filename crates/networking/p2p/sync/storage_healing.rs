@@ -552,11 +552,9 @@ fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone(), membatch).inspect_err(
-                |err| {
-                    error!("{err} in determine missing children while searching {node_response:?}")
-                },
-            )?;
+            determine_missing_children(&node_response, store.clone()).inspect_err(|err| {
+                error!("{err} in determine missing children while searching {node_response:?}")
+            })?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
@@ -649,7 +647,6 @@ fn get_initial_downloads(
 pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
-    membatch: &Membatch,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
@@ -714,29 +711,6 @@ pub fn determine_missing_children(
         _ => {}
     }
     Ok((paths, count))
-}
-
-// This function searches for the nodes we have to download that are childs from the membatch
-fn determine_membatch_missing_children(
-    node_request: NodeRequest,
-    hash: &NodeHash,
-    membatch: &Membatch,
-    store: Store,
-    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
-) -> Result<Vec<NodeRequest>, StoreError> {
-    if let Some(membatch_entry) = membatch.get(&(
-        node_request.acc_path.clone(),
-        node_request.storage_path.clone(),
-    )) {
-        if membatch_entry.node_response.node.compute_hash() == *hash {
-            determine_missing_children(&membatch_entry.node_response, store, membatch)
-                .map(|(paths, count)| paths)
-        } else {
-            Ok(vec![node_request])
-        }
-    } else {
-        Ok(vec![node_request])
-    }
 }
 
 fn commit_node(
