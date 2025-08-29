@@ -77,7 +77,7 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
-            max_gas_limit,
+            max_gas_limit: *max_gas_limit,
         }
     }
 
