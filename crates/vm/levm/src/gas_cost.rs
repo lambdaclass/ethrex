@@ -194,6 +194,11 @@ pub const IDENTITY_DYNAMIC_BASE: u64 = 3;
 pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
+pub const MODEXP_EXPONENT_FACTOR: u64 = 8;
+
+pub const MODEXP_STATIC_COST_OSAKA: u64 = 500;
+pub const MODEXP_DYNAMIC_QUOTIENT_OSAKA: u64 = 1;
+pub const MODEXP_EXPONENT_FACTOR_OSAKA: u64 = 16;
 
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
@@ -838,6 +843,7 @@ pub fn modexp(
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -854,7 +860,22 @@ pub fn modexp(
     //https://eips.ethereum.org/EIPS/eip-2565
 
     let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
-    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGas)?;
+
+    let multiplication_complexity = match fork {
+        Fork::Osaka => {
+            if max_length > 32 {
+                2 * words.checked_pow(2).ok_or(OutOfGas)?
+            } else {
+                16
+            }
+        }
+        _ => words.checked_pow(2).ok_or(OutOfGas)?,
+    };
+
+    let modexp_exponent_factor = match fork {
+        Fork::Osaka => MODEXP_EXPONENT_FACTOR_OSAKA,
+        _ => MODEXP_EXPONENT_FACTOR,
+    };
 
     let calculate_iteration_count =
         if exponent_size <= 32 && *exponent_first_32_bytes != Natural::ZERO {
@@ -866,7 +887,7 @@ pub fn modexp(
             let extra_size = (exponent_size
                 .checked_sub(32)
                 .ok_or(InternalError::Underflow)?)
-            .checked_mul(8)
+            .checked_mul(modexp_exponent_factor)
             .ok_or(OutOfGas)?;
             extra_size
                 .checked_add(exponent_first_32_bytes.significant_bits().max(1))
@@ -878,11 +899,21 @@ pub fn modexp(
         }
         .max(1);
 
-    let cost = MODEXP_STATIC_COST.max(
+    let modexp_static_cost = match fork {
+        Fork::Osaka => MODEXP_STATIC_COST_OSAKA,
+        _ => MODEXP_STATIC_COST,
+    };
+
+    let modexp_dynamic_quotient = match fork {
+        Fork::Osaka => MODEXP_DYNAMIC_QUOTIENT_OSAKA,
+        _ => MODEXP_DYNAMIC_QUOTIENT,
+    };
+
+    let cost = modexp_static_cost.max(
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGas)?
-            / MODEXP_DYNAMIC_QUOTIENT,
+            / modexp_dynamic_quotient,
     );
     Ok(cost)
 }
