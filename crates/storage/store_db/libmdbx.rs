@@ -360,8 +360,9 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         // Check if there's any pruning work to do
-        let has_pruning_work = stats_pre_state_log.entries() > 0 || stats_pre_storage_log.entries() > 0;
-        
+        let has_pruning_work =
+            stats_pre_state_log.entries() > 0 || stats_pre_storage_log.entries() > 0;
+
         // Track overall pruning stats
         let mut state_nodes_deleted = 0u64;
         let mut state_refcnt_decremented = 0u64;
@@ -399,7 +400,7 @@ impl StoreEngine for Store {
                 // If the block number is higher than the keep from, we can stop
                 // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::info!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
+                    tracing::debug!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
                     break;
                 }
 
@@ -442,7 +443,6 @@ impl StoreEngine for Store {
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
             }
-
         }
 
         let mut cursor_storage_trie_pruning_log = tx
@@ -474,7 +474,7 @@ impl StoreEngine for Store {
                 // If the block number is higher than the keep from, we can stop
                 // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::info!(
+                    tracing::debug!(
                         keep_from = keep_from,
                         last_num = last_num,
                         "[STOPPING STORAGE TRIE PRUNING]"
@@ -521,7 +521,6 @@ impl StoreEngine for Store {
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
             }
-
         }
 
         // Get the stats after the pruning and log the metrics
@@ -545,7 +544,7 @@ impl StoreEngine for Store {
         let pruning_duration = start_time.elapsed();
         let total_nodes_deleted = state_nodes_deleted + storage_nodes_deleted;
         let total_nodes_updated = state_refcnt_decremented + storage_refcnt_decremented;
-        
+
         if !has_pruning_work {
             tracing::info!(
                 keep_blocks,
@@ -559,27 +558,65 @@ impl StoreEngine for Store {
                 "[PRUNING] No nodes to prune in range"
             );
         } else {
-            // Estimate data size (assuming ~1KB per node)
-            let estimated_mb_freed = total_nodes_deleted as f64 / 1024.0;
+            // Calculate actual space freed using libmdbx stats
+            let state_bytes_freed =
+                stats_pre_state_nodes.total_size() - stats_post_state_nodes.total_size();
+            let storage_bytes_freed =
+                stats_pre_storage_nodes.total_size() - stats_post_storage_nodes.total_size();
+            let total_bytes_freed = state_bytes_freed + storage_bytes_freed;
+            let mb_freed = total_bytes_freed as f64 / (1024.0 * 1024.0);
+
             let pruning_rate = if pruning_duration.as_millis() > 0 {
-                (total_nodes_deleted + total_nodes_updated) as f64 * 1000.0 / pruning_duration.as_millis() as f64
+                (total_nodes_deleted + total_nodes_updated) as f64 * 1000.0
+                    / pruning_duration.as_millis() as f64
             } else {
                 0.0
             };
-            
+
+            // Calculate efficiency metrics
+            let total_size_before =
+                stats_pre_state_nodes.total_size() + stats_pre_storage_nodes.total_size();
+            let space_efficiency = if total_size_before > 0 {
+                (total_bytes_freed as f64 / total_size_before as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let cleanup_efficiency =
+                if (stats_pre_state_log.entries() + stats_pre_storage_log.entries()) > 0 {
+                    (total_nodes_deleted as f64
+                        / (stats_pre_state_log.entries() + stats_pre_storage_log.entries()) as f64)
+                        * 100.0
+                } else {
+                    0.0
+                };
+
+            let mb_per_second = if pruning_duration.as_secs_f64() > 0.0 {
+                mb_freed / pruning_duration.as_secs_f64()
+            } else {
+                0.0
+            };
+
+            let avg_node_size = if total_nodes_deleted > 0 {
+                total_bytes_freed as f64 / total_nodes_deleted as f64
+            } else {
+                0.0
+            };
+
             tracing::info!(
                 duration_ms = pruning_duration.as_millis(),
-                state_deleted = state_nodes_deleted,
-                state_updated = state_refcnt_decremented,
-                storage_deleted = storage_nodes_deleted,
-                storage_updated = storage_refcnt_decremented,
                 total_deleted = total_nodes_deleted,
-                estimated_mb_freed = format!("{:.2}", estimated_mb_freed),
-                rate_nodes_per_sec = format!("{:.1}", pruning_rate),
-                "[PRUNING] Completed - deleted {} nodes (~{:.2}MB), updated {} refcounts in {}ms",
+                total_updated = total_nodes_updated,
+                mb_freed = format!("{:.2}", mb_freed),
+                space_efficiency_pct = format!("{:.2}", space_efficiency),
+                cleanup_efficiency_pct = format!("{:.1}", cleanup_efficiency),
+                mb_per_sec = format!("{:.2}", mb_per_second),
+                "[PRUNING] Completed - {:.2}MB freed ({} nodes deleted) | {:.2}% space reduction, {:.1}% cleanup rate, {:.2}MB/s in {}ms",
+                mb_freed,
                 total_nodes_deleted,
-                estimated_mb_freed,
-                total_nodes_updated,
+                space_efficiency,
+                cleanup_efficiency,
+                mb_per_second,
                 pruning_duration.as_millis()
             );
         }
