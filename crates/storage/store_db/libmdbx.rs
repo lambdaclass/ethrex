@@ -1447,9 +1447,19 @@ impl StoreEngine for Store {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             for (hashed_address, nodes) in storage_trie_nodes {
-                for (node_hash, node_data) in nodes {
+                for (node_hash, mut node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    // Add reference count (initialize to 1 for nodes written during snap sync)
+                    // This should be done to match the behavior introduced with pruning
+                    tracing::info!(
+                        hashed_address = hex::encode(key_1),
+                        node_hash = hex::encode(key_2),
+                        original_len = node_data.len(),
+                        "[SNAP SYNC] Adding reference count to storage trie node"
+                    );
+                    node_data.extend_from_slice(&1u64.to_be_bytes());
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
