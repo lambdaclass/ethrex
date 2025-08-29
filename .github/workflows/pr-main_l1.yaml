@@ -230,14 +230,56 @@ jobs:
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
+  run-replay:
+    name: Execute an L1 block
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r
+
+      - name: Run
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://eth-testnet-rpc:8547"
+        run: |
+          cp fixtures/cache/rpc_prover/cache_hoodi_1105864.bin cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute BLOCK_NUMBER=974567 NETWORK=hoodi
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: "L1 block executing benchmark"
+          tool: "customBiggerIsBetter"
+          output-file-path: cmd/ethrex_replay/bench_latest.json
+          benchmark-data-dir-path: "benchmarks"
+          # Access token to deploy GitHub Pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push and deploy GitHub pages branch automatically
+          auto-push: true
+          comment-on-alert: true
+
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
+
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [run-assertoor, run-hive]
+    needs: [run-assertoor, run-hive, run-replay]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
+    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' && needs.run-replay.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -248,5 +290,10 @@ jobs:
 
           if [ "${{ needs.run-hive.result }}" != "success" ]; then
             echo "Job Hive failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.run-replay.result }}" != "success" ]; then
+            echo "Job Replay failed"
             exit 1
           fi
