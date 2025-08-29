@@ -75,7 +75,6 @@ pub enum SyncMode {
 }
 
 /// Manager in charge the sync process
-/// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct Syncer {
     /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
@@ -85,6 +84,9 @@ pub struct Syncer {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
+    /// This string indicates a folder where the snap algorithm will store temporary files that are
+    /// used during the syncing process
+    datadir: String,
 }
 
 impl Syncer {
@@ -93,12 +95,14 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
+        datadir: String,
     ) -> Self {
         Self {
             snap_enabled,
             peers,
             cancel_token,
             blockchain,
+            datadir,
         }
     }
 
@@ -113,6 +117,7 @@ impl Syncer {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
+            datadir: ".".to_string(),
         }
     }
 
@@ -788,10 +793,8 @@ impl Syncer {
         );
 
         let state_root = pivot_header.state_root;
-        let account_state_snapshots_dir =
-            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+        let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
         let mut pivot_is_stale = true;
         let mut storage_accounts = AccountStorageRoots::default();
@@ -958,8 +961,7 @@ impl Syncer {
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
-            let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-                .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+            let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
@@ -1130,35 +1132,6 @@ impl Syncer {
             .await?;
         Ok(())
     }
-}
-
-async fn get_number_of_storage_tries_to_download() -> Result<u64, SyncError> {
-    let account_state_snapshots_dir =
-        get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-    let mut number_of_accounts_with_non_empty_storage = 0;
-    for entry in std::fs::read_dir(&account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry.map_err(|_| {
-            SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
-        })?;
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
-
-        let account_states_snapshot: Vec<(H256, AccountState)> =
-            RLPDecode::decode(&snapshot_contents)
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-        // filter and the count accounts with non empty storage
-        let accounts_with_non_empty_storage = account_states_snapshot
-            .iter()
-            .filter(|(_account_hash, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
-            .count() as u64;
-
-        number_of_accounts_with_non_empty_storage += accounts_with_non_empty_storage;
-    }
-    Ok(number_of_accounts_with_non_empty_storage)
 }
 
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
