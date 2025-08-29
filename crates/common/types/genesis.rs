@@ -298,11 +298,8 @@ impl ChainConfig {
 
     pub fn display_config(&self) -> String {
         let mut output = String::new();
-        let border = "-".repeat(80);
 
         let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-
-        output.push_str(&format!("{}\n", border));
 
         output.push_str(&format!("Chain ID:  {} ({})\n", self.chain_id, network));
 
@@ -326,7 +323,6 @@ impl ChainConfig {
             output.push_str(&format!("- Verkle: @{:<10}\n", time));
         }
 
-        output.push_str(&format!("{}\n", border));
         output
     }
 
