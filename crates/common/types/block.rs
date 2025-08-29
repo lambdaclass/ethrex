@@ -36,11 +36,20 @@ use once_cell::sync::OnceCell;
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
+    pub cached_body_rlp_encode: Vec<u8>,
+    pub cached_header_rlp_encode: Vec<u8>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block { header, body }
+        let body_rlp = body.encode_to_vec();
+        let header_rlp = header.encode_to_vec();
+        Block {
+            header,
+            body,
+            cached_body_rlp_encode: body_rlp,
+            cached_header_rlp_encode: header_rlp,
+        }
     }
 
     pub fn hash(&self) -> BlockHash {

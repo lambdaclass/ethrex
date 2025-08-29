@@ -952,10 +952,12 @@ pub fn validate_block(
         .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_size = std::mem::size_of_val(block) as u64;
-        if block_size > MAX_BLOCK_SIZE {
+        let mut buf: Vec<u8> = Vec::new();
+        let block_rlp_size =
+            block.cached_body_rlp_encode.len() as u64 + block.cached_header_rlp_encode.len() as u64;
+        if block_rlp_size > MAX_BLOCK_SIZE {
             return Err(error::ChainError::InvalidBlock(
-                InvalidBlockError::MaximumSizeExceeded(MAX_BLOCK_SIZE, block_size),
+                InvalidBlockError::MaximumSizeExceeded(MAX_BLOCK_SIZE, block_rlp_size),
             ));
         }
     } else if chain_config.is_prague_activated(block.header.timestamp) {
