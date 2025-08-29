@@ -74,8 +74,6 @@ impl RLPxInitiator {
     /// Looks for a single peer. If it finds one to attempt a connection, returns true
     /// Else returns false
     async fn look_for_peer(&self) -> bool {
-        info!("Looking for peers");
-
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
 
         for contact in self.context.table.table.lock().await.values() {
