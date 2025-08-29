@@ -32,6 +32,7 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
         "depositContractAddress",
         "blobSchedule",
         "mergeNetsplitBlock",
+        "enableVerkleAtGenesis",
     ];
     let Value::Object(config) = genesis_map
         .get("config")
