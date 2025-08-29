@@ -131,11 +131,7 @@ impl BlockProducer {
             version,
             elasticity_multiplier: self.elasticity_multiplier,
         };
-        let mut payload = create_payload(&args, &self.store)?;
-
-        if payload.header.gas_limit > self.max_gas_limit {
-            payload.header.gas_limit = self.max_gas_limit;
-        }
+        let payload = create_payload(&args, &self.store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(
@@ -143,6 +139,7 @@ impl BlockProducer {
             payload,
             &self.store,
             &self.rollup_store,
+            self.max_gas_limit,
         )
         .await?;
         info!(
