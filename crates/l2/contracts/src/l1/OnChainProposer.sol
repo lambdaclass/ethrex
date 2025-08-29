@@ -64,23 +64,17 @@ contract OnChainProposer is
 
     address public BRIDGE;
     /// @dev Deprecated variable.
-    address public PICOVERIFIER;
-    address public R0VERIFIER;
-    address public SP1VERIFIER;
+    address public PICO_VERIFIER_ADDRESS;
+    address public RISC0_VERIFIER_ADDRESS;
+    address public SP1_VERIFIER_ADDRESS;
 
     bytes32 public SP1_VERIFICATION_KEY;
-
-    /// @notice Address used to avoid the verification process.
-    /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
-    /// the verification process will not happen.
-    /// @dev Used only in dev mode.
-    address public constant DEV_MODE = address(0xAA);
 
     /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
-    address public TDXVERIFIER;
+    address public TDX_VERIFIER_ADDRESS;
 
     /// @notice The address of the AlignedProofAggregatorService contract.
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
@@ -90,6 +84,16 @@ contract OnChainProposer is
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
+
+    /// @notice True if a Risc0 proof is required for batch verification.
+    bool public REQUIRE_RISC0_PROOF;
+    /// @notice True if a SP1 proof is required for batch verification.
+    bool public REQUIRE_SP1_PROOF;
+    /// @notice True if a TDX proof is required for batch verification.
+    bool public REQUIRE_TDX_PROOF;
+
+    /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
+    bool public ALIGNED_MODE;
 
     modifier onlySequencer() {
         require(
@@ -109,6 +113,10 @@ contract OnChainProposer is
     function initialize(
         bool _validium,
         address owner,
+        bool requireRisc0Proof,
+        bool requireSp1Proof,
+        bool requireTdxProof,
+        bool aligned,
         address r0verifier,
         address sp1verifier,
         address tdxverifier,
@@ -121,37 +129,23 @@ contract OnChainProposer is
     ) public initializer {
         VALIDIUM = _validium;
 
-        // Set the AlignedProofAggregator address
-        require(
-            alignedProofAggregator != address(0),
-            "OnChainProposer: alignedProofAggregator is the zero address"
-        );
-        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
-
-        // Set the Risc0Groth16Verifier address
-        require(
-            r0verifier != address(0),
-            "OnChainProposer: r0verifier is the zero address"
-        );
-        R0VERIFIER = r0verifier;
-
-        // Set the SP1Groth16Verifier address
-        require(
-            sp1verifier != address(0),
-            "OnChainProposer: sp1verifier is the zero address"
-        );
-        SP1VERIFIER = sp1verifier;
-
-        // Set the TDXVerifier address
-        require(
-            tdxverifier != address(0),
-            "OnChainProposer: tdxverifier is the zero address"
-        );
-        TDXVERIFIER = tdxverifier;
-
-        // Set verification keys (or image id in risc0's case)
-        SP1_VERIFICATION_KEY = sp1Vk;
+        // Risc0 constants
+        REQUIRE_RISC0_PROOF = requireRisc0Proof;
+        RISC0_VERIFIER_ADDRESS = r0verifier;
         RISC0_VERIFICATION_KEY = risc0Vk;
+
+        // SP1 constants
+        REQUIRE_SP1_PROOF = requireSp1Proof;
+        SP1_VERIFIER_ADDRESS = sp1verifier;
+        SP1_VERIFICATION_KEY = sp1Vk;
+
+        // TDX constants
+        REQUIRE_TDX_PROOF = requireTdxProof;
+        TDX_VERIFIER_ADDRESS = tdxverifier;
+
+        // Aligned Layer constants
+        ALIGNED_MODE = aligned;
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -263,13 +257,11 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external override onlySequencer whenNotPaused {
-        // TODO: Refactor validation
-        // TODO: imageid, programvkey and riscvvkey should be constants
-        // TODO: organize each zkvm proof arguments in their own structs
         require(
-            ALIGNEDPROOFAGGREGATOR == DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchesAligned instead"
+            !ALIGNED_MODE,
+            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
         );
+
         require(
             batchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: batch already verified"
@@ -292,30 +284,33 @@ contract OnChainProposer is
             );
         }
 
-        if (R0VERIFIER != DEV_MODE) {
+        if (REQUIRE_RISC0_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
-            IRiscZeroVerifier(R0VERIFIER).verify(
+            IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                 risc0BlockProof,
                 RISC0_VERIFICATION_KEY,
                 sha256(risc0Journal)
             );
         }
 
-        if (SP1VERIFIER != DEV_MODE) {
+        if (REQUIRE_SP1_PROOF) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[8:]);
-            ISP1Verifier(SP1VERIFIER).verifyProof(
+            _verifyPublicData(batchNumber, sp1PublicValues);
+            ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );
         }
 
-        if (TDXVERIFIER != DEV_MODE) {
+        if (REQUIRE_TDX_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                tdxPublicValues,
+                tdxSignature
+            );
         }
 
         lastVerifiedBatch = batchNumber;
@@ -329,25 +324,34 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata alignedPublicInputsList,
-        bytes32[][] calldata alignedMerkleProofsList
+        bytes[] calldata publicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes32[][] calldata risc0MerkleProofsList
     ) external override onlySequencer whenNotPaused {
         require(
-            ALIGNEDPROOFAGGREGATOR != DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
+            ALIGNED_MODE,
+            "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
         );
-        require(
-            alignedPublicInputsList.length == alignedMerkleProofsList.length,
-            "OnChainProposer: input/proof array length mismatch"
-        );
-        require(
-            firstBatchNumber == lastVerifiedBatch + 1,
+        require( firstBatchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: incorrect first batch number"
         );
 
+        if (REQUIRE_SP1_PROOF) {
+            require(
+                publicInputsList.length == sp1MerkleProofsList.length,
+                "OnChainProposer: SP1 input/proof array length mismatch"
+            );
+        }
+        if (REQUIRE_RISC0_PROOF) {
+            require(
+                publicInputsList.length == risc0MerkleProofsList.length,
+                "OnChainProposer: Risc0 input/proof array length mismatch"
+            );
+        }
+
         uint256 batchNumber = firstBatchNumber;
 
-        for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
+        for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
                 "OnChainProposer: cannot verify an uncommitted batch"
@@ -367,25 +371,23 @@ contract OnChainProposer is
             }
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
+            _verifyPublicData(batchNumber, publicInputsList[i]);
 
-            bytes memory callData = abi.encodeWithSignature(
-                "verifyProofInclusion(bytes32[],bytes32,bytes)",
-                alignedMerkleProofsList[i],
-                SP1_VERIFICATION_KEY,
-                alignedPublicInputsList[i]
-            );
-            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-                .staticcall(callData);
-            require(
-                callResult,
-                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-            );
-            bool proofVerified = abi.decode(response, (bool));
-            require(
-                proofVerified,
-                "OnChainProposer: Aligned proof verification failed"
-            );
+            // Verify inclusion in aggregated Aligned proof
+            if (REQUIRE_SP1_PROOF) {
+                _verifyProofInclusionAligned(
+                    sp1MerkleProofsList[i],
+                    SP1_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
+            if (REQUIRE_RISC0_PROOF) {
+                _verifyProofInclusionAligned(
+                    risc0MerkleProofsList[i],
+                    RISC0_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
@@ -452,6 +454,30 @@ contract OnChainProposer is
             !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
                 nonPrivilegedTransactions == 0,
             "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
+        );
+    }
+
+    function _verifyProofInclusionAligned(
+        bytes32[] calldata merkleProofsList,
+        bytes32 verificationKey,
+        bytes calldata publicInputsList
+    ) internal view {
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            merkleProofsList,
+            verificationKey,
+            publicInputsList
+        );
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+        require(
+            callResult,
+            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+        );
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: Aligned proof verification failed"
         );
     }
 

@@ -422,11 +422,6 @@ Aligned options:
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
 
-      --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
-          Path to the SP1 elf. This is used for proof verification.
-
-          [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
-
 L2 options:
       --validium
           If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.

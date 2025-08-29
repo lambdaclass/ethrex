@@ -27,9 +27,9 @@ REPLAY_BLOCK_COMPOSITION_ARGS = ${START_BLOCK} ${END_BLOCK} --rpc-url ${RPC_URL}
 # Execution only
 ## Block
 sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- execute block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features sp1 -- execute block ${REPLAY_BLOCK_ARGS}
 sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- execute block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features "sp1,gpu" -- execute block ${REPLAY_BLOCK_ARGS}
 risc0:
 	cargo r -r --no-default-features --features risc0 -- execute block ${REPLAY_BLOCK_ARGS}
 risc0-gpu:
@@ -56,11 +56,11 @@ plot:
 # Proving
 ## Block
 prove-sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features sp1 -- prove block ${REPLAY_BLOCK_ARGS}
 prove-sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_BLOCK_ARGS}
 prove-sp1-gpu-ci:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_BLOCK_ARGS}
 prove-risc0:
 	cargo r -r --no-default-features --features risc0 -- prove block ${REPLAY_BLOCK_ARGS}
 prove-risc0-gpu:
