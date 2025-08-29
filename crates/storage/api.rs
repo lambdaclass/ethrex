@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    Transaction, payload::PayloadBundle,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -299,36 +299,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
-    /// Sets storage trie paths in need of healing, grouped by hashed address
-    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
-    async fn set_storage_heal_paths(
-        &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError>;
-
-    /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removes them from the store
-    #[allow(clippy::type_complexity)]
-    async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
-
     /// Sets the state trie paths in need of healing
     async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError>;
 
     /// Gets the state trie paths in need of healing
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError>;
-
-    /// Clears all checkpoint data created during the last snap sync
-    async fn clear_snap_state(&self) -> Result<(), StoreError>;
-
-    /// Write an account batch into the current state snapshot
-    async fn write_snapshot_account_batch(
-        &self,
-        account_hashes: Vec<H256>,
-        account_states: Vec<AccountState>,
-    ) -> Result<(), StoreError>;
 
     /// Write a storage batch into the current storage snapshot
     async fn write_snapshot_storage_batch(
@@ -367,12 +342,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
-
-    /// Clears the state and storage snapshots
-    async fn clear_snapshot(&self) -> Result<(), StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
     async fn read_storage_snapshot(

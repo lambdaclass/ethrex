@@ -14,11 +14,11 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
@@ -26,7 +26,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;

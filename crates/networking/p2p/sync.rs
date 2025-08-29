@@ -20,10 +20,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::Nibbles;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::{
@@ -34,7 +32,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::SystemTime,
 };
 use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -754,7 +751,6 @@ impl SnapBlockSyncState {
                 .ok_or(SyncError::CorruptDB)?;
             current_headers.push(header);
         }
-        self.store.clear_snap_state().await?;
         Ok(FullBlockSyncState {
             current_headers,
             current_blocks: Vec::new(),
