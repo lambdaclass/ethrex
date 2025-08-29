@@ -676,21 +676,6 @@ pub fn determine_missing_children(
                 {
                     count += 1;
 
-                    // paths.extend(determine_membatch_missing_children(
-                    //     NodeRequest {
-                    //         acc_path: node_response.node_request.acc_path.clone(),
-                    //         storage_path: node_response
-                    //             .node_request
-                    //             .storage_path
-                    //             .append_new(index as u8),
-                    //         parent: node_response.node_request.storage_path.clone(),
-                    //     },
-                    //     &child.compute_hash(),
-                    //     membatch,
-                    //     store.clone(),
-                    //     nodes_to_write
-                    // )?);
-
                     paths.extend(vec![NodeRequest {
                         acc_path: node_response.node_request.acc_path.clone(),
                         storage_path: node_response
@@ -714,20 +699,6 @@ pub fn determine_missing_children(
                     .is_none()
             {
                 count += 1;
-                // paths.extend(determine_membatch_missing_children(
-                //     NodeRequest {
-                //         acc_path: node_response.node_request.acc_path.clone(),
-                //         storage_path: node_response
-                //             .node_request
-                //             .storage_path
-                //             .concat(node.prefix.clone()),
-                //         parent: node_response.node_request.storage_path.clone(),
-                //     },
-                //     &node.child.compute_hash(),
-                //     membatch,
-                //     store.clone(),
-                //     nodes_to_write
-                // )?);
 
                 paths.extend(vec![NodeRequest {
                     acc_path: node_response.node_request.acc_path.clone(),
