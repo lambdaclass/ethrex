@@ -66,7 +66,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         ),
     ]);
 
-    GeneralizedDatabase::new(Arc::new(store), cache)
+    GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
 
 fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<VM, VMError> {

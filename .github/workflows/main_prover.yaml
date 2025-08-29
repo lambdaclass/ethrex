@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_ETHREX_WORKDIR: /usr/local/bin
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
   PROVER: sp1
 
 jobs:
@@ -60,10 +60,10 @@ jobs:
         run: |
           touch cmd/.env
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          docker compose -f docker-compose-l2.yaml up --build contract_deployer
+          docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
@@ -72,11 +72,11 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
-          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_COMMITTER_COMMIT_TIME=180000 \
-          docker compose -f docker-compose-l2.yaml up --build ethrex_l2 --detach
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          docker compose up --build --detach --no-deps ethrex_l2
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -84,13 +84,13 @@ jobs:
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex_prover -s SIGINT
+          killall ethrex -s SIGINT
 
       - name: Destroy Docker containers
         if: always()
         run: |
           cd crates/l2
-          docker compose -f docker-compose-l2.yaml down
+          docker compose down
 
       - name: Ensure admin permissions in _work
         if: always()

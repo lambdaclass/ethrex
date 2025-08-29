@@ -1,4 +1,5 @@
 use crate::utils::RpcRequest;
+use ethrex_common::types::transaction::GenericTransactionError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
@@ -64,6 +65,8 @@ pub enum EthClientError {
     GetBatchByNumberError(#[from] GetBatchByNumberError),
     #[error("All RPC calls failed. Last RPC response: {0}")]
     FailedAllRPC(String),
+    #[error("Generic transaction error: {0}")]
+    GenericTransactionError(#[from] GenericTransactionError),
 }
 
 #[derive(Debug, thiserror::Error)]
