@@ -146,6 +146,7 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        tracing::info!("[DB ISSUE] Apply updates");
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
@@ -188,8 +189,10 @@ impl StoreEngine for Store {
                         .get::<StateTrieNodes>(node_hash)
                         .map_err(StoreError::LibmdbxError)?
                     {
-                        let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                        tracing::info!("[DB ISSUE] State Node len: {:?}", node.len());
+                        let bytes = node[node.len() - 8..].try_into().unwrap();
                         refcnt += u64::from_be_bytes(bytes);
+                        tracing::info!("[DB ISSUE] State Node refcnt: {:?}", refcnt);
                     }
                     node_data.extend_from_slice(&refcnt.to_be_bytes());
                     tx.upsert::<StateTrieNodes>(node_hash, node_data)
@@ -222,8 +225,10 @@ impl StoreEngine for Store {
                             .get::<StorageTriesNodes>((key_1, key_2))
                             .map_err(StoreError::LibmdbxError)?
                         {
-                            let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                            tracing::info!("[DB ISSUE] Storage Node len: {:?}", node.len());
+                            let bytes = node[node.len() - 8..].try_into().unwrap();
                             refcnt += u64::from_be_bytes(bytes);
+                            tracing::info!("[DB ISSUE] Storage Node refcnt: {:?}", refcnt);
                         }
                         node_data.extend_from_slice(&refcnt.to_be_bytes());
                         tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
@@ -1168,6 +1173,9 @@ impl StoreEngine for Store {
             .map(|ref c| {
                 <Vec<H256>>::decode(c)?
                     .try_into()
+                    .inspect_err(|e| {
+                        println!("ERROR EN get_state_trie_key_checkpoint: {:?}", e);
+                    })
                     .map_err(|_| RLPDecodeError::InvalidLength)
             })
             .transpose()
@@ -1330,6 +1338,9 @@ impl StoreEngine for Store {
             root,
             checkpoints
                 .try_into()
+                .inspect_err(|e| {
+                    println!("ERROR EN get_state_trie_rebuild_checkpoint: {:?}", e);
+                })
                 .map_err(|_| RLPDecodeError::InvalidLength)?,
         )))
     }
