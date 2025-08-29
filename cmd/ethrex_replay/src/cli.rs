@@ -19,24 +19,32 @@ use crate::{bench::run_and_measure, fetcher::get_batchdata};
 use ethrex_config::networks::Network;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
 
 #[cfg(feature = "sp1")]
-const BACKEND: Backend = Backend::SP1;
-#[cfg(feature = "risc0")]
-const BACKEND: Backend = Backend::RISC0;
-#[cfg(not(any(feature = "risc0", feature = "sp1")))]
-const BACKEND: Backend = Backend::Exec;
+pub const BACKEND: Backend = Backend::SP1;
+#[cfg(all(feature = "risc0", not(feature = "sp1")))]
+pub const BACKEND: Backend = Backend::RISC0;
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
+pub const BACKEND: Backend = Backend::Exec;
+
+#[cfg(feature = "sp1")]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::ExecuteSP1;
+
+#[cfg(all(feature = "risc0", not(feature = "sp1")))]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::ExecuteRISC0;
+
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
+pub const REPLAYER_MODE: ReplayerMode = ReplayerMode::Execute;
 
 #[derive(Parser)]
-#[command(name=BINARY_NAME, author, version=VERSION_STRING, about, long_about = None)]
+#[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
     #[command(subcommand)]
     command: EthrexReplayCommand,
 }
 
 #[derive(Subcommand)]
-enum SubcommandExecute {
+pub enum SubcommandExecute {
     #[command(about = "Execute a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
@@ -159,13 +167,6 @@ impl SubcommandExecute {
 
                 let eth_client = EthClient::new(rpc_url.as_str())?;
 
-                #[cfg(feature = "sp1")]
-                let replay_mode = ReplayerMode::ExecuteSP1;
-                #[cfg(feature = "risc0")]
-                let replay_mode = ReplayerMode::ExecuteRISC0;
-                #[cfg(not(any(feature = "risc0", feature = "sp1")))]
-                let replay_mode = ReplayerMode::Execute;
-
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!("Executing block {}/{}: {block_number}", i + 1, blocks.len());
 
@@ -194,7 +195,7 @@ impl SubcommandExecute {
                         block,
                         network.clone(),
                         res,
-                        replay_mode.clone(),
+                        REPLAYER_MODE,
                         elapsed,
                     );
 
@@ -205,7 +206,7 @@ impl SubcommandExecute {
                     }
 
                     if to_csv {
-                        let file_name = format!("ethrex_replay_{network}_{replay_mode}.csv",);
+                        let file_name = format!("ethrex_replay_{network}_{}.csv", REPLAYER_MODE);
 
                         let mut file = std::fs::OpenOptions::new()
                             .append(true)
@@ -299,13 +300,13 @@ impl SubcommandExecute {
 }
 
 #[derive(Subcommand)]
-enum SubcommandProve {
+pub enum SubcommandProve {
     #[command(about = "Proves a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
@@ -384,7 +385,7 @@ impl SubcommandProve {
                 bench,
                 l2,
             } => {
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, network.clone(), block, l2).await?;
                 let future = async {
@@ -418,7 +419,7 @@ impl SubcommandProve {
                     let res = Box::pin(async {
                         SubcommandProve::Block {
                             block: Some(*block_number),
-                            rpc_url: rpc_url.as_str().to_string(),
+                            rpc_url: rpc_url.clone(),
                             network: network.clone(),
                             bench,
                             l2,
@@ -504,7 +505,7 @@ impl SubcommandProve {
 }
 
 #[derive(Subcommand)]
-enum SubcommandCache {
+pub enum SubcommandCache {
     #[command(about = "Cache a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
@@ -608,7 +609,7 @@ impl SubcommandCache {
 }
 
 #[derive(Subcommand)]
-enum EthrexReplayCommand {
+pub enum EthrexReplayCommand {
     #[command(
         subcommand,
         about = "Execute blocks, ranges of blocks, or individual transactions."

@@ -1,15 +1,6 @@
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
-mod bench;
-mod block_run_report;
-mod cache;
-mod cli;
-mod fetcher;
-mod plot_composition;
-mod rpc;
-mod run;
-
 #[cfg(feature = "jemalloc")]
 use jemallocator::Jemalloc;
 
@@ -32,7 +23,7 @@ async fn main() {
             .finish(),
     )
     .expect("setting default subscriber failed");
-    if let Err(e) = cli::start().await {
+    if let Err(e) = ethrex_replay::cli::start().await {
         tracing::error!("{e:?}");
         std::process::exit(1);
     }
