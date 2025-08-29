@@ -146,7 +146,6 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        tracing::info!("[DB ISSUE] Apply updates");
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
@@ -189,10 +188,8 @@ impl StoreEngine for Store {
                         .get::<StateTrieNodes>(node_hash)
                         .map_err(StoreError::LibmdbxError)?
                     {
-                        tracing::info!("[DB ISSUE] State Node len: {:?}", node.len());
-                        let bytes = node[node.len() - 8..].try_into().unwrap();
+                        let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
                         refcnt += u64::from_be_bytes(bytes);
-                        tracing::info!("[DB ISSUE] State Node refcnt: {:?}", refcnt);
                     }
                     node_data.extend_from_slice(&refcnt.to_be_bytes());
                     tx.upsert::<StateTrieNodes>(node_hash, node_data)
@@ -225,10 +222,8 @@ impl StoreEngine for Store {
                             .get::<StorageTriesNodes>((key_1, key_2))
                             .map_err(StoreError::LibmdbxError)?
                         {
-                            tracing::info!("[DB ISSUE] Storage Node len: {:?}", node.len());
-                            let bytes = node[node.len() - 8..].try_into().unwrap();
+                            let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
                             refcnt += u64::from_be_bytes(bytes);
-                            tracing::info!("[DB ISSUE] Storage Node refcnt: {:?}", refcnt);
                         }
                         node_data.extend_from_slice(&refcnt.to_be_bytes());
                         tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
@@ -328,6 +323,9 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
+        tracing::info!(keep_blocks, "[PRUNING] Starting pruning process");
+        let start_time = std::time::Instant::now();
+
         let tx = self
             .db
             .begin_readwrite()
@@ -362,6 +360,14 @@ impl StoreEngine for Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))
             .map_err(StoreError::LibmdbxError)?;
 
+        tracing::info!(
+            state_nodes_count = stats_pre_state_nodes.entries(),
+            state_log_entries = stats_pre_state_log.entries(),
+            storage_nodes_count = stats_pre_storage_nodes.entries(),
+            storage_log_entries = stats_pre_storage_log.entries(),
+            "[PRUNING] Pre-pruning database stats"
+        );
+
         let mut cursor_state_trie_pruning_log = tx
             .cursor::<StateTriePruningLog>()
             .map_err(StoreError::LibmdbxError)?;
@@ -377,7 +383,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?
         {
             let keep_from = last_num.saturating_sub(keep_blocks);
-            tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
+            tracing::info!(
+                keep_from,
+                last_num,
+                blocks_to_prune = last_num - keep_from,
+                "[PRUNING] Starting state trie pruning"
+            );
 
             let mut cursor_state_trie = tx
                 .cursor::<StateTrieNodes>()
@@ -385,6 +396,8 @@ impl StoreEngine for Store {
             let mut kv_state_trie_pruning = cursor_state_trie_pruning_log
                 .first()
                 .map_err(StoreError::LibmdbxError)?;
+            let mut state_nodes_deleted = 0u64;
+            let mut state_refcnt_decremented = 0u64;
             // Iterate over the first entries of the pruning log and delete the nodes from the trie
             // until we reach the keep from block number
             while let Some((block, node_hash)) = kv_state_trie_pruning {
@@ -418,6 +431,7 @@ impl StoreEngine for Store {
                             cursor_state_trie
                                 .delete_current()
                                 .map_err(StoreError::LibmdbxError)?;
+                            state_nodes_deleted += 1;
                         } else {
                             refcnt -= 1;
                             let bytes = refcnt.to_be_bytes();
@@ -425,6 +439,7 @@ impl StoreEngine for Store {
                             cursor_state_trie
                                 .upsert(key, value)
                                 .map_err(StoreError::LibmdbxError)?;
+                            state_refcnt_decremented += 1;
                         }
                     }
                 }
@@ -432,6 +447,12 @@ impl StoreEngine for Store {
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
             }
+
+            tracing::info!(
+                state_nodes_deleted,
+                state_refcnt_decremented,
+                "[PRUNING] State trie pruning completed"
+            );
         }
 
         let mut cursor_storage_trie_pruning_log = tx
@@ -449,7 +470,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?
         {
             let keep_from = last_num.saturating_sub(keep_blocks);
-            tracing::debug!(keep_from, last_num, "[KEEPING STORAGE TRIE PRUNING LOG]");
+            tracing::info!(
+                keep_from,
+                last_num,
+                blocks_to_prune = last_num - keep_from,
+                "[PRUNING] Starting storage trie pruning"
+            );
 
             let mut cursor_storage_trie = tx
                 .cursor::<StorageTriesNodes>()
@@ -457,6 +483,8 @@ impl StoreEngine for Store {
             let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log
                 .first()
                 .map_err(StoreError::LibmdbxError)?;
+            let mut storage_nodes_deleted = 0u64;
+            let mut storage_refcnt_decremented = 0u64;
             // Iterate over the first entries of the pruning log and delete the nodes from the trie
             // until we reach the keep from block number
             while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
@@ -494,6 +522,7 @@ impl StoreEngine for Store {
                             cursor_storage_trie
                                 .delete_current()
                                 .map_err(StoreError::LibmdbxError)?;
+                            storage_nodes_deleted += 1;
                         } else {
                             refcnt -= 1;
                             let bytes = refcnt.to_be_bytes();
@@ -501,6 +530,7 @@ impl StoreEngine for Store {
                             cursor_storage_trie
                                 .upsert(key, value)
                                 .map_err(StoreError::LibmdbxError)?;
+                            storage_refcnt_decremented += 1;
                         }
                     }
                 }
@@ -508,6 +538,12 @@ impl StoreEngine for Store {
                     .next()
                     .map_err(StoreError::LibmdbxError)?;
             }
+
+            tracing::info!(
+                storage_nodes_deleted,
+                storage_refcnt_decremented,
+                "[PRUNING] Storage trie pruning completed"
+            );
         }
 
         // Get the stats after the pruning and log the metrics
@@ -528,16 +564,28 @@ impl StoreEngine for Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))
             .map_err(StoreError::LibmdbxError)?;
 
+        let pruning_duration = start_time.elapsed();
+        let state_nodes_delta =
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize;
+        let storage_nodes_delta = stats_post_storage_nodes.entries() as isize
+            - stats_pre_storage_nodes.entries() as isize;
+        let total_nodes_pruned = (-state_nodes_delta) + (-storage_nodes_delta);
+
         tracing::info!(
-            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
-                - stats_pre_state_nodes.entries() as isize,
+            duration_ms = pruning_duration.as_millis(),
+            state_trie_entries_delta = state_nodes_delta,
             state_trie_log_entries_delta =
                 stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
-            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
-                - stats_pre_storage_nodes.entries() as isize,
+            storage_trie_entries_delta = storage_nodes_delta,
             storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
                 - stats_pre_storage_log.entries() as isize,
-            "[PRUNING METRICS]",
+            total_nodes_pruned,
+            pruning_rate_nodes_per_sec = if pruning_duration.as_secs() > 0 {
+                total_nodes_pruned as u64 / pruning_duration.as_secs()
+            } else {
+                0
+            },
+            "[PRUNING] Pruning completed - Final metrics",
         );
 
         debug_assert_eq!(
@@ -1453,6 +1501,7 @@ impl StoreEngine for Store {
 
                     // Add reference count (initialize to 1 for nodes written during snap sync)
                     // This should be done to match the behavior introduced with pruning
+                    // TODO: Are nodes always new? Should the refcount be 1 or count the number of times the node is written?
                     tracing::info!(
                         hashed_address = hex::encode(key_1),
                         node_hash = hex::encode(key_2),
