@@ -863,7 +863,9 @@ pub fn modexp(
     let multiplication_complexity = match fork {
         Fork::Osaka => {
             if max_length > 32 {
-                2 * words.checked_pow(2).ok_or(OutOfGas)?
+                2_u64
+                    .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
+                    .ok_or(OutOfGas)?
             } else {
                 16
             }
@@ -912,7 +914,8 @@ pub fn modexp(
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGas)?
-            / modexp_dynamic_quotient,
+            .checked_div(modexp_dynamic_quotient)
+            .ok_or(OutOfGas)?,
     );
     Ok(cost)
 }
