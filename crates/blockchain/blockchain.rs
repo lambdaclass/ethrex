@@ -380,10 +380,15 @@ impl Blockchain {
             .get_block_header_by_hash(block.header.parent_hash)?
             .ok_or(ChainError::ParentStateNotFound)?
             .state_root;
-        let state_trie_root_hash = account_updates_list
-            .as_ref()
-            .map(|l| l.state_trie_root_hash)
-            .unwrap_or(parent_state_root);
+        let (state_trie_root_hash, state_trie_root_handle) = match account_updates_list {
+            Some(ref updates) => (updates.state_trie_root_hash, updates.state_trie_root_handle),
+            None => (
+                parent_state_root,
+                self.storage
+                    .get_state_trie_root_handle(parent_state_root)?
+                    .ok_or(ChainError::ParentStateNotFound)?,
+            ),
+        };
         info!(
             block_state_root = hex::encode(block.header.state_root),
             parent_state_root = hex::encode(parent_state_root),
@@ -391,10 +396,6 @@ impl Blockchain {
             "VALIDATE ROOT"
         );
         validate_state_root(&block.header, state_trie_root_hash)?;
-        let state_trie_root_handle = self
-            .storage
-            .get_state_trie_root_handle(state_trie_root_hash)?
-            .ok_or(ChainError::ParentStateNotFound)?;
 
         let update_batch = UpdateBatch {
             blocks: vec![block.clone()],

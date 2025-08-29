@@ -77,13 +77,13 @@ impl NodeRef {
     }
 
     pub fn commit(&mut self, acc: &mut Vec<NodeRef>) -> NodeHash {
-        if !self.is_dirty() {
-            // info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
+        if !self.is_dirty() && self.is_valid() {
+            info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
             return self.hash;
         }
         let Some(node) = &mut self.value else {
             // Dirty but no node
-            // info!("NO NODE");
+            info!("NO NODE");
             return NodeHash::Inline(([0u8; 31], 0));
         };
         match Arc::make_mut(node) {
@@ -104,13 +104,12 @@ impl NodeRef {
 
         // Since the node was dirty, the hash is guaranteed to be stale.
         let hash = node.compute_hash();
-        // FIXME: need some kind of shallow clone actually.
-        // Also need it to use the new indices for dirty children.
         let temporary_handle = (1u64 << 63) + acc.len() as u64;
         self.handle = NodeHandle(temporary_handle);
+        self.hash = hash;
+
         acc.push(self.clone());
 
-        self.hash = hash;
         // Node is committed, clear dirty flag.
         // FIXME: actually I should just mark the children here, otherwise
         // when we clone all children self-marked clean, breaking serialization.
@@ -126,15 +125,20 @@ impl NodeRef {
         // 3. Node exists but hash is empty => signals dirty, compute.
         let current_hash = self.hash;
         if current_hash.is_valid() {
-            // info!(hash = hex::encode(self.hash.finalize()), "VALID HASH");
+            info!(
+                hash = hex::encode(self.hash.finalize()),
+                status = "VALID HASH",
+                "COMPUTE HASH"
+            );
             return current_hash;
         }
         let Some(ref node) = self.value else {
-            // info!("NO VALUE");
+            info!(status = "NO VALUE", "COMPUTE HASH");
             return NodeHash::Inline(([0u8; 31], 0));
         };
         // FIXME: should update the cache but then I have to deal with mutex
         // or use OnceLock
+        info!(status = "COMPUTE", "COMPUTE HASH");
         node.compute_hash()
     }
 }

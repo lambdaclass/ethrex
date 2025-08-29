@@ -185,10 +185,10 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
-            // info!("VALID ROOT NODE");
+            info!("VALID ROOT NODE");
             self.root.compute_hash().finalize()
         } else {
-            // info!("EMPTY ROOT NODE");
+            info!("EMPTY ROOT NODE");
             *EMPTY_TRIE_HASH
         }
     }
