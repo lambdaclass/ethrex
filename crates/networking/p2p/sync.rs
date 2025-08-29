@@ -20,10 +20,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::Nibbles;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::{
@@ -34,7 +32,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::SystemTime,
 };
 use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -511,14 +508,14 @@ pub enum BlockSyncState {
 
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
-struct SnapBlockSyncState {
+pub struct SnapBlockSyncState {
     block_hashes: Vec<H256>,
     store: Store,
 }
 
 /// Persisted State during the Block Sync phase for FullSync
 #[derive(Clone)]
-struct FullBlockSyncState {
+pub struct FullBlockSyncState {
     current_headers: Vec<BlockHeader>,
     current_blocks: Vec<Block>,
     store: Store,
@@ -793,7 +790,6 @@ impl Syncer {
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
             .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
-        let mut pivot_is_stale = true;
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
@@ -1130,35 +1126,6 @@ impl Syncer {
             .await?;
         Ok(())
     }
-}
-
-async fn get_number_of_storage_tries_to_download() -> Result<u64, SyncError> {
-    let account_state_snapshots_dir =
-        get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-    let mut number_of_accounts_with_non_empty_storage = 0;
-    for entry in std::fs::read_dir(&account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry.map_err(|_| {
-            SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
-        })?;
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
-
-        let account_states_snapshot: Vec<(H256, AccountState)> =
-            RLPDecode::decode(&snapshot_contents)
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-        // filter and the count accounts with non empty storage
-        let accounts_with_non_empty_storage = account_states_snapshot
-            .iter()
-            .filter(|(_account_hash, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH)
-            .count() as u64;
-
-        number_of_accounts_with_non_empty_storage += accounts_with_non_empty_storage;
-    }
-    Ok(number_of_accounts_with_non_empty_storage)
 }
 
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);

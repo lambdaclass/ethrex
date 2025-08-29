@@ -14,23 +14,21 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    time::{Duration, Instant},
+    collections::{HashMap, VecDeque},
+    time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
 use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
-pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
-const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -55,26 +53,6 @@ pub struct MembatchEntry {
 type MembatchKey = (Nibbles, Nibbles);
 
 type Membatch = HashMap<MembatchKey, MembatchEntry>;
-
-#[derive(Debug, Clone)]
-pub enum StorageHealerCallMsg {
-    IsFinished,
-}
-#[derive(Debug, Clone)]
-pub enum StorageHealerOutMsg {
-    FinishedStale { is_finished: bool, is_stale: bool },
-}
-
-#[derive(Debug, Clone)]
-pub enum StorageHealerMsg {
-    /// Overloaded msg, checkup does two things
-    /// It prints the status of the connection
-    /// And if a request is timed out, we also clean it up
-    CheckUp,
-    /// This message is sent by a peer indicating what is needed to download
-    /// We process the request
-    TrieNodes(TrieNodes),
-}
 
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
@@ -552,22 +530,15 @@ fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone(), membatch).inspect_err(
-                |err| {
-                    error!("{err} in determine missing children while searching {node_response:?}")
-                },
-            )?;
+            determine_missing_children(&node_response, store.clone()).inspect_err(|err| {
+                error!("{err} in determine missing children while searching {node_response:?}")
+            })?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(
-                &node_response,
-                store.clone(),
-                membatch,
-                roots_healed,
-                to_write,
-            )
-            .inspect_err(|err| error!("{err} in commit node while committing {node_response:?}"))?;
+            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
+                error!("{err} in commit node while committing {node_response:?}")
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -649,7 +620,6 @@ fn get_initial_downloads(
 pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
-    membatch: &Membatch,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
@@ -716,32 +686,8 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
-// This function searches for the nodes we have to download that are childs from the membatch
-fn determine_membatch_missing_children(
-    node_request: NodeRequest,
-    hash: &NodeHash,
-    membatch: &Membatch,
-    store: Store,
-    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
-) -> Result<Vec<NodeRequest>, StoreError> {
-    if let Some(membatch_entry) = membatch.get(&(
-        node_request.acc_path.clone(),
-        node_request.storage_path.clone(),
-    )) {
-        if membatch_entry.node_response.node.compute_hash() == *hash {
-            determine_missing_children(&membatch_entry.node_response, store, membatch)
-                .map(|(paths, count)| paths)
-        } else {
-            Ok(vec![node_request])
-        }
-    } else {
-        Ok(vec![node_request])
-    }
-}
-
 fn commit_node(
     node: &NodeResponse,
-    store: Store,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
@@ -775,7 +721,6 @@ fn commit_node(
     if parent_entry.missing_children_count == 0 {
         commit_node(
             &parent_entry.node_response,
-            store,
             membatch,
             roots_healed,
             to_write,
