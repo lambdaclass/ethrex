@@ -254,19 +254,6 @@ jobs:
           cd cmd/ethrex_replay
           make execute BLOCK_NUMBER=1105864 NETWORK=hoodi
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: "L1 block executing benchmark"
-          tool: "customBiggerIsBetter"
-          output-file-path: cmd/ethrex_replay/bench_latest.json
-          benchmark-data-dir-path: "benchmarks"
-          # Access token to deploy GitHub Pages branch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy GitHub pages branch automatically
-          auto-push: true
-          comment-on-alert: true
-
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
