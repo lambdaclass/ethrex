@@ -153,9 +153,12 @@ start-metrics-docker: ## Start L1 docker compose, lighthouse in background, and 
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make start-lighthouse > /dev/null 2>&1 &
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start-lighthouse > /dev/null 2>&1 & echo $$! > lighthouse.pid
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start-ethrex > /dev/null 2>&1 & echo $$! > ethrex.pid
+	sleep 10 # Wait for ethrex to start
+	@echo "Tailing logs... (Press Ctrl+C to stop all processes)"
+	cd $(ETHREX_DIR) && tail -n 100 -f ./logs/ethrex-${NETWORK}.log
 
 start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 	lighthouse bn \
@@ -185,4 +188,5 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
-    		--evm $(EVM)
+    		--evm $(EVM) \
+			--log.filename ethrex-${NETWORK}.log

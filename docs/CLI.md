@@ -63,6 +63,14 @@ Node options:
 
           [default: INFO]
 
+    --log.filename <LOG_FILENAME>
+          Filename for log file (will be created in log.dir)
+
+    --log.dir <LOG_DIRECTORY>
+          Directory where log files will be written
+
+          [default: logs]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
