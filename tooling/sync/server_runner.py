@@ -126,8 +126,8 @@ def block_production_loop(
         try:
             response = requests.post(RPC_URL, json=block_production_payload).json()
             result = response.get("result")
-            if int(result) > current_block_number:
-                current_block_number = int(result)
+            if int(result,0) > current_block_number:
+                current_block_number = int(result,0)
             else:
                 print(f"⚠️ Node did not generated a new block. Stopping.")
                 send_slack_message_failed(
