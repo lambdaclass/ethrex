@@ -239,7 +239,13 @@ impl StoreEngine for Store {
         };
 
         self.read_sync::<Headers>(block_hash.into())?
-            .map(|b| b.to())
+            .map(|b| {
+                b.to().inspect(|h| {
+                    h.hash
+                        .set(block_hash)
+                        .expect("once_cell just created, can't be set")
+                })
+            })
             .transpose()
             .map_err(StoreError::from)
     }
@@ -368,7 +374,13 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         self.read_sync::<Headers>(block_hash.into())?
-            .map(|b| b.to())
+            .map(|b| {
+                b.to().inspect(|h| {
+                    h.hash
+                        .set(block_hash)
+                        .expect("once_cell just created, can't be set")
+                })
+            })
             .transpose()
             .map_err(StoreError::from)
     }
