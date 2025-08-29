@@ -39,8 +39,6 @@ pub enum BlockFetcherError {
     StoreError(#[from] ethrex_storage::error::StoreError),
     #[error("State Updater failed due to a RollupStore error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
-    #[error("Internal Error: {0}")]
-    InternalError(String),
     #[error("Failed to store fetched block: {0}")]
     ChainError(#[from] ethrex_blockchain::error::ChainError),
     #[error("Failed to apply fork choice for fetched block: {0}")]
@@ -61,12 +59,18 @@ pub enum BlockFetcherError {
     PrivilegedTransactionError(
         #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
     ),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    #[error("Internal Error: {0}")]
+    InternalError(#[from] GenServerError),
     #[error("Tried to store an empty batch")]
     EmptyBatchError,
+    #[error("Failed to retrieve data: {0}")]
+    RetrievalError(String),
+    #[error("Inconsistent Storage: {0}")]
+    InconsistentStorage(String),
+    #[error("Conversion Error: {0}")]
+    ConversionError(String),
+    #[error("Calculation Error: {0}")]
+    CalculationError(String),
 }
 
 #[derive(Clone)]
@@ -129,7 +133,7 @@ impl BlockFetcher {
         block_fetcher
             .cast(InMessage::Fetch)
             .await
-            .map_err(BlockFetcherError::GenServerError)
+            .map_err(BlockFetcherError::InternalError)
     }
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
@@ -148,7 +152,7 @@ impl BlockFetcher {
                 .rollup_store
                 .get_batch_number_by_block(last_l2_block_number_known)
                 .await?
-                .ok_or(BlockFetcherError::InternalError(format!(
+                .ok_or(BlockFetcherError::RetrievalError(format!(
                     "Failed to get last batch number known for block {last_l2_block_number_known}"
                 )))?;
 
@@ -156,7 +160,7 @@ impl BlockFetcher {
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
             let l2_batches_behind = last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
-                BlockFetcherError::InternalError(
+                BlockFetcherError::CalculationError(
                     "Failed to calculate batches behind. Last batch number known is greater than last committed batch number.".to_string(),
                 ),
             )?;
@@ -247,7 +251,7 @@ impl BlockFetcher {
                 .eth_client
                 .get_transaction_by_hash(batch_committed_log.transaction_hash)
                 .await?
-                .ok_or(BlockFetcherError::InternalError(format!(
+                .ok_or(BlockFetcherError::RetrievalError(format!(
                     "Failed to get the receipt for transaction {:x}",
                     batch_committed_log.transaction_hash
                 )))?
@@ -334,18 +338,18 @@ impl BlockFetcher {
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transaction_hashes)?;
 
-        let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
+        let first_block = batch.first().ok_or(BlockFetcherError::RetrievalError(
             "Batch is empty. This shouldn't happen.".to_owned(),
         ))?;
 
-        let last_block = batch.last().ok_or(BlockFetcherError::InternalError(
+        let last_block = batch.last().ok_or(BlockFetcherError::RetrievalError(
             "Batch is empty. This shouldn't happen.".to_owned(),
         ))?;
 
         let new_state_root = self
             .store
             .state_trie(last_block.hash())?
-            .ok_or(BlockFetcherError::InternalError(
+            .ok_or(BlockFetcherError::InconsistentStorage(
                 "This block should be in the store".to_owned(),
             ))?
             .hash_no_commit();
@@ -422,7 +426,7 @@ impl BlockFetcher {
         block_number: BlockNumber,
     ) -> Result<Vec<L1Message>, BlockFetcherError> {
         let Some(block_body) = self.store.get_block_body(block_number).await? else {
-            return Err(BlockFetcherError::InternalError(format!(
+            return Err(BlockFetcherError::InconsistentStorage(format!(
                 "Block {block_number} is supposed to be in store at this point"
             )));
         };
@@ -435,13 +439,13 @@ impl BlockFetcher {
                 .get_receipt(
                     block_number,
                     index.try_into().map_err(|_| {
-                        BlockFetcherError::InternalError(
+                        BlockFetcherError::ConversionError(
                             "Failed to convert index to u64".to_owned(),
                         )
                     })?,
                 )
                 .await?
-                .ok_or(BlockFetcherError::InternalError(
+                .ok_or(BlockFetcherError::RetrievalError(
                     "Transactions in a block should have a receipt".to_owned(),
                 ))?;
             txs.push(tx.clone());
@@ -462,7 +466,7 @@ impl BlockFetcher {
                     .log
                     .topics
                     .get(1)
-                    .ok_or(BlockFetcherError::InternalError(
+                    .ok_or(BlockFetcherError::RetrievalError(
                         "Failed to get verified batch number from BatchVerified log".to_string(),
                     ))?
                     .as_bytes(),
@@ -521,7 +525,7 @@ async fn filter_logs(
                 .log
                 .topics
                 .get(1)
-                .ok_or(BlockFetcherError::InternalError(
+                .ok_or(BlockFetcherError::RetrievalError(
                     "Failed to get committed batch number from BatchCommitted log".to_string(),
                 ))?
                 .as_bytes(),

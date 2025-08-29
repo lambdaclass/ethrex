@@ -70,7 +70,7 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
-            ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
+            ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
@@ -110,7 +110,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)
+            .map_err(ProofSenderError::InternalError)
     }
 
     async fn verify_and_send_proof(&mut self) -> Result<(), ProofSenderError> {
@@ -123,7 +123,7 @@ impl L1ProofSender {
         .await
         .map_err(|err| {
             error!("Failed to get next batch to send: {err}");
-            ProofSenderError::InternalError(err.to_string())
+            ProofSenderError::UnexpectedError(err.to_string())
         })?;
 
         let last_committed_batch =
@@ -180,7 +180,7 @@ impl L1ProofSender {
         aligned_proof: BatchProof,
     ) -> Result<(), ProofSenderError> {
         let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
-            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
+            ProofSenderError::UnexpectedError(format!("Failed to read ELF file: {e}"))
         })?;
 
         let verification_data = VerificationData {
@@ -201,13 +201,13 @@ impl L1ProofSender {
             })?;
 
         let Signer::Local(local_signer) = &self.signer else {
-            return Err(ProofSenderError::InternalError(
+            return Err(ProofSenderError::UnexpectedError(
                 "Aligned mode only supports local signer".to_string(),
             ));
         };
 
         let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
-            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+            .map_err(|_| ProofSenderError::UnexpectedError("Failed to create wallet".to_owned()))?;
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
 
