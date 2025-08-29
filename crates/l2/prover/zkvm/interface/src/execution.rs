@@ -284,7 +284,7 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
-        if !is_batch_empty {
+        if !(is_batch_empty && cfg!(feature = "l2")) {
             // Execute block
             #[cfg(feature = "l2")]
             let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
@@ -341,9 +341,6 @@ fn execute_stateless(
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
-
-    // could add a sanity check that, if is_empty_batch is true,
-    // then final_state_hash should equal initial_state_hash
 
     Ok(StatelessResult {
         receipts: acc_receipts,
