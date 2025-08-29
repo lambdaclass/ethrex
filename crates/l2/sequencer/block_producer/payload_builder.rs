@@ -76,9 +76,7 @@ pub async fn build_payload(
 
     metrics!(
         #[allow(clippy::as_conversions)]
-        METRICS_BLOCKS.set_latest_block_gas_limit(
-            ((gas_limit - context.remaining_gas) as f64 / gas_limit as f64) * 100_f64
-        );
+        METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
         // L2 does not allow for blob transactions so the blob pool can be ignored
         let (tx_pool_size, _blob_pool_size) = blockchain
             .mempool
