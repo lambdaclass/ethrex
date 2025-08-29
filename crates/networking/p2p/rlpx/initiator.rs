@@ -6,7 +6,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after},
 };
 
-use tokio::sync::OnceCell;
+use tokio::{sync::OnceCell, time::Instant};
 use tracing::{debug, error, info};
 
 use crate::{metrics::METRICS, network::P2PContext};
@@ -32,10 +32,11 @@ pub struct RLPxInitiator {
     initial_lookup_interval: Duration,
     lookup_interval: Duration,
 
+    /// Interval for logging the amount for peers and clearing the table of aleeady connected peers.
+    last_log_time: Instant,
+
     /// The target number of RLPx connections to reach.
     target_peers: u64,
-    /// The rate at which to try new connections.
-    new_connections_per_lookup: u64,
 }
 
 impl RLPxInitiator {
@@ -45,7 +46,7 @@ impl RLPxInitiator {
             initial_lookup_interval: Duration::from_secs(3),
             lookup_interval: Duration::from_secs(5 * 60),
             target_peers: 50,
-            new_connections_per_lookup: 5000,
+            last_log_time: Instant::now(),
         }
     }
 
@@ -75,6 +76,18 @@ impl RLPxInitiator {
     /// Else returns false
     async fn look_for_peer(&self) -> bool {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
+        let peer_number = self.context.table.peers.lock().await.len() as u64;
+        if peer_number > self.target_peers {
+            return false;
+        }
+
+        if self.last_log_time.elapsed() > self.lookup_interval {
+            info!(
+                "Resetting list of tried peers. Current peers {}",
+                peer_number,
+            );
+            already_tried_peers.clear();
+        }
 
         for contact in self.context.table.table.lock().await.values() {
             let node_id = contact.node.node_id();
@@ -87,11 +100,6 @@ impl RLPxInitiator {
                 return true;
             }
         }
-
-        /*         if tried_connections < self.new_connections_per_lookup {
-            info!("Resetting list of tried peers.");
-            already_tried_peers.clear();
-        } */
         false
     }
 
