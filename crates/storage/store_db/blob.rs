@@ -386,10 +386,10 @@ impl BlobDbEngine {
             //     status = "MISSING LINK",
             //     "OPEN STORAGE TRIE"
             // );
-            assert_eq!(account_state.storage_root, *EMPTY_TRIE_HASH);
+            debug_assert_eq!(account_state.storage_root, *EMPTY_TRIE_HASH);
             return Ok(Trie::stateless());
         };
-        assert_ne!(account_state.storage_root, *EMPTY_TRIE_HASH);
+        debug_assert_ne!(account_state.storage_root, *EMPTY_TRIE_HASH);
         // info!(
         //     value = hex::encode(account_leaf.value),
         //     storage_root = hex::encode(account_state.storage_root),
