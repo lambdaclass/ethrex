@@ -168,10 +168,9 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let tx_set: HashSet<_> = tx_pool.keys().collect();
         Ok(possible_hashes
             .iter()
-            .filter(|hash| !tx_set.contains(hash))
+            .filter(|hash| !tx_pool.contains_key(hash))
             .copied()
             .collect())
     }
