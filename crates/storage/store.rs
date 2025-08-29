@@ -140,13 +140,13 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        info!(
-            block_hash = hex::encode(block_hash),
-            address = hex::encode(address),
-            "GET ACCOUNT INFO"
-        );
+        // info!(
+        //     block_hash = hex::encode(block_hash),
+        //     address = hex::encode(address),
+        //     "GET ACCOUNT INFO"
+        // );
         let Some(state_trie) = self.state_trie(block_hash)? else {
-            info!("TRIE NOT FOUND");
+            // info!("TRIE NOT FOUND");
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -154,16 +154,16 @@ impl Store {
             .db()
             .get_path(Nibbles::from_bytes(&hashed_address))?
         else {
-            info!("VALUE NOT FOUND");
+            // info!("VALUE NOT FOUND");
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state.value)?;
-        info!(
-            code = hex::encode(account_state.code_hash),
-            balance = hex::encode(account_state.balance.to_big_endian()),
-            nonce = hex::encode(account_state.nonce.to_be_bytes()),
-            "FOUND"
-        );
+        // info!(
+        //     code = hex::encode(account_state.code_hash),
+        //     balance = hex::encode(account_state.balance.to_big_endian()),
+        //     nonce = hex::encode(account_state.nonce.to_be_bytes()),
+        //     "FOUND"
+        // );
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -215,10 +215,10 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .clone();
         if block_hash == latest.hash() {
-            info!("GOT FROM CACHE");
+            // info!("GOT FROM CACHE");
             return Ok(Some(latest));
         }
-        info!("MISSED CACHE");
+        // info!("MISSED CACHE");
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -431,14 +431,14 @@ impl Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(block_header) = self.get_block_header_by_hash(block_hash)? else {
-            info!("FAILED GET HEADER BY HASH");
+            // info!("FAILED GET HEADER BY HASH");
             return Err(StoreError::Trie(TrieError::InconsistentTree));
         };
         let Some(root_handle) = self
             .engine
             .get_state_trie_root_handle(block_header.state_root)?
         else {
-            info!("FAILED GET STATE ROOT HANDLE");
+            // info!("FAILED GET STATE ROOT HANDLE");
             return Err(StoreError::Trie(TrieError::InconsistentTree));
         };
         self.blob_engine
@@ -598,15 +598,15 @@ impl Store {
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
-        info!("GOT BLOCK");
+        // info!("GOT BLOCK");
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
-        info!("HASHED BLOCK");
+        // info!("HASHED BLOCK");
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
-        info!("SET CHAIN CONFIG");
+        // info!("SET CHAIN CONFIG");
 
         if let Some(number) = self.engine.get_latest_block_number().await? {
             *self
@@ -635,11 +635,11 @@ impl Store {
                     .await?
             }
         }
-        info!("GOT LATEST HEADER");
+        // info!("GOT LATEST HEADER");
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
-        info!("SETUP STATE TRIE");
+        // info!("SETUP STATE TRIE");
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -728,14 +728,14 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        info!(
-            block_hash = hex::encode(block_hash),
-            address = hex::encode(address),
-            key = hex::encode(storage_key),
-            "GET ACCOUNT STORAGE"
-        );
+        // info!(
+        //     block_hash = hex::encode(block_hash),
+        //     address = hex::encode(address),
+        //     key = hex::encode(storage_key),
+        //     "GET ACCOUNT STORAGE"
+        // );
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            info!("TRIE NOT FOUND");
+            // info!("TRIE NOT FOUND");
             return Ok(None);
         };
         let hashed_key = hash_key(&storage_key);
@@ -743,11 +743,11 @@ impl Store {
             .db()
             .get_path(Nibbles::from_bytes(&hashed_key))?
         else {
-            info!("VALUE NOT FOUND");
+            // info!("VALUE NOT FOUND");
             return Ok(None);
         };
         let value = U256::decode(&value.value).map_err(StoreError::RLPDecode)?;
-        info!(value = hex::encode(value.to_big_endian()), "FOUND");
+        // info!(value = hex::encode(value.to_big_endian()), "FOUND");
         Ok(Some(value))
     }
 
@@ -885,28 +885,28 @@ impl Store {
     /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
-            info!(
-                block_hash = hex::encode(block_hash),
-                status = "BLOCK NOT FOUND",
-                "OPEN STATE TRIE"
-            );
+            // info!(
+            //     block_hash = hex::encode(block_hash),
+            //     status = "BLOCK NOT FOUND",
+            //     "OPEN STATE TRIE"
+            // );
             return Ok(None);
         };
         let Some(state_root_handle) = self.engine.get_state_trie_root_handle(header.state_root)?
         else {
-            info!(
-                block_hash = hex::encode(block_hash),
-                status = "HANDLE NOT FOUND",
-                "OPEN STATE TRIE"
-            );
+            // info!(
+            //     block_hash = hex::encode(block_hash),
+            //     status = "HANDLE NOT FOUND",
+            //     "OPEN STATE TRIE"
+            // );
             return Ok(None);
         };
-        info!(
-            block_hash = hex::encode(block_hash),
-            handle = hex::encode(state_root_handle.0.to_be_bytes()),
-            status = "HANDLE FOUND",
-            "OPEN STATE TRIE"
-        );
+        // info!(
+        //     block_hash = hex::encode(block_hash),
+        //     handle = hex::encode(state_root_handle.0.to_be_bytes()),
+        //     status = "HANDLE FOUND",
+        //     "OPEN STATE TRIE"
+        // );
         Ok(Some(
             self.blob_engine
                 .open_state_trie(header.state_root, state_root_handle)?,
@@ -922,29 +922,29 @@ impl Store {
     ) -> Result<Option<Trie>, StoreError> {
         // Fetch Account from state_trie
         let Some(header) = self.engine.get_block_header_by_hash(block_hash)? else {
-            info!(
-                block_hash = hex::encode(block_hash),
-                status = "BLOCK NOT FOUND",
-                "OPEN STORAGE TRIE"
-            );
+            // info!(
+            //     block_hash = hex::encode(block_hash),
+            //     status = "BLOCK NOT FOUND",
+            //     "OPEN STORAGE TRIE"
+            // );
             return Ok(None);
         };
         let Some(state_root_handle) = self.engine.get_state_trie_root_handle(header.state_root)?
         else {
-            info!(
-                block_hash = hex::encode(block_hash),
-                status = "HANDLE NOT FOUND",
-                "OPEN STORAGE TRIE"
-            );
+            // info!(
+            //     block_hash = hex::encode(block_hash),
+            //     status = "HANDLE NOT FOUND",
+            //     "OPEN STORAGE TRIE"
+            // );
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        info!(
-            block_hash = hex::encode(block_hash),
-            handle = hex::encode(state_root_handle.0.to_be_bytes()),
-            status = "HANDLE FOUND",
-            "OPEN STORAGE TRIE"
-        );
+        // info!(
+        //     block_hash = hex::encode(block_hash),
+        //     handle = hex::encode(state_root_handle.0.to_be_bytes()),
+        //     status = "HANDLE FOUND",
+        //     "OPEN STORAGE TRIE"
+        // );
         Ok(Some(self.blob_engine.open_storage_trie(
             header.state_root,
             state_root_handle,

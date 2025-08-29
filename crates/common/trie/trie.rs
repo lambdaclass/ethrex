@@ -93,7 +93,7 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        info!(path = hex::encode(path), "GET");
+        // info!(path = hex::encode(path), "GET");
         if !self.root.is_valid() {
             return Ok(None);
         }
@@ -105,11 +105,11 @@ impl Trie {
 
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
-        info!(
-            path = hex::encode(&path),
-            value = hex::encode(&value),
-            "INSERT"
-        );
+        // info!(
+        //     path = hex::encode(&path),
+        //     value = hex::encode(&value),
+        //     "INSERT"
+        // );
         let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
@@ -133,12 +133,12 @@ impl Trie {
         value: ValueRLP,
         link: Option<NodeHandle>,
     ) -> Result<(), TrieError> {
-        info!(
-            path = hex::encode(&path),
-            value = hex::encode(&value),
-            link = hex::encode(link.unwrap_or_default().0.to_be_bytes()),
-            "INSERT WITH LINK"
-        );
+        // info!(
+        //     path = hex::encode(&path),
+        //     value = hex::encode(&value),
+        //     link = hex::encode(link.unwrap_or_default().0.to_be_bytes()),
+        //     "INSERT WITH LINK"
+        // );
         let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
@@ -159,7 +159,7 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        info!(path = hex::encode(&path), "REMOVE");
+        // info!(path = hex::encode(&path), "REMOVE");
         if !self.root.is_valid() {
             return Ok(None);
         }
@@ -187,10 +187,10 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
-            info!("VALID ROOT NODE");
+            // info!("VALID ROOT NODE");
             self.root.compute_hash().finalize()
         } else {
-            info!("EMPTY ROOT NODE");
+            // info!("EMPTY ROOT NODE");
             *EMPTY_TRIE_HASH
         }
     }

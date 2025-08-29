@@ -144,7 +144,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        info!("COMPUTE LEAF HASH");
+        // info!("COMPUTE LEAF HASH");
         NodeHash::from_encoded_raw(&self.encode_raw())
     }
 

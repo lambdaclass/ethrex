@@ -78,12 +78,12 @@ impl NodeRef {
 
     pub fn commit(&mut self, acc: &mut Vec<NodeRef>) -> NodeHash {
         if !self.is_dirty() && self.hash.is_valid() {
-            info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
+            // info!(hash = hex::encode(self.hash.finalize()), "NOT DIRTY");
             return self.hash;
         }
         let Some(node) = &mut self.value else {
             // Dirty but no node
-            info!("NO NODE");
+            // info!("NO NODE");
             return NodeHash::Inline(([0u8; 31], 0));
         };
         match Arc::make_mut(node) {
@@ -125,20 +125,20 @@ impl NodeRef {
         // 3. Node exists but hash is empty => signals dirty, compute.
         let current_hash = self.hash;
         if current_hash.is_valid() {
-            info!(
-                hash = hex::encode(self.hash.finalize()),
-                status = "VALID HASH",
-                "COMPUTE HASH"
-            );
+            // info!(
+            //     hash = hex::encode(self.hash.finalize()),
+            //     status = "VALID HASH",
+            //     "COMPUTE HASH"
+            // );
             return current_hash;
         }
         let Some(ref node) = self.value else {
-            info!(status = "NO VALUE", "COMPUTE HASH");
+            // info!(status = "NO VALUE", "COMPUTE HASH");
             return NodeHash::Inline(([0u8; 31], 0));
         };
         // FIXME: should update the cache but then I have to deal with mutex
         // or use OnceLock
-        info!(status = "COMPUTE", "COMPUTE HASH");
+        // info!(status = "COMPUTE", "COMPUTE HASH");
         node.compute_hash()
     }
 }

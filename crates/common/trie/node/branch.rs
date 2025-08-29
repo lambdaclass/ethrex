@@ -212,7 +212,7 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        info!(node_type = "BRANCH", "COMPUTE HASH");
+        // info!(node_type = "BRANCH", "COMPUTE HASH");
         NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
