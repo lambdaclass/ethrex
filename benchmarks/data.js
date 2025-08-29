@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756421019886,
+  "lastUpdate": 1756491797106,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10705,6 +10705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160701000590,
             "range": "± 316808515",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "48f2f4245eeb62799125c8d6dba86b05719a49b3",
+          "message": "perf(l1): avoid cloning the mempool keys when filtering (#4205)\n\n**Motivation**\n\nCurrently, on larger networks the CPU usage is very high and increases\nuntil the node can't keep up with execution.\n\n**Description**\n\nCurrently, filter_unknown_transactions makes a copy of the mempool keys\n(known transaction hashes).\n\nThis cloning is not necessary, we can query the mempool directly.",
+          "timestamp": "2025-08-29T17:30:31Z",
+          "tree_id": "326fc5ad1fd5d83d04ee5157ec07bd863744072b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/48f2f4245eeb62799125c8d6dba86b05719a49b3"
+        },
+        "date": 1756491780944,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162724515031,
+            "range": "± 441436467",
             "unit": "ns/iter"
           }
         ]
