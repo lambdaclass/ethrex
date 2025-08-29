@@ -124,7 +124,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         receipts_root: compute_receipts_root(&receipts),
         logs_bloom: Default::default(),
         difficulty: U256::zero(),
-        number: 1, // I think this is correct
+        number: 1, // In Ethereum state tests, the block being constructed is always the first block after genesis, which has block number 1.
         gas_limit: test.env.current_gas_limit,
         gas_used,
         timestamp: test.env.current_timestamp.as_u64(),
