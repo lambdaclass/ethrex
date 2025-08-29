@@ -388,7 +388,7 @@ pub struct BlockProducerOptions {
     )]
     pub elasticity_multiplier: u64,
     #[arg(
-        long,
+        long = "block-producer.max-gas-limit",
         default_value = "30000000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_MAX_GAS_LIMIT",
