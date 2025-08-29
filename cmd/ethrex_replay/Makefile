@@ -49,6 +49,10 @@ batch-risc0-gpu:
 transaction:
 	cargo r -r -- execute transaction ${REPLAY_TX_ARGS}
 
+## Execution block
+execute:
+	cargo r -r -- execute ${REPLAY_BLOCK_ARGS}
+
 ## Plot Composition
 plot:
 	cargo r -r -- block-composition ${REPLAY_BLOCK_COMPOSITION_ARGS}
