@@ -421,7 +421,7 @@ impl GenServer for DiscoveryServer {
         self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new());
+        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec);
 
         spawn_listener(
             handle.clone(),

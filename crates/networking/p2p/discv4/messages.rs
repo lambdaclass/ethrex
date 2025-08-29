@@ -15,6 +15,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
+use std::{convert::Into, io::ErrorKind};
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum PacketDecodeErr {
@@ -26,6 +27,12 @@ pub enum PacketDecodeErr {
     HashMismatch,
     #[error("Invalid signature")]
     InvalidSignature,
+}
+
+impl Into<std::io::Error> for PacketDecodeErr {
+    fn into(self) -> std::io::Error {
+        std::io::Error::new(ErrorKind::InvalidData, self.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
