@@ -1,5 +1,6 @@
 use crate::{
     cli::Options,
+    info_box::display_chain_initialization,
     utils::{
         get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
         read_node_config_file,
@@ -379,6 +380,7 @@ pub async fn init_l1(
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+    display_chain_initialization(&genesis);
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
