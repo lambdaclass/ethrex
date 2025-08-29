@@ -4030,6 +4030,7 @@ dependencies = [
  "ethers",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
