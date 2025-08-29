@@ -4293,7 +4293,7 @@ dependencies = [
 name = "ethrex-replayer"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.40",
+ "clap 4.5.46",
  "ethrex-common",
  "ethrex-config",
  "ethrex-replay",
@@ -4301,7 +4301,7 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
- "reqwest 0.12.20",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "serde_with",
