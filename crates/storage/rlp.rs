@@ -2,11 +2,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-use ethrex_common::{
-    H256,
-    types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
-    },
+use ethrex_common::types::{
+    AccountState, Block, BlockBody, BlockHeader, Receipt, payload::PayloadBundle,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Nibbles;
@@ -14,24 +11,16 @@ use ethrex_trie::Nibbles;
 use libmdbx::orm::{Decodable, Encodable};
 
 // Account types
-pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
-pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
 
 // Block types
-pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
-
-// Receipt types
 #[allow(unused)]
 pub type ReceiptRLP = Rlp<Receipt>;
-
-// Transaction types
-pub type TransactionHashRLP = Rlp<H256>;
 
 // Payload type
 pub type PayloadBundleRLP = Rlp<PayloadBundle>;
