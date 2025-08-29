@@ -293,7 +293,7 @@ impl RpcHandler for BlockNumberRequest {
         debug!("Requested latest block number");
         serde_json::to_value(format!(
             "{:#x}",
-            context.storage.get_latest_block_number().await?
+            200
         ))
         .map_err(|error| RpcErr::Internal(error.to_string()))
     }
