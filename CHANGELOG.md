@@ -2,6 +2,22 @@
 
 ## Perf
 
+### 2025-08-29
+
+- Improve P2P mempool gossip performance [#4205](https://github.com/lambdaclass/ethrex/pull/4205)
+
+### 2025-08-28
+
+- Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+
+### 2025-08-27
+
+- Improve memory resize performance [#4117](https://github.com/lambdaclass/ethrex/pull/4177)
+
+### 2025-08-25
+
+- Improve calldatacopy opcode further [#4150](https://github.com/lambdaclass/ethrex/pull/4150)
+
 ### 2025-08-22
 
 - Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
