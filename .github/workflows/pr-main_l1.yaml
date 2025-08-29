@@ -248,7 +248,7 @@ jobs:
         env:
           # TODO(): use RPC
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "http://eth-testnet-rpc:8547"
+          RPC_URL: "http://45.76.185.153:8545"
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1105864.bin cmd/ethrex_replay
           cd cmd/ethrex_replay

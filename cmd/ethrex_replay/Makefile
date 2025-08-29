@@ -51,7 +51,7 @@ transaction:
 
 ## Execution block
 execute:
-	cargo r -r -- execute block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --features ci --no-default-features -- execute block ${REPLAY_BLOCK_ARGS}
 
 ## Plot Composition
 plot:
