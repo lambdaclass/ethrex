@@ -43,7 +43,6 @@ use sha3::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
-use crate::gas_cost::MODEXP_STATIC_COST_OSAKA;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
@@ -51,7 +50,7 @@ use crate::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
         BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -389,21 +388,6 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    // Defer converting to a U256 after the zero check.
-    let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
-    let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
-    const ZERO_BYTES: [u8; 32] = [0u8; 32];
-
-    if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
-        // On Berlin or newer there is a floor cost for the modexp precompile
-        let modexp_static_cost = match fork {
-            Fork::Osaka => MODEXP_STATIC_COST_OSAKA,
-            _ => MODEXP_STATIC_COST,
-        };
-        increase_precompile_consumed_gas(modexp_static_cost, gas_remaining)?;
-        return Ok(Bytes::new());
-    }
-
     // The try_into are infallible and the compiler optimizes them out, even without unsafe.
     // https://godbolt.org/z/h8rW8M3c4
     let base_size = u256_from_big_endian_const::<32>(calldata[0..32].try_into()?);
@@ -450,6 +434,10 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    if base_size == 0 && modulus_size == 0 {
+        return Ok(Bytes::new());
+    }
 
     let result = mod_exp(base, exponent, modulus);
 
