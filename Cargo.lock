@@ -4030,6 +4030,7 @@ dependencies = [
  "ethers",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -4254,6 +4255,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
+ "futures",
  "hex",
  "jemallocator",
  "reqwest 0.12.20",
@@ -4265,6 +4267,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.19",
  "zkvm_interface",
+]
+
+[[package]]
+name = "ethrex-replayer"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.40",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-replay",
+ "ethrex-rpc",
+ "eyre",
+ "futures",
+ "hex",
+ "reqwest 0.12.20",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
