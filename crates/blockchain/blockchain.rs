@@ -64,6 +64,8 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
 }
 
@@ -86,13 +88,19 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
+    pub fn new(
+        evm_engine: EvmEngine,
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+    ) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            perf_logs_enabled,
         }
     }
 
@@ -103,6 +111,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            perf_logs_enabled: false,
         }
     }
 
@@ -411,7 +420,10 @@ impl Blockchain {
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
-        Self::print_add_block_logs(block, since, executed, merkleized, stored);
+
+        if self.perf_logs_enabled {
+            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        }
         result
     }
 
@@ -459,7 +471,7 @@ impl Blockchain {
                 "".to_string()
             };
 
-            info!("{}{}", base_log, extra_log);
+            debug!("{}{}", base_log, extra_log);
         }
     }
 
@@ -600,15 +612,17 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        info!(
-            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len,
-            last_block_number,
-            last_block_gas_limit,
-            transactions_count,
-            total_gas_used,
-            throughput
-        );
+        if self.perf_logs_enabled {
+            info!(
+                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                blocks_len,
+                last_block_number,
+                last_block_gas_limit,
+                transactions_count,
+                total_gas_used,
+                throughput
+            );
+        }
 
         Ok(())
     }
