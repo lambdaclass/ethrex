@@ -41,6 +41,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
+use tracing::error;
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -70,6 +71,7 @@ pub(crate) async fn perform(
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
+                    error!("Error creating tcp connection {error}");
                     // context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }

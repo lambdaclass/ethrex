@@ -74,7 +74,7 @@ impl RLPxInitiator {
 
     /// Looks for a single peer. If it finds one to attempt a connection, returns true
     /// Else returns false
-    async fn look_for_peer(&self) -> bool {
+    async fn look_for_peer(&mut self) -> bool {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
         if peer_number > self.target_peers {
@@ -86,6 +86,7 @@ impl RLPxInitiator {
                 "Resetting list of tried peers. Current peers {}",
                 peer_number,
             );
+            self.last_log_time = Instant::now();
             already_tried_peers.clear();
         }
 
