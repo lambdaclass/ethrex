@@ -6,6 +6,24 @@
     lighthouse_version: "7.0.1"
 
   tasks:
+    - name: Write systemd service file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/snap_sync_runner.service
+        content: |
+          [Unit]
+          Description=Snap Sync Runner Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          Environment="PATH=/home/admin/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+          EnvironmentFile=/home/admin/ethrex/tooling/sync/.env
+          ExecStart=/bin/bash -lc "exec /usr/bin/python3 -u  /home/admin/ethrex/tooling/sync/server_runner.py $ARGS"
+          Restart=no
+          User=admin
+          WorkingDirectory=/home/admin/ethrex/tooling/sync
+      become: true
+
     - name: Install Clang and related tools
       become: true
       apt:
@@ -106,3 +124,5 @@
         repo: "https://github.com/lambdaclass/ethrex.git"
         dest: "/home/{{ ansible_user }}/ethrex"
         version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
+
+    
