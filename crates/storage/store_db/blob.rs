@@ -341,7 +341,7 @@ impl BlobDbEngine {
             None => tempfile::tempfile(),
         }
         .map_err(|e| StoreError::Custom(format!("open error: {e}")))?;
-        let reader = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
+        let reader = unsafe { MmapOptions::new().populate().map(&writer).expect("") };
         Ok(Self {
             writer: Mutex::new(writer),
             reader: Mutex::new(Bytes::from_owner(reader)),
