@@ -2,7 +2,7 @@ use crate::{
     cli::Options,
     utils::{
         get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
-        read_node_config_file,
+        read_node_config_file, start_pruner_task,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -386,6 +386,9 @@ pub async fn init_l1(
 
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    start_pruner_task(store.clone(), cancel_token.clone());
+
     let signer = get_signer(&data_dir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
@@ -400,8 +403,6 @@ pub async fn init_l1(
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
         &opts,

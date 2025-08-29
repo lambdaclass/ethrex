@@ -6,7 +6,7 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{BlockNumHash, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -34,6 +34,20 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
+type StateTriePruningLogEntry = [u8; 32];
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    /// includes the block number as the search key.
+    ( StateTriePruningLog ) BlockNumHash[BlockNumber] => StateTriePruningLogEntry
+);
+
+type StorageTriesPruningLogEntry = ([u8; 32], [u8; 33]);
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    /// includes the block number as the search key.
+    ( StorageTriesPruningLog ) BlockNumHash[BlockNumber] => StorageTriesPruningLogEntry
+);
+
 pub struct Store {
     db: Arc<Database>,
 }
@@ -56,6 +70,8 @@ impl Store {
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
+
+    // Helper method to write into a libmdbx table in batch
 
     // Helper method to write into a libmdbx table in batch
     async fn write_batch<T: Table>(
@@ -123,6 +139,8 @@ impl Store {
             .transpose()
             .map_err(StoreError::from)
     }
+
+    // Check if the snapshot is at the canonical chain
 }
 
 #[async_trait::async_trait]
@@ -133,10 +151,112 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+            // We only need to update the flat tables if the update batch contains blocks
+            // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+            if let (Some(first_block), Some(last_block)) =
+                (update_batch.blocks.first(), update_batch.blocks.last())
+            {
+                let parent_block: BlockNumHash = (
+                    first_block.header.number - 1,
+                    first_block.header.parent_hash,
+                )
+                    .into();
+                let final_block: BlockNumHash =
+                    (last_block.header.number, last_block.hash()).into();
+
+                let mut cursor_state_trie_pruning_log = tx
+                    .cursor::<StateTriePruningLog>()
                     .map_err(StoreError::LibmdbxError)?;
+                let mut cursor_storage_trie_pruning_log = tx
+                    .cursor::<StorageTriesPruningLog>()
+                    .map_err(StoreError::LibmdbxError)?;
+
+                // For each block in the update batch, we iterate over the account updates (by index)
+                // we store account info changes in the table StateWriteBatch
+                // store account updates
+                for (node_hash, mut node_data) in update_batch.account_updates {
+                    tracing::debug!(
+                        node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                        parent_block_number = parent_block.block_number,
+                        parent_block_hash = hex::encode(parent_block.block_hash),
+                        final_block_number = final_block.block_number,
+                        final_block_hash = hex::encode(final_block.block_hash),
+                        "[WRITING STATE TRIE NODE]",
+                    );
+                    let mut refcnt = 1;
+                    if let Some(node) = tx
+                        .get::<StateTrieNodes>(node_hash)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                        refcnt += u64::from_be_bytes(bytes);
+                    }
+                    node_data.extend_from_slice(&refcnt.to_be_bytes());
+                    tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+
+                for node_hash in update_batch.invalidated_state_nodes {
+                    // Before inserting, we insert the node into the pruning log
+                    cursor_state_trie_pruning_log
+                        .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+
+                for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    for (node_hash, mut node_data) in nodes {
+                        let key_2 = node_hash_to_fixed_size(node_hash);
+
+                        tracing::debug!(
+                            hashed_address = hex::encode(hashed_address.0),
+                            node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                            parent_block_number = parent_block.block_number,
+                            parent_block_hash = hex::encode(parent_block.block_hash),
+                            final_block_number = final_block.block_number,
+                            final_block_hash = hex::encode(final_block.block_hash),
+                            "[WRITING STORAGE TRIE NODE]",
+                        );
+                        let mut refcnt = 1;
+                        if let Some(node) = tx
+                            .get::<StorageTriesNodes>((key_1, key_2))
+                            .map_err(StoreError::LibmdbxError)?
+                        {
+                            let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                            refcnt += u64::from_be_bytes(bytes);
+                        }
+                        node_data.extend_from_slice(&refcnt.to_be_bytes());
+                        tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                    for node_hash in invalidated_nodes {
+                        // NOTE: the hash itself *should* suffice, but this way the value matches
+                        // the other table's key.
+                        let key_2 = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
+                        cursor_storage_trie_pruning_log
+                            .upsert(final_block, (key_1, key_2))
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                }
+            } else {
+                // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
+                // with an empty block number extension since we don't have a block number to write
+                for (node_hash, mut node_data) in update_batch.account_updates {
+                    node_data.extend_from_slice(&[0u8; 8]);
+                    tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+
+                for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates {
+                    for (node_hash, mut node_data) in nodes {
+                        node_data.extend_from_slice(&[0u8; 8]);
+                        let key_1: [u8; 32] = hashed_address.into();
+                        let key_2 = node_hash_to_fixed_size(node_hash);
+
+                        tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                }
             }
 
             // store code updates
@@ -145,15 +265,6 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
@@ -209,6 +320,232 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        // TODO: use a separate read transaction for selecting nodes to delete to minimize write lock congestions.
+        // Check if that's actually useful, given we still need to delete the entries.
+        // TODO: coalesce operations to reduce write amplification:
+        // 1. Iterate the whole span of blocks once keeping count of how many times a node should be erased;
+        // 2. Decrease the reference count once for that amount;
+        // 3. Iterate in order to help the cursor.
+        // ACTUALLY this is not needed *just* for write amplification but also might be necessary for correctness
+        // I think.
+        // TODO: invert order in values: refcnt first as it's fixed size, it works with no-dup tables as they are
+        // now, as it's always a single value.
+        // FIXME: include a sign bit or similar in the logs, so we can revert creations from side-chains while
+        // also reverting its destructions.
+
+        let stats_pre_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_pre_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_pre_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_pre_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+
+        let mut cursor_state_trie_pruning_log = tx
+            .cursor::<StateTriePruningLog>()
+            .map_err(StoreError::LibmdbxError)?;
+        // Get the block number of the last state trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_state_trie_pruning_log
+            .last()
+            .map_err(StoreError::LibmdbxError)?
+        {
+            let keep_from = last_num.saturating_sub(keep_blocks);
+            tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
+
+            let mut cursor_state_trie = tx
+                .cursor::<StateTrieNodes>()
+                .map_err(StoreError::LibmdbxError)?;
+            let mut kv_state_trie_pruning = cursor_state_trie_pruning_log
+                .first()
+                .map_err(StoreError::LibmdbxError)?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, node_hash)) = kv_state_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
+                    break;
+                }
+
+                // Delete the node from the state trie and the pruning log
+                let k_delete = NodeHash::Hashed(node_hash.into());
+                if let Some((key, mut value)) = cursor_state_trie
+                    .seek_exact(k_delete)
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    if key == k_delete {
+                        tracing::debug!(
+                            node = hex::encode(node_hash.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STATE NODE]"
+                        );
+                        cursor_state_trie_pruning_log
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?;
+                        let refcnt_index = value.len() - 8;
+                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                        let mut refcnt = u64::from_be_bytes(bytes);
+                        if refcnt == 1 {
+                            cursor_state_trie
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else {
+                            refcnt -= 1;
+                            let bytes = refcnt.to_be_bytes();
+                            value[refcnt_index..].copy_from_slice(&bytes);
+                            cursor_state_trie
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+                    }
+                }
+                kv_state_trie_pruning = cursor_state_trie_pruning_log
+                    .next()
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        let mut cursor_storage_trie_pruning_log = tx
+            .cursor::<StorageTriesPruningLog>()
+            .map_err(StoreError::LibmdbxError)?;
+        // Get the block number of the last storage trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_storage_trie_pruning_log
+            .last()
+            .map_err(StoreError::LibmdbxError)?
+        {
+            let keep_from = last_num.saturating_sub(keep_blocks);
+            tracing::debug!(keep_from, last_num, "[KEEPING STORAGE TRIE PRUNING LOG]");
+
+            let mut cursor_storage_trie = tx
+                .cursor::<StorageTriesNodes>()
+                .map_err(StoreError::LibmdbxError)?;
+            let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log
+                .first()
+                .map_err(StoreError::LibmdbxError)?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_num,
+                        "[STOPPING STORAGE TRIE PRUNING]"
+                    );
+                    break;
+                }
+
+                // If the storage trie hash is found, delete it from the trie and the pruning log
+                if let Some((key, mut value)) = cursor_storage_trie
+                    .seek_exact(storage_trie_pruning_hash)
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    if key == storage_trie_pruning_hash {
+                        tracing::debug!(
+                            hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                            node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STORAGE NODE]"
+                        );
+                        cursor_storage_trie_pruning_log
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?;
+                        let refcnt_index = value.len() - 8;
+                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                        let mut refcnt = u64::from_be_bytes(bytes);
+                        if refcnt == 1 {
+                            cursor_storage_trie
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else {
+                            refcnt -= 1;
+                            let bytes = refcnt.to_be_bytes();
+                            value[refcnt_index..].copy_from_slice(&bytes);
+                            cursor_storage_trie
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+                    }
+                }
+                kv_storage_trie_pruning = cursor_storage_trie_pruning_log
+                    .next()
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        // Get the stats after the pruning and log the metrics
+        let stats_post_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_post_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_post_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+        let stats_post_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))
+            .map_err(StoreError::LibmdbxError)?;
+
+        tracing::info!(
+            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
+                - stats_pre_state_nodes.entries() as isize,
+            state_trie_log_entries_delta =
+                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
+                - stats_pre_storage_log.entries() as isize,
+            "[PRUNING METRICS]",
+        );
+
+        debug_assert_eq!(
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
+            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+        );
+        debug_assert_eq!(
+            stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize,
+        );
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(
@@ -1094,6 +1431,31 @@ impl Debug for Store {
 
 // Define tables
 
+impl Encodable for BlockNumHash {
+    type Encoded = [u8; 40];
+
+    fn encode(self) -> Self::Encoded {
+        let mut encoded = [0u8; 40];
+        encoded[0..8].copy_from_slice(&self.block_number.to_be_bytes());
+        encoded[8..40].copy_from_slice(&self.block_hash.0);
+        encoded
+    }
+}
+
+impl Decodable for BlockNumHash {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        if b.len() != 40 {
+            anyhow::bail!("Invalid length for (BlockNumber, BlockHash)");
+        }
+        let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
+        let block_hash = ethereum_types::H256::from_slice(&b[8..40]);
+        Ok(Self {
+            block_number,
+            block_hash,
+        })
+    }
+}
+
 /// For `dupsort` tables, multiple values can be stored under the same key.
 /// To maintain an explicit order, each value is assigned an `index`.
 /// This is useful when storing large byte sequences that exceed the maximum size limit,
@@ -1233,7 +1595,7 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
-dupsort!(
+table!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
     ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
@@ -1399,6 +1761,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(StateTriePruningLog),
+        table_info!(StorageTriesPruningLog),
     ]
     .into_iter()
     .collect();

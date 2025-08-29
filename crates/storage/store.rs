@@ -1,18 +1,17 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{
-    constants::EMPTY_TRIE_HASH,
-    types::{
-        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash, payload::PayloadBundle,
-    },
+use ethrex_common::constants::EMPTY_TRIE_HASH;
+use ethrex_common::types::{
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    code_hash, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -49,8 +48,9 @@ pub enum EngineType {
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
+    pub invalidated_state_nodes: Vec<H256>,
     /// Storage tries updated and their new nodes
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    pub storage_updates: Vec<(H256, Vec<TrieNode>, Vec<H256>)>,
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
@@ -59,13 +59,29 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>, Vec<H256>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub invalidated_state_nodes: Vec<H256>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockNumHash {
+    pub block_number: BlockNumber,
+    pub block_hash: BlockHash,
+}
+
+impl From<(BlockNumber, BlockHash)> for BlockNumHash {
+    fn from(value: (BlockNumber, BlockHash)) -> Self {
+        Self {
+            block_number: value.0,
+            block_hash: value.1,
+        }
+    }
 }
 
 impl Store {
@@ -106,6 +122,11 @@ impl Store {
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    /// /// Prune the state and storage trie from the pruning log
+    pub fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
+        self.engine.prune_state_and_storage_log(keep_blocks)
     }
 
     pub async fn get_account_info(
@@ -391,9 +412,23 @@ impl Store {
         let mut code_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
+            let fixed_hashed_address = H256::from_slice(&hashed_address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                let account_state = state_trie.remove(hashed_address)?;
+                if let Some(Ok(account_state)) = account_state.map(|v| AccountState::decode(&v)) {
+                    let storage_trie =
+                        self.open_storage_trie(fixed_hashed_address, account_state.storage_root)?;
+                    let invalidated_storage_nodes = storage_trie
+                        .into_iter()
+                        .map(|(_, node)| node.compute_hash().finalize())
+                        .collect();
+                    ret_storage_updates.push((
+                        fixed_hashed_address,
+                        Vec::new(),
+                        invalidated_storage_nodes,
+                    ));
+                }
                 continue;
             }
             // Add or update AccountState in the trie
@@ -413,10 +448,9 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                )?;
+                let mut storage_trie = self
+                    .engine
+                    .open_storage_trie(fixed_hashed_address, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -425,18 +459,25 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_updates) =
+                let (storage_hash, storage_updates, invalidated_storage_nodes) =
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((
+                    fixed_hashed_address,
+                    storage_updates,
+                    invalidated_storage_nodes,
+                ));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        let (state_trie_hash, state_updates, invalidated_state_nodes) =
+            state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
+            invalidated_state_nodes,
             storage_updates: ret_storage_updates,
             code_updates,
         })
