@@ -1,0 +1,30 @@
+[package]
+name = "ethrex-replayer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ethrex-config.workspace = true
+ethrex-common.workspace = true
+ethrex-rpc.workspace = true
+ethrex-replay = { path = "../../cmd/ethrex_replay" }
+
+serde.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+reqwest.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing.workspace = true
+eyre.workspace = true
+tokio = { workspace = true, default-features = false, features = ["full"] }
+clap.workspace = true
+futures.workspace = true
+
+[features]
+risc0 = ["ethrex-replay/risc0"]
+sp1 = ["ethrex-replay/sp1"]
+gpu = ["ethrex-replay/gpu"]
+l2 = ["ethrex-replay/l2"]
+profiling = ["ethrex-replay/profiling"]
+ci = ["ethrex-replay/ci"]
