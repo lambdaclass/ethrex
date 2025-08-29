@@ -79,7 +79,10 @@ impl ProverDB {
             let hash = Keccak256::digest(node);
             state_nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
         }
-        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_nodes)?;
+        let root_hash = state_trie_root
+            .as_ref()
+            .map(|node| Keccak256::digest(node).to_vec());
+        let state_trie = Trie::from_nodes(root_hash.as_ref(), state_nodes)?;
 
         let storage_trie = self
             .storage_proofs
