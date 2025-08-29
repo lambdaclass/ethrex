@@ -943,6 +943,13 @@ async fn handle_broadcast(
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
+                let peer_sqrt = (state.connection_broadcast_send.receiver_count() as f64).sqrt();
+                // we want to send to sqrt(peer_count) on average
+                // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
+                let accept_prob = 1.0 / peer_sqrt;
+                if random::<f64>() < accept_prob {
+                    return Ok(());
+                }
                 let mut filtered = Vec::with_capacity(txs.transactions.len());
                 for tx in &txs.transactions {
                     let tx_hash = tx.hash();
