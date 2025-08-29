@@ -161,7 +161,7 @@ pub enum Command {
         contract_pause_options: ContractPauseOptions,
     },
     #[command(about = "Unpause L1 contracts")]
-    UnPause {
+    Unpause {
         #[command(flatten)]
         contract_pause_options: ContractPauseOptions,
     },
@@ -457,25 +457,11 @@ impl Command {
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
-                let signer = parse_signer(
-                    opts.private_key,
-                    opts.remote_signer_url,
-                    opts.remote_signer_public_key,
-                );
-                let client = EthClient::new(opts.rpc_url.as_str())?;
-                if let Ok(signer) = signer.as_ref() {
-                    info!("Pausing OnChainProposer...");
-                    call_contract(&client, signer, opts.contract_address, "pause()", vec![])
-                        .await?;
+                if opts.call_contract("pause()", vec![]).await.is_ok() {
+                    info!("Paused OnChainProposer contract");
                     info!("Doing revert on OnChainProposer...");
-                    call_contract(
-                        &client,
-                        signer,
-                        opts.contract_address,
-                        "revertBatch(uint256)",
-                        vec![Value::Uint(batch.into())],
-                    )
-                    .await?;
+                    opts.call_contract("revertBatch(uint256)", vec![Value::Uint(batch.into())])
+                        .await?
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
@@ -508,20 +494,26 @@ impl Command {
                     .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
                     .await?;
 
-                if let Ok(signer) = signer.as_ref() {
-                    info!("Unpausing OnChainProposer...");
-                    call_contract(&client, signer, opts.contract_address, "unpause()", vec![])
-                        .await?;
-                }
+                if opts.call_contract("unpause()", vec![]).await.is_ok() {
+                    info!("Unpaused OnChainProposer...");
+                };
             }
             Command::Pause {
-                contract_pause_options: _,
+                contract_pause_options: opts,
             } => {
-                todo!("implement ethrex l2 pause")
+                info!("Pausing contract {}", opts.contract_address);
+                opts.call_contract("pause()", vec![])
+                    .await
+                    .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
-            Command::UnPause {
-                contract_pause_options: _,
-            } => todo!("implement ethrex l2 unpause"),
+            Command::Unpause {
+                contract_pause_options: opts,
+            } => {
+                info!("Unpausing contract {}", opts.contract_address);
+                opts.call_contract("unpause()", vec![])
+                    .await
+                    .inspect(|_| info!("Succesfully unpaused contract"))?;
+            }
             Command::Deploy { options } => {
                 deploy_l1_contracts(options).await?;
             }
@@ -562,4 +554,18 @@ pub struct ContractPauseOptions {
             conflicts_with = "private_key"
         )]
     remote_signer_public_key: Option<PublicKey>,
+}
+
+impl ContractPauseOptions {
+    async fn call_contract(&self, s: &str, params: Vec<Value>) -> eyre::Result<()> {
+        let client = EthClient::new(self.rpc_url.as_str())?;
+        let signer = parse_signer(
+            self.private_key,
+            self.remote_signer_url.clone(),
+            self.remote_signer_public_key,
+        )?;
+
+        call_contract(&client, &signer, self.contract_address, s, params).await?;
+        Ok(())
+    }
 }
