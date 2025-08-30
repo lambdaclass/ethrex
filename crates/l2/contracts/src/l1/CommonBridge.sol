@@ -4,6 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -21,7 +22,8 @@ contract CommonBridge is
     Initializable,
     UUPSUpgradeable,
     Ownable2StepUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
 {
     using SafeERC20 for IERC20;
 
@@ -192,12 +194,12 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function sendToL2(SendValues calldata sendValues) public {
+    function sendToL2(SendValues calldata sendValues) public override whenNotPaused {
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(address l2Recipient) public payable {
+    function deposit(address l2Recipient) public payable override whenNotPaused {
         _deposit(l2Recipient);
     }
 
@@ -216,7 +218,7 @@ contract CommonBridge is
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
-    receive() external payable {
+    receive() external payable whenNotPaused {
         _deposit(msg.sender);
     }
 
@@ -225,7 +227,7 @@ contract CommonBridge is
         address tokenL2,
         address destination,
         uint256 amount
-    ) external {
+    ) external whenNotPaused {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
         deposits[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
@@ -266,7 +268,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
-    ) public onlyOnChainProposer {
+    ) public onlyOnChainProposer override whenNotPaused {
         require(
             number <= pendingTxHashes.length,
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
@@ -300,7 +302,7 @@ contract CommonBridge is
     function publishWithdrawals(
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
-    ) public onlyOnChainProposer {
+    ) public onlyOnChainProposer override whenNotPaused {
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
                 bytes32(0),
@@ -321,7 +323,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public {
+    ) public override whenNotPaused {
         _claimWithdrawal(
             ETH_TOKEN,
             ETH_TOKEN,
@@ -342,7 +344,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public nonReentrant {
+    ) public nonReentrant override whenNotPaused {
         _claimWithdrawal(
             tokenL1,
             tokenL2,
