@@ -17,7 +17,7 @@ impl InfoBox {
     }
 
     pub fn with_width(mut self, width: usize) -> Self {
-        self.width = width;
+        self.width = width.max(20);
         self
     }
 
@@ -29,12 +29,12 @@ impl InfoBox {
 
     pub fn add_genesis_hash(mut self, genesis: &Genesis) -> Self {
         let hash = genesis.get_block().hash();
-        self.items.push(format!("Genesis Block Hash: {:#x}", hash));
+        self.items.push(format!("Genesis Block Hash: {hash:#x}"));
         self
     }
 
     pub fn add_custom(mut self, key: &str, value: &str) -> Self {
-        self.items.push(format!("{}: {}", key, value));
+        self.items.push(format!("{key}: {value}"));
         self
     }
 
@@ -44,20 +44,25 @@ impl InfoBox {
         }
 
         let border = "═".repeat(self.width);
-        let title_padding = (self.width.saturating_sub(self.title.len() + 2)) / 2;
-        let title_line = format!(
-            "{} {} {}",
-            " ".repeat(title_padding),
-            self.title,
-            " ".repeat(
-                self.width
-                    .saturating_sub(title_padding + self.title.len() + 2)
-            )
-        );
+        let title_len = self.title.len();
+        let available_width = self.width.saturating_sub(4);
 
-        info!("╔{}╗", border);
-        info!("║{}║", title_line);
-        info!("╠{}╣", border);
+        let title_line = if title_len <= available_width {
+            let title_padding = (self.width.saturating_sub(title_len + 2)) / 2;
+            let right_padding = self.width.saturating_sub(title_padding + title_len + 2);
+            format!(
+                "{} {} {}",
+                " ".repeat(title_padding),
+                self.title,
+                " ".repeat(right_padding)
+            )
+        } else {
+            format!(" {} ", self.title)
+        };
+
+        info!("╔{border}╗");
+        info!("║{title_line}║");
+        info!("╠{border}╣");
 
         for (i, item) in self.items.iter().enumerate() {
             if i > 0 {
@@ -65,20 +70,47 @@ impl InfoBox {
             }
 
             for line in item.lines() {
-                let content = format!(" {}", line);
-                let padding_needed = self.width.saturating_sub(content.len().min(self.width));
+                let content_with_space = format!(" {line}");
+                let content_len = content_with_space.len();
+                let inner_width = self.width.saturating_sub(2);
 
-                let display_line = if content.len() > self.width {
-                    format!(" {}...", &line[..self.width.saturating_sub(5)])
+                if content_len <= inner_width {
+                    let padding_needed = inner_width.saturating_sub(content_len);
+                    let display_line =
+                        format!("{content_with_space}{}", " ".repeat(padding_needed));
+                    info!("║{display_line}║");
                 } else {
-                    format!("{}{}", content, " ".repeat(padding_needed))
-                };
+                    let available_content_width = inner_width.saturating_sub(1);
+                    let words: Vec<&str> = line.split_whitespace().collect();
+                    let mut current_line = String::new();
 
-                info!("║{}║", display_line);
+                    for word in words {
+                        let word_with_space = if current_line.is_empty() {
+                            format!(" {word}")
+                        } else {
+                            format!(" {word}")
+                        };
+
+                        if (current_line.len() + word_with_space.len()) <= available_content_width {
+                            current_line.push_str(&word_with_space);
+                        } else {
+                            if !current_line.is_empty() {
+                                let padding = inner_width.saturating_sub(current_line.len());
+                                info!("║{current_line}{}║", " ".repeat(padding));
+                            }
+                            current_line = format!(" {word}");
+                        }
+                    }
+
+                    if !current_line.is_empty() {
+                        let padding = inner_width.saturating_sub(current_line.len());
+                        info!("║{current_line}{}║", " ".repeat(padding));
+                    }
+                }
             }
         }
 
-        info!("╚{}╝", border);
+        info!("╚{border}╝");
     }
 }
 
