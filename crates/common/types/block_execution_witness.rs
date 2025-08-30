@@ -110,7 +110,7 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(&mut self, address: &H160) -> Option<Trie> {
+    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
         let account_state_rlp = self
             .state_trie
             .as_ref()?
@@ -121,13 +121,9 @@ impl ExecutionWitnessResult {
 
         Trie::from_nodes(
             NodeHash::Hashed(account_state.storage_root),
-            self.storage_trie_nodes
-                .remove(address)?
-                .into_iter()
-                .map(|node| {
-                    let hash = Keccak256::new_with_prefix(&node).finalize();
-                    (NodeHash::Hashed(H256::from_slice(&hash)), node)
-                })
+            self.state_nodes
+                .iter()
+                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
                 .collect(),
         )
         .ok()

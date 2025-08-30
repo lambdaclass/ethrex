@@ -122,7 +122,7 @@ pub fn execution_witness_from_rpc_chain_config(
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
-    let mut storage_root_by_address = HashMap::new();
+    let mut storage_trie_nodes_by_address = HashMap::new();
     let mut touched_account_storage_slots = HashMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
@@ -140,7 +140,33 @@ pub fn execution_witness_from_rpc_chain_config(
                         ))
                     })?;
 
-                storage_root_by_address.insert(address, storage_root);
+                let storage_trie = Trie::from_nodes(
+                    NodeHash::Hashed(storage_root),
+                    state_nodes
+                        .clone()
+                        .into_iter()
+                        .map(|(k, v)| (NodeHash::Hashed(k), v))
+                        .collect(),
+                )
+                .map_err(|e| {
+                    ExecutionWitnessError::RebuildTrie(format!(
+                        "Storage trie for address {address:#x}: {e}"
+                    ))
+                })?;
+
+                let (storage_trie_witness, _storage_trie) = TrieLogger::open_trie(storage_trie);
+
+                let witness = {
+                    let mut w = storage_trie_witness.lock().map_err(|_| {
+                        ExecutionWitnessError::Custom(
+                            "Failed to lock storage trie witness".to_string(),
+                        )
+                    })?;
+                    let w = std::mem::take(&mut *w);
+                    w.into_iter().collect::<Vec<_>>()
+                };
+
+                storage_trie_nodes_by_address.insert(address, witness);
             }
         } else {
             let slot = H256::from_slice(&bytes);
@@ -150,34 +176,6 @@ pub fn execution_witness_from_rpc_chain_config(
                 .or_insert_with(Vec::new)
                 .push(slot);
         }
-    }
-
-    let mut storage_trie_nodes_by_address = HashMap::new();
-    for (address, storage_root) in storage_root_by_address {
-        let Ok(storage_trie) = Trie::from_nodes(
-            NodeHash::Hashed(storage_root),
-            state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
-                .collect(),
-        )
-        .map_err(|e| {
-            ExecutionWitnessError::RebuildTrie(format!(
-                "Storage trie for address {address:#x}: {e}"
-            ))
-        }) else {
-            continue;
-        };
-
-        let (storage_trie_witness, _storage_trie) = TrieLogger::open_trie(storage_trie);
-
-        let witness = storage_trie_witness.lock().map_err(|_| {
-            ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
-        })?;
-
-        storage_trie_nodes_by_address
-            .insert(address, witness.iter().cloned().collect::<Vec<Vec<u8>>>());
     }
 
     let mut witness = ExecutionWitnessResult {
