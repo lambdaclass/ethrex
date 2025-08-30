@@ -5,6 +5,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
     elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
 };
+use std::sync::LazyLock;
 
 use crate::{
     errors::{InternalError, PrecompileError, VMError},
@@ -25,9 +26,7 @@ const P256_N: P256Uint = NistP256::ORDER;
 const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
 const P256_B_UINT: P256Uint =
     P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
-lazy_static::lazy_static! {
-    static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
-}
+static P256_B: LazyLock<P256FieldElement> = LazyLock::new(|| P256FieldElement::from_uint(P256_B_UINT).unwrap());
 
 pub const P256VERIFY_COST: u64 = 3450;
 
