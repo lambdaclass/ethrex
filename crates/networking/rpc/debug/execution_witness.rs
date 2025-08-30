@@ -119,7 +119,7 @@ pub fn execution_witness_from_rpc_chain_config(
             .map(|(k, v)| (NodeHash::Hashed(*k), v.to_vec()))
             .collect(),
     )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
     let mut storage_root_by_address = HashMap::new();
     let mut touched_account_storage_slots = HashMap::new();
@@ -160,7 +160,11 @@ pub fn execution_witness_from_rpc_chain_config(
                 .map(|(k, v)| (NodeHash::Hashed(*k), v.to_vec()))
                 .collect(),
         )
-        .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
+        .map_err(|e| {
+            ExecutionWitnessError::RebuildTrie(format!(
+                "Storage trie for address {address:#x}: {e}"
+            ))
+        })?;
 
         let (storage_trie_witness, _storage_trie) = TrieLogger::open_trie(storage_trie);
 
