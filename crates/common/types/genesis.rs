@@ -200,6 +200,19 @@ pub struct ChainConfig {
     pub deposit_contract_address: Address,
 }
 
+lazy_static::lazy_static! {
+    pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
+        HashMap::from([
+            (1, "mainnet"),
+            (11155111, "sepolia"),
+            (17000, "holesky"),
+            (560048, "hoodi"),
+            (9, "L1 local devnet"),
+            (65536999, "L2 local devnet"),
+        ])
+    };
+}
+
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
@@ -281,6 +294,31 @@ impl ChainConfig {
 
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn display_config(&self) -> String {
+        let mut output = String::new();
+
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        output.push_str(&format!("Chain ID:  {} ({})\n", self.chain_id, network));
+        output.push_str("Network is post-merge\n");
+        output.push_str("Post-Merge hard forks (timestamp based):\n");
+
+        let hard_forks = [
+            ("Shanghai", self.shanghai_time),
+            ("Cancun", self.cancun_time),
+            ("Prague", self.prague_time),
+            ("Verkle", self.verkle_time),
+            ("Osaka", self.osaka_time),
+        ];
+
+        for (name, maybe_time) in &hard_forks {
+            if let Some(time) = maybe_time {
+                output.push_str(&format!("- {}: @{:<10}\n", name, time));
+            }
+        }
+
+        output
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
