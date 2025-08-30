@@ -12,22 +12,20 @@ use ethrex_trie::{Trie, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
 use serde::{Deserialize, Serialize};
 
-use std::sync::LazyLock;
-
 use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
 
 /// The serialized length of a default l1message log
-pub static L1MESSAGE_LOG_LEN: LazyLock<usize> = LazyLock::new(|| L1Message::default().encode().len());
+pub const L1MESSAGE_LOG_LEN: u64 = 84;
 
 /// The serialized length of a default privileged transaction log
-pub static PRIVILEGED_TX_LOG_LEN: LazyLock<usize> = LazyLock::new(|| PrivilegedTransactionLog::default().encode().len());
+pub const PRIVILEGED_TX_LOG_LEN: u64 = 52;
 
 /// The serialized lenght of a default block header
-pub static BLOCK_HEADER_LEN: LazyLock<usize> = LazyLock::new(|| encode_block_header(&BlockHeader::default()).len());
+pub const BLOCK_HEADER_LEN: u64 = 136;
 
 // State diff size for a simple transfer.
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
-pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
+pub const SIMPLE_TX_STATE_DIFF_SIZE: u64 = 108;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateDiffError {
@@ -609,4 +607,55 @@ pub fn prepare_state_diff(
     };
 
     Ok(state_diff)
+}
+
+#[cfg(test)]
+#[allow(clippy::as_conversions)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_l1_message_size() {
+        let l1_message_size = L1Message::default().encode().len() as u64;
+        assert_eq!(L1MESSAGE_LOG_LEN, l1_message_size);
+    }
+
+    #[test]
+    fn test_privileged_tx_log_size() {
+        let privileged_tx_size = PrivilegedTransactionLog::default().encode().len() as u64;
+        assert_eq!(PRIVILEGED_TX_LOG_LEN, privileged_tx_size);
+    }
+
+    #[test]
+    fn test_block_header_size() {
+        let block_header_size = encode_block_header(&BlockHeader::default()).len() as u64;
+        assert_eq!(BLOCK_HEADER_LEN, block_header_size);
+    }
+
+    #[test]
+    fn test_accounts_diff_size() {
+        let empty_storage = BTreeMap::new();
+
+        let account_diff_1 = AccountStateDiff {
+            new_balance: Some(U256::from(1000)),
+            nonce_diff: 1,
+            storage: empty_storage.clone(),
+            bytecode: None,
+            bytecode_hash: None,
+        };
+
+        let account_diff_2 = AccountStateDiff {
+            new_balance: Some(U256::from(1000)),
+            nonce_diff: 0,
+            storage: empty_storage,
+            bytecode: None,
+            bytecode_hash: None,
+        };
+
+        let account_diff_1_size = account_diff_1.encode(&Address::zero()).unwrap().len() as u64;
+        let account_diff_2_size = account_diff_2.encode(&Address::zero()).unwrap().len() as u64;
+        assert_eq!(
+            SIMPLE_TX_STATE_DIFF_SIZE,
+            account_diff_1_size + account_diff_2_size
+        );
+    }
 }

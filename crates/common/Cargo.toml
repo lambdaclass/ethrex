@@ -28,6 +28,7 @@ bytes.workspace = true
 hex.workspace = true
 rayon.workspace = true
 url.workspace = true
+rkyv.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true

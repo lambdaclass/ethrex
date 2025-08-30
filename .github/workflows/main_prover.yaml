@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_ETHREX_WORKDIR: /usr/local/bin
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
   PROVER: sp1
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
         run: |
           touch cmd/.env
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
           docker compose up --build contract_deployer
@@ -72,9 +72,10 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_COMMITTER_COMMIT_TIME=180000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose up --build --detach --no-deps ethrex_l2
 
       - name: Run test

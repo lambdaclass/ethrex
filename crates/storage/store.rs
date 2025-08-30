@@ -3,8 +3,6 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
-#[cfg(feature = "redb")]
-use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -26,14 +24,12 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
-/// Panic message shown when the Store is initialized with a genesis that differs from the one already stored
-pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -48,8 +44,6 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
     Libmdbx,
-    #[cfg(feature = "redb")]
-    RedB,
 }
 
 pub struct UpdateBatch {
@@ -75,7 +69,6 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
@@ -91,12 +84,6 @@ impl Store {
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -216,6 +203,15 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_number == latest.number {
+            // The latest may not be marked as canonical yet
+            return self.engine.get_block_body_by_hash(latest.hash()).await;
+        }
         self.engine.get_block_body(block_number).await
     }
 
@@ -309,12 +305,7 @@ impl Store {
         let mut locations = vec![];
 
         for (index, transaction) in transactions.iter().enumerate() {
-            locations.push((
-                transaction.compute_hash(),
-                block_number,
-                block_hash,
-                index as Index,
-            ));
+            locations.push((transaction.hash(), block_number, block_hash, index as Index));
         }
 
         self.engine.add_transaction_locations(locations).await
@@ -604,7 +595,12 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             }
-            Some(_) => panic!("{GENESIS_DIFF_PANIC_MESSAGE}"),
+            Some(_) => {
+                error!(
+                    "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, choose another datadir or clear the database (e.g., run `ethrex removedb`) and try again."
+                );
+                return Err(StoreError::IncompatibleChainConfig);
+            }
             None => {
                 self.engine
                     .add_block_header(genesis_hash, genesis_block.header.clone())
@@ -656,7 +652,7 @@ impl Store {
     pub async fn get_transaction_by_location(
         &self,
         block_hash: BlockHash,
-        index: u64,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine
             .get_transaction_by_location(block_hash, index)
@@ -1382,12 +1378,6 @@ mod tests {
         test_store_suite(EngineType::Libmdbx).await;
     }
 
-    #[cfg(feature = "redb")]
-    #[tokio::test]
-    async fn test_redb_store() {
-        test_store_suite(EngineType::RedB).await;
-    }
-
     // Creates an empty store, runs the test and then removes the store (if needed)
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
@@ -1436,16 +1426,9 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
-        let add_initial_state_handle =
-            tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
-        let panic = add_initial_state_handle.await.unwrap_err().into_panic();
-        assert_eq!(
-            panic
-                .downcast_ref::<String>()
-                .expect("Failed to downcast panic message"),
-            &GENESIS_DIFF_PANIC_MESSAGE
-        );
+        let result = store.add_initial_state(genesis_hive).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
     }
 
     fn remove_test_dbs(path: &str) {

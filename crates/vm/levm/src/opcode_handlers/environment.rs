@@ -100,17 +100,20 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        let size = 32;
+
+        if offset < current_call_frame.calldata.len() {
+            let diff = current_call_frame.calldata.len().wrapping_sub(offset);
+            let final_size = size.min(diff);
+            let end = offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(current_call_frame.calldata.get_unchecked(offset..end));
             }
         }
+
         let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push1(result)?;
@@ -149,25 +152,51 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let mut data = vec![0u8; size];
+        let calldata_len = current_call_frame.calldata.len();
 
-        if calldata_offset <= current_call_frame.calldata.len() {
-            for (i, byte) in current_call_frame
-                .calldata
-                .iter()
-                .skip(calldata_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
-            }
+        // offset is out of bounds, so fill zeroes
+        if calldata_offset >= calldata_len {
+            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        #[expect(
+            clippy::arithmetic_side_effects,
+            clippy::indexing_slicing,
+            reason = "bounds checked"
+        )]
+        {
+            // we already verified calldata_len >= calldata_offset
+            let available_data = calldata_len - calldata_offset;
+            let copy_size = size.min(available_data);
+            let zero_fill_size = size - copy_size;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+            if zero_fill_size == 0 {
+                // no zero padding needed
+
+                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
+                let src_slice =
+                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+                current_call_frame
+                    .memory
+                    .store_data(dest_offset, src_slice)?;
+            } else {
+                let mut data = vec![0u8; size];
+
+                let available_data = calldata_len - calldata_offset;
+                let copy_size = size.min(available_data);
+
+                if copy_size > 0 {
+                    data[..copy_size].copy_from_slice(
+                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
+                    );
+                }
+
+                current_call_frame.memory.store_data(dest_offset, &data)?;
+            }
+
+            Ok(OpcodeResult::Continue { pc_increment: 1 })
+        }
     }
 
     // CODESIZE operation
@@ -204,7 +233,7 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end < current_call_frame.bytecode.len() {
+            if code_offset_end <= current_call_frame.bytecode.len() {
                 #[expect(unsafe_code, reason = "bounds checked beforehand")]
                 let slice = unsafe {
                     current_call_frame
@@ -290,12 +319,29 @@ impl<'a> VM<'a> {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let bytecode = self.db.get_account_code(address)?;
 
+        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        if let Some(offset_end) = offset.checked_add(size) {
+            if offset_end <= bytecode.len() {
+                #[expect(unsafe_code, reason = "bounds checked beforehand")]
+                let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
+                self.current_call_frame
+                    .memory
+                    .store_data(dest_offset, slice)?;
+
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
+        }
+
         let mut data = vec![0u8; size];
         if offset < bytecode.len() {
-            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
+            let diff = bytecode.len().wrapping_sub(offset);
+            let final_size = size.min(diff);
+            let end = offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(bytecode.get_unchecked(offset..end));
             }
         }
 
@@ -349,22 +395,13 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfBounds.into());
         }
 
-        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
-        // I would've used copy_from_slice but it can panic.
-        let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
-
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        #[expect(unsafe_code, reason = "bounds checked beforehand")]
+        let slice = unsafe {
+            current_call_frame
+                .sub_return_data
+                .get_unchecked(returndata_offset..copy_limit)
+        };
+        current_call_frame.memory.store_data(dest_offset, slice)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

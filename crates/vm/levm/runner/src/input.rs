@@ -104,6 +104,7 @@ impl From<InputTransaction> for ethrex_common::types::LegacyTransaction {
             v: U256::zero(),
             r: U256::zero(),
             s: U256::zero(),
+            ..Default::default()
         }
     }
 }
