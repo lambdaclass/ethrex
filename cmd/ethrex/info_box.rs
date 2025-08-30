@@ -134,7 +134,7 @@ impl InfoBox {
                             continue;
                         }
 
-                        let raw = format!("{word}");
+                        let raw = word.to_string();
                         for chunk in split_into_chunks(&raw, chunk_cap) {
                             let mut line_to_print = String::from(" ");
                             line_to_print.push_str(&chunk);
