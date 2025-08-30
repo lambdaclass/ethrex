@@ -300,27 +300,22 @@ impl ChainConfig {
         let mut output = String::new();
 
         let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-
         output.push_str(&format!("Chain ID:  {} ({})\n", self.chain_id, network));
-
         output.push_str("Network is post-merge\n");
-
         output.push_str("Post-Merge hard forks (timestamp based):\n");
 
-        if let Some(time) = self.shanghai_time {
-            output.push_str(&format!("- Shanghai: @{:<10}\n", time));
-        }
+        let hard_forks = [
+            ("Shanghai", self.shanghai_time),
+            ("Cancun", self.cancun_time),
+            ("Prague", self.prague_time),
+            ("Verkle", self.verkle_time),
+            ("Osaka", self.osaka_time),
+        ];
 
-        if let Some(time) = self.cancun_time {
-            output.push_str(&format!("- Cancun: @{:<10}\n", time));
-        }
-
-        if let Some(time) = self.prague_time {
-            output.push_str(&format!("- Prague: @{:<10}\n", time));
-        }
-
-        if let Some(time) = self.verkle_time {
-            output.push_str(&format!("- Verkle: @{:<10}\n", time));
+        for (name, maybe_time) in &hard_forks {
+            if let Some(time) = maybe_time {
+                output.push_str(&format!("- {}: @{:<10}\n", name, time));
+            }
         }
 
         output
