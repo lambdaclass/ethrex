@@ -7,6 +7,26 @@ pub struct InfoBox {
     width: usize,
 }
 
+fn char_len(s: &str) -> usize {
+    s.chars().count()
+}
+
+fn split_into_chunks(s: &str, chunk: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    if chunk == 0 {
+        return chunks;
+    }
+    let mut it = s.chars();
+    loop {
+        let part: String = it.by_ref().take(chunk).collect();
+        if part.is_empty() {
+            break;
+        }
+        chunks.push(part);
+    }
+    chunks
+}
+
 impl InfoBox {
     pub fn new(title: &str) -> Self {
         Self {
@@ -43,13 +63,14 @@ impl InfoBox {
             return;
         }
 
-        let border = "═".repeat(self.width);
-        let title_len = self.title.len();
-        let available_width = self.width.saturating_sub(4);
+        let inner_width = self.width;
+        let border = "═".repeat(inner_width);
+        let title_len = char_len(&self.title);
+        let available_width = inner_width.saturating_sub(4);
 
         let title_line = if title_len <= available_width {
-            let title_padding = (self.width.saturating_sub(title_len + 2)) / 2;
-            let right_padding = self.width.saturating_sub(title_padding + title_len + 2);
+            let title_padding = (inner_width.saturating_sub(title_len + 2)) / 2;
+            let right_padding = inner_width.saturating_sub(title_padding + title_len + 2);
             format!(
                 "{} {} {}",
                 " ".repeat(title_padding),
@@ -57,7 +78,16 @@ impl InfoBox {
                 " ".repeat(right_padding)
             )
         } else {
-            format!(" {} ", self.title)
+            let mut t = self.title.chars().take(available_width).collect::<String>();
+            t.push('…');
+            let title_padding = 1;
+            let right_padding = inner_width.saturating_sub(title_padding + char_len(&t) + 1);
+            format!(
+                "{}{}{}",
+                " ".repeat(title_padding),
+                t,
+                " ".repeat(right_padding)
+            )
         };
 
         info!("╔{border}╗");
@@ -66,13 +96,12 @@ impl InfoBox {
 
         for (i, item) in self.items.iter().enumerate() {
             if i > 0 {
-                info!("║{}║", " ".repeat(self.width));
+                info!("║{}║", " ".repeat(inner_width));
             }
 
             for line in item.lines() {
                 let content_with_space = format!(" {line}");
-                let content_len = content_with_space.len();
-                let inner_width = self.width.saturating_sub(2);
+                let content_len = char_len(&content_with_space);
 
                 if content_len <= inner_width {
                     let padding_needed = inner_width.saturating_sub(content_len);
@@ -80,26 +109,49 @@ impl InfoBox {
                         format!("{content_with_space}{}", " ".repeat(padding_needed));
                     info!("║{display_line}║");
                 } else {
-                    let available_content_width = inner_width.saturating_sub(1);
                     let words: Vec<&str> = line.split_whitespace().collect();
                     let mut current_line = String::new();
 
                     for word in words {
-                        let word_with_space = format!(" {word}");
+                        let mut word_with_space = format!(" {word}");
+                        let curr_len = char_len(&current_line);
+                        let word_len = char_len(&word_with_space);
 
-                        if (current_line.len() + word_with_space.len()) <= available_content_width {
+                        if curr_len + word_len <= inner_width {
                             current_line.push_str(&word_with_space);
-                        } else {
-                            if !current_line.is_empty() {
-                                let padding = inner_width.saturating_sub(current_line.len());
-                                info!("║{current_line}{}║", " ".repeat(padding));
-                            }
-                            current_line = format!(" {word}");
+                            continue;
                         }
+
+                        if curr_len > 0 {
+                            let padding = inner_width.saturating_sub(curr_len);
+                            info!("║{current_line}{}║", " ".repeat(padding));
+                            current_line.clear();
+                        }
+
+                        let chunk_cap = inner_width.saturating_sub(1);
+                        if word_len <= inner_width {
+                            current_line = format!(" {word}");
+                            continue;
+                        }
+
+                        let raw = format!("{word}");
+                        for chunk in split_into_chunks(&raw, chunk_cap) {
+                            let mut line_to_print = String::from(" ");
+                            line_to_print.push_str(&chunk);
+                            let l = char_len(&line_to_print);
+                            if l < inner_width {
+                                let pad = inner_width - l;
+                                info!("║{line_to_print}{}║", " ".repeat(pad));
+                            } else {
+                                info!("║{line_to_print}║");
+                            }
+                        }
+                        current_line.clear();
+                        word_with_space.clear();
                     }
 
                     if !current_line.is_empty() {
-                        let padding = inner_width.saturating_sub(current_line.len());
+                        let padding = inner_width.saturating_sub(char_len(&current_line));
                         info!("║{current_line}{}║", " ".repeat(padding));
                     }
                 }
