@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756513104841,
+  "lastUpdate": 1756517736384,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -24297,6 +24297,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0021126481481481482,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "b4d6cb2e7c4b07ed3f8b96a725bc43f2f43ba35d",
+          "message": "ci(l1): add new block, missing execution workflow",
+          "timestamp": "2025-08-29T18:54:25Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4209/commits/b4d6cb2e7c4b07ed3f8b96a725bc43f2f43ba35d"
+        },
+        "date": 1756517735827,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0005003640350877193,
             "unit": "Mgas/s"
           }
         ]
