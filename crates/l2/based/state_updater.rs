@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, types::Block};
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -175,10 +175,8 @@ impl StateUpdater {
 
     /// Reverts state to the last committed batch if known.
     async fn revert_uncommitted_state(&mut self) -> Result<(), StateUpdaterError> {
-        let last_l2_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_l2_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         debug!("Last committed batch: {last_l2_committed_batch}");
 

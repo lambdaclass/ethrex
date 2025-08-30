@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_config::networks::LOCAL_DEVNET_PRIVATE_KEYS;
-use ethrex_l2_sdk::get_address_from_secret_key;
+use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use hex::FromHexError;
 use ratatui::{
@@ -59,7 +59,9 @@ impl RichAccountsTable {
         for pk in private_keys.iter() {
             let secret_key = SecretKey::from_slice(&parse_hex(pk)?)
                 .map_err(|e| MonitorError::DecodingError(format!("Invalid private key: {e}")))?;
-            let address = get_address_from_secret_key(&secret_key)?;
+            let address = get_address_from_secret_key(&secret_key).map_err(|e| {
+                MonitorError::DecodingError(format!("Failed to get address from private key: {e}"))
+            })?;
             let get_balance = rollup_client
                 .get_balance(
                     address,
