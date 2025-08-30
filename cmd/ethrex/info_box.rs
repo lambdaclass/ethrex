@@ -17,7 +17,7 @@ impl InfoBox {
     }
 
     pub fn with_width(mut self, width: usize) -> Self {
-        self.width = width.max(20);
+        self.width = width.max(60);
         self
     }
 
@@ -85,11 +85,7 @@ impl InfoBox {
                     let mut current_line = String::new();
 
                     for word in words {
-                        let word_with_space = if current_line.is_empty() {
-                            format!(" {word}")
-                        } else {
-                            format!(" {word}")
-                        };
+                        let word_with_space = format!(" {word}");
 
                         if (current_line.len() + word_with_space.len()) <= available_content_width {
                             current_line.push_str(&word_with_space);
