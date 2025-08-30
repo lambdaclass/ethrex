@@ -198,9 +198,9 @@ impl RpcRequest {
         resolve_namespace(namespace, self.method.clone())
     }
 
-    pub fn new(method: &str, params: Option<Vec<Value>>) -> Self {
+    pub fn new(id: RpcRequestId, method: &str, params: Option<Vec<Value>>) -> Self {
         RpcRequest {
-            id: RpcRequestId::Number(1),
+            id,
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
             params,
