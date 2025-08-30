@@ -4,11 +4,13 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        BlockHeader, ChainConfig,
+        AccountState, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::hash_address;
+use ethrex_trie::{NodeHash, Trie, TrieLogger};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -110,11 +112,35 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes.insert(keccak(node), node.to_vec());
     }
 
+    let state_trie = Trie::from_nodes(
+        NodeHash::Hashed(parent_header.state_root),
+        state_nodes
+            .iter()
+            .map(|(k, v)| (NodeHash::Hashed(*k), v.to_vec()))
+            .collect(),
+    )
+    .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
+
+    let mut storage_root_by_address = HashMap::new();
     let mut touched_account_storage_slots = HashMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
         if bytes.len() == Address::len_bytes() {
             address = Address::from_slice(&bytes);
+
+            if let Some(account_state_rlp) = state_trie
+                .get(&hash_address(&address))
+                .map_err(|e| ExecutionWitnessError::Custom(e.to_string()))?
+            {
+                let AccountState { storage_root, .. } = AccountState::decode(&account_state_rlp)
+                    .map_err(|e| {
+                        ExecutionWitnessError::Custom(format!(
+                            "Failed to decode account state RLP for address {address:#x}: {e}"
+                        ))
+                    })?;
+
+                storage_root_by_address.insert(address, storage_root);
+            }
         } else {
             let slot = H256::from_slice(&bytes);
             // Insert in the vec of the address value
@@ -125,6 +151,27 @@ pub fn execution_witness_from_rpc_chain_config(
         }
     }
 
+    let mut storage_trie_nodes_by_address = HashMap::new();
+    for (address, storage_root) in storage_root_by_address {
+        let storage_trie = Trie::from_nodes(
+            NodeHash::Hashed(storage_root),
+            state_nodes
+                .iter()
+                .map(|(k, v)| (NodeHash::Hashed(*k), v.to_vec()))
+                .collect(),
+        )
+        .map_err(|e| ExecutionWitnessError::RebuildTrie(e.to_string()))?;
+
+        let (storage_trie_witness, _storage_trie) = TrieLogger::open_trie(storage_trie);
+
+        let witness = storage_trie_witness.lock().map_err(|_| {
+            ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+        })?;
+
+        storage_trie_nodes_by_address
+            .insert(address, witness.iter().cloned().collect::<Vec<Vec<u8>>>());
+    }
+
     let mut witness = ExecutionWitnessResult {
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
@@ -133,6 +180,7 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: parent_header,
         state_nodes,
+        storage_trie_nodes: storage_trie_nodes_by_address,
         touched_account_storage_slots,
     };
 

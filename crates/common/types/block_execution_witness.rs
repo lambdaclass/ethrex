@@ -52,6 +52,8 @@ pub struct ExecutionWitnessResult {
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: HashMap<H256, NodeRLP>,
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, rkyv::with::AsBox>)]
+    pub storage_trie_nodes: HashMap<Address, Vec<NodeRLP>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -108,7 +110,7 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
+    pub fn rebuild_storage_trie(&mut self, address: &H160) -> Option<Trie> {
         let account_state_rlp = self
             .state_trie
             .as_ref()?
@@ -119,9 +121,13 @@ impl ExecutionWitnessResult {
 
         Trie::from_nodes(
             NodeHash::Hashed(account_state.storage_root),
-            self.state_nodes
-                .iter()
-                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
+            self.storage_trie_nodes
+                .remove(address)?
+                .into_iter()
+                .map(|node| {
+                    let hash = Keccak256::new_with_prefix(&node).finalize();
+                    (NodeHash::Hashed(H256::from_slice(&hash)), node)
+                })
                 .collect(),
         )
         .ok()

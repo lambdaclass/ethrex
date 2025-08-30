@@ -180,6 +180,7 @@ impl Blockchain {
         let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
+        let mut encoded_storage_tries: HashMap<Address, Vec<Vec<u8>>> = HashMap::new();
 
         // Store the root node in case the block is empty and the witness does not record any nodes
         let root_node = trie.root_node().map_err(|_| {
@@ -307,6 +308,10 @@ impl Blockchain {
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
+                encoded_storage_tries
+                    .entry(address)
+                    .or_default()
+                    .extend(witness);
             }
             trie = updated_trie;
         }
@@ -368,6 +373,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
+            storage_trie_nodes: encoded_storage_tries,
             touched_account_storage_slots,
         })
     }
