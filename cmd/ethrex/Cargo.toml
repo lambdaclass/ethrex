@@ -36,7 +36,6 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 local-ip-address = "0.6"
 tokio-util.workspace = true
-redb = { workspace = true, optional = true }
 secp256k1.workspace = true
 keccak-hash.workspace = true
 reqwest.workspace = true
