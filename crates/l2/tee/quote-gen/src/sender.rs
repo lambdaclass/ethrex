@@ -6,6 +6,7 @@ use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_vm::prover_db::PreExecutionState;
 
 use ethrex_common::Bytes;
 
@@ -27,7 +28,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
-                    db: input.db,
+                    pre_execution_state: PreExecutionState::Witness(Box::new(input.db)),
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,

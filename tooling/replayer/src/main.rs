@@ -74,6 +74,8 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub cache_level: CacheLevel,
+    #[arg(long, required = false)]
+    pub l2: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
@@ -122,6 +124,7 @@ async fn main() {
                         rpc_url,
                         slack_webhook_url,
                         opts.cache_level,
+                        opts.l2,
                     )
                     .await
                 });
@@ -151,6 +154,7 @@ async fn main() {
                 ],
                 slack_webhook_url,
                 opts.cache_level,
+                opts.l2,
             )
             .await
         });
@@ -217,6 +221,7 @@ async fn replay_execution(
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
     cache_level: CacheLevel,
+    l2: bool,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
@@ -230,6 +235,7 @@ async fn replay_execution(
             &eth_client,
             slack_webhook_url.clone(),
             cache_level,
+            l2,
         )
         .await?;
 
@@ -244,6 +250,7 @@ async fn replay_proving(
     rpc_urls: [(Option<Url>, Network); 3],
     slack_webhook_url: Option<Url>,
     cache_level: CacheLevel,
+    l2: bool,
 ) -> Result<(), EthClientError> {
     loop {
         let start = SystemTime::now();
@@ -262,6 +269,7 @@ async fn replay_proving(
                 &eth_client,
                 slack_webhook_url.clone(),
                 cache_level,
+                l2,
             )
             .await?;
         }
@@ -282,6 +290,7 @@ async fn replay_latest_block(
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
     cache_level: CacheLevel,
+    l2: bool,
 ) -> Result<Duration, EthClientError> {
     let latest_block = eth_client
         .get_block_number()
@@ -310,6 +319,7 @@ async fn replay_latest_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                l2,
             }
             .run()
             .await
@@ -320,6 +330,7 @@ async fn replay_latest_block(
                 rpc_url: rpc_url.clone(),
                 network: network.clone(),
                 bench: false,
+                l2,
             }
             .run()
             .await

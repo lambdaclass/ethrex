@@ -263,13 +263,28 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(
-        root_hash: NodeHash,
+        root_hash: Option<NodeHash>,
+        root: Option<&NodeRLP>,
         mut state_nodes: HashMap<NodeHash, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        // TODO: Try to remove this clone.
-        let Some(root) = state_nodes.get(&root_hash).cloned() else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
-            return Ok(Trie::new(in_memory_trie));
+        let root = match (root, root_hash) {
+            (Some(root), None) => root,
+            (None, Some(root_hash)) => &{
+                let Some(root) = state_nodes.get(&root_hash).cloned() else {
+                    let in_memory_trie =
+                        Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+                    return Ok(Trie::new(in_memory_trie));
+                };
+                root
+            },
+            (None, None) => {
+                let in_memory_trie =
+                    Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+                return Ok(Trie::new(in_memory_trie));
+            }
+            (Some(_), Some(_)) => {
+                return Err(TrieError::InvalidInput)?;
+            }
         };
 
         fn inner(
@@ -309,7 +324,7 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut state_nodes, &root)?.into();
+        let root = inner(&mut state_nodes, root)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
