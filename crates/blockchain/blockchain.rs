@@ -33,7 +33,6 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
-use std::os::macos::raw::stat;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

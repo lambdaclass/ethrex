@@ -77,6 +77,12 @@ trait BlobCodec: Sized {
     fn decode(bytes: &[u8]) -> Result<Self, StoreError>;
 }
 
+// TODO: impl for individual node types, check the flag in get_path first to pick
+// node type, decode each. That allows us to skip allocations, which do take most
+// of the time once we prefault the pages.
+// Also, cache the root with the latest header in Store, as getting it from the
+// DB takes a long time.
+// We seem to have cache misses for the header, check it out.
 impl BlobCodec for Node {
     fn encode(&self, mut w: impl std::io::Write) -> Result<u64, StoreError> {
         use Node::*;
@@ -258,7 +264,7 @@ impl BlobCodec for Node {
                     }
                     hash_cursor += 32;
                 }
-                Ok(Node::Branch(Box::new(BranchNode::new(children))))
+                Ok(Node::Branch(BranchNode::new(children)))
             }
             0x60 => {
                 if len < 42 {
@@ -604,7 +610,24 @@ impl BlobDbEngine {
         buffer.flush().expect("");
         let writer = buffer.into_inner().expect("");
         writer.sync_data().expect("");
+        // FIXME: attempt remap without move first on Linux.
+        // How? Store in an Arc instead and use get_mut_unchecked.
+        // This works because without may_move the mapping either starts in the same
+        // position, with only appended data, or the remap fails.
+        // If the remap fails, we create **a different** Arc with a new map.
+        // Alternatives:
+        // Simply read from file with offset
+        // madvise, with or without range
+        // Node cache
+        // Buffer pool
         let map = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
+        map.advise(
+            memmap2::Advice::WillNeed, // memmap2::Advice::Random
+        )
+        .expect("");
+        // FIXME: this unmap takes a long time, longer than mapping and advising.
+        // Check if simple reads suffice or if something else is needed.
+        // Maybe implement remap manually by mapping with fixed offsets the missing part?
         let new_reader = Bytes::from_owner(map);
         let len = new_reader.len() as u64;
         *self.reader.lock().expect("") = new_reader;

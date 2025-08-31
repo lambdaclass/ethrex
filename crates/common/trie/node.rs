@@ -12,9 +12,9 @@ use ethrex_rlp::{
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
-use tracing::info;
+// use tracing::info;
 
-use crate::{EMPTY_TRIE_HASH, TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -199,20 +199,14 @@ impl From<NodeHash> for ValueOrHash {
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Branch(Box<BranchNode>),
+    Branch(BranchNode),
     Extension(ExtensionNode),
     Leaf(LeafNode),
 }
 
-impl From<Box<BranchNode>> for Node {
-    fn from(val: Box<BranchNode>) -> Self {
-        Node::Branch(val)
-    }
-}
-
 impl From<BranchNode> for Node {
     fn from(val: BranchNode) -> Self {
-        Node::Branch(Box::new(val))
+        Node::Branch(val)
     }
 }
 
