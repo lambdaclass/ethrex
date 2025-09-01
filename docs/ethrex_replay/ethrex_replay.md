@@ -169,7 +169,7 @@ The following table lists the available features for `ethrex-replay`. To enable 
 > If `BLOCK_NUMBER` is not provided, the latest block will be executed.
 
 ```
-ethrex-replay execute block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay block <BLOCK_NUMBER> --execute --rpc-url <RPC_URL>
 ```
 
 ### Prove a single block
@@ -182,13 +182,13 @@ ethrex-replay execute block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWOR
 > 4. If proving with SP1, add `SP1_PROVER=cuda` to the command to enable GPU support.
 
 ```
-ethrex-replay prove block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay block <BLOCK_NUMBER> --prove --rpc-url <RPC_URL>
 ```
 
 ### Execute an L2 batch
 
 ```
-ethrex-replay execute batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay l2 batch <BATCH_NUMBER> --execute --rpc-url <RPC_URL>
 ```
 
 ### Prove an L2 batch
@@ -199,13 +199,15 @@ ethrex-replay execute batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWOR
 > 2. If proving with SP1, add `SP1_PROVER=cuda` to the command to enable GPU support.
 
 ```
-ethrex-replay prove batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay l2 batch <BATCH_NUMBER> --prove --rpc-url <RPC_URL>
 ```
 
 ### Execute a transaction
 
 ```
-ethrex-replay execute transaction <TX_HASH> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay transaction <TX_HASH> --execute --rpc-url <RPC_URL>
+
+ethrex-replay l2 transaction <TX_HASH> --execute --rpc-url <RPC_URL>
 ```
 
 ### Plot block composition
