@@ -1,4 +1,11 @@
-use std::{cmp::max, io::Write, time::SystemTime};
+use std::{
+    cmp::max,
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use clap::{Parser, Subcommand};
 use ethrex_blockchain::{
@@ -7,8 +14,11 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::{
-    Address, H256,
-    types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
+    Address, Bytes, H256, U256,
+    types::{
+        AccountUpdate, Block, ELASTICITY_MULTIPLIER, GenesisAccount, Receipt,
+        payload::PayloadBundle,
+    },
 };
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
@@ -1015,6 +1025,90 @@ pub async fn produce_l2_block(
     Ok(new_block)
 }
 
+#[derive(Parser)]
+pub struct SubcommandGenerateGenesis {
+    #[arg(
+        long,
+        help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+        value_parser = clap::value_parser!(Network),
+        default_value_t = Network::default(),
+    )]
+    network: Network,
+    #[arg(long, help = "Number of accounts to generate.")]
+    num_accounts: u64,
+    #[arg(
+        long,
+        help = "Balance for each account.",
+        default_value_t = 1_000_000_000_000_000_000_000_000
+    )]
+    balance: u128,
+    #[arg(
+        long,
+        help = "Output path for the genesis file.",
+        default_value = "genesis.json"
+    )]
+    genesis_out: PathBuf,
+    #[arg(
+        long,
+        help = "Output path for the private keys file.",
+        default_value = "keys.txt"
+    )]
+    keys_out: PathBuf,
+}
+
+use secp256k1::{PublicKey, Secp256k1};
+use sha3::{Digest, Keccak256};
+impl SubcommandGenerateGenesis {
+    pub async fn run(self) -> eyre::Result<()> {
+        println!(
+            "Generating genesis file with {} accounts...",
+            self.num_accounts
+        );
+
+        let secp = Secp256k1::new();
+        let mut keys_file = File::create(&self.keys_out)?;
+        let mut alloc = BTreeMap::new();
+        let balance = U256::from(self.balance);
+
+        for _ in 0..self.num_accounts {
+            let (secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
+            let address = public_key_to_address(&public_key);
+
+            writeln!(keys_file, "{}", hex::encode(secret_key.secret_bytes()))?;
+
+            alloc.insert(
+                address,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: HashMap::new(),
+                    balance,
+                    nonce: 0,
+                },
+            );
+        }
+
+        let mut genesis = self.network.get_genesis()?;
+        genesis.alloc = alloc;
+
+        let file = BufWriter::new(File::create(&self.genesis_out)?);
+        serde_json::to_writer_pretty(file, &genesis)?;
+
+        println!(
+            "Successfully generated genesis file '{}' and keys file '{}'",
+            self.genesis_out.display(),
+            self.keys_out.display()
+        );
+
+        Ok(())
+    }
+}
+
+fn public_key_to_address(public_key: &PublicKey) -> Address {
+    let public_key = public_key.serialize_uncompressed();
+    let hash = Keccak256::digest(&public_key[1..]);
+    Address::from_slice(&hash[12..])
+}
+
 #[derive(Subcommand)]
 pub enum EthrexReplayCommand {
     #[command(
@@ -1050,6 +1144,8 @@ pub enum EthrexReplayCommand {
     Cache(SubcommandCache),
     #[command(subcommand, about = "Custom block or batch")]
     Custom(SubcommandCustom),
+    #[command(about = "Generate a custom genesis file.")]
+    GenerateGenesis(SubcommandGenerateGenesis),
 }
 
 pub async fn start() -> eyre::Result<()> {
@@ -1075,6 +1171,7 @@ pub async fn start() -> eyre::Result<()> {
         }
         EthrexReplayCommand::Cache(cmd) => cmd.run().await?,
         EthrexReplayCommand::Custom(cmd) => cmd.run().await?,
+        EthrexReplayCommand::GenerateGenesis(cmd) => cmd.run().await?,
     };
     Ok(())
 }
