@@ -1012,7 +1012,6 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peers_info.lock().await;
 
         self.refresh_peers_availability().await;
         loop {
@@ -1046,15 +1045,13 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    let peer_info = scores.entry(peer_id).or_default();
-                    peer_info.score -= 1;
+                    self.record_peer_failure(peer_id).await;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                let peer_info = scores.entry(peer_id).or_default();
-                peer_info.score += 1;
+                self.record_peer_success(peer_id).await;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1167,12 +1164,9 @@ impl PeerHandler {
         let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =
             tokio::task::JoinSet::new();
 
-        let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
-        let mut scores = self.peers_info.lock().await;
-        // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
         let current_account_hashes = account_storage_roots
             .accounts_with_storage_root
@@ -1181,6 +1175,7 @@ impl PeerHandler {
             .collect::<Vec<_>>();
 
         loop {
+            self.reset_timed_out_busy_peers().await;
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > 1024 * 1024 * 1024 * 8
             {
@@ -1223,17 +1218,6 @@ impl PeerHandler {
 
                 chunk_index += 1;
             }
-
-            let new_last_metrics_update = last_metrics_update
-                .elapsed()
-                .unwrap_or(Duration::from_secs(1));
-
-            /*             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.storages_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            } */
 
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageRequestTaskResult {
@@ -1333,8 +1317,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    let peer_info = scores.entry(peer_id).or_default();
-                    peer_info.score -= 1;
+                    self.record_peer_failure(peer_id).await;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1344,16 +1327,7 @@ impl PeerHandler {
                     }
                 }
 
-                let peer_info = scores.entry(peer_id).or_default();
-                if peer_info.score < 10 {
-                    peer_info.score += 1;
-                }
-
-                /*                 *downloaded_count += account_storages.len() as u64;
-                // If we didn't finish downloading the account, don't count it
-                if !hash_start.is_zero() {
-                    *downloaded_count -= 1;
-                } */
+                self.record_peer_success(peer_id).await;
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1430,10 +1404,6 @@ impl PeerHandler {
             {
                 tasks_queue_not_started.push_front(task);
             }
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                last_metrics_update = SystemTime::now();
-            }
         }
 
         {
@@ -1465,11 +1435,6 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
 
-        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
         disk_joinset
             .join_all()
             .await
