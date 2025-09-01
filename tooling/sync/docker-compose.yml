@@ -32,7 +32,7 @@ services:
   ethrex:
     container_name: ethrex
     image: "ethrex:unstable"
-    build: .
+    build: ../../
     ports:
       - 127.0.0.1:8545:8545
       - "30303:30303/tcp"
