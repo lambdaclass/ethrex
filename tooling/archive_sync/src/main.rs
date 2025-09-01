@@ -560,7 +560,7 @@ fn continue_from_latest_file_dump(
         if let Some(dump_number) = filename
             .strip_prefix("dump_")
             .and_then(|filename| filename.strip_suffix(".json"))
-            .and_then(|number_str| usize::from_str_radix(number_str, 10).ok())
+            .and_then(|number_str| number_str.parse::<usize>().ok())
         {
             dump_writer.current_file = max(dump_writer.current_file, dump_number);
         }
