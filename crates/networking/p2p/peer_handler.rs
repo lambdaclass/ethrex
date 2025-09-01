@@ -756,48 +756,26 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
-        let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            let (_, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
+            let available_downloader = self.get_best_available_downloader().await?;
+            let peer_id = available_downloader.peer_id();
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::Receipts {
+                    block_hashes: block_hashes.clone(),
+                })
                 .await
             {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(receipts)) => {
-                            if receipts.get_id() == request_id {
-                                return Some(receipts.get_receipts());
-                            }
-                            return None;
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
+                Ok(DownloaderCallResponse::Receipts(Some(receipts))) => {
+                    return {
+                        self.record_peer_success(peer_id).await;
+                        Some(receipts)
+                    };
                 }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|receipts|
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-            {
-                return Some(receipts);
+                _ => {
+                    self.record_peer_failure(peer_id).await;
+                    continue;
+                }
             }
         }
         None

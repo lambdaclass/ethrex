@@ -211,6 +211,55 @@ impl GenServer for Downloader {
 
                 CallResponse::Stop(DownloaderCallResponse::NotFound)
             }
+            DownloaderCallRequest::Receipts { block_hashes } => {
+                let block_hashes_len = block_hashes.len();
+
+                let request_id = rand::random();
+                let request = RLPxMessage::GetReceipts(GetReceipts {
+                    id: request_id,
+                    block_hashes,
+                });
+
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
+                }
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Some(receipts) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::Receipts(receipts)) => {
+                                if receipts.get_id() == request_id {
+                                    return Some(receipts.get_receipts());
+                                }
+                                return None;
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|receipts|
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
+                {
+                    return CallResponse::Stop(DownloaderCallResponse::Receipts(
+                        Some(receipts),
+                    ));
+                }
+
+                return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
+            }
             _ => todo!(),
         }
     }
