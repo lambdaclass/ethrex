@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756517736384,
+  "lastUpdate": 1756732626107,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10795,6 +10795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160715342545,
             "range": "± 343581416",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0299d044a77c0ad99a0b8e41723a7eb76c491f26",
+          "message": "feat(l1): added fusaka support for runners (#4163)\n\n**Motivation**\n\nAdding the boilerplate in the runners to be able to execute the Fusaka\ntests in the future when we start implementing it\n\n**Description**\n\nThis PR changes the fixture URLs to the most recent execution spec tests\nrelease that supports Fusaka. Additionally, it adds the parameters\nneeded to the structs the runners use to be able to parse and execute\nthe test; although at the moment they're skipped by default. The Osaka\ntests were also added to the Hive daily report.\n\nCloses #4114",
+          "timestamp": "2025-09-01T12:18:44Z",
+          "tree_id": "8fbdbf3a8b9cac6c2b2c725aeef952a519bf71f4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0299d044a77c0ad99a0b8e41723a7eb76c491f26"
+        },
+        "date": 1756732608867,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159327707599,
+            "range": "± 385797761",
             "unit": "ns/iter"
           }
         ]
