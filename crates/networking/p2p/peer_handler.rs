@@ -613,7 +613,7 @@ impl PeerHandler {
         block_hashes: Vec<H256>,
     ) -> Option<(Vec<BlockBody>, H256)> {
         self.refresh_peers_availability().await;
-        let Some(available_downloader) = self.get_best_available_downloader().await else {
+        let Some(available_downloader) = self.get_random_available_downloader().await else {
             debug!("No free downloaders available to request block bodies");
             return None;
         };
@@ -700,7 +700,7 @@ impl PeerHandler {
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let available_downloader = self.get_best_available_downloader().await?;
+            let available_downloader = self.get_random_available_downloader().await?;
             let peer_id = available_downloader.peer_id();
             match available_downloader
                 .start()
@@ -898,7 +898,7 @@ impl PeerHandler {
                 });
             }
 
-            let available_downloader = self.get_best_available_downloader().await;
+            let available_downloader = self.get_random_available_downloader().await;
             let Some(available_downloader) = available_downloader else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
@@ -999,23 +999,11 @@ impl PeerHandler {
             .ok_or(PeerHandlerError::NoTasks)?;
         last_task.1 = all_bytecode_hashes.len();
 
-        // 2) request the chunks from peers
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
-
         let mut downloaded_count = 0_u64;
         let mut all_bytecodes = vec![Bytes::new(); all_bytecode_hashes.len()];
 
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<BytecodeRequestTaskResult>(1000);
-
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-            peers_table
-                .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
-        );
 
         info!("Starting to download bytecodes from peers");
 
@@ -1036,7 +1024,8 @@ impl PeerHandler {
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.bytecode_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
-                *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.total_bytecode_downloaders.lock().await =
+                    self.peers_info.lock().await.len() as u64;
                 *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
             }
 
@@ -1049,9 +1038,7 @@ impl PeerHandler {
                     remaining_end,
                 } = result;
 
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
+                self.mark_peer_as_free(peer_id).await;
 
                 if remaining_start < remaining_end {
                     tasks_queue_not_started.push_back((remaining_start, remaining_end));
@@ -1078,7 +1065,7 @@ impl PeerHandler {
                 }
             }
 
-            let Some(available_downloader) = self.get_best_available_downloader().await else {
+            let Some(available_downloader) = self.get_random_available_downloader().await else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
@@ -1118,11 +1105,12 @@ impl PeerHandler {
             }
         }
 
+        let downloaders_count = self.peers_info.lock().await.len() as u64;
         *METRICS.bytecode_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
-        *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.total_bytecode_downloaders.lock().await = downloaders_count;
         *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
-        *METRICS.free_bytecode_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_bytecode_downloaders.lock().await = downloaders_count;
 
         info!(
             "Finished downloading bytecodes, total bytecodes: {}",
@@ -1405,7 +1393,7 @@ impl PeerHandler {
                 }
             }
 
-            let Some(available_downloader) = self.get_best_available_downloader().await else {
+            let Some(available_downloader) = self.get_random_available_downloader().await else {
                 debug!("No free downloaders available, waiting for a peer to be free, retrying");
                 continue;
             };
