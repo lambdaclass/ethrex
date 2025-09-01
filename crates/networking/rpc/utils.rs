@@ -1,9 +1,10 @@
+use ethrex_common::U256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authentication::AuthenticationError;
+use crate::{authentication::AuthenticationError, clients::EthClientError};
 use ethrex_blockchain::error::MempoolError;
 
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +96,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: Some(data.clone()),
                 message: format!(
                     "execution reverted: {}",
-                    get_message_from_revert_data(&data)
+                    get_message_from_revert_data(&data).unwrap_or("unknown error".to_string())
                 ),
             },
             RpcErr::Halt { reason, gas_used } => RpcErrorMetadata {
@@ -268,12 +269,47 @@ impl From<EvmError> for RpcErr {
     }
 }
 
-fn get_message_from_revert_data(_data: &str) -> String {
-    // TODO
-    // Hive tests are not failing when revert message does not match, but currently it is not matching
-    // It should be fixed
-    // See https://github.com/ethereum/go-ethereum/blob/8fd43c80132434dca896d8ae5004ae2aac1450d3/accounts/abi/abi.go#L275
-    "".to_owned()
+pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
+    if data == "0x" {
+        Ok("unknown error".to_owned())
+    // 4 byte function signature 0xXXXXXXXX
+    } else if data.len() == 10 {
+        Ok(data.to_owned())
+    } else {
+        let abi_decoded_error_data =
+            hex::decode(data.strip_prefix("0x").ok_or(EthClientError::Custom(
+                "Failed to strip_prefix when getting message from revert data".to_owned(),
+            ))?)
+            .map_err(|_| {
+                EthClientError::Custom(
+                    "Failed to hex::decode when getting message from revert data".to_owned(),
+                )
+            })?;
+        let string_length = U256::from_big_endian(abi_decoded_error_data.get(36..68).ok_or(
+            EthClientError::Custom(
+                "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),
+            ),
+        )?);
+        let string_len = if string_length > usize::MAX.into() {
+            return Err(EthClientError::Custom(
+                "Failed to convert string_length to usize when getting message from revert data"
+                    .to_owned(),
+            ));
+        } else {
+            string_length.as_usize()
+        };
+        let string_data = abi_decoded_error_data
+            .get(68..68 + string_len)
+            .ok_or(EthClientError::Custom(
+            "Failed to slice index abi_decoded_error_data when getting message from revert data"
+                .to_owned(),
+        ))?;
+        String::from_utf8(string_data.to_vec()).map_err(|_| {
+            EthClientError::Custom(
+                "Failed to String::from_utf8 when getting message from revert data".to_owned(),
+            )
+        })
+    }
 }
 
 pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
