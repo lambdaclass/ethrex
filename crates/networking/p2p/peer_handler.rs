@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::ErrorKind,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -1156,12 +1156,6 @@ impl PeerHandler {
             });
         }
 
-        // 2) request the chunks from peers
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
-
         let mut all_account_storages =
             vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
@@ -1172,12 +1166,6 @@ impl PeerHandler {
         // channel to send the result of dumping storages
         let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =
             tokio::task::JoinSet::new();
-
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-            peers_table
-                .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
-        );
 
         let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();
@@ -1256,11 +1244,8 @@ impl PeerHandler {
                     remaining_end,
                     remaining_hash_range: (hash_start, hash_end),
                 } = result;
+                self.mark_peer_as_free(peer_id).await;
                 completed_tasks += 1;
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
 
                 for account in &current_account_hashes[start_index..remaining_start] {
                     accounts_done.push(*account);
