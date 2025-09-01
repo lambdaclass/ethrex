@@ -691,7 +691,7 @@ impl SubcommandCustom {
 
                 #[cfg(not(feature = "l2"))]
                 let mut blockchain =
-                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1, false);
                 #[cfg(feature = "l2")]
                 let blockchain = Arc::new(Blockchain::new(
                     EvmEngine::LEVM,
@@ -808,7 +808,7 @@ impl SubcommandCustom {
 
                 #[cfg(not(feature = "l2"))]
                 let mut blockchain =
-                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1, false);
                 #[cfg(feature = "l2")]
                 let blockchain = Arc::new(Blockchain::new(
                     EvmEngine::LEVM,
