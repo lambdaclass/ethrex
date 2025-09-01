@@ -190,7 +190,7 @@ pub async fn fill_transactions(
             }
         }
 
-        // Copy remaining gas and block value beforeexecuting the transact ion
+        // Copy remaining gas and block value before executing the transaction
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
 
