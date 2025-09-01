@@ -1067,8 +1067,8 @@ impl SubcommandGenerateGenesis {
 
         let secp = Secp256k1::new();
         let mut keys_file = File::create(&self.keys_out)?;
-        let mut alloc = BTreeMap::new();
         let balance = U256::from(self.balance);
+        let mut genesis = self.network.get_genesis()?;
 
         for _ in 0..self.num_accounts {
             let (secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
@@ -1076,7 +1076,7 @@ impl SubcommandGenerateGenesis {
 
             writeln!(keys_file, "{}", hex::encode(secret_key.secret_bytes()))?;
 
-            alloc.insert(
+            genesis.alloc.insert(
                 address,
                 GenesisAccount {
                     code: Bytes::new(),
@@ -1087,8 +1087,6 @@ impl SubcommandGenerateGenesis {
             );
         }
 
-        let mut genesis = self.network.get_genesis()?;
-        genesis.alloc = alloc;
 
         let file = BufWriter::new(File::create(&self.genesis_out)?);
         serde_json::to_writer_pretty(file, &genesis)?;
