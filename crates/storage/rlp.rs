@@ -4,12 +4,9 @@ use std::marker::PhantomData;
 use bytes::Bytes;
 use ethrex_common::{
     H256,
-    types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
-    },
+    types::{Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::Nibbles;
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
@@ -17,8 +14,6 @@ use libmdbx::orm::{Decodable, Encodable};
 pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
 pub type AccountHashRLP = Rlp<H256>;
-pub type AccountStateRLP = Rlp<AccountState>;
-pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;

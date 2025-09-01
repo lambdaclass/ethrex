@@ -471,7 +471,7 @@ impl Blockchain {
                 "".to_string()
             };
 
-            debug!("{}{}", base_log, extra_log);
+            info!("{}{}", base_log, extra_log);
         }
     }
 

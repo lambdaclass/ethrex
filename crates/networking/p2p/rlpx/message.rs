@@ -2,6 +2,11 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::snap::{
+    AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
+    StorageRanges, TrieNodes,
+};
+
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -12,10 +17,6 @@ use super::eth::update::BlockRangeUpdate;
 use super::l2::messages::{BatchSealed, L2Message, NewBlock};
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
-use super::snap::{
-    AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
-    StorageRanges, TrieNodes,
-};
 
 use ethrex_rlp::encode::RLPEncode;
 
@@ -31,7 +32,7 @@ pub trait RLPxMessage: Sized {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
 #[derive(Debug, Clone)]
-pub(crate) enum Message {
+pub enum Message {
     Hello(HelloMessage),
     Disconnect(DisconnectMessage),
     Ping(PingMessage),

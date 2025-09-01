@@ -16,9 +16,11 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
+use std::collections::HashSet;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
+    broadcast_pool: RwLock<HashSet<H256>>,
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
@@ -42,8 +44,39 @@ impl Mempool {
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert(hash, transaction);
+        self.broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert(hash);
 
         Ok(())
+    }
+
+    pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let txs = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
+            .map(|pool| {
+                pool.iter()
+                    .filter_map(|(hash, tx)| {
+                        if !self.broadcast_pool.read().ok()?.contains(hash) {
+                            None
+                        } else {
+                            Some(tx.clone())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+        Ok(txs)
+    }
+
+    pub fn clear_broadcasted_txs(&self) {
+        self.broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
+            .map(|mut pool| pool.clear())
+            .unwrap_or_default();
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
@@ -75,6 +108,10 @@ impl Mempool {
             .transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut broadcast_pool = self
+            .broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 self.blobs_bundle_pool
@@ -88,6 +125,7 @@ impl Mempool {
                 .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
                 .remove(&(tx.sender(), tx.nonce()));
             tx_pool.remove(hash);
+            broadcast_pool.remove(hash);
         };
 
         Ok(())
