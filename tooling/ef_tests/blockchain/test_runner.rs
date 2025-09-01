@@ -97,7 +97,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1);
+    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1, false);
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
