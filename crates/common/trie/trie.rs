@@ -378,6 +378,10 @@ impl Trie {
 
                 Box::new(InnerReader)
             }
+
+            fn put_batch(&self, _data: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+                Ok(())
+            }
         }
 
         impl TrieDbReader for NullTrieDB {

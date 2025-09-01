@@ -6,6 +6,10 @@ use std::{
 
 pub trait TrieDB: Send + Sync + TrieDbReader {
     fn read_tx<'a>(&'a self) -> Box<dyn 'a + TrieDbReader>;
+
+    fn put_batch(&self, _data: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        unimplemented!()
+    }
 }
 
 pub trait TrieDbReader {
@@ -42,15 +46,15 @@ impl TrieDB for InMemoryTrieDB {
         Box::new(InnerReader(self.inner.lock().expect("poisoned mutex")))
     }
 
-    // fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-    //     let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
-    //     for (key, value) in key_values {
-    //         db.insert(key, value);
-    //     }
+        for (key, value) in key_values {
+            db.insert(key, value);
+        }
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
 
 impl TrieDbReader for InMemoryTrieDB {
