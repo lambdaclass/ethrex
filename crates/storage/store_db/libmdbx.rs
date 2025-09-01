@@ -1585,16 +1585,24 @@ impl StoreEngine for Store {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    // Add reference count (initialize to 1 for nodes written during snap sync)
-                    // This should be done to match the behavior introduced with pruning
-                    // TODO: Are nodes always new? Should the refcount be 1 or count the number of times the node is written?
+                    // Add reference count, checking if node already exists and incrementing accordingly
+                    // This matches the behavior of normal storage trie node writes
+                    let mut refcnt = 1;
+                    if let Some(existing_node) = tx
+                        .get::<StorageTriesNodes>((key_1, key_2))
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        let bytes = existing_node[existing_node.len() - 8..].try_into().unwrap_or_default();
+                        refcnt += u64::from_be_bytes(bytes);
+                    }
                     tracing::debug!(
                         hashed_address = hex::encode(key_1),
                         node_hash = hex::encode(key_2),
                         original_len = node_data.len(),
+                        refcnt = refcnt,
                         "[SNAP SYNC] Adding reference count to storage trie node"
                     );
-                    node_data.extend_from_slice(&1u64.to_be_bytes());
+                    node_data.extend_from_slice(&refcnt.to_be_bytes());
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
