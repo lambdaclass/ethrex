@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756749597399,
+  "lastUpdate": 1756749985403,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10945,6 +10945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162275580668,
             "range": "± 370769480",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "75ab1026b1f03b9fc8b1f2360ed37a5505b7cd44",
+          "message": "docs(l1,l2): update `ethrex-replay` docs (#4214)\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-09-01T17:11:34Z",
+          "tree_id": "90bb99e0698824505c1091138b99566146ec69a9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/75ab1026b1f03b9fc8b1f2360ed37a5505b7cd44"
+        },
+        "date": 1756749967276,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161648797209,
+            "range": "± 332952768",
             "unit": "ns/iter"
           }
         ]
