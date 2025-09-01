@@ -55,6 +55,7 @@ pub async fn get_blockdata(
 
     let witness = match eth_client.get_witness(block_number.clone(), None).await {
         Ok(witness) => {
+            dbg!("asdasd");
             execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
                 .expect("Failed to convert witness")
         }

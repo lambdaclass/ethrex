@@ -51,7 +51,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
-    db: Box<dyn TrieDB>,
+    pub db: Box<dyn TrieDB>,
     root: NodeRef,
 }
 
@@ -269,6 +269,7 @@ impl Trie {
         // TODO: Try to remove this clone.
         let Some(root) = state_nodes.get(&root_hash).cloned() else {
             let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+            dbg!("ACA");
             return Ok(Trie::new(in_memory_trie));
         };
 

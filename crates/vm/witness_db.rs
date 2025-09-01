@@ -81,9 +81,11 @@ impl VmDatabase for ExecutionWitnessWrapper {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_storage_slot(address, key)
-            .map_err(|_| EvmError::DB("Failed get storage slot".to_string()))
+        dbg!(
+            self.lock_mutex()
+                .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+                .get_storage_slot(address, key)
+                .map_err(|_| EvmError::DB("Failed get storage slot".to_string()))
+        )
     }
 }

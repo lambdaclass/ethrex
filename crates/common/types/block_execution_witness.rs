@@ -11,6 +11,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{NodeHash, NodeRLP, Trie};
+use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -110,7 +111,7 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
+    pub fn rebuild_storage_trie(&mut self, address: &H160) -> Option<Trie> {
         let account_state_rlp = self
             .state_trie
             .as_ref()?
@@ -119,14 +120,12 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            self.state_nodes
-                .iter()
-                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
-                .collect(),
-        )
-        .ok()
+        let storage_nodes = self.storage_trie_nodes.get(address)?;
+        let mut nodes = HashMap::new();
+        for node in storage_nodes.iter() {
+            nodes.insert(NodeHash::Hashed(keccak(node)), node.clone());
+        }
+        Trie::from_nodes(NodeHash::Hashed(account_state.storage_root), nodes).ok()
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -335,8 +334,10 @@ impl ExecutionWitnessResult {
             };
 
             let Some(storage_trie) = self.rebuild_storage_trie(&address) else {
+                dbg!("None");
                 return Ok(None);
             };
+            dbg!("Some(storage_trie)");
 
             self.storage_tries.entry(address).or_insert(storage_trie)
         };
