@@ -27,23 +27,23 @@ REPLAY_BLOCK_COMPOSITION_ARGS = ${START_BLOCK} ${END_BLOCK} --rpc-url ${RPC_URL}
 # Execution only
 ## Block
 sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- execute block ${REPLAY_BLOCK_ARGS}
+	SP1_PROVER=cpu cargo r -r --features sp1 -- block --execute ${REPLAY_BLOCK_ARGS}
 sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- execute block ${REPLAY_BLOCK_ARGS}
+	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- block --execute ${REPLAY_BLOCK_ARGS}
 risc0:
-	cargo r -r --no-default-features --features risc0 -- execute block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --no-default-features --features risc0 -- block --execute ${REPLAY_BLOCK_ARGS}
 risc0-gpu:
-	cargo r -r --no-default-features --features "risc0,gpu" -- execute block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --no-default-features --features "risc0,gpu" -- block --execute ${REPLAY_BLOCK_ARGS}
 
 ## L2 Batch
 batch-sp1:
-	SP1_PROVER=cpu cargo r -r --features "sp1,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+	SP1_PROVER=cpu cargo r -r --features "sp1" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 batch-sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 batch-risc0:
-	cargo r -r --no-default-features --features "risc0,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+	cargo r -r --no-default-features --features "risc0" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 batch-risc0-gpu:
-	cargo r -r --no-default-features --features "risc0,gpu,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+	cargo r -r --no-default-features --features "risc0,gpu" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 
 ## Transaction
 transaction:
@@ -56,41 +56,41 @@ plot:
 # Proving
 ## Block
 prove-sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- prove block ${REPLAY_BLOCK_ARGS}
+	SP1_PROVER=cpu cargo r -r --features sp1 -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_BLOCK_ARGS}
+	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-sp1-gpu-ci:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_BLOCK_ARGS}
+	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-risc0:
-	cargo r -r --no-default-features --features risc0 -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --no-default-features --features risc0 -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-risc0-gpu:
-	cargo r -r --no-default-features --features "risc0,gpu" -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --no-default-features --features "risc0,gpu" -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-risc0-gpu-ci:
-	cargo r -r --no-default-features --features "risc0,gpu,ci" -- prove block ${REPLAY_BLOCK_ARGS}
+	cargo r -r --no-default-features --features "risc0,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
 
 ## L2 Batch
 prove-batch-sp1:
-	SP1_PROVER=cpu cargo r -r --features "sp1,l2" -- prove batch ${REPLAY_BATCH_ARGS}
+	SP1_PROVER=cpu cargo r -r --features "sp1" -- l2 batch --prove ${REPLAY_BATCH_ARGS}
 prove-batch-sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
+	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- l2 batch --prove ${REPLAY_BATCH_ARGS}
 prove-batch-risc0:
-	cargo r -r --no-default-features --features "risc0,l2" -- prove batch ${REPLAY_BATCH_ARGS}
+	cargo r -r --no-default-features --features "risc0" -- l2 batch --prove ${REPLAY_BATCH_ARGS}
 prove-batch-risc0-gpu:
-	cargo r -r --no-default-features --features "risc0,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
+	cargo r -r --no-default-features --features "risc0,gpu" -- l2 batch --prove ${REPLAY_BATCH_ARGS}
 
 ## Profile SP1 l1 block
 profile-sp1:
-	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,profiling" -- execute block  ${REPLAY_BLOCK_ARGS}
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,profiling" -- block --execute ${REPLAY_BLOCK_ARGS}
 ## Profile SP1 l2 batch
 profile-batch-sp1:
-	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,l2,profiling" -- execute batch ${REPLAY_BATCH_ARGS}
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,profiling" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 
 ## Profile risc0 l1 block
 profile-risc0:
-	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0" -- execute block  ${REPLAY_BLOCK_ARGS}
+	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0" -- block --execute  ${REPLAY_BLOCK_ARGS}
 ## Profile risc0 l2 block
 profile-batch-risc0:
-	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+	RISC0_PPROF_OUT=./profile.pb RUST_LOG=info RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release --features "risc0" -- l2 batch --execute ${REPLAY_BATCH_ARGS}
 
 help:
 	cargo r -r -- --help
