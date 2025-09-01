@@ -310,7 +310,9 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         timestamp: 0,
         config: chain_config,
         gas_limit: test.env.current_gas_limit,
-            .checked_div(7), // The base fee per gas in the genesis block must be set so that, after applying the base fee adjustment logic (as defined in EIP-1559 and implemented in `calculate_base_fee_per_gas`), the resulting base fee matches the expected value for the first block. The division by 7 is chosen to reverse the protocol's adjustment formula, ensuring the header passes validation according to the Ethereum specification.
+        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64()
+            * BASE_FEE_MAX_CHANGE_DENOMINATOR as u64)
+            .checked_div(7), // This was VERY carefully calculated so that the header passes validations in calculate_base_fee_per_gas
         excess_blob_gas: genesis_excess_blob_gas,
         ..Default::default()
     }
