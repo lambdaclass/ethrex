@@ -58,7 +58,6 @@ type Membatch = HashMap<MembatchKey, MembatchEntry>;
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
     peer_id: H256,
-    sent_time: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -246,7 +245,7 @@ pub async fn heal_storage_trie(
         )
         .await;
 
-        let result = requests_task_joinset.try_join_next();
+        let _ = requests_task_joinset.try_join_next();
 
         let trie_nodes_result = match task_receiver.try_recv() {
             Ok(trie_nodes) => trie_nodes,
@@ -286,7 +285,7 @@ pub async fn heal_storage_trie(
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
-            Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
+            Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 state
@@ -334,7 +333,6 @@ async fn ask_peers_for_nodes(
             InflightRequest {
                 requests: inflight_requests_data,
                 peer_id: peer.0,
-                sent_time: Instant::now(),
             },
         );
         let gtn = GetTrieNodes {
@@ -462,6 +460,7 @@ fn zip_requeue_node_responses_score_peer(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,

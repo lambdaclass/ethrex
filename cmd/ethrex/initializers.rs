@@ -35,7 +35,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
 };
@@ -115,9 +115,10 @@ pub fn init_blockchain(
     evm_engine: EvmEngine,
     store: Store,
     blockchain_type: BlockchainType,
+    perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store, blockchain_type).into()
+    info!(evm = %evm_engine, "Initiating blockchain");
+    Blockchain::new(evm_engine, store, blockchain_type, perf_logs_enabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -251,7 +252,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 
     bootnodes.extend(network.get_bootnodes());
 
-    info!("Reading known peers from config file");
+    debug!("Loading known peers from config");
 
     match read_node_config_file(data_dir) {
         Ok(Some(ref mut config)) => bootnodes.append(&mut config.known_peers),
@@ -313,7 +314,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = node.enode_url();
-    info!("Node: {enode}");
+    info!(enode = %enode, "Local node initialized");
 
     node
 }
@@ -380,7 +381,7 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1, true);
 
     let signer = get_signer(&data_dir);
 
