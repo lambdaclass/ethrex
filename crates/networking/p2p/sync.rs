@@ -828,12 +828,12 @@ impl Syncer {
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
                 let account_states_snapshot: Vec<(H256, AccountState)> =
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -962,15 +962,14 @@ impl Syncer {
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
                 let entry = entry.map_err(|err| {
-                    error!("Error while opening account_storages_snapshots_dir entry: {err}");
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 
                 let snapshot_path = entry.path();
 
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
                 let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
                     RLPDecode::decode(&snapshot_contents)
@@ -1275,8 +1274,8 @@ pub enum SyncError {
     BlockNumber(H256),
     #[error("No blocks found")]
     NoBlocks,
-    #[error("Failed to read snapshot from {0:?}")]
-    SnapshotReadError(PathBuf),
+    #[error("Failed to read snapshot from {0:?} with error {1:?}")]
+    SnapshotReadError(PathBuf, std::io::Error),
     #[error("Failed to RLP decode account_state_snapshot from {0:?}")]
     SnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
