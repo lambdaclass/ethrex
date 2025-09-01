@@ -512,10 +512,16 @@ mod tests {
                         "pragueTime": 1718232101,
                         "verkleTime": null,
                         "osakaTime": null,
+                        "bpo1Time": null,
+                        "bpo2Time": null,
+                        "bpo3Time": null,
+                        "bpo4Time": null,
+                        "bpo5Time": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
+                        "enableVerkleAtGenesis": false,
                     }
                 },
             }
