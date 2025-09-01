@@ -74,17 +74,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -199,17 +192,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
