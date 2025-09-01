@@ -268,7 +268,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
-    ) public onlyOnChainProposer override whenNotPaused {
+    ) public onlyOnChainProposer {
         require(
             number <= pendingTxHashes.length,
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
@@ -302,7 +302,7 @@ contract CommonBridge is
     function publishWithdrawals(
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
-    ) public onlyOnChainProposer override whenNotPaused {
+    ) public onlyOnChainProposer {
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
                 bytes32(0),
