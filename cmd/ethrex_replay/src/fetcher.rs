@@ -9,8 +9,11 @@ use ethrex_rpc::{
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::{Cache, L2Fields, load_cache, write_cache};
+use crate::cache::{Cache, load_cache, write_cache};
 use ethrex_config::networks::Network;
+
+#[cfg(feature = "l2")]
+use crate::cache::L2Fields;
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -210,6 +213,7 @@ pub async fn get_rangedata(
     Ok(cache)
 }
 
+#[cfg(feature = "l2")]
 pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
