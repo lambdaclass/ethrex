@@ -109,7 +109,7 @@ pub async fn archive_sync(
                     processing: dump_processor.get_checkpoint(),
                     reading: dump_reader.get_checkpoint(),
                 };
-                let checkpoint_file = File::create(&checkpoint_filename)?;
+                let checkpoint_file = File::create(checkpoint_filename)?;
                 serde_json::to_writer(checkpoint_file, &checkpoint)?;
             }
         }
