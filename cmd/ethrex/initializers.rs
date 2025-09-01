@@ -140,7 +140,6 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
     )
     .await;
 
