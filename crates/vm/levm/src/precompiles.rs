@@ -394,24 +394,35 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
     let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
 
+    if fork >= Fork::Osaka {
+        if base_size > U256::from(1024) {
+            return Err(PrecompileError::ModExpBaseTooLarge.into());
+        }
+        if exponent_size > U256::from(1024) {
+            return Err(PrecompileError::ModExpExpTooLarge.into());
+        }
+        if modulus_size > U256::from(1024) {
+            return Err(PrecompileError::ModExpModulusTooLarge.into());
+        }
+    }
+
+    // Defer converting to a U256 after the zero check.
+    let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
+    let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
+    const ZERO_BYTES: [u8; 32] = [0u8; 32];
+
+    if fork < Fork::Osaka && base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
+        // On Berlin or newer there is a floor cost for the modexp precompile
+        increase_precompile_consumed_gas(500, gas_remaining)?;
+        return Ok(Bytes::new());
+    }
+
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
     let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let exponent_size =
         usize::try_from(exponent_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
-
-    if fork >= Fork::Osaka {
-        if base_size > 1024 {
-            return Err(PrecompileError::ModExpBaseTooLarge.into());
-        }
-        if exponent_size > 1024 {
-            return Err(PrecompileError::ModExpExpTooLarge.into());
-        }
-        if modulus_size > 1024 {
-            return Err(PrecompileError::ModExpModulusTooLarge.into());
-        }
-    }
 
     let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
