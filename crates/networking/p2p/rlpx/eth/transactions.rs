@@ -73,10 +73,7 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
-    pub fn new(
-        transactions: Vec<Transaction>,
-        blockchain: &Blockchain,
-    ) -> Result<Self, StoreError> {
+    pub fn new(transactions: &[Transaction], blockchain: &Blockchain) -> Result<Self, StoreError> {
         let transactions_len = transactions.len();
         let mut transaction_types = Vec::with_capacity(transactions_len);
         let mut transaction_sizes = Vec::with_capacity(transactions_len);

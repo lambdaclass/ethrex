@@ -13,6 +13,7 @@
 ### 2025-08-28
 
 - Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+- Refactor P2P transaction broadcast filter [#4175](https://github.com/lambdaclass/ethrex/pull/4175)
 
 ### 2025-08-27
 

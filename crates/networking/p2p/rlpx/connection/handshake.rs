@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use super::{
     codec::RLPxCodec,
@@ -10,7 +6,7 @@ use super::{
 };
 use crate::{
     rlpx::{
-        connection::server::{Established, InnerState},
+        connection::server::{Established, InnerState, TxBcastState},
         error::RLPxError,
         l2::l2_connection::L2ConnState,
         utils::{
@@ -129,7 +125,7 @@ pub(crate) async fn perform(
             negotiated_eth_capability: None,
             negotiated_snap_capability: None,
             last_block_range_update_block: 0,
-            broadcasted_txs: HashSet::new(),
+            tx_bcast_state: TxBcastState::new(&context.blockchain.mempool),
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
