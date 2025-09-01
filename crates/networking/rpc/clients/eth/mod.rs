@@ -11,7 +11,7 @@ use crate::{
         block_identifier::{BlockIdentifier, BlockTag},
         receipt::{RpcLog, RpcReceipt},
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse, get_message_from_revert_data},
+    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use bytes::Bytes;
 use errors::{
@@ -296,14 +296,9 @@ impl EthClient {
             }
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
-            RpcResponse::Error(error_response) => Err(EstimateGasError::RPCError(format!(
-                "{}: {}",
-                error_response.error.message,
-                get_message_from_revert_data(
-                    &error_response.error.data.unwrap_or("0x".to_string())
-                )?
-            ))
-            .into()),
+            RpcResponse::Error(error_response) => {
+                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
+            }
         }
     }
 
