@@ -28,7 +28,7 @@ use crate::{
         },
         eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         message::Message as RLPxMessage,
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
+        p2p::{Capability, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
     },
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
@@ -347,11 +347,6 @@ impl PeerHandler {
 
         let mut ret = Vec::<BlockHeader>::new();
 
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
-
         let mut sync_head_number = 0_u64;
 
         let sync_head_number_retrieval_start = SystemTime::now();
@@ -434,11 +429,6 @@ impl PeerHandler {
             tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
 
         let mut current_show = 0;
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-            peers_table
-                .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
-        );
 
         // 3) create tasks that will request a chunk of headers from a peer
 
@@ -460,20 +450,15 @@ impl PeerHandler {
                 *METRICS.header_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
 
-                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.total_header_downloaders.lock().await = self.peers_info.lock().await.len() as u64;
             }
 
             if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
+                self.mark_peer_as_free(peer_id).await;
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
-
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true; // mark the downloader as free
-                    });
-
-                    debug!("Downloader {peer_id} freed");
 
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
@@ -516,11 +501,6 @@ impl PeerHandler {
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true; // mark the downloader as free
-                });
-                debug!("Downloader {peer_id} freed");
             }
 
             let available_downloader = self.get_random_available_downloader().await;
@@ -566,9 +546,10 @@ impl PeerHandler {
             }
         }
 
+        let downloaders_count = self.peers_info.lock().await.len() as u64;
         *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
-        *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_header_downloaders.lock().await = downloaders_count;
+        *METRICS.total_header_downloaders.lock().await = downloaders_count;
         *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
 
         let elapsed = start_time.elapsed().unwrap_or_default();
