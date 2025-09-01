@@ -128,7 +128,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery side car: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone())
+    RLPxInitiator::spawn(context.clone()) // todo add tx broadcaster handle
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");

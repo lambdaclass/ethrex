@@ -802,7 +802,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     // Mark as broadcasted for the sender so we don't include it in the next
                     // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
                     // For broadcast itself, `handle_broadcast` filters by task id already.
-                    state.broadcasted_txs.insert(tx.hash());
+                    state.broadcasted_txs.insert(tx.hash()); //todo remove
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
@@ -817,7 +817,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         &state.node,
                         &format!("Broadcasted {} transactions to peers", valid_txs.len()),
                     );
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
+                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?; // Change to tx broadcaster
                 }
             }
         }
@@ -941,6 +941,7 @@ async fn handle_broadcast(
     (id, broadcasted_msg): (task::Id, Arc<Message>),
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
+        //todo refactor to an outside message to be called by tx broadcaster instead of broadcast
         match broadcasted_msg.as_ref() {
             Message::Transactions(txs) => {
                 let peer_sqrt = (state.connection_broadcast_send.receiver_count() as f64).sqrt();
