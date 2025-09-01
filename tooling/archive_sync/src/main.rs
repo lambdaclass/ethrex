@@ -532,10 +532,10 @@ impl DumpIpcReader {
 
 /// Set the starting hash for dump reads to the next hash on the latest dump written to a file
 /// Can be used to resume a previously aborted archive sync process.
-/// However, it will only be able to resume state download to file and not state rebuilding for the node
+/// However, it will only be able to resume state download to file and not state rebuilding for the node.
 /// Will only work if the dump processor is a pure file writter and the dump reader is an IPC reader
 /// These conditions should have been checked by the CLI.
-/// Does not ensure in any way that the block used in the previous sync matche sthe current block
+/// Does not ensure in any way that the block used in the previous sync matches the current block
 fn continue_from_latest_file_dump(
     dump_processor: &mut DumpProcessor,
     dump_reader: &mut DumpReader,
