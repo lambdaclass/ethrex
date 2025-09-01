@@ -9,7 +9,7 @@ use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
@@ -169,7 +169,40 @@ impl EthrexReplayCommand {
 
                 let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
-                run_and_measure(replay(cache, &opts), opts.bench).await?;
+                let block = cache.blocks.first().cloned().ok_or_else(|| {
+                    eyre::Error::msg("no block found in the cache, this should never happen")
+                })?;
+
+                let start = SystemTime::now();
+
+                let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+
+                let replayer_mode = replayer_mode(opts.execute);
+
+                let block_run_report = BlockRunReport::new_for(
+                    block,
+                    network.clone(),
+                    block_run_result,
+                    replayer_mode.clone(),
+                    start.elapsed()?,
+                );
+
+                block_run_report.log();
+
+                if opts.to_csv {
+                    let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
+
+                    let mut file = std::fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(file_name)?;
+
+                    file.write_all(block_run_report.to_csv().as_bytes())?;
+
+                    file.write_all(b"\n")?;
+
+                    file.flush()?;
+                }
             }
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -177,10 +210,6 @@ impl EthrexReplayCommand {
                 }
 
                 blocks.sort();
-
-                let (eth_client, network) = setup(&opts, false).await?;
-
-                let replayer_mode = replayer_mode(opts.execute);
 
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
@@ -190,13 +219,7 @@ impl EthrexReplayCommand {
                         blocks.len()
                     );
 
-                    let block = eth_client
-                        .get_raw_block(BlockIdentifier::Number(*block_number))
-                        .await?;
-
-                    let start = SystemTime::now();
-
-                    let res = Box::pin(async {
+                    Box::pin(async {
                         Self::Block(BlockOptions {
                             block: Some(*block_number),
                             opts: opts.clone(),
@@ -204,38 +227,7 @@ impl EthrexReplayCommand {
                         .run()
                         .await
                     })
-                    .await;
-
-                    let elapsed = start.elapsed().unwrap_or_default();
-
-                    let block_run_report = BlockRunReport::new_for(
-                        block,
-                        network.clone(),
-                        res,
-                        replayer_mode.clone(),
-                        elapsed,
-                    );
-
-                    if block_run_report.run_result.is_err() {
-                        error!("{block_run_report}");
-                    } else {
-                        info!("{block_run_report}");
-                    }
-
-                    if opts.to_csv {
-                        let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-                        let mut file = std::fs::OpenOptions::new()
-                            .append(true)
-                            .create(true)
-                            .open(file_name)?;
-
-                        file.write_all(block_run_report.to_csv().as_bytes())?;
-
-                        file.write_all(b"\n")?;
-
-                        file.flush()?;
-                    }
+                    .await?;
                 }
             }
             Self::BlockRange(BlockRangeOptions { start, end, opts }) => {
