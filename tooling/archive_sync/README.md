@@ -78,3 +78,13 @@ If we don't need the node to be synced (for example if we plan to move the state
 ```bash
  cargo run --release BLOCK_NUMBER --input_dir STATE_DUMP_DIR
 ```
+
+## Resuming archive sync after crashes
+
+If the node crashes mid-sync there is little we can (currenlty) do to resume state rebuilding as we would have lost track of the intermediate state root. However, it is possible to resume the file-writing portion of the archive sync from the latest written file by using:
+
+```bash
+ cargo run --release BLOCK_NUMBER --ipc_path IPC_PATH --output_dir STATE_DUMP_DIR --no_sync --continued
+```
+
+This command will continue reading state from an archive node's ipc and dumping it to files from the latest downloaded dump without rebuilding the state in the node's DB. Please ensure you use the same block number as the previously aborted sync to avoid state inconsistencies.

@@ -252,6 +252,7 @@ impl DumpProcessor {
     /// Process incoming state dump by either writing it to a file and/or using it to rebuild the partial state
     /// Will fail if the incoming dump's state root differs from the previously processed dump
     async fn process_dump(&mut self, dump: Dump) -> eyre::Result<bool> {
+        let instant = Instant::now();
         // Sanity check
         if *self.state_root.get_or_insert(dump.state_root) != dump.state_root {
             return Err(eyre::ErrReport::msg(
@@ -265,13 +266,12 @@ impl DumpProcessor {
         }
         // Process dump
         if let Some((current_root, store)) = self.sync_state.as_mut() {
-            let instant = Instant::now();
             *current_root = process_dump(dump, store.clone(), *current_root).await?;
-            info!(
-                "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
-                mseconds_to_readable(instant.elapsed().as_millis())
-            );
         }
+        info!(
+            "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
+            mseconds_to_readable(instant.elapsed().as_millis())
+        );
         Ok(should_continue)
     }
 
