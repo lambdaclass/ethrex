@@ -267,10 +267,10 @@ impl Trie {
         mut state_nodes: HashMap<NodeHash, NodeRLP>,
     ) -> Result<Self, TrieError> {
         // TODO: Try to remove this clone.
-        let Some(root) = state_nodes.get(&root_hash).cloned() else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
-            return Ok(Trie::new(in_memory_trie));
-        };
+        let root_rlp = state_nodes
+            .get(&root_hash)
+            .cloned()
+            .expect("Trie should have root hash");
 
         fn inner(
             storage: &mut HashMap<NodeHash, Vec<u8>>,
@@ -284,6 +284,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
+                            println!("Going to remove {:?}", hash);
                             *choice = match storage.remove(&hash) {
                                 Some(rlp) => inner(storage, &rlp)?.into(),
                                 None => hash.into(),
@@ -298,6 +299,7 @@ impl Trie {
                         unreachable!()
                     };
 
+                    println!("Going to remove {:?}", hash);
                     node.child = match storage.remove(&hash) {
                         Some(rlp) => inner(storage, &rlp)?.into(),
                         None => hash.into(),
@@ -309,7 +311,8 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut state_nodes, &root)?.into();
+        let root = inner(&mut state_nodes, &root_rlp)?.into();
+        state_nodes.shrink_to_fit();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
