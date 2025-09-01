@@ -165,7 +165,9 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let (eth_client, network) = setup(&opts, false).await?;
+                let l2 = false;
+
+                let (eth_client, network) = setup(&opts, l2).await?;
 
                 let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
@@ -175,7 +177,7 @@ impl EthrexReplayCommand {
 
                 let start = SystemTime::now();
 
-                let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+                let block_run_result = run_and_measure(replay(cache, &opts, l2), opts.bench).await;
 
                 let replayer_mode = replayer_mode(opts.execute);
 
@@ -360,7 +362,7 @@ impl EthrexReplayCommand {
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
-                run_and_measure(replay(cache, &opts), opts.bench).await?;
+                run_and_measure(replay(cache, &opts, true), opts.bench).await?;
             }
         }
 
@@ -375,13 +377,13 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
     Ok((eth_client, network))
 }
 
-async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+async fn replay(cache: Cache, opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
     if opts.execute {
-        exec(BACKEND, cache).await?;
+        exec(BACKEND, cache, l2).await?;
     } else {
-        prove(BACKEND, cache).await?;
+        prove(BACKEND, cache, l2).await?;
     }
 
     Ok(gas_used)

@@ -16,8 +16,10 @@ ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
-zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }
-ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
+zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", features = [
+    "l2",
+] }
+ethrex-prover = { path = "../../crates/l2/prover", features = ["l2"] }
 
 serde.workspace = true
 hex.workspace = true
@@ -39,7 +41,6 @@ jemallocator = { version = "0.5.4", optional = true }
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
-l2 = ["zkvm_interface/l2", "ethrex-prover/l2"]
 profiling = ["ethrex-prover/profiling"]
 ci = []
 jemalloc = ["dep:jemallocator"]
