@@ -260,6 +260,52 @@ impl GenServer for Downloader {
 
                 return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
             }
+            DownloaderCallRequest::BlockBodies { block_hashes } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+                    id: request_id,
+                    block_hashes: block_hashes.clone(),
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                }
+
+                if let Some(block_bodies) =
+                    tokio::time::timeout(BLOCK_BODIES_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::BlockBodies(BlockBodies {
+                                    id,
+                                    block_bodies,
+                                })) if id == request_id => {
+                                    return Some(block_bodies);
+                                }
+                                // Ignore replies that don't match the expected id (such as late responses)
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|bodies| {
+                        // Check that the response is not empty and does not contain more bodies than the ones requested
+                        (!bodies.is_empty() && bodies.len() <= block_hashes.len()).then_some(bodies)
+                    })
+                {
+                    return CallResponse::Stop(DownloaderCallResponse::BlockBodies(block_bodies));
+                }
+
+                return CallResponse::Stop(DownloaderCallResponse::NotFound);
+            }
             _ => todo!(),
         }
     }
