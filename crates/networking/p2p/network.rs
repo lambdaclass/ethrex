@@ -393,7 +393,13 @@ pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        let total_peers = peers.len();
+        info!(
+            snap_active_peers,
+            active_peers,
+            total_peers,
+            "Peer stats updated"
+        );
         interval.tick().await;
     }
 }
