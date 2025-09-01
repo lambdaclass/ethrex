@@ -1,4 +1,11 @@
-use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
+use std::{
+    cmp::max,
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_blockchain::{
@@ -7,8 +14,11 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
-    Address, H256,
-    types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt},
+    Address, Bytes, H256, U256,
+    types::{
+        AccountUpdate, Block, ELASTICITY_MULTIPLIER, GenesisAccount, Receipt,
+        payload::PayloadBundle,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
@@ -915,4 +925,210 @@ pub async fn produce_custom_l2_block(
     apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
 
     Ok(new_block)
+}
+
+#[derive(Parser)]
+pub struct SubcommandGenerateGenesis {
+    #[arg(
+        long,
+        help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+        value_parser = clap::value_parser!(Network),
+        default_value_t = Network::default(),
+    )]
+    network: Network,
+    #[arg(long, help = "Number of accounts to generate.")]
+    num_accounts: u64,
+    #[arg(
+        long,
+        help = "Balance for each account.",
+        default_value_t = 1_000_000_000_000_000_000_000_000
+    )]
+    balance: u128,
+    #[arg(
+        long,
+        help = "Output path for the genesis file.",
+        default_value = "genesis.json"
+    )]
+    genesis_out: PathBuf,
+    #[arg(
+        long,
+        help = "Output path for the private keys file.",
+        default_value = "keys.txt"
+    )]
+    keys_out: PathBuf,
+}
+
+use secp256k1::{PublicKey, Secp256k1};
+use sha3::{Digest, Keccak256};
+impl SubcommandGenerateGenesis {
+    pub async fn run(self) -> eyre::Result<()> {
+        println!(
+            "Generating genesis file with {} accounts...",
+            self.num_accounts
+        );
+
+        let secp = Secp256k1::new();
+        let mut keys_file = File::create(&self.keys_out)?;
+        let mut alloc = BTreeMap::new();
+        let balance = U256::from(self.balance);
+
+        for _ in 0..self.num_accounts {
+            let (secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
+            let address = public_key_to_address(&public_key);
+
+            writeln!(keys_file, "{}", hex::encode(secret_key.secret_bytes()))?;
+
+            alloc.insert(
+                address,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: HashMap::new(),
+                    balance,
+                    nonce: 0,
+                },
+            );
+        }
+
+        let mut genesis = self.network.get_genesis()?;
+        genesis.alloc = alloc;
+
+        let file = BufWriter::new(File::create(&self.genesis_out)?);
+        serde_json::to_writer_pretty(file, &genesis)?;
+
+        println!(
+            "Successfully generated genesis file '{}' and keys file '{}'",
+            self.genesis_out.display(),
+            self.keys_out.display()
+        );
+
+        Ok(())
+    }
+}
+
+fn public_key_to_address(public_key: &PublicKey) -> Address {
+    let public_key = public_key.serialize_uncompressed();
+    let hash = Keccak256::digest(&public_key[1..]);
+    Address::from_slice(&hash[12..])
+}
+
+#[derive(Subcommand)]
+pub enum EthrexReplayCommand {
+    #[command(
+        subcommand,
+        about = "Execute blocks, ranges of blocks, or individual transactions."
+    )]
+    Execute(SubcommandExecute),
+    #[command(
+        subcommand,
+        about = "Proves blocks, ranges of blocks, or individual transactions."
+    )]
+    Prove(SubcommandProve),
+    #[command(about = "Plots the composition of a range of blocks.")]
+    BlockComposition {
+        #[arg(help = "Starting block. (Inclusive)")]
+        start: usize,
+        #[arg(help = "Ending block. (Inclusive)")]
+        end: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
+            value_parser = clap::value_parser!(Network),
+            default_value_t = Network::default(),
+        )]
+        network: Network,
+    },
+    #[command(
+        subcommand,
+        about = "Store the state prior to the execution of the block"
+    )]
+    Cache(SubcommandCache),
+    #[command(subcommand, about = "Custom block or batch")]
+    Custom(SubcommandCustom),
+    #[command(about = "Generate a custom genesis file.")]
+    GenerateGenesis(SubcommandGenerateGenesis),
+}
+
+pub async fn start() -> eyre::Result<()> {
+    let EthrexReplayCLI { command } = EthrexReplayCLI::parse();
+
+    match command {
+        EthrexReplayCommand::Execute(cmd) => cmd.run().await?,
+        EthrexReplayCommand::Prove(cmd) => cmd.run().await?,
+        EthrexReplayCommand::BlockComposition {
+            start,
+            end,
+            rpc_url,
+            network,
+        } => {
+            if start >= end {
+                return Err(eyre::Error::msg(
+                    "starting point can't be greater than ending point",
+                ));
+            }
+            let eth_client = EthClient::new(&rpc_url)?;
+            let cache = get_rangedata(eth_client, network, start, end).await?;
+            plot(cache).await?;
+        }
+        EthrexReplayCommand::Cache(cmd) => cmd.run().await?,
+        EthrexReplayCommand::Custom(cmd) => cmd.run().await?,
+        EthrexReplayCommand::GenerateGenesis(cmd) => cmd.run().await?,
+    };
+    Ok(())
+}
+
+fn get_total_gas_used(blocks: &[Block]) -> f64 {
+    blocks.iter().map(|b| b.header.gas_used).sum::<u64>() as f64
+}
+
+fn or_latest(maybe_number: Option<usize>) -> eyre::Result<BlockIdentifier> {
+    Ok(match maybe_number {
+        Some(n) => BlockIdentifier::Number(n.try_into()?),
+        None => BlockIdentifier::Tag(BlockTag::Latest),
+    })
+}
+
+fn print_transition(update: AccountUpdate) {
+    println!("Account {:x}", update.address);
+    if update.removed {
+        println!("  Account deleted.");
+    }
+    if let Some(info) = update.info {
+        println!("  Updated AccountInfo:");
+        println!("    New balance: {}", info.balance);
+        println!("    New nonce: {}", info.nonce);
+        println!("    New codehash: {:#x}", info.code_hash);
+        if let Some(code) = update.code {
+            println!("    New code: {}", hex::encode(code));
+        }
+    }
+    if !update.added_storage.is_empty() {
+        println!("  Updated Storage:");
+    }
+    for (key, value) in update.added_storage {
+        println!("    {key:#x} = {value:#x}");
+    }
+}
+
+fn print_receipt(receipt: Receipt) {
+    if receipt.succeeded {
+        println!("Transaction succeeded.")
+    } else {
+        println!("Transaction failed.")
+    }
+    println!("  Transaction type: {:?}", receipt.tx_type);
+    println!("  Gas used: {}", receipt.cumulative_gas_used);
+    if !receipt.logs.is_empty() {
+        println!("  Logs: ");
+    }
+    for log in receipt.logs {
+        let formatted_topics = log.topics.iter().map(|v| format!("{v:#x}"));
+        println!(
+            "    - {:#x} ({}) => {:#x}",
+            log.address,
+            formatted_topics.collect::<Vec<String>>().join(", "),
+            log.data
+        );
+    }
 }
