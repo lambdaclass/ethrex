@@ -111,9 +111,9 @@ pub struct EthrexReplayOptions {
 #[derive(Parser)]
 pub struct BlockOptions {
     #[arg(long, help = "Block to use. Uses the latest if not specified.")]
-    block: Option<u64>,
+    pub block: Option<u64>,
     #[command(flatten)]
-    opts: EthrexReplayOptions,
+    pub opts: EthrexReplayOptions,
 }
 
 #[derive(Parser)]
@@ -405,7 +405,7 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-fn replayer_mode(execute: bool) -> ReplayerMode {
+pub fn replayer_mode(execute: bool) -> ReplayerMode {
     if execute {
         #[cfg(feature = "sp1")]
         return ReplayerMode::ExecuteSP1;
