@@ -1,8 +1,7 @@
 use crate::types::Node;
-use ethrex_common::{Address, H256, H512};
+use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
-use secp256k1::{Message as SignedMessage, ecdsa::RecoveryId};
 use secp256k1::{PublicKey, SecretKey};
 use sha3::{Digest, Keccak256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
@@ -92,26 +91,6 @@ pub(crate) fn log_peer_error(node: &Node, text: &str) {
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     warn!("[{0}]: {1}", node, text)
-}
-
-pub fn recover_address(
-    recovery_id: u8,
-    signature: &[u8; 64],
-    payload: [u8; 32],
-) -> Result<Address, CryptographyError> {
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        signature,
-        RecoveryId::from_i32(recovery_id.into()).expect("Invalid recovery ID"), // cannot fail
-    )
-    .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))?;
-
-    // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&SignedMessage::from_digest(payload), &signature)
-        .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))?;
-    // Hash public key to obtain address
-    let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-    Ok(Address::from_slice(&hash[12..]))
 }
 
 #[cfg(test)]

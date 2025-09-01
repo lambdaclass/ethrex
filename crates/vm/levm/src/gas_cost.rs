@@ -8,7 +8,8 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork};
-use num_bigint::BigUint;
+use malachite::base::num::logic::traits::*;
+use malachite::{Natural, base::num::basic::traits::Zero as _};
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -774,34 +775,50 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
-    let mut i = U256::one();
+/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
+/// https://eips.ethereum.org/EIPS/eip-4844#helpers
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
+    if denominator == 0 {
+        return Err(InternalError::DivisionByZero.into());
+    }
+
+    if numerator.is_zero() {
+        return Ok(factor);
+    }
+
     let mut output: U256 = U256::zero();
+    let denominator_u256: U256 = denominator.into();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
-        .checked_mul(denominator)
+        .checked_mul(denominator_u256)
         .ok_or(InternalError::Overflow)?;
 
-    while !numerator_accum.is_zero() {
-        // Safe addition to output
-        output = output
-            .checked_add(numerator_accum)
-            .ok_or(InternalError::Overflow)?;
+    let mut denominator_by_i = denominator_u256;
 
-        // Safe multiplication and division within loop
-        numerator_accum = numerator_accum
-            .checked_mul(numerator)
-            .ok_or(InternalError::Overflow)?
-            .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
-            .ok_or(InternalError::DivisionByZero)?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division can't overflow since denominator is not 0"
+    )]
+    {
+        while !numerator_accum.is_zero() {
+            // Safe addition to output
+            output = output
+                .checked_add(numerator_accum)
+                .ok_or(InternalError::Overflow)?;
 
-        i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
+            // Safe multiplication and division within loop
+            numerator_accum = numerator_accum
+                .checked_mul(numerator)
+                .ok_or(InternalError::Overflow)?
+                / denominator_by_i;
+
+            // denominator comes from a u64 value, will never overflow before other variables.
+            denominator_by_i += denominator_u256;
+        }
+
+        Ok(output / denominator)
     }
-
-    output
-        .checked_div(denominator)
-        .ok_or(InternalError::DivisionByZero.into())
 }
 
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
@@ -817,7 +834,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent_first_32_bytes: &BigUint,
+    exponent_first_32_bytes: &Natural,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
@@ -840,9 +857,9 @@ pub fn modexp(
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGas)?;
 
     let calculate_iteration_count =
-        if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+        if exponent_size <= 32 && *exponent_first_32_bytes != Natural::ZERO {
             exponent_first_32_bytes
-                .bits()
+                .significant_bits()
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?
         } else if exponent_size > 32 {
@@ -852,7 +869,7 @@ pub fn modexp(
             .checked_mul(8)
             .ok_or(OutOfGas)?;
             extra_size
-                .checked_add(exponent_first_32_bytes.bits().max(1))
+                .checked_add(exponent_first_32_bytes.significant_bits().max(1))
                 .ok_or(OutOfGas)?
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?

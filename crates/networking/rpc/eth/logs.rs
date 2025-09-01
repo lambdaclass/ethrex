@@ -152,7 +152,7 @@ pub(crate) async fn fetch_logs_with_filter(
         // Since transactions share indices with their receipts,
         // we'll use them to fetch their receipts, which have the actual logs.
         for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.compute_hash();
+            let tx_hash = tx.hash();
             let receipt = storage
                 .get_receipt(block_num, tx_index as u64)
                 .await?

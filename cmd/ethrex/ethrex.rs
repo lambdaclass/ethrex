@@ -4,7 +4,8 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, store_node_config_file},
 };
-use ethrex_p2p::{kademlia::KademliaTable, types::NodeRecord};
+use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_p2p::types::NodeRecord;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -40,6 +41,7 @@ async fn main() -> eyre::Result<()> {
     init_tracing(&opts);
 
     let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
+
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
     tokio::select! {

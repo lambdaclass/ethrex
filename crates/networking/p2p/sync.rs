@@ -36,15 +36,15 @@ use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of bach to start a bytecode fetch request in queues
+const MIN_FULL_BLOCKS: u32 = 64;
+/// Max size of batch to start a bytecode fetch request in queues
 const BYTECODE_BATCH_SIZE: usize = 70;
-/// Max size of a bach to start a storage fetch request in queues
+/// Max size of a batch to start a storage fetch request in queues
 const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
+/// Max size of a batch to start a node fetch request in queues
 const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue
-const MAX_PARALLEL_FETCHES: usize = 10;
+const MAX_PARALLEL_FETCHES: u32 = 10;
 /// Maximum amount of messages in a channel
 const MAX_CHANNEL_MESSAGES: usize = 500;
 /// Maximum amount of messages to read from a channel at once
@@ -283,7 +283,9 @@ impl Syncer {
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
                 let all_block_hashes = block_sync_state.into_snap_block_hashes();
-                let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
+                let pivot_idx = all_block_hashes
+                    .len()
+                    .saturating_sub(MIN_FULL_BLOCKS as usize);
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
@@ -315,8 +317,9 @@ impl Syncer {
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
                     self.blockchain.add_block(&block).await?;
-                    store.set_canonical_block(block_number, *hash).await?;
-                    store.update_latest_block_number(block_number).await?;
+                    store
+                        .forkchoice_update(None, block_number, *hash, None, None)
+                        .await?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
@@ -557,13 +560,12 @@ impl FullBlockSyncState {
                 .collect();
             // Copy some values for later
             let blocks_len = block_batch.len();
-            let numbers_and_hashes = block_batch
+            let mut numbers_and_hashes = block_batch
                 .iter()
                 .map(|b| (b.header.number, b.hash()))
                 .collect::<Vec<_>>();
             let (last_block_number, last_block_hash) = numbers_and_hashes
-                .last()
-                .cloned()
+                .pop()
                 .ok_or(SyncError::InvalidRangeReceived)?;
             let (first_block_number, first_block_hash) = numbers_and_hashes
                 .first()
@@ -591,10 +593,13 @@ impl FullBlockSyncState {
             }
             // Mark chain as canonical & last block as latest
             self.store
-                .mark_chain_as_canonical(&numbers_and_hashes)
-                .await?;
-            self.store
-                .update_latest_block_number(last_block_number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    last_block_number,
+                    last_block_hash,
+                    None,
+                    None,
+                )
                 .await?;
 
             let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;

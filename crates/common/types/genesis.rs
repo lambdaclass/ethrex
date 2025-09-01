@@ -2,6 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -15,7 +16,10 @@ use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
-use crate::constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH};
+use crate::{
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    rkyv_utils,
+};
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -86,16 +90,20 @@ impl TryFrom<&Path> for Genesis {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
-    pub target: u64,
-    pub max: u64,
+    pub target: u32,
+    pub max: u32,
     pub base_fee_update_fraction: u64,
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobSchedule {
     #[serde(default = "default_cancun_schedule")]
@@ -131,7 +139,18 @@ fn default_prague_schedule() -> ForkBlobSchedule {
 
 /// Blockchain settings defined per block
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    Default,
+    PartialEq,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainConfig {
     /// Current chain identifier
@@ -167,6 +186,7 @@ pub struct ChainConfig {
     pub cancun_time: Option<u64>,
     pub prague_time: Option<u64>,
     pub verkle_time: Option<u64>,
+    pub osaka_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
@@ -175,6 +195,7 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
 }
@@ -233,6 +254,10 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
+        self.osaka_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
         self.prague_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -259,7 +284,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_osaka_activated(block_timestamp) {
+            Fork::Osaka
+        } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
         } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
