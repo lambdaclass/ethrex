@@ -78,6 +78,15 @@ impl RLPxInitiator {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
 
+        {
+            // Temporary block to disable looking up
+            info!(
+                "Eating new connections, current peer_number: {}",
+                peer_number,
+            );
+            return true;
+        }
+
         if self.last_log_time.elapsed() > self.lookup_interval {
             info!(
                 "Resetting list of tried peers. Current peers {}",
