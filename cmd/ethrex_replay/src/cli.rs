@@ -1,20 +1,29 @@
-use std::{io::Write, time::SystemTime};
+use std::{cmp::max, io::Write, time::SystemTime};
 
 use clap::{Parser, Subcommand};
+use ethrex_blockchain::{
+    Blockchain, BlockchainType,
+    fork_choice::apply_fork_choice,
+    payload::{BuildPayloadArgs, create_payload},
+};
 use ethrex_common::{
-    H256,
-    types::{AccountUpdate, Block, Receipt},
+    Address, H256,
+    types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
 };
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EvmEngine;
 use reqwest::Url;
 use tracing::info;
 
+use crate::bench::run_and_measure;
+#[cfg(feature = "l2")]
+use crate::fetcher::get_batchdata;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
-use crate::{bench::run_and_measure, fetcher::get_batchdata};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -68,18 +77,24 @@ pub enum EthrexReplayCommand {
         about = "Store the state prior to the execution of the block"
     )]
     Cache(CacheSubcommand),
+    #[command(subcommand, about = "Replay a custom block or batch")]
+    Custom(CustomSubcommand),
     #[command(about = "Replay a single transaction")]
     Transaction(TransactionOpts),
+    #[cfg(feature = "l2")]
     #[command(subcommand, about = "L2 specific commands")]
     L2(L2Subcommand),
 }
 
+#[cfg(feature = "l2")]
 #[derive(Subcommand)]
 pub enum L2Subcommand {
     #[command(about = "Replay an L2 transaction")]
     Transaction(TransactionOpts),
     #[command(about = "Replay an L2 batch")]
     Batch(BatchOptions),
+    #[command(subcommand, about = "Replay a custom L2 block or batch")]
+    Custom(CustomSubcommand),
 }
 
 #[derive(Parser)]
@@ -90,6 +105,14 @@ pub enum CacheSubcommand {
     Blocks(BlocksOptions),
     #[command(about = "Cache a range of blocks")]
     BlockRange(BlockRangeOptions),
+}
+
+#[derive(Parser)]
+pub enum CustomSubcommand {
+    #[command(about = "Replay a single custom block")]
+    Block(EthrexReplayOptions),
+    #[command(about = "Replay a single custom batch")]
+    Batch(CustomBatchOptions),
 }
 
 #[derive(Parser, Clone)]
@@ -149,10 +172,19 @@ pub struct TransactionOpts {
     opts: EthrexReplayOptions,
 }
 
+#[cfg(feature = "l2")]
 #[derive(Parser)]
 pub struct BatchOptions {
     #[arg(long, help = "Batch number to use.")]
     batch: u64,
+    #[command(flatten)]
+    opts: EthrexReplayOptions,
+}
+
+#[derive(Parser)]
+pub struct CustomBatchOptions {
+    #[arg(long, help = "Number of blocks to include in the batch.")]
+    n_blocks: u64,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -291,6 +323,24 @@ impl EthrexReplayCommand {
 
                 info!("Block from {start} to {end} data cached successfully.");
             }
+            Self::Custom(CustomSubcommand::Block(opts)) => {
+                let elapsed = replay_custom_l1_blocks(1, &opts).await?;
+
+                if opts.execute {
+                    println!("Successfully executed block in {elapsed:.2} seconds.");
+                } else if opts.prove {
+                    println!("Successfully proved block in {elapsed:.2} seconds.");
+                }
+            }
+            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, opts })) => {
+                let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
+
+                if opts.execute {
+                    println!("Successfully executed batch in {elapsed:.2} seconds.");
+                } else if opts.prove {
+                    println!("Successfully proved batch in {elapsed:.2} seconds.");
+                }
+            }
             Self::Transaction(TransactionOpts { tx_hash, opts, l2 }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
@@ -337,17 +387,12 @@ impl EthrexReplayCommand {
 
                 plot(cache).await?;
             }
+            #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Transaction(TransactionOpts {
                 tx_hash,
                 opts,
                 l2: _,
             })) => {
-                if cfg!(not(feature = "l2")) {
-                    return Err(eyre::Error::msg(
-                        "Please enable the `l2` feature to use L2 functionalities.",
-                    ));
-                }
-
                 Box::pin(async {
                     EthrexReplayCommand::Transaction(TransactionOpts {
                         tx_hash,
@@ -359,13 +404,8 @@ impl EthrexReplayCommand {
                 })
                 .await?;
             }
+            #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
-                if cfg!(not(feature = "l2")) {
-                    return Err(eyre::Error::msg(
-                        "Please enable the `l2` feature to use L2 functionalities.",
-                    ));
-                }
-
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
@@ -375,6 +415,29 @@ impl EthrexReplayCommand {
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
+            }
+            #[cfg(feature = "l2")]
+            Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(opts))) => {
+                let elapsed = replay_custom_l2_blocks(1, &opts).await?;
+
+                if opts.execute {
+                    println!("Successfully executed L2 block in {elapsed:.2} seconds.");
+                } else if opts.prove {
+                    println!("Successfully proved L2 block in {elapsed:.2} seconds.");
+                }
+            }
+            #[cfg(feature = "l2")]
+            Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(CustomBatchOptions {
+                n_blocks,
+                opts,
+            }))) => {
+                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
+
+                if opts.execute {
+                    println!("Successfully executed L2 batch in {elapsed:.2} seconds.");
+                } else if opts.prove {
+                    println!("Successfully proved L2 batch in {elapsed:.2} seconds.");
+                }
             }
         }
 
@@ -488,4 +551,209 @@ fn print_receipt(receipt: Receipt) {
             log.data
         );
     }
+}
+
+pub async fn replay_custom_l1_blocks(
+    n_blocks: u64,
+    opts: &EthrexReplayOptions,
+) -> eyre::Result<f64> {
+    let network = Network::LocalDevnet;
+
+    let genesis = network.get_genesis()?;
+
+    let mut store = {
+        let store_inner = Store::new("./", EngineType::InMemory)?;
+        store_inner.add_initial_state(genesis.clone()).await?;
+        store_inner
+    };
+
+    let mut blockchain = Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1, false);
+
+    let blocks = produce_l1_blocks(
+        &mut blockchain,
+        &mut store,
+        genesis.get_block().hash(),
+        genesis.timestamp + 12,
+        n_blocks,
+    )
+    .await?;
+
+    let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
+
+    let cache = Cache::new(blocks, execution_witness);
+
+    let start = SystemTime::now();
+
+    run_and_measure(replay(cache, opts), false).await?;
+
+    let elapsed = start.elapsed()?.as_secs_f64();
+
+    Ok(elapsed)
+}
+
+pub async fn produce_l1_blocks(
+    blockchain: &mut Blockchain,
+    store: &mut Store,
+    head_block_hash: H256,
+    initial_timestamp: u64,
+    n_blocks: u64,
+) -> eyre::Result<Vec<Block>> {
+    let mut blocks = Vec::new();
+    let mut current_parent_hash = head_block_hash;
+    let mut current_timestamp = initial_timestamp;
+
+    for _ in 0..=n_blocks {
+        let block =
+            produce_l1_block(blockchain, store, current_parent_hash, current_timestamp).await?;
+        current_parent_hash = block.hash();
+        current_timestamp += 12; // Assuming an average block time of 12 seconds
+        blocks.push(block);
+    }
+
+    Ok(blocks)
+}
+
+pub async fn produce_l1_block(
+    blockchain: &mut Blockchain,
+    store: &mut Store,
+    head_block_hash: H256,
+    timestamp: u64,
+) -> eyre::Result<Block> {
+    let build_payload_args = BuildPayloadArgs {
+        parent: head_block_hash,
+        timestamp,
+        fee_recipient: Address::zero(),
+        random: H256::zero(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::zero()),
+        version: 3,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    };
+
+    let payload = create_payload(&build_payload_args, store)?;
+
+    let payload_id = build_payload_args.id()?;
+
+    store.add_payload(payload_id, payload).await?;
+
+    let incompleted_payload_bundle = store
+        .get_payload(payload_id)
+        .await?
+        .expect("Storage returned None for existing payload");
+
+    let payload_build_result = blockchain
+        .build_payload(incompleted_payload_bundle.block)
+        .await?;
+
+    let completed_payload_bundle = PayloadBundle {
+        block: payload_build_result.payload,
+        block_value: payload_build_result.block_value,
+        blobs_bundle: payload_build_result.blobs_bundle,
+        requests: payload_build_result.requests,
+        completed: true,
+    };
+
+    store
+        .update_payload(payload_id, completed_payload_bundle.clone())
+        .await?;
+
+    let final_payload = store
+        .get_payload(payload_id)
+        .await?
+        .expect("Storage returned None for existing payload");
+
+    blockchain.add_block(&final_payload.block).await?;
+
+    let new_block_hash = final_payload.block.hash();
+
+    apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
+
+    Ok(completed_payload_bundle.block)
+}
+
+#[cfg(feature = "l2")]
+use ethrex_blockchain::validate_block;
+#[cfg(feature = "l2")]
+use ethrex_l2::sequencer::block_producer::build_payload;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
+#[cfg(feature = "l2")]
+use ethrex_vm::BlockExecutionResult;
+#[cfg(feature = "l2")]
+use std::sync::Arc;
+
+#[cfg(feature = "l2")]
+pub async fn replay_l2_blocks() {
+    todo!()
+}
+
+#[cfg(feature = "l2")]
+pub async fn produce_l2_blocks() {
+    todo!()
+}
+
+#[cfg(feature = "l2")]
+pub async fn produce_l2_block(
+    blockchain: Arc<Blockchain>,
+    store: &mut Store,
+    rollup_store: &StoreRollup,
+    head_block_hash: H256,
+    timestamp: u64,
+) -> eyre::Result<Block> {
+    let build_payload_args = BuildPayloadArgs {
+        parent: head_block_hash,
+        timestamp,
+        fee_recipient: Address::zero(),
+        random: H256::zero(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::zero()),
+        version: 3,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    };
+
+    let payload = create_payload(&build_payload_args, store)?;
+
+    let payload_build_result =
+        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+
+    let new_block = payload_build_result.payload;
+
+    let chain_config = store.get_chain_config()?;
+
+    validate_block(
+        &new_block,
+        &store
+            .get_block_header_by_hash(new_block.header.parent_hash)?
+            .ok_or(eyre::Error::msg("Parent block header not found"))?,
+        &chain_config,
+        build_payload_args.elasticity_multiplier,
+    )?;
+
+    let account_updates = payload_build_result.account_updates;
+
+    let execution_result = BlockExecutionResult {
+        receipts: payload_build_result.receipts,
+        requests: Vec::new(),
+    };
+
+    let account_updates_list = store
+        .apply_account_updates_batch(new_block.header.parent_hash, &account_updates)
+        .await?
+        .ok_or(eyre::Error::msg(
+            "Failed to apply account updates: parent block not found",
+        ))?;
+
+    blockchain
+        .store_block(&new_block, account_updates_list, execution_result)
+        .await?;
+
+    rollup_store
+        .store_account_updates_by_block_number(new_block.header.number, account_updates)
+        .await?;
+
+    let new_block_hash = new_block.hash();
+
+    apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
+
+    Ok(new_block)
 }
