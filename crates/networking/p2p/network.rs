@@ -31,7 +31,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
@@ -350,7 +350,7 @@ pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockch
             (*downloaded_bytecodes as f64 / *total_bytecodes_to_download as f64) * 100.0
         };
 
-        info!(
+        debug!(
             r#"
 P2P:
 ====
