@@ -10,7 +10,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeHash, NodeRLP, Trie};
+use ethrex_trie::{Node, NodeHash, NodeRLP, NodeRef, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -117,14 +117,80 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            self.state_nodes
-                .iter()
-                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
-                .collect(),
-        )
-        .ok()
+        println!(
+            "Account storage root {} - {}",
+            account_state.storage_root,
+            hex::encode(account_state.storage_root),
+        );
+
+        let (key, value) = self
+            .state_nodes
+            .iter()
+            .find(|(k, v)| **k == account_state.storage_root)
+            .unwrap();
+
+        let mut algo: HashMap<NodeHash, Vec<u8>> = vec![(NodeHash::Hashed(*key), value.clone())]
+            .into_iter()
+            .collect();
+
+        fn inner(
+            storage: &mut HashMap<NodeHash, Vec<u8>>,
+            node: &NodeRLP,
+            algo: &mut HashMap<NodeHash, Vec<u8>>,
+        ) -> Node {
+            let node_hash = Keccak256::digest(node);
+            algo.insert(
+                NodeHash::Hashed(H256::from_slice(&node_hash)),
+                node.to_vec(),
+            );
+            let node = Node::decode_raw(node).unwrap();
+
+            // algo.insert(k, node);
+            match node {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        // println!("  {:?}", hash);
+
+                        if hash.is_valid() {
+                            *choice = match storage.remove(&hash) {
+                                Some(rlp) => inner(storage, &rlp, algo).into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    println!("Children: {:?}", hash);
+
+                    node.child = match storage.remove(&hash) {
+                        Some(rlp) => inner(storage, &rlp, algo).into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            }
+        }
+
+        let mut clone_nodes = self
+            .state_nodes
+            .iter()
+            .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
+            .collect();
+        inner(&mut clone_nodes, value, &mut algo);
+
+        Trie::from_nodes(NodeHash::Hashed(account_state.storage_root), algo).ok()
     }
 
     /// Helper function to apply account updates to the execution witness

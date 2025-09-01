@@ -310,7 +310,6 @@ impl Trie {
         }
 
         let root = inner(&mut state_nodes, &root_rlp)?.into();
-        state_nodes.shrink_to_fit();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
