@@ -16,6 +16,7 @@ use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
+use super::peer_score::PeerScores;
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
@@ -60,7 +61,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: Kademlia,
-    pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
+    pub peer_scores: Arc<Mutex<PeerScores>>,
 }
 
 pub enum BlockRequestOrder {
