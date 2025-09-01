@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756732626107,
+  "lastUpdate": 1756735413005,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10825,6 +10825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159327707599,
             "range": "± 385797761",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "09c6defb6a6ef47c606fd5587017f94d602764c1",
+          "message": "perf(levm): process JUMPDEST gas and pc together within the given JUMP/JUMPI opcode (#4220)\n\n**Motivation**\n\nIt's basically #3763 without the nop slide, see the discussion there. \nIt only skips 1 jumpdest if coming from a jump, but doesn't slide if\nthere are a lot of sequential jumpdests afterwards.\n\nStill has improvements overall to a lot of benches\n\n<img width=\"1405\" height=\"4352\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/88748fd2-f2b0-436b-bed0-33d163779872\"\n/>\n\n---------\n\nCo-authored-by: Esteve Soler Arderiu <azteca1998@users.noreply.github.com>",
+          "timestamp": "2025-09-01T13:13:26Z",
+          "tree_id": "fec9b49c82dd96b65f59a03d14b35b21470b218e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09c6defb6a6ef47c606fd5587017f94d602764c1"
+        },
+        "date": 1756735397852,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161416072105,
+            "range": "± 332115861",
             "unit": "ns/iter"
           }
         ]
