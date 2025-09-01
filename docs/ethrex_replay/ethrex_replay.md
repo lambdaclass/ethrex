@@ -54,32 +54,42 @@ sp1up --version 5.0.8
 
 ### Installation
 
-#### From Source
-
-> [!IMPORTANT]
-> The following instructions show how to install the tool without features. In the section below, we list the available features and how to enable them during installation.
-
-**Build for L1 CPU execution/proving**
+#### From Cargo
 
 ```
-git clone git@github.com:lambdaclass/ethrex.git
+# L1 Replay
 
-cd ethrex
+## Install without features for vanilla execution (no prover backend)
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay
 
-cargo install --locked --path ./cmd/ethrex_replay
-```
+## Install for CPU execution/proving with SP1
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features sp1
 
-**Build for L1 GPU execution/proving with SP1**
+## Install for CPU execution/proving with RISC0
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features risc0
 
-> [!WARNING]
-> Building with GPU support requires a CUDA-capable GPU and the CUDA toolkit installed.
+## Install for GPU execution/proving with SP1
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features sp1,gpu
 
-```
-git clone git@github.com:lambdaclass/ethrex.git
+## Install for GPU execution/proving with RISC0
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features risc0,gpu
 
-cd ethrex
+# L2 Replay
 
-cargo install --locked --path ./cmd/ethrex_replay --features gpu
+## Install without features for vanilla execution (no prover backend)
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features l2
+
+## Install for CPU execution/proving with SP1
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features l2,sp1
+
+## Install for CPU execution/proving with RISC0
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features l2,risc0
+
+## Install for GPU execution/proving with SP1
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features l2,sp1,gpu
+
+## Install for GPU execution/proving with RISC0
+cargo install --locked --git https://github.com/lambdaclass/ethrex.git ethrex-replay --features l2,risc0,gpu
 ```
 
 ### Run from Source
