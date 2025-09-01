@@ -188,6 +188,12 @@ pub struct ChainConfig {
     pub verkle_time: Option<u64>,
     pub osaka_time: Option<u64>,
 
+    pub bpo1_time: Option<u64>,
+    pub bpo2_time: Option<u64>,
+    pub bpo3_time: Option<u64>,
+    pub bpo4_time: Option<u64>,
+    pub bpo5_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
     /// Network has already passed the terminal total difficult
@@ -198,6 +204,9 @@ pub struct ChainConfig {
     #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
+
+    #[serde(default)]
+    pub enable_verkle_at_genesis: bool,
 }
 
 #[repr(u8)]
