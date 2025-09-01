@@ -1,9 +1,8 @@
 use crate::{
     cli::Options,
-    info_box::display_chain_initialization,
     utils::{
-        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
-        read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
+        read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};

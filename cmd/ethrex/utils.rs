@@ -1,7 +1,7 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     sync::SyncMode,
@@ -190,4 +190,20 @@ pub fn get_client_version() -> String {
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
+}
+
+pub fn display_chain_initialization(genesis: &Genesis) {
+    let border = "═".repeat(70);
+
+    info!("{border}");
+    info!("NETWORK CONFIGURATION");
+    info!("{border}");
+
+    for line in genesis.config.display_config().lines() {
+        info!("{line}");
+    }
+
+    let hash = genesis.get_block().hash();
+    info!("Genesis Block Hash: {hash:x}");
+    info!("{border}");
 }
