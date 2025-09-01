@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
-use rocksdb::{ColumnFamily, DB};
+use rocksdb::{ColumnFamily, DB, DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.

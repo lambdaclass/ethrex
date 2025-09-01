@@ -8,7 +8,7 @@ use ethrex_common::{
     utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options, WriteBatch};
+use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use std::sync::Arc;
 
 use crate::{
@@ -50,11 +50,30 @@ impl Store {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        // Performance configurations similar to libmdbx setup
-        db_options.set_max_open_files(1000);
+        // Optimized performance configurations for blockchain data
+        db_options.set_max_open_files(-1); // Unlimited
         db_options.set_use_fsync(false);
-        db_options.set_bytes_per_sync(1048576);
+        db_options.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
+        db_options.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
         db_options.set_disable_auto_compactions(false);
+
+        // Memory management
+        db_options.set_write_buffer_size(256 * 1024 * 1024); // 256MB
+        db_options.set_max_write_buffer_number(6);
+        db_options.set_min_write_buffer_number_to_merge(2);
+        db_options.set_max_bytes_for_level_base(1024 * 1024 * 1024); // 1GB
+        db_options.set_max_bytes_for_level_multiplier(10.0);
+
+        // Compaction settings
+        db_options.set_level_compaction_dynamic_level_bytes(true);
+        db_options.set_max_background_jobs(8);
+
+        // Bloom filter for better read performance
+        db_options.set_bloom_locality(1);
+
+        // WAL settings for durability vs performance balance
+        db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
+        db_options.set_max_total_wal_size(512 * 1024 * 1024); // 512MB
 
         // Column families matching libmdbx tables
         let column_families = vec![
@@ -78,7 +97,43 @@ impl Store {
         let mut cf_descriptors = Vec::new();
         for cf_name in column_families {
             let mut cf_opts = Options::default();
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+            // Optimized per column family based on data patterns
+            match cf_name {
+                CF_HEADERS | CF_BODIES => {
+                    // Block data - larger values, infrequent updates
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(4);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+                }
+                CF_CANONICAL_BLOCK_HASHES | CF_BLOCK_NUMBERS => {
+                    // Frequently accessed small values
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                }
+                CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
+                    // Trie nodes - many small writes, read heavy
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                    // Enable bloom filter for trie lookups
+                    let mut block_opts = rocksdb::BlockBasedOptions::default();
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                _ => {
+                    // Default for other CFs
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                }
+            }
+
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
@@ -89,7 +144,7 @@ impl Store {
     }
 
     // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<&ColumnFamily, StoreError> {
+    fn cf_handle(&self, cf_name: &str) -> Result<&rocksdb::ColumnFamily, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
@@ -195,124 +250,154 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let db = self.db.clone();
 
-        for (node_hash, node_data) in update_batch.account_updates {
-            batch_ops.push((
-                CF_STATE_TRIE_NODES.to_string(),
-                node_hash.as_ref().to_vec(),
-                node_data,
-            ));
-        }
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
 
-        for (address_hash, storage_updates) in update_batch.storage_updates {
-            for (node_hash, node_data) in storage_updates {
-                // For storage tries, use address_hash + node_hash as key
-                let mut key = address_hash.as_bytes().to_vec();
-                key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
+            // Process account updates
+            if let Some(cf_state) = db.cf_handle(CF_STATE_TRIE_NODES) {
+                for (node_hash, node_data) in update_batch.account_updates {
+                    batch.put_cf(cf_state, node_hash.as_ref(), node_data);
+                }
             }
-        }
 
-        for block in update_batch.blocks {
-            let block_hash = block.hash();
-            let block_number = block.header.number;
-
-            batch_ops.push((
-                CF_HEADERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                BlockHeaderRLP::from(block.header.clone()).bytes().clone(),
-            ));
-
-            batch_ops.push((
-                CF_BODIES.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                BlockBodyRLP::from(block.body.clone()).bytes().clone(),
-            ));
-
-            batch_ops.push((
-                CF_BLOCK_NUMBERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                block_number.encode_to_vec(),
-            ));
-
-            batch_ops.push((
-                CF_CANONICAL_BLOCK_HASHES.to_string(),
-                block_number.encode_to_vec(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-            ));
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                let location_key = tx_hash.as_bytes().to_vec();
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push((
-                    CF_TRANSACTION_LOCATIONS.to_string(),
-                    location_key,
-                    location_value,
-                ));
+            // Process storage updates
+            if let Some(cf_storage) = db.cf_handle(CF_STORAGE_TRIES_NODES) {
+                for (address_hash, storage_updates) in update_batch.storage_updates {
+                    for (node_hash, node_data) in storage_updates {
+                        let mut key = address_hash.as_bytes().to_vec();
+                        key.extend_from_slice(node_hash.as_ref());
+                        batch.put_cf(cf_storage, key, node_data);
+                    }
+                }
             }
-        }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                batch_ops.push((CF_RECEIPTS.to_string(), key, value));
+            // Process blocks
+            let cf_headers = db.cf_handle(CF_HEADERS);
+            let cf_bodies = db.cf_handle(CF_BODIES);
+            let cf_block_numbers = db.cf_handle(CF_BLOCK_NUMBERS);
+            let cf_canonical = db.cf_handle(CF_CANONICAL_BLOCK_HASHES);
+            let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
+
+            for block in update_batch.blocks {
+                let block_hash = block.hash();
+                let block_number = block.header.number;
+
+                if let Some(cf) = cf_headers {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
+                    batch.put_cf(cf, hash_key, header_value);
+                }
+
+                if let Some(cf) = cf_bodies {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
+                    batch.put_cf(cf, hash_key, body_value);
+                }
+
+                if let Some(cf) = cf_block_numbers {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let number_value = block_number.encode_to_vec();
+                    batch.put_cf(cf, hash_key, number_value);
+                }
+
+                if let Some(cf) = cf_canonical {
+                    let number_key = block_number.encode_to_vec();
+                    let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
+                    batch.put_cf(cf, number_key, hash_value);
+                }
+
+                if let Some(cf) = cf_tx_locations {
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        let tx_hash = transaction.hash();
+                        let location_key = tx_hash.as_bytes();
+                        let location_value =
+                            (block_number, block_hash, index as u64).encode_to_vec();
+                        batch.put_cf(cf, location_key, location_value);
+                    }
+                }
             }
-        }
 
-        for (code_hash, code) in update_batch.code_updates {
-            batch_ops.push((
-                CF_ACCOUNT_CODES.to_string(),
-                code_hash.as_bytes().to_vec(),
-                AccountCodeRLP::from(code).bytes().clone(),
-            ));
-        }
+            // Process receipts
+            if let Some(cf_receipts) = db.cf_handle(CF_RECEIPTS) {
+                for (block_hash, receipts) in update_batch.receipts {
+                    for (index, receipt) in receipts.into_iter().enumerate() {
+                        let key = (block_hash, index as u64).encode_to_vec();
+                        let value = receipt.encode_to_vec();
+                        batch.put_cf(cf_receipts, key, value);
+                    }
+                }
+            }
 
-        self.write_batch_async(batch_ops).await
+            // Process code updates
+            if let Some(cf_codes) = db.cf_handle(CF_ACCOUNT_CODES) {
+                for (code_hash, code) in update_batch.code_updates {
+                    let code_key = code_hash.as_bytes();
+                    let code_value = AccountCodeRLP::from(code).bytes().clone();
+                    batch.put_cf(cf_codes, code_key, code_value);
+                }
+            }
+
+            // Single write operation
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let db = self.db.clone();
 
-        for block in blocks {
-            let block_hash = block.hash();
-            let block_number = block.header.number;
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
 
-            batch_ops.push((
-                CF_HEADERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                BlockHeaderRLP::from(block.header.clone()).bytes().clone(),
-            ));
+            let cf_headers = db.cf_handle(CF_HEADERS);
+            let cf_bodies = db.cf_handle(CF_BODIES);
+            let cf_block_numbers = db.cf_handle(CF_BLOCK_NUMBERS);
+            let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
 
-            batch_ops.push((
-                CF_BODIES.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                BlockBodyRLP::from(block.body.clone()).bytes().clone(),
-            ));
+            for block in blocks {
+                let block_hash = block.hash();
+                let block_number = block.header.number;
 
-            batch_ops.push((
-                CF_BLOCK_NUMBERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                block_number.encode_to_vec(),
-            ));
+                if let Some(cf) = cf_headers {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
+                    batch.put_cf(cf, hash_key, header_value);
+                }
 
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                let location_key = tx_hash.as_bytes().to_vec();
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push((
-                    CF_TRANSACTION_LOCATIONS.to_string(),
-                    location_key,
-                    location_value,
-                ));
+                if let Some(cf) = cf_bodies {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
+                    batch.put_cf(cf, hash_key, body_value);
+                }
+
+                if let Some(cf) = cf_block_numbers {
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let number_value = block_number.encode_to_vec();
+                    batch.put_cf(cf, hash_key, number_value);
+                }
+
+                if let Some(cf) = cf_tx_locations {
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        let tx_hash = transaction.hash();
+                        let location_key = tx_hash.as_bytes();
+                        let location_value =
+                            (block_number, block_hash, index as u64).encode_to_vec();
+                        batch.put_cf(cf, location_key, location_value);
+                    }
+                }
             }
-        }
 
-        self.write_batch_async(batch_ops).await
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn add_block_header(
