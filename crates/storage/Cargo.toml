@@ -10,6 +10,7 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-trie.workspace = true
 
+nix = { version = "0.30.1", features = ["fs"] }
 async-trait.workspace = true
 ethereum-types.workspace = true
 anyhow = "1.0.86"

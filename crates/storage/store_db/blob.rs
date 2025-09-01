@@ -6,8 +6,12 @@ use std::{
     collections::BTreeMap,
     fs::File,
     io::{BufWriter, Write},
+    os::{
+        fd::AsFd,
+        unix::fs::{FileExt, MetadataExt},
+    },
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, atomic::AtomicU64},
 };
 use tracing::{info, warn};
 
@@ -58,19 +62,23 @@ use crate::{AccountUpdatesList, UpdateBatch, error::StoreError};
 #[derive(Debug)]
 pub struct BlobDbEngine {
     writer: Mutex<File>,
-    reader: Mutex<Bytes>,
+    reader: Arc<File>,
+    length: AtomicU64,
 }
 
 pub struct BlobDbRoTxn {
-    reader: Bytes,
+    // FIXME: get_account_info can be made 25% faster if not cloning the reader.
+    // Use a reference or Arc.
+    reader: Arc<File>,
+    length: u64,
     root: NodeHandle,
 }
 
-pub struct BlobDbRwTxn<'w> {
-    ro: BlobDbRoTxn,
-    guard: MutexGuard<'w, File>,
-    buffer: BufWriter<File>,
-}
+// pub struct BlobDbRwTxn<'w> {
+//     ro: BlobDbRoTxn,
+//     guard: MutexGuard<'w, File>,
+//     buffer: BufWriter<File>,
+// }
 
 trait BlobCodec: Sized {
     fn encode(&self, w: impl std::io::Write) -> Result<u64, StoreError>;
@@ -347,10 +355,12 @@ impl BlobDbEngine {
             None => tempfile::tempfile(),
         }
         .map_err(|e| StoreError::Custom(format!("open error: {e}")))?;
-        let reader = unsafe { MmapOptions::new().populate().map(&writer).expect("") };
+        let reader = writer.try_clone().expect("");
+        let length = writer.metadata().expect("").size();
         Ok(Self {
             writer: Mutex::new(writer),
-            reader: Mutex::new(Bytes::from_owner(reader)),
+            reader: Arc::new(reader),
+            length: AtomicU64::new(length),
         })
     }
     pub fn open_state_trie(
@@ -359,7 +369,8 @@ impl BlobDbEngine {
         root_handle: NodeHandle,
     ) -> Result<Trie, StoreError> {
         let trie_db = BlobDbRoTxn {
-            reader: self.reader.lock().expect("").clone(),
+            reader: self.reader.clone(),
+            length: self.length.load(std::sync::atomic::Ordering::Relaxed),
             root: root_handle,
         };
         Ok(Trie::open(Box::new(trie_db), root_hash, root_handle))
@@ -403,7 +414,8 @@ impl BlobDbEngine {
         //     "OPEN STORAGE TRIE"
         // );
         let trie_db = BlobDbRoTxn {
-            reader: self.reader.lock().expect("").clone(),
+            reader: self.reader.clone(),
+            length: self.length.load(std::sync::atomic::Ordering::Relaxed),
             root: storage_root_handle,
         };
         Ok(Trie::open(
@@ -475,9 +487,8 @@ impl BlobDbEngine {
         //     }
         // }
         let mut writer_lock = self.writer.lock().expect("");
+        let mut offset = self.length.load(std::sync::atomic::Ordering::Relaxed);
         let writer = &mut *writer_lock;
-        let reader = self.reader.lock().expect("").clone();
-        let mut offset = reader.len() as u64;
 
         // Discard any incomplete operation
         writer
@@ -610,6 +621,8 @@ impl BlobDbEngine {
         buffer.flush().expect("");
         let writer = buffer.into_inner().expect("");
         writer.sync_data().expect("");
+        self.length
+            .store(offset, std::sync::atomic::Ordering::Relaxed);
         // FIXME: attempt remap without move first on Linux.
         // How? Store in an Arc instead and use get_mut_unchecked.
         // This works because without may_move the mapping either starts in the same
@@ -620,17 +633,17 @@ impl BlobDbEngine {
         // madvise, with or without range
         // Node cache
         // Buffer pool
-        let map = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
-        map.advise(
-            memmap2::Advice::WillNeed, // memmap2::Advice::Random
-        )
-        .expect("");
+        // let map = unsafe { MmapOptions::new().populate().map(&*writer).expect("") };
+        // map.advise(
+        //     memmap2::Advice::WillNeed, // memmap2::Advice::Random
+        // )
+        // .expect("");
         // FIXME: this unmap takes a long time, longer than mapping and advising.
         // Check if simple reads suffice or if something else is needed.
         // Maybe implement remap manually by mapping with fixed offsets the missing part?
-        let new_reader = Bytes::from_owner(map);
-        let len = new_reader.len() as u64;
-        *self.reader.lock().expect("") = new_reader;
+        // let new_reader = Bytes::from_owner(map);
+        // let len = new_reader.len() as u64;
+        // *self.reader.lock().expect("") = new_reader;
 
         let code_updates = account_updates
             .iter()
@@ -639,7 +652,7 @@ impl BlobDbEngine {
             .collect();
 
         Ok(Some(AccountUpdatesList {
-            trie_version: len,
+            trie_version: offset,
             state_trie_root_hash,
             state_trie_root_handle: *offsets.last().expect(""),
             code_updates,
@@ -647,19 +660,9 @@ impl BlobDbEngine {
     }
 }
 
-impl BlobDbRoTxn {
-    pub fn new_empty() -> Self {
-        let engine = BlobDbEngine::open(Option::<String>::None, 0).expect("");
-        Self {
-            root: NodeHandle(0),
-            reader: engine.reader.lock().expect("").clone(),
-        }
-    }
-}
-
 impl TrieDB for BlobDbRoTxn {
     fn get(&self, NodeHandle(offset): NodeHandle) -> Result<Option<Node>, TrieError> {
-        if self.reader.len() as u64 <= offset {
+        if self.length <= offset {
             // info!(
             //     handle = hex::encode(offset.to_be_bytes()),
             //     length = hex::encode(self.reader.len().to_be_bytes()),
@@ -674,8 +677,13 @@ impl TrieDB for BlobDbRoTxn {
         //     status = "TO DECODE",
         //     "TRIEDB GET"
         // );
-        let after = &self.reader[offset as usize..];
-        let node = Node::decode(after).map_err(|e| TrieError::DbError(anyhow::anyhow!(e)))?;
+        let mut buffer = [0u8; 1024];
+        let len = self
+            .reader
+            .read_at(&mut buffer, offset)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!(e)))?;
+        let node =
+            Node::decode(&buffer[..len]).map_err(|e| TrieError::DbError(anyhow::anyhow!(e)))?;
         Ok(Some(node))
     }
     fn get_path(&self, path: Nibbles) -> Result<Option<Node>, TrieError> {
@@ -685,12 +693,12 @@ impl TrieDB for BlobDbRoTxn {
         let mut node = self.get(self.root)?;
         let mut path = &path.data[..];
         while !path.is_empty() && path[0] != 16 {
-            let node_type = match node {
-                None => "NONE",
-                Some(Branch(_)) => "BRANCH",
-                Some(Extension(_)) => "EXTENSION",
-                Some(Leaf(_)) => "LEAF",
-            };
+            // let node_type = match node {
+            //     None => "NONE",
+            //     Some(Branch(_)) => "BRANCH",
+            //     Some(Extension(_)) => "EXTENSION",
+            //     Some(Leaf(_)) => "LEAF",
+            // };
             // info!(
             //     path = hex::encode(path),
             //     node_type = node_type,

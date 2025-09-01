@@ -1202,7 +1202,7 @@ impl Store {
     // Internal methods, archive sync tool, snap sync and some command
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         if state_root == *EMPTY_TRIE_HASH {
-            return Ok(Trie::new(Box::new(BlobDbRoTxn::new_empty())));
+            return Ok(Trie::stateless());
         }
         let root_handle = self
             .engine
@@ -1226,7 +1226,7 @@ impl Store {
         account_hash: H256,
     ) -> Result<Trie, StoreError> {
         if state_root == *EMPTY_TRIE_HASH {
-            return Ok(Trie::new(Box::new(BlobDbRoTxn::new_empty())));
+            return Ok(Trie::stateless());
         }
         let root_handle = self
             .engine
