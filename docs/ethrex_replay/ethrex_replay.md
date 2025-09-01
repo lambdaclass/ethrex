@@ -233,7 +233,7 @@ TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay <COMMAND> [ARGS]
 
 > [!IMPORTANT]
 >
-> 1. The following requires [Jemalloc](https://github.com/jemalloc/jemalloc) and to be installed.
+> 1. The following requires [Jemalloc](https://github.com/jemalloc/jemalloc) and [Bytehound](https://github.com/koute/bytehound) to be installed.
 > 2. The `ethrex-replay` binary must be built with the `jemalloc` feature enabled.
 
 ```
