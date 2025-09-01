@@ -648,8 +648,8 @@ fn load_checkpoint(
         }
         // Warn and request user approval before resuming a sync process with --no_sync flag
         if no_sync && checkpoint.processing.current_root.is_some() {
-            print!(
-                "Previous archive sync started a state sync, are you sure you want to continue with --no_sync? Please type `confirm`\n"
+            println!(
+                "Previous archive sync started a state sync, are you sure you want to continue with --no_sync? Please type `confirm`"
             );
             io::stdout().flush()?;
             let mut input = String::new();
@@ -660,8 +660,8 @@ fn load_checkpoint(
         }
         // Warn and request user approval before resuming a sync process that wrote state to files without --output_dir
         if !file_output && checkpoint.processing.current_file.is_some() {
-            print!(
-                "Previous archive sync downloaded state to files, are you sure you want to continue without an output_dir? Please type `confirm`\n"
+            println!(
+                "Previous archive sync downloaded state to files, are you sure you want to continue without an output_dir? Please type `confirm`"
             );
             io::stdout().flush()?;
             let mut input = String::new();
