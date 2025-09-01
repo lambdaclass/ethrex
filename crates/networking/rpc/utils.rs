@@ -96,7 +96,9 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: Some(data.clone()),
                 message: format!(
                     "execution reverted: {}",
-                    get_message_from_revert_data(&data).unwrap_or("unknown error".to_string())
+                    get_message_from_revert_data(&data).unwrap_or_else(|err| format!(
+                        "tried to decode error from abi but failed: {err}"
+                    ))
                 ),
             },
             RpcErr::Halt { reason, gas_used } => RpcErrorMetadata {
