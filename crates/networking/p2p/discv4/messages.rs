@@ -27,11 +27,13 @@ pub enum PacketDecodeErr {
     HashMismatch,
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Discv4 decoding error: {0}")]
+    Discv4DecodingError(String),
 }
 
-impl Into<std::io::Error> for PacketDecodeErr {
-    fn into(self) -> std::io::Error {
-        std::io::Error::new(ErrorKind::InvalidData, self.to_string())
+impl From<PacketDecodeErr> for std::io::Error {
+    fn from(error: PacketDecodeErr) -> Self {
+        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
     }
 }
 

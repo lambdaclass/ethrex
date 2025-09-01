@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::{H512, U256};
+use futures::{SinkExt as _, StreamExt, stream::SplitSink};
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -61,6 +62,13 @@ pub struct DiscoveryServer {
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
+    sink: Option<
+        Arc<
+            Mutex<
+                SplitSink<UdpFramed<Discv4Codec, Arc<UdpSocket>>, (Message, std::net::SocketAddr)>,
+            >,
+        >,
+    >,
     kademlia: Kademlia,
 }
 
@@ -83,10 +91,11 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket,
+            sink: None,
             kademlia: kademlia.clone(),
         };
 
-        info!("Pinging {} bootnodes", bootnodes.len());
+        info!("Adding {} bootnodes", bootnodes.len());
 
         let mut table = kademlia.table.lock().await;
 
@@ -97,12 +106,10 @@ impl DiscoveryServer {
                 .inspect_err(|e| {
                     error!("Failed to ping bootnode: {e}");
                 });
-
             table.insert(bootnode.node_id(), bootnode.clone().into());
         }
 
         discovery_server.start();
-
         Ok(())
     }
 
@@ -280,15 +287,8 @@ impl DiscoveryServer {
             .try_into()
             .expect("first 32 bytes are the message hash");
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
+        // We do not use the Sink/Codec here, as we already encoded the message to calculate hash.
+        self.udp_socket.send_to(&buf, node.udp_addr()).await?;
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
@@ -296,8 +296,6 @@ impl DiscoveryServer {
     }
 
     async fn send_pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
-        let mut buf = Vec::new();
-
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
@@ -311,13 +309,7 @@ impl DiscoveryServer {
 
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
-        pong.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
+        self.send(pong, node.udp_addr()).await?;
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
@@ -329,20 +321,12 @@ impl DiscoveryServer {
         neighbors: Vec<Node>,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
-        let mut buf = Vec::new();
-
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
         let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
 
-        msg.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
+        self.send(msg, node.udp_addr()).await?;
 
         debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
@@ -358,19 +342,7 @@ impl DiscoveryServer {
 
         let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
 
-        let mut buf = vec![];
-
-        msg.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, from)
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
+        self.send(msg, from).await?;
 
         Ok(())
     }
@@ -409,6 +381,19 @@ impl DiscoveryServer {
         }
         contact.ping_hash = None;
     }
+
+    async fn send(&self, message: Message, addr: SocketAddr) -> Result<(), DiscoveryServerError> {
+        if let Some(s) = &self.sink {
+            s.lock()
+                .await
+                .send((message, addr))
+                .await
+                .map_err(DiscoveryServerError::MessageSendFailure)
+        } else {
+            error!("Trying to send a message through a non-initialized UdpSocket");
+            Ok(())
+        }
+    }
 }
 
 impl GenServer for DiscoveryServer {
@@ -418,10 +403,14 @@ impl GenServer for DiscoveryServer {
     type Error = DiscoveryServerError;
 
     async fn init(
-        self,
+        mut self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec);
+        let framed = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
+
+        let (sink, stream) = framed.split();
+
+        self.sink = Some(Arc::new(Mutex::new(sink)));
 
         spawn_listener(
             handle.clone(),

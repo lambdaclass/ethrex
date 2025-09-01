@@ -1,36 +1,38 @@
-use crate::{
-    discv4::messages::Packet,
-    rlpx::{error::RLPxError, message as rlpx},
-};
+use crate::discv4::messages::{Message, Packet};
 
 use bytes::BytesMut;
-use std::io::{Error, ErrorKind};
+use secp256k1::SecretKey;
 use tokio_util::codec::{Decoder, Encoder};
 
-pub struct Discv4Codec;
+#[derive(Debug)]
+pub struct Discv4Codec {
+    signer: SecretKey,
+}
 
-impl Decoder for Discv4Codec {
-    type Item = Packet;
-    type Error = Error;
-
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if buf.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(Packet::decode(&buf).map_err(|err| {
-            Error::new(ErrorKind::InvalidData, err.to_string())
-        })?))
+impl Discv4Codec {
+    pub fn new(signer: SecretKey) -> Self {
+        Self { signer }
     }
 }
 
-impl Encoder<rlpx::Message> for Discv4Codec {
-    type Error = RLPxError;
+impl Decoder for Discv4Codec {
+    type Item = Packet;
+    type Error = std::io::Error;
 
-    fn encode(
-        &mut self,
-        _message: rlpx::Message,
-        _buffer: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if !buf.is_empty() {
+            Ok(Some(Packet::decode(&buf.split_to(buf.len()))?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Encoder<Message> for Discv4Codec {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, message: Message, buf: &mut BytesMut) -> Result<(), Self::Error> {
+        message.encode_with_header(buf, &self.signer);
         Ok(())
     }
 }
