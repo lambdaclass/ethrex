@@ -96,15 +96,12 @@ pub async fn archive_sync(
     };
     let mut should_continue = true;
     let mut dumps_since_checkpoint = 0;
-    let checkpoint_file = checkpoint
-        .map(|checkpoint_filename| File::open(checkpoint_filename))
-        .transpose()?;
     // Fetch and process dumps until we have the full block state
     while should_continue {
         let dump = dump_reader.read_dump().await?;
         should_continue = dump_processor.process_dump(dump).await?;
         // Write checkpoint every `DUMPS_BEFORE_CHECKPOINT` dumps if we have one
-        if let Some(checkpoint_file) = checkpoint_file.as_ref() {
+        if let Some(checkpoint_filename) = checkpoint.as_ref() {
             dumps_since_checkpoint += 1;
             if dumps_since_checkpoint >= DUMPS_BEFORE_CHECKPOINT || !should_continue {
                 dumps_since_checkpoint = 0;
@@ -112,6 +109,7 @@ pub async fn archive_sync(
                     processing: dump_processor.get_checkpoint(),
                     reading: dump_reader.get_checkpoint(),
                 };
+                let checkpoint_file = File::create(&checkpoint_filename)?;
                 serde_json::to_writer(checkpoint_file, &checkpoint)?;
             }
         }
@@ -598,9 +596,7 @@ impl DumpIpcReader {
 
 #[derive(Deserialize, Debug, Serialize, Default)]
 struct CheckPoint {
-    #[serde(flatten)]
     processing: ProcessingCheckpoint,
-    #[serde(flatten)]
     reading: ReadingCheckpoint,
 }
 
@@ -642,7 +638,7 @@ fn load_checkpoint(
         }
         if file_output && checkpoint.processing.current_file.is_none() {
             return Err(eyre::Error::msg(
-                "File output received but no file checkpoint",
+                "Output directory received but no current file found in checkpoint",
             ));
         }
         if !no_sync && checkpoint.processing.current_root.is_none() {
@@ -653,7 +649,7 @@ fn load_checkpoint(
         // Warn and request user approval before resuming a sync process with --no_sync flag
         if no_sync && checkpoint.processing.current_root.is_some() {
             print!(
-                "Previous archive sync started a state sync, are you sure you want to continue with --no_sync? Please type `confirm`"
+                "Previous archive sync started a state sync, are you sure you want to continue with --no_sync? Please type `confirm`\n"
             );
             io::stdout().flush()?;
             let mut input = String::new();
@@ -665,7 +661,7 @@ fn load_checkpoint(
         // Warn and request user approval before resuming a sync process that wrote state to files without --output_dir
         if !file_output && checkpoint.processing.current_file.is_some() {
             print!(
-                "Previous archive sync downloaded state to files, are you sure you want to continue without an output_dir? Please type `confirm`"
+                "Previous archive sync downloaded state to files, are you sure you want to continue without an output_dir? Please type `confirm`\n"
             );
             io::stdout().flush()?;
             let mut input = String::new();
