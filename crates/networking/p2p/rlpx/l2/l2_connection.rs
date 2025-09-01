@@ -1,12 +1,12 @@
 use crate::rlpx::connection::server::{broadcast_message, send};
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
-use crate::rlpx::utils::{log_peer_error, recover_address};
+use crate::rlpx::utils::log_peer_error;
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, recover_address};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -49,6 +49,13 @@ pub enum L2Cast {
 }
 
 impl L2ConnState {
+    pub(crate) fn is_supported(&self) -> bool {
+        match self {
+            Self::Unsupported => false,
+            Self::Disconnected(_) | Self::Connected(_) => true,
+        }
+    }
+
     pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
         match self {
             Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
@@ -199,33 +206,38 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                 header: new_block_header,
                 body: new_block_body,
             };
-            let (signature, recovery_id) = if let Some(recovered_sig) = l2_state
+            let signature = match l2_state
                 .store_rollup
                 .get_signature_by_block(new_block.hash())
                 .await?
             {
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&recovered_sig[..64]);
-                let recovery_id = recovered_sig[64];
-                (signature, recovery_id)
-            } else {
-                let (recovery_id, signature) = secp256k1::SECP256K1
-                    .sign_ecdsa_recoverable(
-                        &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                        &l2_state.committer_key,
-                    )
-                    .serialize_compact();
-                let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                    RLPxError::InternalError(format!(
-                        "Failed to convert recovery id to u8: {e}. This is a bug."
-                    ))
-                })?;
-                (signature, recovery_id)
+                Some(sig) => sig,
+                None => {
+                    let (recovery_id, signature) = secp256k1::SECP256K1
+                        .sign_ecdsa_recoverable(
+                            &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                            &l2_state.committer_key,
+                        )
+                        .serialize_compact();
+                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+                        RLPxError::InternalError(format!(
+                            "Failed to convert recovery id to u8: {e}. This is a bug."
+                        ))
+                    })?;
+                    let mut sig = [0u8; 65];
+                    sig[..64].copy_from_slice(&signature);
+                    sig[64] = recovery_id;
+                    let signature = Signature::from_slice(&sig);
+                    l2_state
+                        .store_rollup
+                        .store_signature_by_block(new_block.hash(), signature)
+                        .await?;
+                    signature
+                }
             };
             NewBlock {
                 block: new_block.into(),
                 signature,
-                recovery_id,
             }
         };
 
@@ -262,12 +274,7 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let recovered_lead_sequencer = recover_address(
-        msg.recovery_id,
-        &msg.signature,
-        *block_hash.as_fixed_bytes(),
-    )
-    .map_err(|e| {
+    let recovered_lead_sequencer = recover_address(msg.signature, block_hash).map_err(|e| {
         log_peer_error(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),
@@ -278,12 +285,9 @@ async fn should_process_new_block(
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_block(block_hash, Signature::from_slice(&signature))
+        .store_signature_by_block(block_hash, msg.signature)
         .await?;
     Ok(true)
 }
@@ -319,25 +323,20 @@ async fn should_process_batch_sealed(
 
     let hash = batch_hash(&msg.batch);
 
-    let recovered_lead_sequencer = recover_address(msg.recovery_id, &msg.signature, hash.0)
-        .map_err(|e| {
-            log_peer_error(
-                &established.node,
-                &format!("Failed to recover lead sequencer: {e}"),
-            );
-            RLPxError::CryptographyError(e.to_string())
-        })?;
+    let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
+        log_peer_error(
+            &established.node,
+            &format!("Failed to recover lead sequencer: {e}"),
+        );
+        RLPxError::CryptographyError(e.to_string())
+    })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
-
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_batch(msg.batch.number, Signature::from_slice(&signature))
+        .store_signature_by_batch(msg.batch.number, msg.signature)
         .await?;
     Ok(true)
 }
@@ -414,20 +413,20 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             .inspect_err(|err| {
                 warn!(
                     "Fetching signature from store returned an error, \
-             defaulting to signing with commiter key: {err}"
+             defaulting to signing with committer key: {err}"
                 )
             }) {
-            Ok(Some(recovered_sig)) => {
-                let (signature, recovery_id) = {
-                    let mut signature = [0u8; 64];
-                    signature.copy_from_slice(&recovered_sig[..64]);
-                    let recovery_id = recovered_sig[64];
-                    (signature, recovery_id)
-                };
-                BatchSealed::new(batch, signature, recovery_id)
-            }
+            Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
             Ok(None) | Err(_) => {
-                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?
+                let msg = BatchSealed::from_batch_and_key(
+                    batch,
+                    l2_state.committer_key.clone().as_ref(),
+                )?;
+                l2_state
+                    .store_rollup
+                    .store_signature_by_batch(msg.batch.number, msg.signature)
+                    .await?;
+                msg
             }
         }
     };

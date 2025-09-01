@@ -26,9 +26,9 @@ impl<'a> VM<'a> {
             callee,
             value,
             current_memory_size,
-            args_start_offset,
+            args_offset,
             args_size,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
         ) = {
             let current_call_frame = &mut self.current_call_frame;
@@ -36,33 +36,24 @@ impl<'a> VM<'a> {
                 gas,
                 callee,
                 value_to_transfer,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let callee: Address = word_to_address(callee);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset: usize = return_data_start_offset
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size: usize = return_data_size
-                .try_into()
-                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (return_data_size, return_data_offset) =
+                size_offset_to_usize(return_data_size, return_data_offset)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
                 callee,
                 value_to_transfer,
                 current_memory_size,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             )
         };
@@ -79,9 +70,9 @@ impl<'a> VM<'a> {
         // GAS
         let (new_memory_size, gas_left, account_is_empty, address_was_cold) = self
             .get_call_gas_params(
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
                 eip7702_gas_consumed,
                 callee,
@@ -111,7 +102,7 @@ impl<'a> VM<'a> {
         let from = callframe.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = callframe.is_static;
-        let data = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer.enter(CALL, from, to, value, gas_limit, &data);
 
@@ -124,7 +115,7 @@ impl<'a> VM<'a> {
             true,
             is_static,
             data,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
             bytecode,
             is_delegation_7702,
@@ -139,9 +130,9 @@ impl<'a> VM<'a> {
             address,
             value,
             current_memory_size,
-            args_start_offset,
+            args_offset,
             args_size,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
         ) = {
             let current_call_frame = &mut self.current_call_frame;
@@ -149,34 +140,24 @@ impl<'a> VM<'a> {
                 gas,
                 address,
                 value_to_transfer,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_start_offset = match args_start_offset.try_into() {
-                Ok(x) => x,
-                Err(_) => usize::MAX,
-            };
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (return_data_size, return_data_offset) =
+                size_offset_to_usize(return_data_size, return_data_offset)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
                 address,
                 value_to_transfer,
                 current_memory_size,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             )
         };
@@ -187,9 +168,9 @@ impl<'a> VM<'a> {
         // GAS
         let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
             .get_call_gas_params(
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
@@ -218,7 +199,7 @@ impl<'a> VM<'a> {
         let from = callframe.to;
         let to = callframe.to;
         let is_static = callframe.is_static;
-        let data = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
             .enter(CALLCODE, from, code_address, value, gas_limit, &data);
@@ -232,7 +213,7 @@ impl<'a> VM<'a> {
             true,
             is_static,
             data,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
             bytecode,
             is_delegation_7702,
@@ -243,26 +224,19 @@ impl<'a> VM<'a> {
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let size = size
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if size == 0 {
+        if size.is_zero() {
             return Ok(OpcodeResult::Halt);
         }
 
-        let offset: usize = match offset.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
-
+        let (size, offset) = size_offset_to_usize(size, offset)?;
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -274,41 +248,32 @@ impl<'a> VM<'a> {
             gas,
             address,
             current_memory_size,
-            args_start_offset,
+            args_offset,
             args_size,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
         ) = {
             let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (return_data_size, return_data_offset) =
+                size_offset_to_usize(return_data_size, return_data_offset)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
                 address,
                 current_memory_size,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             )
         };
@@ -320,9 +285,9 @@ impl<'a> VM<'a> {
         // GAS
         let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
             .get_call_gas_params(
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
@@ -351,7 +316,7 @@ impl<'a> VM<'a> {
         let value = callframe.msg_value;
         let to = callframe.to;
         let is_static = callframe.is_static;
-        let data = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_offset, args_size)?;
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
@@ -366,7 +331,7 @@ impl<'a> VM<'a> {
             false,
             is_static,
             data,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
             bytecode,
             is_delegation_7702,
@@ -380,41 +345,32 @@ impl<'a> VM<'a> {
             gas,
             address,
             current_memory_size,
-            args_start_offset,
+            args_offset,
             args_size,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
         ) = {
             let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let args_size = args_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = return_data_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_size = return_data_size
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (return_data_size, return_data_offset) =
+                size_offset_to_usize(return_data_size, return_data_offset)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
                 address,
                 current_memory_size,
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
             )
         };
@@ -426,9 +382,9 @@ impl<'a> VM<'a> {
         // GAS
         let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
             .get_call_gas_params(
-                args_start_offset,
+                args_offset,
                 args_size,
-                return_data_start_offset,
+                return_data_offset,
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
@@ -456,7 +412,7 @@ impl<'a> VM<'a> {
         let value = U256::zero();
         let from = callframe.to; // The new sender will be the current contract.
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-        let data = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
             .enter(STATICCALL, from, to, value, gas_limit, &data);
@@ -470,7 +426,7 @@ impl<'a> VM<'a> {
             true,
             true,
             data,
-            return_data_start_offset,
+            return_data_offset,
             return_data_size,
             bytecode,
             is_delegation_7702,
@@ -486,13 +442,8 @@ impl<'a> VM<'a> {
             code_offset_in_memory,
             code_size_in_memory,
         ] = *current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = code_size_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
+        let (code_size_in_memory, code_offset_in_memory) =
+            size_offset_to_usize(code_size_in_memory, code_offset_in_memory)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -521,14 +472,9 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             salt,
         ] = *current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = code_size_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
 
+        let (code_size_in_memory, code_offset_in_memory) =
+            size_offset_to_usize(code_size_in_memory, code_offset_in_memory)?;
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::create_2(
@@ -556,14 +502,7 @@ impl<'a> VM<'a> {
 
         let [offset, size] = *current_call_frame.stack.pop()?;
 
-        let offset = match offset.try_into() {
-            Ok(x) => x,
-            Err(_) => usize::MAX,
-        };
-
-        let size = size
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let (size, offset) = size_offset_to_usize(size, offset)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -571,7 +510,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Err(VMError::RevertOpcode)
     }
@@ -671,11 +610,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
-        let code = Bytes::from(
-            self.current_call_frame
-                .memory
-                .load_range(code_offset_in_memory, code_size_in_memory)?,
-        );
+        let code = self
+            .current_call_frame
+            .memory
+            .load_range(code_offset_in_memory, code_size_in_memory)?;
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -1063,9 +1001,9 @@ impl<'a> VM<'a> {
     /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
     fn get_call_gas_params(
         &mut self,
-        args_start_offset: usize,
+        args_offset: usize,
         args_size: usize,
-        return_data_start_offset: usize,
+        return_data_offset: usize,
         return_data_size: usize,
         eip7702_gas_consumed: u64,
         address: Address,
@@ -1075,9 +1013,9 @@ impl<'a> VM<'a> {
         let account_is_empty = self.db.get_account(address)?.is_empty();
 
         // Calculated here for memory expansion gas cost
-        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
+        let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
         let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_start_offset, return_data_size)?;
+            calculate_memory_size(return_data_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
         // Calculate remaining gas after EIP7702 consumption
         let gas_left = self
@@ -1095,9 +1033,7 @@ impl<'a> VM<'a> {
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        Ok(Bytes::from(
-            self.current_call_frame.memory.load_range(offset, size)?,
-        ))
+        self.current_call_frame.memory.load_range(offset, size)
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
