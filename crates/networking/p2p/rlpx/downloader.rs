@@ -295,6 +295,111 @@ impl GenServer for Downloader {
                 // Nothing to do after completion, stop actor
                 CastResponse::Stop
             }
+            DownloaderCastRequest::AccountRange {
+                task_sender,
+                root_hash,
+                starting_hash,
+                limit_hash,
+            } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetAccountRange(GetAccountRange {
+                    id: request_id,
+                    root_hash,
+                    starting_hash,
+                    limit_hash,
+                    response_bytes: MAX_RESPONSE_BYTES,
+                });
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = (&mut self.peer_channels.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                    self.send_through_response_channel(task_sender, msg).await;
+                    return CastResponse::Stop;
+                }
+                if let Some((accounts, proof)) =
+                    tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::AccountRange(AccountRange {
+                                    id,
+                                    accounts,
+                                    proof,
+                                })) if id == request_id => return Some((accounts, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                {
+                    if accounts.is_empty() {
+                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                        self.send_through_response_channel(task_sender, msg).await;
+                        return CastResponse::Stop;
+                    }
+                    // Unzip & validate response
+                    let proof = encodable_to_proof(&proof);
+                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                        .clone()
+                        .into_iter()
+                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                        .unzip();
+                    let encoded_accounts = account_states
+                        .iter()
+                        .map(|acc| acc.encode_to_vec())
+                        .collect::<Vec<_>>();
+
+                    let Ok(should_continue) = verify_range(
+                        root_hash,
+                        &starting_hash,
+                        &account_hashes,
+                        &encoded_accounts,
+                        &proof,
+                    ) else {
+                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                        self.send_through_response_channel(task_sender, msg).await;
+                        return CastResponse::Stop;
+                    };
+
+                    // If the range has more accounts to fetch, we send the new chunk
+                    let chunk_left = if should_continue {
+                        let last_hash = match account_hashes.last() {
+                            Some(last_hash) => last_hash,
+                            None => {
+                                error!("Account hashes last failed, this shouldn't happen");
+                                let msg =
+                                    (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                                self.send_through_response_channel(task_sender, msg).await;
+                                return CastResponse::Stop;
+                            }
+                        };
+
+                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        let new_start = H256::from_uint(&new_start_u256);
+                        Some((new_start, limit_hash))
+                    } else {
+                        None
+                    };
+
+                    let accounts = accounts
+                        .into_iter()
+                        .filter(|unit| unit.hash <= limit_hash)
+                        .collect();
+                    let msg = (accounts, self.peer_id, chunk_left);
+                    self.send_through_response_channel(task_sender, msg).await;
+                } else {
+                    tracing::debug!("Failed to get account range");
+                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                    self.send_through_response_channel(task_sender, msg).await;
+                }
+                CastResponse::Stop
+            }
             _ => todo!(),
         }
     }
