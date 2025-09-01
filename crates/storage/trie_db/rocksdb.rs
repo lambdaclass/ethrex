@@ -5,9 +5,12 @@ use std::sync::Arc;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
+    /// RocksDB database
     db: Arc<DB>,
+    /// Column family name
     cf_name: String,
-    address_prefix: Option<H256>, // For storage tries
+    /// Storage trie address prefix
+    address_prefix: Option<H256>,
 }
 
 impl RocksDBTrieDB {

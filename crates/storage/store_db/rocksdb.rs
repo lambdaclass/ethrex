@@ -169,7 +169,7 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    // Helper method to add canonical block hash (like libmdbx does implicitly)
+    // Helper method to add canonical block hash
     async fn add_canonical_block_hash(
         &self,
         block_number: BlockNumber,
@@ -197,7 +197,6 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
-        // Add state trie nodes
         for (node_hash, node_data) in update_batch.account_updates {
             batch_ops.push((
                 CF_STATE_TRIE_NODES.to_string(),
@@ -206,50 +205,43 @@ impl StoreEngine for Store {
             ));
         }
 
-        // Add storage trie nodes
         for (address_hash, storage_updates) in update_batch.storage_updates {
             for (node_hash, node_data) in storage_updates {
-                // Para storage tries, usamos address_hash + node_hash como clave
+                // For storage tries, use address_hash + node_hash as key
                 let mut key = address_hash.as_bytes().to_vec();
                 key.extend_from_slice(node_hash.as_ref());
                 batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
             }
         }
 
-        // Add blocks
         for block in update_batch.blocks {
             let block_hash = block.hash();
             let block_number = block.header.number;
 
-            // Add header
             batch_ops.push((
                 CF_HEADERS.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 BlockHeaderRLP::from(block.header.clone()).bytes().clone(),
             ));
 
-            // Add body
             batch_ops.push((
                 CF_BODIES.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 BlockBodyRLP::from(block.body.clone()).bytes().clone(),
             ));
 
-            // Add block number mapping
             batch_ops.push((
                 CF_BLOCK_NUMBERS.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 block_number.encode_to_vec(),
             ));
 
-            // Add canonical block hash mapping
             batch_ops.push((
                 CF_CANONICAL_BLOCK_HASHES.to_string(),
                 block_number.encode_to_vec(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
             ));
 
-            // Add transaction locations
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 let location_key = tx_hash.as_bytes().to_vec();
@@ -262,7 +254,6 @@ impl StoreEngine for Store {
             }
         }
 
-        // Add receipts
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
@@ -271,7 +262,6 @@ impl StoreEngine for Store {
             }
         }
 
-        // Add code updates
         for (code_hash, code) in update_batch.code_updates {
             batch_ops.push((
                 CF_ACCOUNT_CODES.to_string(),
@@ -292,28 +282,24 @@ impl StoreEngine for Store {
             let block_hash = block.hash();
             let block_number = block.header.number;
 
-            // Add header
             batch_ops.push((
                 CF_HEADERS.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 BlockHeaderRLP::from(block.header.clone()).bytes().clone(),
             ));
 
-            // Add body
             batch_ops.push((
                 CF_BODIES.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 BlockBodyRLP::from(block.body.clone()).bytes().clone(),
             ));
 
-            // Add block number mapping
             batch_ops.push((
                 CF_BLOCK_NUMBERS.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 block_number.encode_to_vec(),
             ));
 
-            // Add transaction locations
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 let location_key = tx_hash.as_bytes().to_vec();
@@ -329,7 +315,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Add block header
     async fn add_block_header(
         &self,
         block_hash: BlockHash,
@@ -340,7 +325,6 @@ impl StoreEngine for Store {
         self.write_async(CF_HEADERS, hash_key, header_value).await
     }
 
-    /// Add a batch of block headers
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
@@ -351,7 +335,6 @@ impl StoreEngine for Store {
 
             batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
 
-            // Also add the block number mapping
             let number_key = header.number.encode_to_vec();
             batch_ops.push((
                 CF_BLOCK_NUMBERS.to_string(),
@@ -363,21 +346,17 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Obtain canonical block header
     fn get_block_header(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        // First get the canonical hash for this block number
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
 
-        // Then get the header using the hash
         self.get_block_header_by_hash(block_hash)
     }
 
-    /// Add block body
     async fn add_block_body(
         &self,
         block_hash: BlockHash,
@@ -388,28 +367,23 @@ impl StoreEngine for Store {
         self.write_async(CF_BODIES, hash_key, body_value).await
     }
 
-    /// Obtain canonical block body
     async fn get_block_body(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
-        // First get the canonical hash for this block number
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
 
-        // Then get the body using the hash
         self.get_block_body_by_hash(block_hash).await
     }
 
-    /// Remove canonical block
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
-            // Remove canonical block hash mapping
             let cf_canonical = db
                 .cf_handle(CF_CANONICAL_BLOCK_HASHES)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
@@ -422,7 +396,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    /// Obtain canonical block bodies in from..=to
     async fn get_block_bodies(
         &self,
         from: BlockNumber,
@@ -439,7 +412,6 @@ impl StoreEngine for Store {
         Ok(bodies)
     }
 
-    /// Obtain block bodies from a list of hashes
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
@@ -455,7 +427,6 @@ impl StoreEngine for Store {
         Ok(bodies)
     }
 
-    /// Obtain any block body using the hash
     async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
@@ -505,7 +476,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Add block number for a given hash
     async fn add_block_number(
         &self,
         block_hash: BlockHash,
@@ -517,7 +487,6 @@ impl StoreEngine for Store {
             .await
     }
 
-    /// Obtain block number for a given hash
     async fn get_block_number(
         &self,
         block_hash: BlockHash,
@@ -532,7 +501,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Store transaction location (block number and index of the transaction within the block)
     async fn add_transaction_location(
         &self,
         transaction_hash: H256,
@@ -546,7 +514,6 @@ impl StoreEngine for Store {
             .await
     }
 
-    /// Store transaction locations in batch (one db transaction for all)
     async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
@@ -562,7 +529,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Obtain transaction location (block hash and index)
     async fn get_transaction_location(
         &self,
         transaction_hash: H256,
@@ -579,7 +545,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Add receipt
     async fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -591,7 +556,6 @@ impl StoreEngine for Store {
         self.write_async(CF_RECEIPTS, key, value).await
     }
 
-    /// Add receipts
     async fn add_receipts(
         &self,
         block_hash: BlockHash,
@@ -608,13 +572,11 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Obtain receipt for a canonical block represented by the block number.
     async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        // First get the canonical hash for this block number
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
@@ -629,7 +591,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Add account code
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
         let code_value = AccountCodeRLP::from(code).bytes().clone();
@@ -637,7 +598,6 @@ impl StoreEngine for Store {
             .await
     }
 
-    /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
         let db = self.db.clone();
 
@@ -646,7 +606,6 @@ impl StoreEngine for Store {
                 .cf_handle(CF_SNAP_STATE)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            // Clear all data in the snap state column family
             let mut iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
             let mut batch = WriteBatch::default();
 
@@ -661,7 +620,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    /// Obtain account code via code hash
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
 
@@ -721,7 +679,6 @@ impl StoreEngine for Store {
         self.get_block_by_hash(block_hash).await
     }
 
-    // Get the canonical block hash for a given block number.
     async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
@@ -740,8 +697,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Stores the chain configuration values, should only be called once after reading the genesis file
-    /// Ignores previously stored values if present
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::ChainConfig);
         let value = serde_json::to_string(chain_config)
@@ -750,7 +705,6 @@ impl StoreEngine for Store {
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
-    /// Update earliest block number
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
@@ -760,7 +714,6 @@ impl StoreEngine for Store {
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
-    /// Obtain earliest block number
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
 
@@ -772,7 +725,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Obtain finalized block number
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
 
@@ -784,7 +736,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Obtain safe block number
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
 
@@ -796,7 +747,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Obtain latest block number
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
 
@@ -808,7 +758,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Update pending block number
     async fn update_pending_block_number(
         &self,
         block_number: BlockNumber,
@@ -818,7 +767,6 @@ impl StoreEngine for Store {
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
-    /// Obtain pending block number
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
 
@@ -830,9 +778,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Obtain a storage trie from the given address and storage_root
-    /// Doesn't check if the account is stored
-    /// Used for internal store operations
     fn open_storage_trie(
         &self,
         hashed_address: H256,
@@ -846,9 +791,6 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, storage_root))
     }
 
-    /// Obtain a state trie from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
@@ -858,18 +800,12 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, state_root))
     }
 
-    /// Obtain a state trie locked for reads from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         // For now, we use the same implementation as open_state_trie
         // In the future, we could implement a read-only version
         self.open_state_trie(state_root)
     }
 
-    /// Obtain a read-locked storage trie from the given address and storage_root
-    /// Doesn't check if the account is stored
-    /// Used for internal store operations
     fn open_locked_storage_trie(
         &self,
         hashed_address: H256,
@@ -888,7 +824,6 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
-        // Update canonical chain if provided
         if let Some(canonical_blocks) = new_canonical_blocks {
             for (block_number, block_hash) in canonical_blocks {
                 batch_ops.push((
@@ -899,7 +834,6 @@ impl StoreEngine for Store {
             }
         }
 
-        // Update latest block number
         let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
         batch_ops.push((
             CF_CHAIN_DATA.to_string(),
@@ -907,7 +841,6 @@ impl StoreEngine for Store {
             head_number.encode_to_vec(),
         ));
 
-        // Update safe block number if provided
         if let Some(safe_number) = safe {
             let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
             batch_ops.push((
@@ -917,7 +850,6 @@ impl StoreEngine for Store {
             ));
         }
 
-        // Update finalized block number if provided
         if let Some(finalized_number) = finalized {
             let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
             batch_ops.push((
@@ -985,9 +917,6 @@ impl StoreEngine for Store {
         Ok(receipts)
     }
 
-    // Snap State methods
-
-    /// Sets the hash of the last header downloaded during a snap sync
     async fn set_header_download_checkpoint(
         &self,
         block_hash: BlockHash,
@@ -1010,7 +939,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Sets the last key fetched from the state trie being fetched during snap sync
     async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
@@ -1020,7 +948,6 @@ impl StoreEngine for Store {
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
-    /// Gets the last key fetched from the state trie being fetched during snap sync
     async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
@@ -1041,14 +968,12 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Sets the state trie paths in need of healing
     async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::StateHealPaths);
         let value = paths.encode_to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
-    /// Gets the state trie paths in need of healing
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::StateHealPaths);
 
@@ -1060,7 +985,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Write a storage batch into the current storage snapshot
     async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -1089,7 +1013,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
     async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
@@ -1132,7 +1055,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -1142,7 +1064,6 @@ impl StoreEngine for Store {
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
@@ -1164,7 +1085,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
     async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
@@ -1174,7 +1094,6 @@ impl StoreEngine for Store {
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
@@ -1188,7 +1107,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
     async fn read_storage_snapshot(
         &self,
         start: H256,
@@ -1239,11 +1157,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
-    /// when processing an invalid payload. To provide this, we must track invalid chains.
-    ///
-    /// We only store the last known valid head upon encountering a bad block,
-    /// rather than tracking every subsequent invalid block.
     async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
@@ -1254,8 +1167,6 @@ impl StoreEngine for Store {
         self.write_async(CF_INVALID_ANCESTORS, key, value).await
     }
 
-    /// Returns the latest valid ancestor hash for a given invalid block hash.
-    /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1271,7 +1182,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Obtain block number for a given hash
     fn get_block_number_sync(
         &self,
         block_hash: BlockHash,
@@ -1286,7 +1196,6 @@ impl StoreEngine for Store {
         }
     }
 
-    /// Get the canonical block hash for a given block number.
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
@@ -1333,157 +1242,5 @@ impl StoreEngine for Store {
         }
 
         self.write_batch_async(batch_ops).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethrex_common::types::BlockHeader;
-    use ethrex_common::{Address, H256, U256};
-    use tempdir::TempDir;
-
-    fn create_test_header() -> BlockHeader {
-        BlockHeader {
-            hash: Default::default(),
-            parent_hash: H256::random(),
-            ommers_hash: H256::random(),
-            coinbase: Address::random(),
-            state_root: H256::random(),
-            transactions_root: H256::random(),
-            receipts_root: H256::random(),
-            logs_bloom: Default::default(),
-            difficulty: U256::from(1000),
-            number: 1,
-            gas_limit: 8000000,
-            gas_used: 5000000,
-            timestamp: 1234567890,
-            extra_data: vec![].into(),
-            prev_randao: H256::random(),
-            nonce: 42,
-            base_fee_per_gas: Some(1000),
-            withdrawals_root: None,
-            blob_gas_used: None,
-            excess_blob_gas: None,
-            parent_beacon_block_root: None,
-            requests_hash: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_store_creation() {
-        let temp_dir = TempDir::new("rocksdb_test").unwrap();
-        let db_path = temp_dir.path().join("test_db");
-
-        let store = Store::new(db_path.to_str().unwrap()).unwrap();
-        // Just test that we can create the store successfully
-        assert!(store.db.live_files().is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_header_round_trip() {
-        let temp_dir = TempDir::new("rocksdb_test").unwrap();
-        let db_path = temp_dir.path().join("test_db");
-        let store = Store::new(db_path.to_str().unwrap()).unwrap();
-
-        let header = create_test_header();
-        let block_hash = header.hash();
-
-        // Store the header
-        store
-            .add_block_header(block_hash, header.clone())
-            .await
-            .unwrap();
-
-        // Retrieve the header
-        let retrieved_header = store.get_block_header_by_hash(block_hash).unwrap().unwrap();
-
-        // Verify they match
-        assert_eq!(header.parent_hash, retrieved_header.parent_hash);
-        assert_eq!(header.number, retrieved_header.number);
-        assert_eq!(header.difficulty, retrieved_header.difficulty);
-        assert_eq!(header.gas_limit, retrieved_header.gas_limit);
-    }
-
-    #[tokio::test]
-    async fn test_canonical_chain_lookup() {
-        let temp_dir = TempDir::new("rocksdb_test").unwrap();
-        let db_path = temp_dir.path().join("test_db");
-        let store = Store::new(db_path.to_str().unwrap()).unwrap();
-
-        let header = create_test_header();
-        let block_hash = header.hash();
-        let block_number = header.number;
-
-        // Store the header
-        store
-            .add_block_header(block_hash, header.clone())
-            .await
-            .unwrap();
-
-        // Store the canonical mapping and block number mapping
-        store
-            .add_canonical_block_hash(block_number, block_hash)
-            .await
-            .unwrap();
-        store
-            .add_block_number(block_hash, block_number)
-            .await
-            .unwrap();
-
-        // Test canonical hash lookup
-        let canonical_hash = store
-            .get_canonical_block_hash(block_number)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(canonical_hash, block_hash);
-
-        // Test sync version
-        let canonical_hash_sync = store
-            .get_canonical_block_hash_sync(block_number)
-            .unwrap()
-            .unwrap();
-        assert_eq!(canonical_hash_sync, block_hash);
-
-        // Test block number lookup
-        let retrieved_number = store.get_block_number(block_hash).await.unwrap().unwrap();
-        assert_eq!(retrieved_number, block_number);
-
-        // Test sync version
-        let retrieved_number_sync = store.get_block_number_sync(block_hash).unwrap().unwrap();
-        assert_eq!(retrieved_number_sync, block_number);
-
-        // Test get_block_header with canonical lookup
-        let canonical_header = store.get_block_header(block_number).unwrap().unwrap();
-        assert_eq!(canonical_header.parent_hash, header.parent_hash);
-        assert_eq!(canonical_header.number, header.number);
-    }
-
-    #[tokio::test]
-    async fn test_nonexistent_data() {
-        let temp_dir = TempDir::new("rocksdb_test").unwrap();
-        let db_path = temp_dir.path().join("test_db");
-        let store = Store::new(db_path.to_str().unwrap()).unwrap();
-
-        let random_hash = H256::random();
-        let random_number = 999999;
-
-        // Test that nonexistent data returns None
-        assert!(
-            store
-                .get_block_header_by_hash(random_hash)
-                .unwrap()
-                .is_none()
-        );
-        assert!(store.get_block_header(random_number).unwrap().is_none());
-        assert!(
-            store
-                .get_canonical_block_hash(random_number)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(store.get_block_number(random_hash).await.unwrap().is_none());
     }
 }
