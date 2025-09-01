@@ -553,7 +553,7 @@ impl PeerHandler {
                 debug!("Downloader {peer_id} freed");
             }
 
-            let available_downloader = self.get_best_available_downloader().await;
+            let available_downloader = self.get_random_available_downloader().await;
             let Some(available_downloader) = available_downloader else {
                 debug!("No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
