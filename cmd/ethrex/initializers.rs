@@ -99,11 +99,6 @@ pub fn open_store(data_dir: &str) -> Store {
     if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        info!(
-            "Opening store with feature flags: rocksdb = {}, libmdbx = {}",
-            cfg!(feature = "rocksdb"),
-            cfg!(feature = "libmdbx")
-        );
         cfg_if::cfg_if! {
             if #[cfg(feature = "rocksdb")] {
                 let engine_type = EngineType::RocksDB;
