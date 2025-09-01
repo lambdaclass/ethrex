@@ -4,7 +4,7 @@ NETWORK ?= mainnet
 
 # Block parameters
 ifdef BLOCK_NUMBER
-REPLAY_BLOCK_ARGS = ${BLOCK_NUMBER}
+REPLAY_BLOCK_ARGS = --block ${BLOCK_NUMBER}
 endif
 REPLAY_BLOCK_ARGS += --rpc-url ${RPC_URL} --network ${NETWORK} --bench
 
