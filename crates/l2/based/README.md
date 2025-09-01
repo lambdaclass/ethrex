@@ -188,8 +188,8 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 \
   --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
   --based \
   --p2p.enabled \
-  --p2p.tcp.port 30303 \
-  --p2p.udp.port 30303
+  --p2p.port 30303 \
+  --discovery.port 30303
 ```
 
 After running this command, the node will start syncing with the L1 and will be able to follow the lead Sequencer.
@@ -206,8 +206,8 @@ After running this command, the node will start syncing with the L1 and will be 
 > - `--datadir`
 > - `--committer-l1-private-key`
 > - `--proof-coordinator-l1-private-key`
-> - `--p2p.tcp.port`
-> - `--p2p.udp.port`
+> - `--p2p.port`
+> - `--discovery.port`
 >
 > Also, once a node has booted you can add it to the newer nodes for the P2P communication with:
 >
