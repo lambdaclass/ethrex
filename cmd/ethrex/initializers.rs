@@ -296,7 +296,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
 
     // TODO: for now we just use the local ip
     // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = local_ip().expect("Failed to get local ip");
+    let p2p_node_ip = local_ipv6().expect("Failed to get local ip");
 
     info!("p2p_node_ip {p2p_node_ip:?}");
 
