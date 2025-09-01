@@ -105,6 +105,8 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
+    // fn get_traversed_nodes(&self, nodes: HashMap<NodeHash, Vec<u8>>) {}
+
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
@@ -117,21 +119,16 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        println!(
-            "Account storage root {} - {}",
-            account_state.storage_root,
-            hex::encode(account_state.storage_root),
-        );
+        // Get all necessary nodes for rebuilding storage trie.
 
+        // Get
         let (key, value) = self
             .state_nodes
             .iter()
             .find(|(k, v)| **k == account_state.storage_root)
             .unwrap();
 
-        let mut algo: HashMap<NodeHash, Vec<u8>> = vec![(NodeHash::Hashed(*key), value.clone())]
-            .into_iter()
-            .collect();
+        let mut algo: HashMap<NodeHash, Vec<u8>> = HashMap::new();
 
         fn inner(
             storage: &mut HashMap<NodeHash, Vec<u8>>,
