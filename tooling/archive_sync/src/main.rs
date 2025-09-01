@@ -95,7 +95,7 @@ impl Serialize for MaybeAddress {
     {
         match self {
             MaybeAddress::Address(address) => address.serialize(serializer),
-            MaybeAddress::HashesAddress(hash) => serializer.serialize_str(&format!("pre({hash})")),
+            MaybeAddress::HashesAddress(hash) => serializer.serialize_str(&format!("pre({hash:?})")),
         }
     }
 }
