@@ -284,7 +284,6 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            println!("Going to remove {:?}", hash);
                             *choice = match storage.remove(&hash) {
                                 Some(rlp) => inner(storage, &rlp)?.into(),
                                 None => hash.into(),
@@ -299,7 +298,6 @@ impl Trie {
                         unreachable!()
                     };
 
-                    println!("Going to remove {:?}", hash);
                     node.child = match storage.remove(&hash) {
                         Some(rlp) => inner(storage, &rlp)?.into(),
                         None => hash.into(),
