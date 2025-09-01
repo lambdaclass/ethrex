@@ -17,7 +17,7 @@ use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_TRIE_HASH},
     rkyv_utils,
 };
 
@@ -420,6 +420,11 @@ impl Genesis {
             .config
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
+
+        assert_eq!(
+            self.alloc.is_empty(),
+            *EMPTY_TRIE_HASH == self.compute_state_root()
+        );
 
         BlockHeader {
             parent_hash: H256::zero(),

@@ -8,7 +8,7 @@ use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, NodeHandle, NodeHash, NodeRef, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -229,37 +229,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain pending block number
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Obtain a storage trie from the given address and storage_root
-    /// Doesn't check if the account is stored
-    /// Used for internal store operations
-    fn open_storage_trie(
+    fn get_state_trie_root_handle(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError>;
-
-    /// Obtain a state trie from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
-
-    /// Obtain a state trie locked for reads from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
-    fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        self.open_state_trie(state_root)
-    }
-
-    /// Obtain a read-locked storage trie from the given address and storage_root
-    /// Doesn't check if the account is stored
-    /// Used for internal store operations
-    fn open_locked_storage_trie(
-        &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root)
-    }
+        state_root: H256,
+    ) -> Result<Option<NodeHandle>, StoreError>;
 
     async fn forkchoice_update(
         &self,
@@ -385,7 +358,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<NodeRef>)>,
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(

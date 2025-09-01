@@ -354,105 +354,105 @@ impl Command {
                     .sorted_by_key(|f| f.file_name())
                     .enumerate()
                 {
-                    let batch_number = file_number as u64 + 1;
-                    let blob = std::fs::read(file.path())?;
+                    // let batch_number = file_number as u64 + 1;
+                    // let blob = std::fs::read(file.path())?;
 
-                    if blob.len() != BYTES_PER_BLOB {
-                        panic!("Invalid blob size");
-                    }
+                    // if blob.len() != BYTES_PER_BLOB {
+                    //     panic!("Invalid blob size");
+                    // }
 
-                    // Decode state diff from blob
-                    let blob = bytes_from_blob(blob.into());
-                    let state_diff = StateDiff::decode(&blob)?;
+                    // // Decode state diff from blob
+                    // let blob = bytes_from_blob(blob.into());
+                    // let state_diff = StateDiff::decode(&blob)?;
 
-                    // Apply all account updates to trie
-                    let account_updates = state_diff.to_account_updates(&new_trie)?;
-                    let account_updates_list = store
-                        .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
-                        .await
-                        .map_err(|e| format!("Error applying account updates: {e}"))
-                        .unwrap();
+                    // // Apply all account updates to trie
+                    // let account_updates = state_diff.to_account_updates(&new_trie)?;
+                    // let account_updates_list = store
+                    //     .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
+                    //     .await
+                    //     .map_err(|e| format!("Error applying account updates: {e}"))
+                    //     .unwrap();
 
-                    let (new_state_root, state_updates, accounts_updates) = (
-                        account_updates_list.state_trie_hash,
-                        account_updates_list.state_updates,
-                        account_updates_list.storage_updates,
-                    );
+                    // let (new_state_root, state_updates, accounts_updates) = (
+                    //     account_updates_list.state_trie_hash,
+                    //     account_updates_list.state_updates,
+                    //     account_updates_list.storage_updates,
+                    // );
 
-                    let pseudo_update_batch = UpdateBatch {
-                        account_updates: state_updates,
-                        storage_updates: accounts_updates,
-                        blocks: vec![],
-                        receipts: vec![],
-                        code_updates: vec![],
-                    };
+                    // let pseudo_update_batch = UpdateBatch {
+                    //     account_updates: state_updates,
+                    //     storage_updates: accounts_updates,
+                    //     blocks: vec![],
+                    //     receipts: vec![],
+                    //     code_updates: vec![],
+                    // };
 
-                    store
-                        .store_block_updates(pseudo_update_batch)
-                        .await
-                        .map_err(|e| format!("Error storing trie updates: {e}"))
-                        .unwrap();
+                    // store
+                    //     .store_block_updates(pseudo_update_batch)
+                    //     .await
+                    //     .map_err(|e| format!("Error storing trie updates: {e}"))
+                    //     .unwrap();
 
-                    new_trie = store
-                        .open_state_trie(new_state_root)
-                        .map_err(|e| format!("Error opening new state trie: {e}"))
-                        .unwrap();
+                    // new_trie = store
+                    //     .open_state_trie(new_state_root)
+                    //     .map_err(|e| format!("Error opening new state trie: {e}"))
+                    //     .unwrap();
 
-                    // Get withdrawal hashes
-                    let message_hashes = state_diff
-                        .l1_messages
-                        .iter()
-                        .map(get_l1_message_hash)
-                        .collect();
+                    // // Get withdrawal hashes
+                    // let message_hashes = state_diff
+                    //     .l1_messages
+                    //     .iter()
+                    //     .map(get_l1_message_hash)
+                    //     .collect();
 
-                    // Get the first block of the batch
-                    let first_block_number = last_block_number + 1;
+                    // // Get the first block of the batch
+                    // let first_block_number = last_block_number + 1;
 
-                    // Build the header of the last block.
-                    // Note that its state_root is the root of new_trie.
-                    let new_block = BlockHeader {
-                        coinbase,
-                        state_root: new_trie
-                            .hash()
-                            .map_err(|e| format!("Error committing state: {e}"))
-                            .unwrap(),
-                        ..state_diff.last_header
-                    };
+                    // // Build the header of the last block.
+                    // // Note that its state_root is the root of new_trie.
+                    // let new_block = BlockHeader {
+                    //     coinbase,
+                    //     state_root: new_trie
+                    //         .hash()
+                    //         .map_err(|e| format!("Error committing state: {e}"))
+                    //         .unwrap(),
+                    //     ..state_diff.last_header
+                    // };
 
-                    // Store last block.
-                    let new_block_hash = new_block.hash();
-                    store
-                        .add_block_header(new_block_hash, new_block.clone())
-                        .await?;
-                    store
-                        .add_block_number(new_block_hash, state_diff.last_header.number)
-                        .await?;
-                    new_canonical_blocks.push((state_diff.last_header.number, new_block_hash));
-                    println!(
-                        "Stored last block of blob. Block {}. State root {}",
-                        new_block.number, new_block.state_root
-                    );
+                    // // Store last block.
+                    // let new_block_hash = new_block.hash();
+                    // store
+                    //     .add_block_header(new_block_hash, new_block.clone())
+                    //     .await?;
+                    // store
+                    //     .add_block_number(new_block_hash, state_diff.last_header.number)
+                    //     .await?;
+                    // new_canonical_blocks.push((state_diff.last_header.number, new_block_hash));
+                    // println!(
+                    //     "Stored last block of blob. Block {}. State root {}",
+                    //     new_block.number, new_block.state_root
+                    // );
 
-                    last_block_number = new_block.number;
+                    // last_block_number = new_block.number;
 
-                    let batch = Batch {
-                        number: batch_number,
-                        first_block: first_block_number,
-                        last_block: new_block.number,
-                        state_root: new_block.state_root,
-                        privileged_transactions_hash: H256::zero(),
-                        message_hashes,
-                        blobs_bundle: BlobsBundle::empty(),
-                        commit_tx: None,
-                        verify_tx: None,
-                    };
+                    // let batch = Batch {
+                    //     number: batch_number,
+                    //     first_block: first_block_number,
+                    //     last_block: new_block.number,
+                    //     state_root: new_block.state_root,
+                    //     privileged_transactions_hash: H256::zero(),
+                    //     message_hashes,
+                    //     blobs_bundle: BlobsBundle::empty(),
+                    //     commit_tx: None,
+                    //     verify_tx: None,
+                    // };
 
-                    // Store batch info in L2 storage
-                    rollup_store
-                        .seal_batch(batch)
-                        .await
-                        .map_err(|e| format!("Error storing batch: {e}"))
-                        .unwrap();
+                    // // Store batch info in L2 storage
+                    // rollup_store
+                    //     .seal_batch(batch)
+                    //     .await
+                    //     .map_err(|e| format!("Error storing batch: {e}"))
+                    //     .unwrap();
                 }
                 let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
                     return Err(eyre::eyre!("No blocks found in blobs directory"));

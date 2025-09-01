@@ -11,7 +11,7 @@ use hasher::HasherKeccak;
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
-use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
+use ethrex_storage::blob::BlobDbRoTxn as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
 #[allow(clippy::unit_arg)]
@@ -22,7 +22,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Trie");
 
     group.bench_function("ethrex-trie insert 1k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+        let mut trie = EthrexTrie::stateless();
         b.iter(|| {
             for i in 0..keys_1k.len() {
                 black_box(&mut trie)
@@ -37,7 +37,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("ethrex-trie insert 10k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+        let mut trie = EthrexTrie::stateless();
 
         b.iter(|| {
             for i in 0..keys_10k.len() {

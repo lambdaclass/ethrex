@@ -67,7 +67,10 @@ impl RLPDecode for BranchNode {
             "Error decoding field 'choices' of type [H256;16]: Invalid Length";
         let decoder = Decoder::new(rlp)?;
         let (choices, decoder) = decoder.decode_field::<Vec<NodeHash>>("choices")?;
-        let choices = choices.into_iter().map(NodeRef::Hash).collect::<Vec<_>>();
+        let choices = choices
+            .into_iter()
+            .map(<NodeRef as From<NodeHash>>::from)
+            .collect::<Vec<_>>();
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
@@ -84,7 +87,7 @@ impl RLPDecode for ExtensionNode {
         Ok((
             Self {
                 prefix,
-                child: NodeRef::Hash(child),
+                child: <NodeRef as From<NodeHash>>::from(child),
             },
             decoder.finish()?,
         ))
@@ -96,7 +99,14 @@ impl RLPDecode for LeafNode {
         let decoder = Decoder::new(rlp)?;
         let (partial, decoder) = decoder.decode_field("partial")?;
         let (value, decoder) = decoder.decode_field("value")?;
-        Ok((Self { partial, value }, decoder.finish()?))
+        Ok((
+            Self {
+                partial,
+                value,
+                link: None,
+            },
+            decoder.finish()?,
+        ))
     }
 }
 
