@@ -145,7 +145,9 @@ impl L1Committer {
             sequencer_state,
         )
         .await?;
-        let l1_committer = state.start();
+        // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
+        // `send_tx_bump_gas_exponential_backoff` blocking for more than ~40ms
+        let l1_committer = state.start_blocking();
         send_after(
             random_duration(cfg.l1_committer.first_wake_up_time_ms),
             l1_committer,
