@@ -14,7 +14,7 @@ use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
     api::StoreEngine,
     error::StoreError,
-    rlp::{BlockHashRLP, BlockHeaderRLP},
+    rlp::{BlockBodyRLP, BlockHashRLP, BlockHeaderRLP},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
@@ -204,7 +204,25 @@ impl StoreEngine for Store {
 
     /// Add a batch of block headers
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        todo!()
+        let mut batch_ops = Vec::new();
+
+        for header in block_headers {
+            let block_hash = header.hash();
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
+
+            batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
+
+            // Also add the block number mapping
+            let number_key = header.number.encode_to_vec();
+            batch_ops.push((
+                CF_BLOCK_NUMBERS.to_string(),
+                BlockHashRLP::from(block_hash).bytes().clone(),
+                number_key,
+            ));
+        }
+
+        self.write_batch_async(batch_ops).await
     }
 
     /// Obtain canonical block header
@@ -227,7 +245,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let body_value = BlockBodyRLP::from(block_body).bytes().clone();
+        self.write_async(CF_BODIES, hash_key, body_value).await
     }
 
     /// Obtain canonical block body
@@ -235,7 +255,13 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
-        todo!()
+        // First get the canonical hash for this block number
+        let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
+            return Ok(None);
+        };
+
+        // Then get the body using the hash
+        self.get_block_body_by_hash(block_hash).await
     }
 
     /// Remove canonical block
@@ -265,7 +291,15 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+
+        match self.read_async(CF_BODIES, hash_key).await? {
+            Some(body_bytes) => {
+                let body_rlp = BlockBodyRLP::from_bytes(body_bytes);
+                body_rlp.to().map(Some).map_err(StoreError::from)
+            }
+            None => Ok(None),
+        }
     }
 
     fn get_block_header_by_hash(
