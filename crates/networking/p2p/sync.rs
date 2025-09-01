@@ -827,7 +827,7 @@ impl Syncer {
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
+                let entry = entry.map_err(|err| {
                     SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
                 })?;
                 info!("Reading account file from entry {entry:?}");
@@ -961,7 +961,8 @@ impl Syncer {
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
+                let entry = entry.map_err(|err| {
+                    error!("Error while opening account_storages_snapshots_dir entry: {err}");
                     SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
