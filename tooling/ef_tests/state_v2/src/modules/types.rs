@@ -259,6 +259,7 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
         blob_schedule: BlobSchedule::default(),
         deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
             .unwrap(), // Doesn't matter
+        ..Default::default()
     };
 
     if *fork < Fork::Paris {
