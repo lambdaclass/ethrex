@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-01
+
+- Process JUMPDEST gas and pc together with the given JUMP JUMPI opcode, improving performance. #[4220](https://github.com/lambdaclass/ethrex/pull/4220)
+
 ### 2025-08-29
 
 - Improve P2P mempool gossip performance [#4205](https://github.com/lambdaclass/ethrex/pull/4205)
@@ -45,8 +49,6 @@
 - Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
 
 ### 2025-07-31
-
-- Optimize NOP-sliding on JUMP, JUMPI (taken only) and JUMPDEST instructions.
 
 - Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
 
