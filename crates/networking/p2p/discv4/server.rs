@@ -34,7 +34,6 @@ const REVALIDATION_INTERVAL_IN_SECONDS: u64 = 30;
 const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum DiscoveryError {
     BindSocket(std::io::Error),
     MessageSendFailure(std::io::Error),

@@ -38,7 +38,6 @@ pub struct Store {
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
