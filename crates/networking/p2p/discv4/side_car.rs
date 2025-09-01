@@ -145,7 +145,10 @@ impl DiscoverySideCar {
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
             .await
-            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+            .map_err(|err| {
+                error!("Failed when sending to {}: {}", node.ip, node.udp_port);
+                DiscoverySideCarError::MessageSendFailure(err)
+            })?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
