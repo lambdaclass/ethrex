@@ -1079,6 +1079,7 @@ impl PeerHandler {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     async fn request_account_range_worker(
         free_peer_id: H256,
         chunk_start: H256,

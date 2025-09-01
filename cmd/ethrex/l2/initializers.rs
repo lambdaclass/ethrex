@@ -158,7 +158,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     let store = init_store(&data_dir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
+    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2, true);
 
     let signer = get_signer(&data_dir);
 
@@ -265,7 +265,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     }
     info!("Server shut down started...");
     let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
+    info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
     store_node_config_file(node_config, node_config_path).await;
