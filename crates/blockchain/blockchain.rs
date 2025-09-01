@@ -81,7 +81,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
     if progress_needed {
         PERCENT_MARKS.iter().for_each(|mark| {
             if (batch_size * mark) / 100 == current_block {
-                info!("[SYNCING] {mark}% of batch processed");
+                info!(percent = *mark, processed = current_block, batch_size, "Sync progress");
             }
         });
     }
@@ -602,14 +602,15 @@ impl Blockchain {
         );
 
         if self.perf_logs_enabled {
+            let throughput_rounded = (throughput * 1000.0).round() / 1000.0;
             info!(
-                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-                blocks_len,
-                last_block_number,
+                range = blocks_len,
+                last_block_num = last_block_number,
                 last_block_gas_limit,
-                transactions_count,
-                total_gas_used,
-                throughput
+                total_transactions = transactions_count,
+                total_gas = total_gas_used,
+                throughput_gigagas = throughput_rounded,
+                "Sync metrics",
             );
         }
 

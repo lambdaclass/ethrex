@@ -24,7 +24,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -234,7 +234,7 @@ impl Store {
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!("Adding block to pending: {}", block.hash());
+        debug!(block_hash = %format!("{:#x}", block.hash()), "Pending block added");
         self.engine.add_pending_block(block).await
     }
 
@@ -242,7 +242,6 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        info!("get pending: {}", block_hash);
         self.engine.get_pending_block(block_hash).await
     }
 

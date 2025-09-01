@@ -33,6 +33,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use ethrex_common::utils::short_hex;
 use trie_rebuild::TrieRebuilder;
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -175,8 +176,10 @@ impl Syncer {
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
         info!(
-            "Syncing from current head {:?} to sync_head {:?}",
-            current_head, sync_head
+            current_head = %short_hex(current_head),
+            sync_head = %short_hex(sync_head),
+            mode = ?sync_mode,
+            "Sync started",
         );
         let pending_block = match store.get_pending_block(sync_head).await {
             Ok(res) => res,
@@ -603,20 +606,17 @@ impl FullBlockSyncState {
                 .await?;
 
             let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-            let blocks_per_second = blocks_len as f64 / execution_time;
+            let blocks_per_second = (blocks_len as f64 / execution_time * 1000.0).round() / 1000.0;
 
             info!(
-                "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
-            Started at block with hash {} (number {}).\n\
-            Finished at block with hash {} (number {}).\n\
-            Blocks per second: {:.3}",
-                blocks_len,
-                execution_time,
-                first_block_hash,
+                blocks = blocks_len,
+                duration_secs = ((execution_time * 100.0).round() / 100.0),
+                first_block = %short_hex(first_block_hash),
                 first_block_number,
-                last_block_hash,
+                last_block = %short_hex(last_block_hash),
                 last_block_number,
-                blocks_per_second
+                blocks_per_second,
+                "Sync batch executed",
             );
         }
         Ok(())

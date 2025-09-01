@@ -170,7 +170,10 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             })
             .count();
         info!(
-            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
+            snap_active_peers,
+            active_peers,
+            total_peers,
+            "Peer stats updated"
         );
         interval.tick().await;
     }

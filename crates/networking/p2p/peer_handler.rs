@@ -80,8 +80,10 @@ impl PeerHandler {
         // Penalize previous peers that returned empty/invalid responses
         peer_ids.remove(&succesful_peer_id);
         for peer_id in peer_ids {
-            info!(
-                "[SYNCING] Penalizing peer {peer_id} as it failed to return data cornfirmed as non-stale"
+            debug!(
+                peer_id = %format!("{:#x}", peer_id),
+                reason = "stale_or_empty_response",
+                "Penalizing peer",
             );
             self.record_peer_failure(peer_id).await;
         }
@@ -123,7 +125,7 @@ impl PeerHandler {
             };
             // drop the lock early to no block the rest of processes
             drop(table);
-            info!("[Sync] No peers available, retrying in 10 sec");
+            info!(retry_in_secs = 10, "No peers available, retrying");
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
@@ -184,13 +186,11 @@ impl PeerHandler {
                     self.record_peer_success(peer_id).await;
                     return Some(block_headers);
                 } else {
-                    warn!(
-                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
-                    );
+                    warn!(peer_id = %format!("{:#x}", peer_id), "Peer returned invalid headers");
                     self.record_peer_critical_failure(peer_id).await;
                 }
             }
-            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
+            warn!(peer_id = %format!("{:#x}", peer_id), "Peer returned no block headers");
             self.record_peer_failure(peer_id).await;
         }
         None
@@ -248,7 +248,7 @@ impl PeerHandler {
             return Some((block_bodies, peer_id));
         }
 
-        warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
+        warn!(peer_id = %format!("{:#x}", peer_id), "Peer returned no block bodies");
         self.record_peer_failure(peer_id).await;
         None
     }

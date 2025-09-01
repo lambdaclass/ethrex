@@ -7,7 +7,9 @@ use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
+use std::time::Instant;
+use tracing::{debug, error, info, instrument, warn};
+use ethrex_common::utils::short_hex;
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
@@ -607,7 +609,7 @@ fn get_block_from_payload(
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
-    info!("Received new payload with block hash: {block_hash:#x}");
+    debug!(block = %short_hex(block_hash), "Received payload");
 
     payload
         .clone()
@@ -632,18 +634,39 @@ async fn try_execute_payload(
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
+    let started = Instant::now();
+    let txs = block.body.transactions.len();
+    let gas_used = block.header.gas_used;
     // Return the valid message directly if we have it.
     if storage.get_block_by_hash(block_hash).await?.is_some() {
+        let elapsed = started.elapsed().as_millis();
+        info!(
+            block = %short_hex(block_hash),
+            status = "already_present",
+            txs,
+            gas_used,
+            duration_ms = elapsed,
+            "Payload processed",
+        );
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
     // Execute and store the block
-    info!("Executing payload with block hash: {block_hash:#x}");
+    debug!(block = %short_hex(block_hash), "Executing payload");
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             context.syncer.sync_to_head(block_hash);
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "syncing",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state
@@ -661,6 +684,16 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "invalid",
+                latest_valid = %short_hex(latest_valid_hash),
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -672,6 +705,16 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "invalid",
+                latest_valid = %short_hex(latest_valid_hash),
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -679,22 +722,66 @@ async fn try_execute_payload(
         }
         Err(ChainError::StoreError(error)) => {
             warn!("Error storing block: {error}");
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "store_error",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Err(RpcErr::Internal(error.to_string()))
         }
         Err(ChainError::Custom(e)) => {
             error!("{e} for block {block_hash}");
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "custom_error",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::InvalidTransaction(e)) => {
             error!("{e} for block {block_hash}");
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "invalid_tx",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::WitnessGeneration(e)) => {
             error!("{e} for block {block_hash}");
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "witness_error",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            let elapsed = started.elapsed().as_millis();
+            info!(
+                block = %short_hex(block_hash),
+                status = "valid",
+                txs,
+                gas_used,
+                duration_ms = elapsed,
+                "Payload processed",
+            );
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }
