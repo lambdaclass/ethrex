@@ -378,8 +378,7 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                spawned_rt::tasks::spawn_blocking(move || generate_blobs_bundle(&state_diff))
-                    .await?
+                generate_blobs_bundle(&state_diff)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };

@@ -247,8 +247,6 @@ pub enum CommitterError {
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
-    #[error("Failed to join task: {0}")]
-    JoinError(#[from] JoinError),
 }
 
 #[derive(Debug, thiserror::Error)]
