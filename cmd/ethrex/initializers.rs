@@ -290,6 +290,11 @@ pub fn get_signer(data_dir: &str) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
+    info!(
+        "Starting discovery sidecar at {}:{}",
+        &opts.discovery_addr, &opts.discovery_port
+    );
+
     let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
