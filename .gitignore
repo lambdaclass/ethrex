@@ -8,12 +8,12 @@
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-cmd/ef_tests/blockchain/vectors
+tooling/ef_tests/blockchain/vectors
 
-cmd/ef_tests/state/vectors
+tooling/ef_tests/state/vectors
 
-cmd/ef_tests/state/runner_v2/failure_report.txt
-cmd/ef_tests/state/runner_v2/success_report.txt
+tooling/ef_tests/state/runner_v2/failure_report.txt
+tooling/ef_tests/state/runner_v2/success_report.txt
 
 # Repos checked out by make target
 /hive/
@@ -50,7 +50,7 @@ loc_report_github.txt
 loc_report.json
 
 # used by Flamegraph and Samply
-cmd/ef_tests/state/levm_perfgraphs
+tooling/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json

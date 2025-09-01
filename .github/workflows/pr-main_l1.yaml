@@ -67,49 +67,19 @@ jobs:
 
       - name: Run Blockchain EF tests
         run: |
-          make -C cmd/ef_tests/blockchain test
+          make -C tooling/ef_tests/blockchain test
 
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check for Docker Hub credentials
-        shell: bash
-        env:
-          DOCKER_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
-            echo "DOCKER_CREDS_EXISTS=false" >> $GITHUB_ENV
-            echo "No credentials provided. Skipping DockerHub login..."
-          else
-            echo "DOCKER_CREDS_EXISTS=true" >> $GITHUB_ENV
-            echo "Credentials were provided!"
-          fi
-
-      - name: Login to Docker Hub
-        if: env.DOCKER_CREDS_EXISTS == 'true'
-        uses: docker/login-action@v3
+      - id: docker
+        name: Build Ethrex Docker Image
+        uses: ./.github/actions/build-docker
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          load: true
-          tags: ethrex:ci
-          outputs: type=docker,dest=/tmp/ethrex_image.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
