@@ -43,7 +43,18 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     let mut failing_tests = 0;
     let mut total_run = 0;
 
+    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
+    //EIPs should be added as strings in the format 'eip-XXXX'
+    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7939"];
+
     for test in tests {
+        let test_eip = test._info.clone().reference_spec.unwrap_or_default();
+
+        if test.path.to_str().unwrap().contains("osaka")
+            && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+        {
+            continue;
+        }
         run_test(
             &test,
             &mut passing_tests,
