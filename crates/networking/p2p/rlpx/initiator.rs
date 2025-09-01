@@ -77,12 +77,8 @@ impl RLPxInitiator {
     async fn look_for_peer(&mut self) -> bool {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
-        info!(
-            "Duration since last_log_time {:?}",
-            self.last_log_time.elapsed()
-        );
 
-        if self.last_log_time.elapsed() > self.lookup_interval {
+        if self.last_log_time.elapsed() > Duration::from_secs(2) {
             info!(
                 "Resetting list of tried peers. Current peers {}",
                 peer_number,
