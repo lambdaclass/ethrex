@@ -3,10 +3,10 @@ name: Run Hive Tests
 on:
   workflow_call:
     inputs:
-      # Must be 'main'/'trigger' or 'daily'
       job_type:
         required: true
         type: string
+        description: "Allowed values: 'trigger' or 'daily'"
     outputs:
       report_artifact_name:
         description: "The name of the hive report artifact"
@@ -43,29 +43,28 @@ jobs:
             }
 
     steps:
-      - name: Checkout sources
-        if: ${{ inputs.job_type != 'main' }}
-        uses: actions/checkout@v4
+      - name: Verify input parameters
+        if: ${{ inputs.job_type != 'trigger' && inputs.job_type != 'daily' }}
+        run: |
+          echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
+          exit 1
 
       - name: Checkout sources
-        if: ${{ inputs.job_type == 'main' }}
         uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Build image
-        uses: ./.github/actions/build-docker
-        if: ${{ inputs.job_type != 'main' }}
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Pull image
-        if: ${{ inputs.job_type == 'main' }}
+        if: ${{ github.ref_name == 'main' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:main
           # Tests use ethrex:ci so we retag it
           docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
+
+      - name: Build image
+        uses: ./.github/actions/build-docker
+        if: ${{ github.ref_name != 'main' }}
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
