@@ -303,6 +303,7 @@ where
             "Shanghai" => Fork::Shanghai,
             "Cancun" => Fork::Cancun,
             "Prague" => Fork::Prague,
+            "Osaka" => Fork::Osaka,
             "Byzantium" => Fork::Byzantium,
             "EIP158" => Fork::SpuriousDragon,
             "EIP150" => Fork::Tangerine,
