@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756746117486,
+  "lastUpdate": 1756749597399,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10915,6 +10915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161035725712,
             "range": "± 271562435",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cbbd6f8f94b6f19acdc69318f78f46c4e7606f8b",
+          "message": "fix(l2): make `down-l2` kill only the L2 process, not the prover (#4225)\n\n**Motivation**\n\nWhen running `make restart-l2`, the `down-l2` rule kills the prover if\nit's already running. This filters out the `ethrex l2 prover ...`\nprocess.",
+          "timestamp": "2025-09-01T17:08:39Z",
+          "tree_id": "10b28551306694cef947c16ecddeb7061aaf4710",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbbd6f8f94b6f19acdc69318f78f46c4e7606f8b"
+        },
+        "date": 1756749580628,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162275580668,
+            "range": "± 370769480",
             "unit": "ns/iter"
           }
         ]
