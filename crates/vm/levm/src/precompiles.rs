@@ -43,6 +43,7 @@ use sha3::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
+use crate::gas_cost::MODEXP_STATIC_COST;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
@@ -413,7 +414,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
 
     if fork < Fork::Osaka && base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
         // On Berlin or newer there is a floor cost for the modexp precompile
-        increase_precompile_consumed_gas(500, gas_remaining)?;
+        increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
         return Ok(Bytes::new());
     }
 
