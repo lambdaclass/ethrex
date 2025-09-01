@@ -87,10 +87,12 @@ pub enum EthrexReplayCommand {
 #[cfg(feature = "l2")]
 #[derive(Subcommand)]
 pub enum L2Subcommand {
-    #[command(about = "Replay an L2 transaction")]
-    Transaction(TransactionOpts),
     #[command(about = "Replay an L2 batch")]
     Batch(BatchOptions),
+    #[command(about = "Replay an L2 block")]
+    Block(BlockOptions),
+    #[command(about = "Replay an L2 transaction")]
+    Transaction(TransactionOpts),
 }
 
 #[cfg(not(feature = "l2"))]
@@ -120,7 +122,6 @@ pub struct EthrexReplayOptions {
     pub to_csv: bool,
 }
 
-#[cfg(not(feature = "l2"))]
 #[derive(Parser)]
 pub struct BlockOptions {
     #[arg(long, help = "Block to use. Uses the latest if not specified.")]
@@ -177,52 +178,7 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(BlockOptions { block, opts }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
-                let l2 = false;
-
-                let (eth_client, network) = setup(&opts, l2).await?;
-
-                let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
-
-                let block = cache.blocks.first().cloned().ok_or_else(|| {
-                    eyre::Error::msg("no block found in the cache, this should never happen")
-                })?;
-
-                let start = SystemTime::now();
-
-                let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
-
-                let replayer_mode = replayer_mode(opts.execute);
-
-                let block_run_report = BlockRunReport::new_for(
-                    block,
-                    network.clone(),
-                    block_run_result,
-                    replayer_mode.clone(),
-                    start.elapsed()?,
-                );
-
-                block_run_report.log();
-
-                if opts.to_csv {
-                    let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-                    let mut file = std::fs::OpenOptions::new()
-                        .append(true)
-                        .create(true)
-                        .open(file_name)?;
-
-                    file.write_all(block_run_report.to_csv().as_bytes())?;
-
-                    file.write_all(b"\n")?;
-
-                    file.flush()?;
-                }
-            }
+            Self::Block(block_opts) => replay_block(block_opts).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -239,13 +195,9 @@ impl EthrexReplayCommand {
                         blocks.len()
                     );
 
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: Some(*block_number),
-                            opts: opts.clone(),
-                        })
-                        .run()
-                        .await
+                    replay_block(BlockOptions {
+                        block: Some(*block_number),
+                        opts: opts.clone(),
                     })
                     .await?;
                 }
@@ -263,13 +215,9 @@ impl EthrexReplayCommand {
                 }
 
                 for block in start..=end {
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: Some(block),
-                            opts: opts.clone(),
-                        })
-                        .run()
-                        .await
+                    replay_block(BlockOptions {
+                        block: Some(block),
+                        opts: opts.clone(),
                     })
                     .await?;
                 }
@@ -359,6 +307,8 @@ impl EthrexReplayCommand {
 
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
+            #[cfg(feature = "l2")]
+            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
         }
 
         Ok(())
@@ -414,6 +364,67 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
 
     for transition in transitions {
         print_transition(transition);
+    }
+
+    Ok(())
+}
+
+async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
+    let opts = block_opts.opts;
+
+    let block = block_opts.block;
+
+    if opts.cached {
+        unimplemented!("cached mode is not implemented yet");
+    }
+
+    let l2 = false;
+
+    let (eth_client, network) = setup(&opts, l2).await?;
+
+    #[cfg(feature = "l2")]
+    if network != Network::LocalDevnetL2 {
+        return Err(eyre::Error::msg(
+            "L2 mode is only supported on LocalDevnetL2 network",
+        ));
+    }
+
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+
+    let block =
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?;
+
+    let start = SystemTime::now();
+
+    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+
+    let replayer_mode = replayer_mode(opts.execute);
+
+    let block_run_report = BlockRunReport::new_for(
+        block,
+        network.clone(),
+        block_run_result,
+        replayer_mode.clone(),
+        start.elapsed()?,
+    );
+
+    block_run_report.log();
+
+    if opts.to_csv {
+        let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(file_name)?;
+
+        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+        file.write_all(b"\n")?;
+
+        file.flush()?;
     }
 
     Ok(())
