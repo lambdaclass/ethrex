@@ -92,8 +92,8 @@ impl Memory {
         let real_new_memory_size = new_memory_size + self.current_base;
 
         if real_new_memory_size > buffer.len() {
-            // when resizing, resize by allocating entire pages instead of small memory sizes.
-            let new_size = real_new_memory_size.next_multiple_of(4096);
+            // when resizing, avoid really small resizes.
+            let new_size = real_new_memory_size.next_multiple_of(64);
             buffer.resize(new_size, 0);
         }
 
@@ -253,6 +253,29 @@ impl Memory {
                     .ok_or(InternalError::Overflow)?),
             true_to_offset,
         );
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn store_zeros(&mut self, offset: usize, size: usize) -> Result<(), VMError> {
+        if size == 0 {
+            return Ok(());
+        }
+
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let real_offset = self.current_base.wrapping_add(offset);
+        let mut buffer = self.buffer.borrow_mut();
+
+        // resize ensures bounds are correct
+        #[expect(unsafe_code)]
+        unsafe {
+            buffer
+                .get_unchecked_mut(real_offset..(real_offset.wrapping_add(size)))
+                .fill(0);
+        }
 
         Ok(())
     }

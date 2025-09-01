@@ -569,19 +569,18 @@ pub async fn initialize_contract(
 
 pub async fn call_contract(
     client: &EthClient,
-    private_key: &SecretKey,
+    signer: &Signer,
     to: Address,
     signature: &str,
     parameters: Vec<Value>,
 ) -> Result<H256, EthClientError> {
     let calldata = encode_calldata(signature, &parameters)?.into();
-    let signer: Signer = Signer::Local(LocalSigner::new(*private_key));
     let from = signer.address();
     let tx = client
         .build_generic_tx(TxType::EIP1559, to, from, calldata, Default::default())
         .await?;
 
-    let tx_hash = send_generic_transaction(client, tx, &signer).await?;
+    let tx_hash = send_generic_transaction(client, tx, signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)

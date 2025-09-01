@@ -20,18 +20,20 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
 
 /// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
 const MAX_ACCOUNTS: usize = 256;
 /// Amount of blocks before the target block to request hashes for. These may be needed to execute the next block after the target block.
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
+/// Amount of state dumps to process before updating checkpoint
+const DUMPS_BEFORE_CHECKPOINT: usize = 10;
 
 #[derive(Deserialize, Debug, Serialize)]
 struct Dump {
@@ -115,25 +117,50 @@ pub async fn archive_sync(
     output_dir: Option<String>,
     input_dir: Option<String>,
     no_sync: bool,
+    checkpoint: Option<String>,
     store: Store,
 ) -> eyre::Result<()> {
     let sync_start: Instant = Instant::now();
+    // Load checkpoint (if we have one)
+    let prev_checkpoint = load_checkpoint(
+        &checkpoint,
+        archive_ipc_path.is_some(),
+        input_dir.is_some(),
+        output_dir.is_some(),
+        no_sync,
+    )?;
     let mut dump_reader = if let Some(ipc_path) = archive_ipc_path {
-        DumpReader::new_from_ipc(&ipc_path, block_number).await?
+        DumpReader::new_from_ipc(&ipc_path, block_number, &prev_checkpoint).await?
     } else {
-        DumpReader::new_from_dir(input_dir.unwrap())?
+        DumpReader::new_from_dir(input_dir.unwrap(), &prev_checkpoint)?
     };
-    let dump_writer = output_dir.map(DumpDirWriter::new).transpose()?;
+    let dump_writer = output_dir
+        .map(|dir| DumpDirWriter::new(dir, &prev_checkpoint))
+        .transpose()?;
     let mut dump_processor = if no_sync {
         DumpProcessor::new_no_sync(dump_writer)
     } else {
-        DumpProcessor::new_sync(dump_writer, store)
+        DumpProcessor::new_sync(dump_writer, store, &prev_checkpoint)
     };
     let mut should_continue = true;
+    let mut dumps_since_checkpoint = 0;
     // Fetch and process dumps until we have the full block state
     while should_continue {
         let dump = dump_reader.read_dump().await?;
         should_continue = dump_processor.process_dump(dump).await?;
+        // Write checkpoint every `DUMPS_BEFORE_CHECKPOINT` dumps if we have one
+        if let Some(checkpoint_filename) = checkpoint.as_ref() {
+            dumps_since_checkpoint += 1;
+            if dumps_since_checkpoint >= DUMPS_BEFORE_CHECKPOINT || !should_continue {
+                dumps_since_checkpoint = 0;
+                let checkpoint = CheckPoint {
+                    processing: dump_processor.get_checkpoint(),
+                    reading: dump_reader.get_checkpoint(),
+                };
+                let checkpoint_file = File::create(checkpoint_filename)?;
+                serde_json::to_writer(checkpoint_file, &checkpoint)?;
+            }
+        }
     }
     // Fetch the block itself so we can mark it as canonical
     let rlp_block = dump_reader.read_rlp_block().await?;
@@ -275,10 +302,20 @@ struct DumpProcessor {
 impl DumpProcessor {
     /// Create a new DumpProcessor that will rebuild a Block's state based on incoming state dumps
     /// And which may write incoming data into files if writer is set
-    fn new_sync(writer: Option<DumpDirWriter>, store: Store) -> Self {
+    fn new_sync(
+        writer: Option<DumpDirWriter>,
+        store: Store,
+        prev_checkpoint: &Option<CheckPoint>,
+    ) -> Self {
         Self {
             state_root: None,
-            sync_state: Some((*EMPTY_TRIE_HASH, store)),
+            sync_state: Some((
+                prev_checkpoint
+                    .as_ref()
+                    .and_then(|check_point| check_point.processing.current_root)
+                    .unwrap_or(*EMPTY_TRIE_HASH),
+                store,
+            )),
             writer,
         }
     }
@@ -350,6 +387,13 @@ impl DumpProcessor {
         }
         Ok(())
     }
+
+    fn get_checkpoint(&self) -> ProcessingCheckpoint {
+        ProcessingCheckpoint {
+            current_root: self.state_root,
+            current_file: self.writer.as_ref().map(|writer| writer.current_file),
+        }
+    }
 }
 
 /// Struct in charge of writing state data into files on a given directory
@@ -361,13 +405,16 @@ struct DumpDirWriter {
 impl DumpDirWriter {
     /// Create a new DumpDirWriter which will write state data to files the given directory
     /// It will create the directory if it doesn't exist yet
-    fn new(dirname: String) -> eyre::Result<DumpDirWriter> {
+    fn new(dirname: String, prev_checkpoint: &Option<CheckPoint>) -> eyre::Result<DumpDirWriter> {
         if !std::path::Path::new(&dirname).exists() {
             std::fs::create_dir(&dirname)?;
         }
         Ok(Self {
             dirname,
-            current_file: 0,
+            current_file: prev_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.processing.current_file)
+                .unwrap_or_default(),
         })
     }
 
@@ -428,15 +475,29 @@ struct DumpIpcReader {
 
 impl DumpReader {
     /// Create a new DumpReader that will read state data from the given directory
-    fn new_from_dir(dirname: String) -> eyre::Result<Self> {
-        Ok(Self::Dir(DumpDirReader::new(dirname)?))
+    fn new_from_dir(dirname: String, prev_checkpoint: &Option<CheckPoint>) -> eyre::Result<Self> {
+        let mut dir_reader = DumpDirReader::new(dirname)?;
+        if let Some(checkpoint) = prev_checkpoint {
+            if let Some(current) = checkpoint.reading.current_file {
+                dir_reader.current_file = current
+            }
+        }
+        Ok(Self::Dir(dir_reader))
     }
 
     /// Create a new DumpReader that will read state data from an archive node given the path to its IPC file
-    async fn new_from_ipc(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<Self> {
-        Ok(Self::Ipc(
-            DumpIpcReader::new(archive_ipc_path, block_number).await?,
-        ))
+    async fn new_from_ipc(
+        archive_ipc_path: &str,
+        block_number: BlockNumber,
+        prev_checkpoint: &Option<CheckPoint>,
+    ) -> eyre::Result<Self> {
+        let mut ipc_reader = DumpIpcReader::new(archive_ipc_path, block_number).await?;
+        if let Some(checkpoint) = prev_checkpoint {
+            if let Some(start) = checkpoint.reading.start_hash {
+                ipc_reader.start = start
+            }
+        }
+        Ok(Self::Ipc(ipc_reader))
     }
 
     /// Read the next state dump, either from a file or from an active IPC connection
@@ -462,6 +523,15 @@ impl DumpReader {
             DumpReader::Dir(dump_dir_reader) => dump_dir_reader.read_block_hashes(),
             DumpReader::Ipc(dump_ipc_reader) => dump_ipc_reader.read_block_hashes().await,
         }
+    }
+
+    fn get_checkpoint(&self) -> ReadingCheckpoint {
+        let mut checkpoint = ReadingCheckpoint::default();
+        match self {
+            DumpReader::Dir(dir_reader) => checkpoint.current_file = Some(dir_reader.current_file),
+            DumpReader::Ipc(ipc_reader) => checkpoint.start_hash = Some(ipc_reader.start),
+        }
+        checkpoint
     }
 }
 
@@ -576,6 +646,86 @@ impl DumpIpcReader {
     }
 }
 
+#[derive(Deserialize, Debug, Serialize, Default)]
+struct CheckPoint {
+    processing: ProcessingCheckpoint,
+    reading: ReadingCheckpoint,
+}
+
+#[derive(Deserialize, Debug, Serialize, Default)]
+struct ProcessingCheckpoint {
+    current_root: Option<H256>,
+    current_file: Option<usize>,
+}
+
+#[derive(Deserialize, Debug, Serialize, Default)]
+struct ReadingCheckpoint {
+    start_hash: Option<H256>,
+    current_file: Option<usize>,
+}
+
+/// Loads previous checkpoint (if it exists)
+fn load_checkpoint(
+    checkpoint: &Option<String>,
+    ipc_input: bool,
+    file_input: bool,
+    file_output: bool,
+    no_sync: bool,
+) -> Result<Option<CheckPoint>, eyre::Error> {
+    let prev_checkpoint: Option<CheckPoint> = match checkpoint {
+        Some(checkpoint_filename) if std::path::Path::new(&checkpoint_filename).exists() => {
+            Some(serde_json::from_reader(File::open(checkpoint_filename)?)?)
+        }
+        _ => None,
+    };
+    // Validate current flags match pre-existing state
+    if let Some(checkpoint) = &prev_checkpoint {
+        info!("Checkpoint detected, resuming archive sync");
+        debug!("Previous checkpoint: {checkpoint:?}");
+        // Check inconsistencies
+        if ipc_input && checkpoint.reading.start_hash.is_none()
+            || file_input && checkpoint.reading.current_file.is_none()
+        {
+            return Err(eyre::Error::msg("Input type doesn't match checkpoint data"));
+        }
+        if file_output && checkpoint.processing.current_file.is_none() {
+            return Err(eyre::Error::msg(
+                "Output directory received but no current file found in checkpoint",
+            ));
+        }
+        if !no_sync && checkpoint.processing.current_root.is_none() {
+            return Err(eyre::Error::msg(
+                "Checkpoint file doesn't contain currnet root, try running with --no_sync",
+            ));
+        }
+        // Warn and request user approval before resuming a sync process with --no_sync flag
+        if no_sync && checkpoint.processing.current_root.is_some() {
+            println!(
+                "Previous archive sync started a state sync, are you sure you want to continue with --no_sync? Please type `confirm`"
+            );
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("confirm") {
+                return Err(eyre::Error::msg("Archive sync cancelled"));
+            }
+        }
+        // Warn and request user approval before resuming a sync process that wrote state to files without --output_dir
+        if !file_output && checkpoint.processing.current_file.is_some() {
+            println!(
+                "Previous archive sync downloaded state to files, are you sure you want to continue without an output_dir? Please type `confirm`"
+            );
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("confirm") {
+                return Err(eyre::Error::msg("Archive sync cancelled"));
+            }
+        }
+    }
+    Ok(prev_checkpoint)
+}
+
 #[derive(Parser)]
 #[clap(group = ArgGroup::new("input").required(true).args(&["ipc_path", "input_dir"]).multiple(false))]
 struct Args {
@@ -619,6 +769,13 @@ struct Args {
         requires = "output_dir"
     )]
     pub no_sync: bool,
+    #[arg(
+        long = "checkpoint",
+        value_name = "CHECKPOINT_FILENAME",
+        help = "Receives the name of the file where the checkpoint is/will be located",
+        long_help = "Receives the name of the file where the checkpoint is/will be located. This checkpoint will be used to resume a previous archive sync process if aborted"
+    )]
+    pub checkpoint: Option<String>,
 }
 
 #[tokio::main]
@@ -634,6 +791,7 @@ pub async fn main() -> eyre::Result<()> {
         args.output_dir,
         args.input_dir,
         args.no_sync,
+        args.checkpoint,
         store,
     )
     .await
