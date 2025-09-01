@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-01
+
+- Process JUMPDEST gas and pc together with the given JUMP JUMPI opcode, improving performance. #[4220](https://github.com/lambdaclass/ethrex/pull/4220)
+
 ### 2025-08-29
 
 - Improve P2P mempool gossip performance [#4205](https://github.com/lambdaclass/ethrex/pull/4205)
@@ -52,7 +56,6 @@
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
 - Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
-
 
 ### 2025-07-30
 
