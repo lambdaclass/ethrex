@@ -137,10 +137,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Prague
                 let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
 
+                let result_osaka = create_fork_result(&json_data, "Osaka", "fork_Osaka");
+
                 results.push(result_paris);
                 results.push(result_shanghai);
                 results.push(result_cancun);
                 results.push(result_prague);
+                results.push(result_osaka);
             } else {
                 let total_tests = json_data.test_cases.len();
                 let passed_tests = json_data
