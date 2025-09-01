@@ -41,13 +41,24 @@ def parse_args():
     parser.add_argument(
         "--timeout", type=int, default=60, help="Timeout in minutes (default: 60)"
     )
+    parser.add_argument(
+        "--no-monitor",
+        action="store_true",
+        help="Whether we should restart after success/failure",
+    )
+    parser.add_argument(
+        "--block_wait_time",
+        type=int,
+        default=60,
+        help="Time to wait until new block in seconds (default: 60)",
+    )
 
     return parser.parse_args()
 
 
-def send_slack_message(message: str):
+def send_slack_message_failed(message: str):
     try:
-        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
         message = {"text": message}
         response = requests.post(
             webhook_url,
@@ -63,10 +74,26 @@ def send_slack_message(message: str):
         return
 
 
-def main():
-    args = parse_args()
+def send_slack_message_success(message: str):
+    try:
+        webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
+        message = {"text": message}
+        response = requests.post(
+            webhook_url,
+            data=json.dumps(message),
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code != 200:
+            print(f"Error sending Slack message")
+
+    except Exception as e:
+        print(f"Error sending Slack message: {e}", file=sys.stderr)
+        return
+
+
+def get_variables(args):
     variables = {}
-    hostname = socket.gethostname()
 
     # Only include SNAP if flag is set
     if args.snap:
@@ -78,6 +105,102 @@ def main():
     variables["SERVER_SYNC_NETWORK"] = args.network
     variables["SERVER_SYNC_BRANCH"] = args.branch
 
+    return variables
+
+
+def block_production_loop(
+    hostname, args, logs_file, elapsed, start_time, block_production_payload
+):
+    current_block_number = 0
+    block_start_time = time.time()
+    while True:
+        block_elapsed = time.time() - block_start_time
+        if block_elapsed > 30 * 60:  # 30 minutes
+            print("✅ Node is fully synced!")
+            send_slack_message_success(
+                f"✅ Node on {hostname} is fully synced after {elapsed / 60:.2f} minutes and correctly generated blocks for 30 minutes! Network: {args.network} Log File: {logs_file}_{start_time}.log"
+            )
+            with open("sync_logs.txt", "a") as f:
+                f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
+            break
+        try:
+            response = requests.post(RPC_URL, json=block_production_payload).json()
+            result = response.get("result")
+            if int(result,0) > current_block_number:
+                current_block_number = int(result,0)
+            else:
+                print(f"⚠️ Node did not generated a new block. Stopping.")
+                send_slack_message_failed(
+                    f"⚠️ Node on {hostname} stopped generating new blocks after sync. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
+                )
+                with open("sync_logs.txt", "a") as f:
+                    f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
+                break
+        except Exception as e:
+            print(f"⚠️ Node did stopped. Stopping.")
+            print("Error:", e)
+            send_slack_message_failed(
+                f"⚠️ Node on {hostname} stopped. Network: {args.network}. Log File: {logs_file}_{start_time}.log"
+            )
+            with open("sync_logs.txt", "a") as f:
+                f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
+            break
+        time.sleep(args.block_wait_time)
+
+
+def verification_loop(
+    logs_file, args, hostname, payload, block_production_payload, start_time
+):
+    while True:
+        try:
+            elapsed = time.time() - start_time
+            if elapsed > args.timeout * 60:
+                print(f"⚠️ Node did not sync within {args.timeout} minutes. Stopping.")
+                send_slack_message_failed(
+                    f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
+                )
+                with open("sync_logs.txt", "a") as f:
+                    f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
+                break
+            response = requests.post(RPC_URL, json=payload).json()
+            result = response.get("result")
+            if result is False:
+                block_production_loop(
+                    hostname,
+                    args,
+                    logs_file,
+                    elapsed,
+                    start_time,
+                    block_production_payload,
+                )
+                break
+            time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            pass
+
+
+def execution_loop(
+    command, logs_file, args, hostname, payload, block_production_payload
+):
+    while True:
+        start_time = time.time()
+        subprocess.run(
+            command + [f"LOGS_FILE={logs_file}_{start_time}.log"], check=True
+        )
+        if args.no_monitor:
+            print("No monitor flag set, exiting.")
+            break
+        verification_loop(
+            logs_file, args, hostname, payload, block_production_payload, start_time
+        )
+
+
+def main():
+    args = parse_args()
+    hostname = socket.gethostname()
+
+    variables = get_variables(args)
+
     logs_file = args.logs_file
     command = ["make", "server-sync"]
 
@@ -85,35 +208,16 @@ def main():
         command.append(f"{key}={value}")
 
     payload = {"jsonrpc": "2.0", "method": "eth_syncing", "params": [], "id": 1}
+    block_production_payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": [],
+        "id": 1,
+    }
     try:
-        while True:
-            start_time = time.time()
-            subprocess.run(
-                command + [f"LOGS_FILE={logs_file}_{start_time}.log"], check=True
-            )
-            while True:
-                try:
-                    elapsed = time.time() - start_time
-                    if elapsed > args.timeout * 60:
-                        print(
-                            f"⚠️ Node did not sync within {args.timeout} minutes. Stopping."
-                        )
-                        send_slack_message(
-                            f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Stopping. Log File: {logs_file}_{start_time}.log"
-                        )
-                        with open("sync_logs.txt", "a") as f:
-                            f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
-                        break
-                    response = requests.post(RPC_URL, json=payload).json()
-                    result = response.get("result")
-                    if result is False:
-                        print("✅ Node is fully synced!")
-                        with open("sync_logs.txt", "a") as f:
-                            f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
-                        break
-                    time.sleep(CHECK_INTERVAL)
-                except Exception as e:
-                    pass
+        execution_loop(
+            command, logs_file, args, hostname, payload, block_production_payload
+        )
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the make command: {e}", file=sys.stderr)
         sys.exit(1)

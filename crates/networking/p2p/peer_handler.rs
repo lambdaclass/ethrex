@@ -35,7 +35,7 @@ use crate::{
     snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
+        SendMessageError, dump_to_file, get_account_state_snapshot_file,
         get_account_storages_snapshot_file,
     },
 };
@@ -154,22 +154,6 @@ impl PeerHandler {
     pub fn dummy() -> PeerHandler {
         let dummy_peer_table = Kademlia::new();
         PeerHandler::new(dummy_peer_table)
-    }
-
-    /// Helper method to record a succesful peer response as well as record previous failed responses from other peers
-    /// We make this distinction for snap requests as the data we request might have become stale
-    /// So we cannot know whether a peer returning an empty response is a failure until another peer returns the requested data
-    async fn record_snap_peer_success(&self, succesful_peer_id: H256, mut peer_ids: HashSet<H256>) {
-        // Reward succesful peer
-        self.record_peer_success(succesful_peer_id).await;
-        // Penalize previous peers that returned empty/invalid responses
-        peer_ids.remove(&succesful_peer_id);
-        for peer_id in peer_ids {
-            info!(
-                "[SYNCING] Penalizing peer {peer_id} as it failed to return data cornfirmed as non-stale"
-            );
-            self.record_peer_failure(peer_id).await;
-        }
     }
 
     // TODO: Implement the logic for recording peer successes
@@ -1834,7 +1818,7 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            let free_downloader_channels_clone = free_downloader_channels.clone();
 
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
@@ -2145,26 +2129,14 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
-        logging_flag: bool,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        if logging_flag {
-            info!("request_storage_trienodes {id} started");
-        }
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        if logging_flag {
-            info!("request_storage_trienodes {id} has finished creating the get trie nodes");
-        }
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(
-            peer_channel,
-            request,
-            id,
-            logging_flag,
-        )
-        .await
-        .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
+            .await
+            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
 
     /// Returns the PeerData for each connected Peer
