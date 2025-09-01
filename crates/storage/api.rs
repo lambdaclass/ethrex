@@ -139,6 +139,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add account code
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
 
+    /// Clears all checkpoint data created during the last snap sync
+    async fn clear_snap_state(&self) -> Result<(), StoreError>;
+
     /// Obtain account code via code hash
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
 

@@ -751,6 +751,7 @@ impl SnapBlockSyncState {
                 .ok_or(SyncError::CorruptDB)?;
             current_headers.push(header);
         }
+        self.store.clear_snap_state().await?;
         Ok(FullBlockSyncState {
             current_headers,
             current_blocks: Vec::new(),
