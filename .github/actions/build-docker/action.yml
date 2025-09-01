@@ -49,9 +49,15 @@ runs:
       with:
         context: .
         file: ./Dockerfile
-        load: ${{ inputs.push == 'false' }}
         push: ${{ inputs.push }}
         tags: ${{ inputs.tags }}
         outputs: ${{ inputs.push == 'false' && format('type=docker,dest={0}', steps.vars.outputs.artifact_path) || '' }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    # Since we're exporting the image as a tar, we need to load it manually as well
+    - name: Load image locally
+      shell: bash
+      if: inputs.push == 'false'
+      run: |
+        docker load -i ${{ steps.vars.outputs.artifact_path }}
