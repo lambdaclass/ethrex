@@ -19,6 +19,7 @@ use ethrex_storage::Store;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -67,6 +68,7 @@ pub async fn archive_sync(
     output_dir: Option<String>,
     input_dir: Option<String>,
     no_sync: bool,
+    continued: bool,
     store: Store,
 ) -> eyre::Result<()> {
     let sync_start: Instant = Instant::now();
@@ -81,6 +83,10 @@ pub async fn archive_sync(
     } else {
         DumpProcessor::new_sync(dump_writer, store)
     };
+    // Update starting points if we are resuming a previously aborted archive sync
+    if continued {
+        continue_from_latest_file_dump(&mut dump_processor, &mut dump_reader)?;
+    }
     let mut should_continue = true;
     // Fetch and process dumps until we have the full block state
     while should_continue {
@@ -524,6 +530,64 @@ impl DumpIpcReader {
     }
 }
 
+/// Set the starting hash for dump reads to the next hash on the latest dump written to a file
+/// Can be used to resume a previously aborted archive sync process.
+/// However, it will only be able to resume state download to file and not state rebuilding for the node
+/// Will only work if the dump processor is a pure file writter and the dump reader is an IPC reader
+/// These conditions should have been checked by the CLI.
+/// Does not ensure in any way that the block used in the previous sync matche sthe current block
+fn continue_from_latest_file_dump(
+    dump_processor: &mut DumpProcessor,
+    dump_reader: &mut DumpReader,
+) -> Result<(), eyre::Error> {
+    info!("Resuming aborted state download from latest file");
+    // These conditions should have been checked by the CLI parser
+    let dump_writer = match dump_processor {
+        DumpProcessor {
+            state_root: None,
+            sync_state: None,
+            writer: Some(file_writer),
+        } => file_writer,
+        _ => return Err(eyre::Error::msg("Wrong dump processing config")),
+    };
+    let ipc_reader = match dump_reader {
+        DumpReader::Ipc(ipc_reader) => ipc_reader,
+        _ => return Err(eyre::Error::msg("Wrong dump reading config")),
+    };
+    // Find out what the latest written file was
+    for file in std::fs::read_dir(&dump_writer.dirname)? {
+        let filename = file?.file_name().into_string().unwrap();
+        if let Some(dump_number) = filename
+            .strip_prefix("dump_")
+            .and_then(|filename| filename.strip_suffix(".json"))
+            .and_then(|number_str| usize::from_str_radix(number_str, 10).ok())
+        {
+            dump_writer.current_file = max(dump_writer.current_file, dump_number);
+        }
+    }
+    info!(
+        "Identified file dump_{}.json as latest written dump, obtaining next hash",
+        dump_writer.current_file
+    );
+    // Obtain the starting hash from the last written dump file
+    let latest_dump_file = File::open(
+        std::path::Path::new(&dump_writer.dirname)
+            .join(format!("dump_{}.json", dump_writer.current_file)),
+    )?;
+    let latest_dump: Dump = serde_json::from_reader(latest_dump_file)?;
+    let last_key = latest_dump
+        .accounts
+        .iter()
+        .map(|(addr, acc)| acc.hashed_address.unwrap_or_else(|| keccak(addr)))
+        .max()
+        .unwrap_or_default();
+    ipc_reader.start = hash_next(last_key);
+    // Advance dump writer so we don't overwrite the latest file
+    dump_writer.current_file += 1;
+    info!("Resuming state download from hash {}", ipc_reader.start);
+    Ok(())
+}
+
 #[derive(Parser)]
 #[clap(group = ArgGroup::new("input").required(true).args(&["ipc_path", "input_dir"]).multiple(false))]
 struct Args {
@@ -538,7 +602,7 @@ struct Args {
         value_name = "DATABASE_DIRECTORY",
         default_value_t = default_datadir(),
         help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        long_help = "Receives the name of the directory where the Database is located. If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         env = "ETHREX_DATADIR"
     )]
     pub datadir: String,
@@ -567,6 +631,14 @@ struct Args {
         requires = "output_dir"
     )]
     pub no_sync: bool,
+    #[arg(
+        long = "continued",
+        value_name = "CONTINUED",
+        help = "If enabled, the state download will continue from the last downloaded dump instead of the start. Only usable if --output_dir, --ipc_path and --no_sync are set. Please use the same block number as the previous run to avoid inconsistent state",
+        long_help = "If enabled, the state download will continue from the last downloaded dump instead of the start. Only usable if --output_dir and --no_sync are set. Please use the same block number as the previous run to avoid inconsistent state. It is not possible to continue an aborted state sync as intermediate state root will be lost",
+        requires_all = ["output_dir", "no_sync", "ipc_path"]
+    )]
+    pub continued: bool,
 }
 
 #[tokio::main]
@@ -582,6 +654,7 @@ pub async fn main() -> eyre::Result<()> {
         args.output_dir,
         args.input_dir,
         args.no_sync,
+        args.continued,
         store,
     )
     .await
