@@ -72,7 +72,6 @@ pub enum SyncMode {
 }
 
 /// Manager in charge the sync process
-/// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct Syncer {
     /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
@@ -82,6 +81,9 @@ pub struct Syncer {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
+    /// This string indicates a folder where the snap algorithm will store temporary files that are
+    /// used during the syncing process
+    datadir: String,
 }
 
 impl Syncer {
@@ -90,12 +92,14 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
+        datadir: String,
     ) -> Self {
         Self {
             snap_enabled,
             peers,
             cancel_token,
             blockchain,
+            datadir,
         }
     }
 
@@ -110,6 +114,7 @@ impl Syncer {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
+            datadir: ".".to_string(),
         }
     }
 
@@ -785,10 +790,8 @@ impl Syncer {
         );
 
         let state_root = pivot_header.state_root;
-        let account_state_snapshots_dir =
-            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+        let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -824,13 +827,13 @@ impl Syncer {
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+                let entry = entry.map_err(|err| {
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
                 let account_states_snapshot: Vec<(H256, AccountState)> =
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -954,20 +957,19 @@ impl Syncer {
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
-            let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-                .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+            let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
+                let entry = entry.map_err(|err| {
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 
                 let snapshot_path = entry.path();
 
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
                 let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
                     RLPDecode::decode(&snapshot_contents)
@@ -1272,8 +1274,8 @@ pub enum SyncError {
     BlockNumber(H256),
     #[error("No blocks found")]
     NoBlocks,
-    #[error("Failed to read snapshot from {0:?}")]
-    SnapshotReadError(PathBuf),
+    #[error("Failed to read snapshot from {0:?} with error {1:?}")]
+    SnapshotReadError(PathBuf, std::io::Error),
     #[error("Failed to RLP decode account_state_snapshot from {0:?}")]
     SnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
