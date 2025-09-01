@@ -587,7 +587,85 @@ impl GenServer for Downloader {
 
                 CastResponse::NoReply
             }
-            _ => todo!(),
+            DownloaderCastRequest::ByteCode {
+                task_sender,
+                hashes_to_request,
+                chunk_start,
+                chunk_end,
+            } => {
+                let empty_task_result = BytecodeRequestTaskResult {
+                    start_index: chunk_start,
+                    bytecodes: vec![],
+                    peer_id: self.peer_id,
+                    remaining_start: chunk_start,
+                    remaining_end: chunk_end,
+                };
+                debug!(
+                    "Requesting bytecode from peer {}, chunk: {chunk_start:?} - {chunk_end:?}",
+                    self.peer_id
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetByteCodes(GetByteCodes {
+                    id: request_id,
+                    hashes: hashes_to_request.clone(),
+                    bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = (self.peer_channels.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                if let Some(codes) = tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
+                                if id == request_id =>
+                            {
+                                return Some(codes);
+                            }
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                {
+                    if codes.is_empty() {
+                        self.send_through_response_channel(task_sender, empty_task_result)
+                            .await;
+                        return CastResponse::Stop;
+                    }
+                    // Validate response by hashing bytecodes
+                    let validated_codes: Vec<Bytes> = codes
+                        .into_iter()
+                        .zip(hashes_to_request)
+                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .map(|(b, _hash)| b)
+                        .collect();
+                    let msg = BytecodeRequestTaskResult {
+                        start_index: chunk_start,
+                        remaining_start: chunk_start + validated_codes.len(),
+                        bytecodes: validated_codes,
+                        peer_id: self.peer_id,
+                        remaining_end: chunk_end,
+                    };
+                    self.send_through_response_channel(task_sender, msg).await;
+                } else {
+                    tracing::error!("Failed to get bytecode");
+                    self.send_through_response_channel(task_sender, empty_task_result)
+                        .await;
+                }
+
+                CastResponse::Stop
+            }
         }
     }
 }
