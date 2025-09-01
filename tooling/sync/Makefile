@@ -92,8 +92,8 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
-		--p2p.port 30303\
-		--discovery.port 30303 \
+		--p2p.tcp.port 30303\
+		--p2p.udp.port 30303 \
 		--network $(NETWORK) \
 		--datadir ${NETWORK}_data/ethrex/$(EVM) \
 		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
@@ -177,10 +177,10 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
-    		--p2p.port 30303\
+    		--p2p.tcp.port 30303\
+    		--p2p.udp.port 30303 \
     		--metrics \
     		--metrics.port 3701 \
-    		--discovery.port 30303 \
     		--network $(NETWORK) \
     		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \

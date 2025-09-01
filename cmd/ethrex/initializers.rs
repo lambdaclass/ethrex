@@ -288,10 +288,10 @@ pub fn get_signer(data_dir: &str) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
+    let udp_socket_addr = parse_socket_addr(&opts.p2p_addr, &opts.p2p_udp_port)
         .expect("Failed to parse discovery address and port");
-    let tcp_socket_addr =
-        parse_socket_addr(&opts.p2p_addr, &opts.p2p_port).expect("Failed to parse addr and port");
+    let tcp_socket_addr = parse_socket_addr(&opts.p2p_addr, &opts.p2p_tcp_port)
+        .expect("Failed to parse addr and port");
 
     // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
     // This is fine for now, but we might need to support more options in the future.

@@ -120,7 +120,7 @@ We start a new server passing the enode from node `a` as an argument. Also chang
 
 ```bash
 cargo run --bin ethrex -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_A_ENODE` \
---datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=30306
+--datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.tcp.port=30305 --p2p.udp.port=30306
 ```
 
 **node c**
@@ -128,7 +128,7 @@ Finally, with `node_c` we connect to `node_b`. When the lookup runs, `node_c` sh
 
 ```bash
 cargo run --bin ethrex -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_B_ENODE` \
---datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+--datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.tcp.port=30308 --p2p.udp.port=30310
 ```
 
 We get the `enode` by querying the node_info and using jq:

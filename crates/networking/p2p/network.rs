@@ -136,7 +136,10 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
-    let tcp_socket = TcpSocket::new_v4()?;
+    let tcp_socket = match tcp_addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4(),
+        SocketAddr::V6(_) => TcpSocket::new_v6(),
+    }?;
     tcp_socket.bind(tcp_addr)?;
     tcp_socket.listen(50)
 }
