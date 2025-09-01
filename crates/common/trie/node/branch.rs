@@ -1,6 +1,8 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
+use crate::{
+    TrieDB, ValueRLP, db::TrieDbReader, error::TrieError, nibbles::Nibbles, node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -37,7 +39,11 @@ impl BranchNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDbReader,
+        mut path: Nibbles,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If path is at the end, return to its own value if present.
         // Otherwise, check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {

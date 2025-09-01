@@ -6,6 +6,7 @@ use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
+use crate::db::TrieDbReader;
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -22,7 +23,11 @@ impl ExtensionNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDbReader,
+        mut path: Nibbles,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {

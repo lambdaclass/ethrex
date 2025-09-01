@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{TrieDB, db::TrieDbReader, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -31,7 +31,7 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDbReader) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
@@ -161,7 +161,7 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, db: &dyn TrieDbReader, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         match self {
             Node::Branch(n) => n.get(db, path),
             Node::Extension(n) => n.get(db, path),
