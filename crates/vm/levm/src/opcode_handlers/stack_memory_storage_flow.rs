@@ -343,14 +343,14 @@ impl<'a> VM<'a> {
 
     // JUMPI operation
     pub fn op_jumpi(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [jump_address, condition] = *current_call_frame.stack.pop()?;
+        let [jump_address, condition] = *self.current_call_frame.stack.pop()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::JUMPI)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPI)?;
 
         let pc_increment = if !condition.is_zero() {
             // Move the PC but don't increment it afterwards
-            Self::jump(current_call_frame, jump_address)?;
+            Self::jump(&mut self.current_call_frame, jump_address)?;
             0
         } else {
             1
@@ -360,9 +360,8 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        let call_frame = &mut self.current_call_frame;
-
-        call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPDEST)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
