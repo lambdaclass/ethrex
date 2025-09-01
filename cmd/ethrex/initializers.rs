@@ -28,7 +28,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
