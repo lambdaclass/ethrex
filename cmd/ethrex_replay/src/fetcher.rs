@@ -212,7 +212,7 @@ pub async fn get_rangedata(
 
 pub async fn get_batchdata(
     rollup_client: EthClient,
-    chain_config: ChainConfig,
+    network: Network,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_batch_{batch_number}.bin");
@@ -226,7 +226,7 @@ pub async fn get_batchdata(
 
     let mut cache = fetch_rangedata_from_client(
         rollup_client,
-        chain_config,
+        network.get_genesis()?.config,
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
     )

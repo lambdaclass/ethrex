@@ -11,11 +11,14 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 use tracing::{error, info};
 
-use crate::block_run_report::{BlockRunReport, ReplayerMode};
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, fetcher::get_batchdata};
+use crate::{
+    block_run_report::{BlockRunReport, ReplayerMode},
+    cache::Cache,
+};
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
@@ -162,25 +165,11 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let eth_client = EthClient::new(opts.rpc_url.as_str())?;
-
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, false);
+                let (eth_client, network) = setup(&opts, false).await?;
 
                 let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
-                let future = async {
-                    let gas_used = get_total_gas_used(&cache.blocks);
-                    if opts.execute {
-                        exec(BACKEND, cache).await?;
-                    } else {
-                        prove(BACKEND, cache).await?;
-                    }
-                    Ok(gas_used)
-                };
-
-                run_and_measure(future, opts.bench).await?;
+                run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -189,11 +178,7 @@ impl EthrexReplayCommand {
 
                 blocks.sort();
 
-                let eth_client = EthClient::new(opts.rpc_url.as_str())?;
-
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, opts.execute);
+                let (eth_client, network) = setup(&opts, false).await?;
 
                 let replayer_mode = replayer_mode(opts.execute);
 
@@ -277,11 +262,12 @@ impl EthrexReplayCommand {
                 }
             }
             Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
-                let eth_client = EthClient::new(opts.rpc_url.as_ref())?;
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-                let network = network_from_chain_id(chain_id, opts.execute);
+                let (eth_client, network) = setup(&opts, false).await?;
+
                 let block_identifier = or_latest(block)?;
-                let _ = get_blockdata(eth_client, network.clone(), block_identifier).await?;
+
+                get_blockdata(eth_client, network.clone(), block_identifier).await?;
+
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
                 } else {
@@ -291,30 +277,23 @@ impl EthrexReplayCommand {
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions { mut blocks, opts })) => {
                 blocks.sort();
 
-                let eth_client = EthClient::new(opts.rpc_url.as_ref())?;
-
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, opts.execute);
+                let (eth_client, network) = setup(&opts, false).await?;
 
                 for block_number in blocks {
-                    let _ = get_blockdata(
+                    get_blockdata(
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
                     )
                     .await?;
                 }
+
                 info!("Blocks data cached successfully.");
             }
             Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
-                let eth_client = EthClient::new(opts.rpc_url.as_ref())?;
+                let (eth_client, network) = setup(&opts, false).await?;
 
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, opts.execute);
-
-                let _ = get_rangedata(eth_client, network, start, end).await?;
+                get_rangedata(eth_client, network, start, end).await?;
 
                 info!("Block from {start} to {end} data cached successfully.");
             }
@@ -323,11 +302,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let eth_client = EthClient::new(opts.rpc_url.as_str())?;
-
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, opts.execute);
+                let (eth_client, network) = setup(&opts, l2).await?;
 
                 // Get the block number of the transaction
                 let tx = eth_client
@@ -335,12 +310,10 @@ impl EthrexReplayCommand {
                     .await?
                     .ok_or(eyre::Error::msg("error fetching transaction"))?;
 
-                let block_number = tx.block_number;
-
                 let cache = get_blockdata(
                     eth_client,
                     network,
-                    BlockIdentifier::Number(block_number.as_u64()),
+                    BlockIdentifier::Number(tx.block_number.as_u64()),
                 )
                 .await?;
 
@@ -391,32 +364,35 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                if !opts.execute {
-                    return Err(eyre::Error::msg("Proving batches is not supported yet."));
-                }
+                let (eth_client, network) = setup(&opts, true).await?;
 
-                let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+                let cache = get_batchdata(eth_client, network, batch).await?;
 
-                let chain_id = eth_client.get_chain_id().await?.as_u64();
-
-                let network = network_from_chain_id(chain_id, true);
-
-                let chain_config = network.get_genesis()?.config;
-
-                let cache = get_batchdata(eth_client, chain_config, batch).await?;
-
-                let future = async {
-                    let gas_used = get_total_gas_used(&cache.blocks);
-                    exec(BACKEND, cache).await?;
-                    Ok(gas_used)
-                };
-
-                run_and_measure(future, opts.bench).await?;
+                run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
         }
 
         Ok(())
     }
+}
+
+async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient, Network)> {
+    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+    let chain_id = eth_client.get_chain_id().await?.as_u64();
+    let network = network_from_chain_id(chain_id, l2);
+    Ok((eth_client, network))
+}
+
+async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+    let gas_used = get_total_gas_used(&cache.blocks);
+
+    if opts.execute {
+        exec(BACKEND, cache).await?;
+    } else {
+        prove(BACKEND, cache).await?;
+    }
+
+    Ok(gas_used)
 }
 
 fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
