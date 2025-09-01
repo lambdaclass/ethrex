@@ -136,26 +136,6 @@ pub async fn fill_transactions(
             break;
         };
 
-        // Check we don't have an excessive number of privileged transactions
-        if head_tx.tx_type() == TxType::Privileged {
-            let id = head_tx.nonce();
-            if let Some(range) = privileged_range.as_mut() {
-                if range.clone().count() > PRIVILEGED_TX_BUDGET {
-                    debug!("Ran out of space for privileged transactions");
-                    txs.pop();
-                    continue;
-                }
-                if id != range.end {
-                    debug!("Ignoring out-of-order privileged transaction");
-                    txs.pop();
-                    continue;
-                }
-                range.end += 1;
-            } else {
-                privileged_range = Some(id..(id + 1));
-            }
-        }
-
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
@@ -224,6 +204,28 @@ pub async fn fill_transactions(
             // This transaction state change is too big, we need to undo it.
             undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
             continue;
+        }
+
+        // Check we don't have an excessive number of privileged transactions
+        if head_tx.tx_type() == TxType::Privileged {
+            let id = head_tx.nonce();
+            if let Some(range) = privileged_range.as_mut() {
+                if range.clone().count() > PRIVILEGED_TX_BUDGET {
+                    debug!("Ran out of space for privileged transactions");
+                    txs.pop();
+                    context.vm.undo_last_tx()?;
+                    continue;
+                }
+                if id != range.end {
+                    debug!("Ignoring out-of-order privileged transaction");
+                    txs.pop();
+                    context.vm.undo_last_tx()?;
+                    continue;
+                }
+                range.end += 1;
+            } else {
+                privileged_range = Some(id..(id + 1));
+            }
         }
 
         txs.shift()?;
