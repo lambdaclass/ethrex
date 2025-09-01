@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756735413005,
+  "lastUpdate": 1756737671681,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10855,6 +10855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161416072105,
             "range": "± 332115861",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbef92ec2aa0a39ff9f468d28d49d23a58318bc5",
+          "message": "chore(l1): improve logging on the `import` subcommand. (#4201)\n\n**Motivation**\nLogging in general, and specifically in the `import` subcommand is quite\nmessy.\n\n**Description**\n- Improves the logging phrasing\n- Instead of logging for each block, logs a summary every 10 seconds\n- Logs the total time that it took.\n- Some misc log additions and downgrades\n\nThis is how it looks:\n```\n2025-08-28T17:27:12.121079Z  INFO ethrex_storage::store: Opening storage engine engine=Libmdbx path=/Users/mpaulucci/Library/Application-Support/ethrex\n2025-08-28T17:27:12.158692Z  INFO ethrex_storage::store: Storing genesis block hash=0xbbe3…971b\n2025-08-28T17:27:12.159567Z  INFO ethrex::initializers: Initiating blockchain evm=levm\n2025-08-28T17:27:12.159726Z  INFO ethrex::cli: Importing blocks from file path=./hoodi-1k.rlp\n2025-08-28T17:27:22.415021Z  INFO ethrex::cli: Import progress processed=151 total=1000 percent=15.1\n2025-08-28T17:27:32.602179Z  INFO ethrex::cli: Import progress processed=180 total=1000 percent=18.0\n```",
+          "timestamp": "2025-09-01T13:51:03Z",
+          "tree_id": "f4b2a8aa1b155f1a710358f6c92e61a9475c5423",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbef92ec2aa0a39ff9f468d28d49d23a58318bc5"
+        },
+        "date": 1756737654162,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160756299677,
+            "range": "± 231254991",
             "unit": "ns/iter"
           }
         ]
