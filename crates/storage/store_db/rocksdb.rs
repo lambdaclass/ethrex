@@ -10,12 +10,173 @@ use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use std::sync::Arc;
 
-use crate::{STATE_TRIE_SEGMENTS, UpdateBatch, api::StoreEngine, error::StoreError};
+use crate::{
+    STATE_TRIE_SEGMENTS, UpdateBatch,
+    api::StoreEngine,
+    error::StoreError,
+    rlp::{BlockHashRLP, BlockHeaderRLP},
+};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
+
+// Column Family names - matching libmdbx tables
+const CF_CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
+const CF_BLOCK_NUMBERS: &str = "block_numbers";
+const CF_HEADERS: &str = "headers";
+const CF_BODIES: &str = "bodies";
+const CF_ACCOUNT_CODES: &str = "account_codes";
+const CF_RECEIPTS: &str = "receipts";
+const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
+const CF_CHAIN_DATA: &str = "chain_data";
+const CF_SNAP_STATE: &str = "snap_state";
+const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
+const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
+const CF_PAYLOADS: &str = "payloads";
+const CF_PENDING_BLOCKS: &str = "pending_blocks";
+const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
+const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
     db: Arc<DB>,
+}
+
+impl Store {
+    pub fn new(path: &str) -> Result<Self, StoreError> {
+        let mut db_options = Options::default();
+        db_options.create_if_missing(true);
+        db_options.create_missing_column_families(true);
+
+        // Performance configurations similar to libmdbx setup
+        db_options.set_max_open_files(1000);
+        db_options.set_use_fsync(false);
+        db_options.set_bytes_per_sync(1048576);
+        db_options.set_disable_auto_compactions(false);
+
+        // Column families matching libmdbx tables
+        let column_families = vec![
+            CF_CANONICAL_BLOCK_HASHES,
+            CF_BLOCK_NUMBERS,
+            CF_HEADERS,
+            CF_BODIES,
+            CF_ACCOUNT_CODES,
+            CF_RECEIPTS,
+            CF_TRANSACTION_LOCATIONS,
+            CF_CHAIN_DATA,
+            CF_SNAP_STATE,
+            CF_STATE_TRIE_NODES,
+            CF_STORAGE_TRIES_NODES,
+            CF_PAYLOADS,
+            CF_PENDING_BLOCKS,
+            CF_STORAGE_SNAPSHOT,
+            CF_INVALID_ANCESTORS,
+        ];
+
+        let mut cf_descriptors = Vec::new();
+        for cf_name in column_families {
+            let mut cf_opts = Options::default();
+            cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
+        }
+
+        let db = DB::open_cf_descriptors(&db_options, path, cf_descriptors)
+            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    // Helper method to get column family handle
+    fn cf_handle(&self, cf_name: &str) -> Result<&ColumnFamily, StoreError> {
+        self.db
+            .cf_handle(cf_name)
+            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
+    }
+
+    // Helper method for async writes
+    async fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
+    where
+        K: AsRef<[u8]> + Send + 'static,
+        V: AsRef<[u8]> + Send + 'static,
+    {
+        let db = self.db.clone();
+        let cf_name = cf_name.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: {}", cf_name))
+            })?;
+            db.put_cf(cf, key, value)
+                .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    // Helper method for async reads
+    async fn read_async<K>(&self, cf_name: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
+    where
+        K: AsRef<[u8]> + Send + 'static,
+    {
+        let db = self.db.clone();
+        let cf_name = cf_name.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: {}", cf_name))
+            })?;
+            db.get_cf(cf, key)
+                .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    // Helper method for sync reads
+    fn read_sync<K>(&self, cf_name: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
+    where
+        K: AsRef<[u8]>,
+    {
+        let cf = self.cf_handle(cf_name)?;
+        self.db
+            .get_cf(cf, key)
+            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+    }
+
+    // Helper method for batch writes
+    async fn write_batch_async(
+        &self,
+        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+
+            for (cf_name, key, value) in batch_ops {
+                let cf = db.cf_handle(&cf_name).ok_or_else(|| {
+                    StoreError::Custom(format!("Column family not found: {}", cf_name))
+                })?;
+                batch.put_cf(cf, key, value);
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    // Helper method to add canonical block hash (like libmdbx does implicitly)
+    async fn add_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let number_key = block_number.encode_to_vec();
+        let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
+        self.write_async(CF_CANONICAL_BLOCK_HASHES, number_key, hash_value)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -36,7 +197,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
+        self.write_async(CF_HEADERS, hash_key, header_value).await
     }
 
     /// Add a batch of block headers
@@ -49,7 +212,13 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        todo!()
+        // First get the canonical hash for this block number
+        let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
+            return Ok(None);
+        };
+
+        // Then get the header using the hash
+        self.get_block_header_by_hash(block_hash)
     }
 
     /// Add block body
@@ -103,7 +272,15 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+
+        match self.read_sync(CF_HEADERS, hash_key)? {
+            Some(header_bytes) => {
+                let header_rlp = BlockHeaderRLP::from_bytes(header_bytes);
+                header_rlp.to().map(Some).map_err(StoreError::from)
+            }
+            None => Ok(None),
+        }
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
@@ -119,7 +296,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let number_value = block_number.encode_to_vec();
+        self.write_async(CF_BLOCK_NUMBERS, hash_key, number_value)
+            .await
     }
 
     /// Obtain block number for a given hash
@@ -127,7 +307,14 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+
+        match self.read_async(CF_BLOCK_NUMBERS, hash_key).await? {
+            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
+                .map(Some)
+                .map_err(StoreError::from),
+            None => Ok(None),
+        }
     }
 
     /// Store transaction location (block number and index of the transaction within the block)
@@ -252,7 +439,18 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let number_key = block_number.encode_to_vec();
+
+        match self
+            .read_async(CF_CANONICAL_BLOCK_HASHES, number_key)
+            .await?
+        {
+            Some(hash_bytes) => {
+                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
+                hash_rlp.to().map(Some).map_err(StoreError::from)
+            }
+            None => Ok(None),
+        }
     }
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file
@@ -495,7 +693,14 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+
+        match self.read_sync(CF_BLOCK_NUMBERS, hash_key)? {
+            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
+                .map(Some)
+                .map_err(StoreError::from),
+            None => Ok(None),
+        }
     }
 
     /// Get the canonical block hash for a given block number.
@@ -503,7 +708,15 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let number_key = block_number.encode_to_vec();
+
+        match self.read_sync(CF_CANONICAL_BLOCK_HASHES, number_key)? {
+            Some(hash_bytes) => {
+                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
+                hash_rlp.to().map(Some).map_err(StoreError::from)
+            }
+            None => Ok(None),
+        }
     }
 
     async fn write_storage_trie_nodes_batch(
@@ -518,5 +731,157 @@ impl StoreEngine for Store {
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::BlockHeader;
+    use ethrex_common::{Address, H256, U256};
+    use tempdir::TempDir;
+
+    fn create_test_header() -> BlockHeader {
+        BlockHeader {
+            hash: Default::default(),
+            parent_hash: H256::random(),
+            ommers_hash: H256::random(),
+            coinbase: Address::random(),
+            state_root: H256::random(),
+            transactions_root: H256::random(),
+            receipts_root: H256::random(),
+            logs_bloom: Default::default(),
+            difficulty: U256::from(1000),
+            number: 1,
+            gas_limit: 8000000,
+            gas_used: 5000000,
+            timestamp: 1234567890,
+            extra_data: vec![].into(),
+            prev_randao: H256::random(),
+            nonce: 42,
+            base_fee_per_gas: Some(1000),
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_store_creation() {
+        let temp_dir = TempDir::new("rocksdb_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
+
+        let store = Store::new(db_path.to_str().unwrap()).unwrap();
+        // Just test that we can create the store successfully
+        assert!(store.db.live_files().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_header_round_trip() {
+        let temp_dir = TempDir::new("rocksdb_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
+        let store = Store::new(db_path.to_str().unwrap()).unwrap();
+
+        let header = create_test_header();
+        let block_hash = header.hash();
+
+        // Store the header
+        store
+            .add_block_header(block_hash, header.clone())
+            .await
+            .unwrap();
+
+        // Retrieve the header
+        let retrieved_header = store.get_block_header_by_hash(block_hash).unwrap().unwrap();
+
+        // Verify they match
+        assert_eq!(header.parent_hash, retrieved_header.parent_hash);
+        assert_eq!(header.number, retrieved_header.number);
+        assert_eq!(header.difficulty, retrieved_header.difficulty);
+        assert_eq!(header.gas_limit, retrieved_header.gas_limit);
+    }
+
+    #[tokio::test]
+    async fn test_canonical_chain_lookup() {
+        let temp_dir = TempDir::new("rocksdb_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
+        let store = Store::new(db_path.to_str().unwrap()).unwrap();
+
+        let header = create_test_header();
+        let block_hash = header.hash();
+        let block_number = header.number;
+
+        // Store the header
+        store
+            .add_block_header(block_hash, header.clone())
+            .await
+            .unwrap();
+
+        // Store the canonical mapping and block number mapping
+        store
+            .add_canonical_block_hash(block_number, block_hash)
+            .await
+            .unwrap();
+        store
+            .add_block_number(block_hash, block_number)
+            .await
+            .unwrap();
+
+        // Test canonical hash lookup
+        let canonical_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(canonical_hash, block_hash);
+
+        // Test sync version
+        let canonical_hash_sync = store
+            .get_canonical_block_hash_sync(block_number)
+            .unwrap()
+            .unwrap();
+        assert_eq!(canonical_hash_sync, block_hash);
+
+        // Test block number lookup
+        let retrieved_number = store.get_block_number(block_hash).await.unwrap().unwrap();
+        assert_eq!(retrieved_number, block_number);
+
+        // Test sync version
+        let retrieved_number_sync = store.get_block_number_sync(block_hash).unwrap().unwrap();
+        assert_eq!(retrieved_number_sync, block_number);
+
+        // Test get_block_header with canonical lookup
+        let canonical_header = store.get_block_header(block_number).unwrap().unwrap();
+        assert_eq!(canonical_header.parent_hash, header.parent_hash);
+        assert_eq!(canonical_header.number, header.number);
+    }
+
+    #[tokio::test]
+    async fn test_nonexistent_data() {
+        let temp_dir = TempDir::new("rocksdb_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
+        let store = Store::new(db_path.to_str().unwrap()).unwrap();
+
+        let random_hash = H256::random();
+        let random_number = 999999;
+
+        // Test that nonexistent data returns None
+        assert!(
+            store
+                .get_block_header_by_hash(random_hash)
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.get_block_header(random_number).unwrap().is_none());
+        assert!(
+            store
+                .get_canonical_block_hash(random_number)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.get_block_number(random_hash).await.unwrap().is_none());
     }
 }
