@@ -23,6 +23,8 @@ lazy_static.workspace = true
 [features]
 default = []
 libmdbx = ["dep:libmdbx"]
+rocksdb = []
+
 
 [dev-dependencies]
 hex.workspace = true
