@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756761963525,
+  "lastUpdate": 1756764957367,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11005,6 +11005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160899074324,
             "range": "± 418893542",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cae720162fd889eb18417010e5f091c6d097d35",
+          "message": "feat(l1): improve p2p peer discovery and rework snap sync (#4213)\n\n**Motivation**\n\nThis PR does two main things:\n\n- Improves the process of finding peers by being way more aggressive in\nour lookup. The previous version was too passive and as a result did not\nfind many peers in a reasonable amount of time.\n- Reworks and fixes a few things in snap sync to make it work on the\nmain networks: this was tested and ran succesfully on hoodi, sepolia and\nmainnet. It currently syncs hoodi in around 20 minutes in a good\nscenario, sepolia in around 3 and a half hours, and mainnet in ~24\nhours. These times are very far from ideal and there is a ton of room\nfor improvement here. This is a first iteration that will be improved in\nsubsequent PRs, along with improvements to our p2p code in general (lots\nof bugs and performance issues were found once we started succesfully\nsyncing big testnets). The code is also far from ideal from a\nreadability standpoint, something we will also tackle on a future PR by\nrewriting this code using `spawned`.\n\nSome of the things left to tackle on subsequent PRs are:\n\n- Fix memory usage, currently the snap sync code does not flush data to\ndisk frequently enough and as a result uses massive amounts of memory on\nbig networks when syncing.\n- Use a global peer scoring mechanism instead of tracking scores\nseparately on each snap sync stage.\n- Improve download task distribution to peers; the algorithm is\ncurrently too simple and becomes very slow if run on a node with high\nlatency to most of its peers.\n- Various p2p fixes: improve tx broadcast logic to decrease cpu usage\nwhen we have lots of peers, limit mempool size and other changes needed\nto make the node more stable.\n- Optionally download blocks and receipts as well once the sync process\nis finished. These are not necessary for a node to be synced but they\nare common data that most clients usually serve by default.\n- Various performance improvements to reduce time spent writing to the\ndatabase, make db writes concurrent to downloads, and more.\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Pablo Deymonnaz <deymonnaz@gmail.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: ricomateo <mrico@fi.uba.ar>\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>\nCo-authored-by: Mateo Rico <89949621+ricomateo@users.noreply.github.com>\nCo-authored-by: Juan Munoz <juanmunoz890@gmail.com>\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>\nCo-authored-by: Pablo Deymonnaz <pdeymon@fi.uba.ar>\nCo-authored-by: juan518munoz <62400508+juan518munoz@users.noreply.github.com>",
+          "timestamp": "2025-09-01T21:15:01Z",
+          "tree_id": "8d4577ca009a9683dfc86805d24a31b55dae0d2b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0cae720162fd889eb18417010e5f091c6d097d35"
+        },
+        "date": 1756764939930,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161782600464,
+            "range": "± 342574259",
             "unit": "ns/iter"
           }
         ]
