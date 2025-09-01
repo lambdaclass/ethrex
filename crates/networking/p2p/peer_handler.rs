@@ -12,8 +12,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
-use ethrex_trie::{Node, verify_range};
-use rand::{random, seq::SliceRandom};
+use ethrex_trie::Node;
+use rand::random;
 use spawned_concurrency::tasks::GenServer;
 use tokio::{sync::Mutex, time::Instant};
 
@@ -26,18 +26,11 @@ use crate::{
             BytecodeRequestTaskResult, Downloader, DownloaderCallRequest, DownloaderCallResponse,
             DownloaderCastRequest, StorageRequestTaskResult,
         },
-        eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
-            receipts::GetReceipts,
-        },
+        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
-        snap::{
-            AccountRangeUnit, ByteCodes, GetByteCodes, GetStorageRanges, GetTrieNodes,
-            StorageRanges, TrieNodes,
-        },
+        snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
     },
-    snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
         SendMessageError, dump_to_file, get_account_state_snapshot_file,
@@ -93,15 +86,6 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
-#[derive(Clone)]
-struct StorageTaskResult {
-    start_index: usize,
-    account_storages: Vec<Vec<(H256, U256)>>,
-    peer_id: H256,
-    remaining_start: usize,
-    remaining_end: usize,
-    remaining_hash_range: (H256, Option<H256>),
-}
 #[derive(Debug)]
 struct StorageTask {
     start_index: usize,
@@ -165,20 +149,6 @@ impl PeerHandler {
         }
 
         Ok(Some((free_peer_id, free_peer_channel.clone())))
-    }
-
-    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
-        &self,
-        capabilities: &[Capability],
-    ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
-
-        peer_channels.shuffle(&mut rand::rngs::OsRng);
-
-        peer_channels.first().cloned()
     }
 
     async fn mark_peer_as_busy(&self, peer_id: H256) {

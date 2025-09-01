@@ -23,7 +23,7 @@ use crate::{
         },
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
+            GetStorageRanges, StorageRanges,
         },
     },
     snap::encodable_to_proof,
