@@ -261,7 +261,8 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
             .unwrap(), // Doesn't matter
     };
 
-        panic!("Pre-Merge forks are not supported in this context. Please use a fork at or after Paris (the Merge).");
+    if *fork < Fork::Paris {
+        panic!("We don't support pre Merge forks, what are you doing here?");
     }
     if *fork >= Fork::Shanghai {
         basic_chain_config.shanghai_time = Some(0);
