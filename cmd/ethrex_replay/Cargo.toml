@@ -36,6 +36,9 @@ clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
 rkyv.workspace = true
+secp256k1.workspace = true
+sha3.workspace = true
+rand.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 
