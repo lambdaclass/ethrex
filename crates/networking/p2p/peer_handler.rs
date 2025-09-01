@@ -111,13 +111,23 @@ impl PeerHandler {
         PeerHandler::new(dummy_peer_table)
     }
 
-    // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
-    async fn record_peer_success(&self, _peer_id: H256) {}
+    async fn record_peer_success(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| info.score = info.score.saturating_add(1));
+    }
 
-    // TODO: Implement the logic for recording peer failures
     /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, _peer_id: H256) {}
+    async fn record_peer_failure(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| info.score = info.score.saturating_sub(1));
+    }
 
     // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
@@ -450,7 +460,8 @@ impl PeerHandler {
                 *METRICS.header_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
 
-                *METRICS.total_header_downloaders.lock().await = self.peers_info.lock().await.len() as u64;
+                *METRICS.total_header_downloaders.lock().await =
+                    self.peers_info.lock().await.len() as u64;
             }
 
             if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
@@ -459,10 +470,9 @@ impl PeerHandler {
                 self.mark_peer_as_free(peer_id).await;
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
-
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
-
+                    // self.record_peer_failure(peer_id).await; // commented as of now, enable later
                     continue; // Retry with the next peer
                 }
 
@@ -500,7 +510,10 @@ impl PeerHandler {
                     );
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
+                    continue;
+                    // TODO: We should also reward half succeful peers, but probably not as much as fully successful ones
                 }
+                self.record_peer_success(peer_id).await;
             }
 
             let available_downloader = self.get_random_available_downloader().await;
@@ -752,12 +765,6 @@ impl PeerHandler {
             .ok_or(PeerHandlerError::NoTasks)?;
         last_task.1 = limit;
 
-        // 2) request the chunks from peers
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
-
         let mut downloaded_count = 0_u64;
         let mut all_account_hashes = Vec::new();
         let mut all_accounts_state = Vec::new();
@@ -770,19 +777,12 @@ impl PeerHandler {
         let (dump_account_result_sender, mut dump_account_result_receiver) =
             tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
 
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-            peers_table
-                .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
-        );
-
         info!("Starting to download account ranges from peers");
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peers_info.lock().await;
         let mut chunk_file = 0;
 
         self.refresh_peers_availability().await;
@@ -835,14 +835,13 @@ impl PeerHandler {
             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.accounts_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
-                *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.total_accounts_downloaders.lock().await =
+                    self.peers_info.lock().await.len() as u64;
                 *METRICS.downloaded_account_tries.lock().await = downloaded_count;
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
+                self.mark_peer_as_free(peer_id).await;
 
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
@@ -855,12 +854,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    let peer_info = scores.entry(peer_id).or_default();
-                    peer_info.score -= 1;
+                    self.record_peer_failure(peer_id).await;
                     continue;
                 }
-                let peer_info = scores.entry(peer_id).or_default();
-                peer_info.score += 1;
+                self.record_peer_success(peer_id).await;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -963,11 +960,12 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
+        let downloaders_count = self.peers_info.lock().await.len() as u64;
         *METRICS.accounts_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
-        *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.total_accounts_downloaders.lock().await = downloaders_count;
         *METRICS.downloaded_account_tries.lock().await = downloaded_count;
-        *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_accounts_downloaders.lock().await = downloaders_count;
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
