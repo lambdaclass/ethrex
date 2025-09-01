@@ -8,7 +8,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address};
-use ethrex_trie::{Trie, TrieError};
+use ethrex_trie::{Trie, TrieError, TrieReader};
 use ethrex_vm::{EvmError, VmDatabase};
 use serde::{Deserialize, Serialize};
 
@@ -261,8 +261,9 @@ impl StateDiff {
     ) -> Result<HashMap<Address, AccountUpdate>, StateDiffError> {
         let mut account_updates = HashMap::new();
 
+        let trie_reader = prev_state.reader();
         for (address, diff) in &self.modified_accounts {
-            let account_state = match prev_state
+            let account_state = match trie_reader
                 .get(&hash_address(address))
                 .map_err(StateDiffError::DbError)?
             {

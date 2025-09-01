@@ -44,6 +44,7 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+use ethrex_trie::TrieReader;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -226,10 +227,13 @@ impl Blockchain {
             block_hashes.extend(logger_block_hashes);
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+                let trie_reader = trie.reader();
                 for withdrawal in withdrawals {
-                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
-                        ChainError::Custom("Failed to access account from trie".to_string())
-                    })?;
+                    trie_reader
+                        .get(&hash_address(&withdrawal.address))
+                        .map_err(|_e| {
+                            ChainError::Custom("Failed to access account from trie".to_string())
+                        })?;
                 }
             }
 
@@ -237,35 +241,45 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
             {
-                // Access the account from the state trie to record the nodes used to access it
-                trie.get(&hash_address(account)).map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to access account from trie".to_string())
-                })?;
-                // Get storage trie at before updates
-                if !acc_keys.is_empty() {
-                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
-                    {
-                        let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie);
-                        // Access all the keys
-                        for storage_key in acc_keys {
-                            let hashed_key = hash_key(storage_key);
-                            storage_trie.get(&hashed_key).map_err(|_e| {
-                                ChainError::WitnessGeneration(
-                                    "Failed to access storage key".to_string(),
-                                )
-                            })?;
+                let trie_reader = trie.reader();
+                for (account, acc_keys) in logger
+                    .state_accessed
+                    .lock()
+                    .map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                    })?
+                    .iter()
+                {
+                    // Access the account from the state trie to record the nodes used to access it
+                    trie_reader.get(&hash_address(account)).map_err(|_e| {
+                        ChainError::WitnessGeneration(
+                            "Failed to access account from trie".to_string(),
+                        )
+                    })?;
+                    // Get storage trie at before updates
+                    if !acc_keys.is_empty() {
+                        if let Ok(Some(storage_trie)) =
+                            self.storage.storage_trie(parent_hash, *account)
+                        {
+                            let (storage_trie_witness, storage_trie) =
+                                TrieLogger::open_trie(storage_trie);
+                            {
+                                let storage_trie_reader = storage_trie.reader();
+                                // Access all the keys
+                                for storage_key in acc_keys {
+                                    let hashed_key = hash_key(storage_key);
+                                    storage_trie_reader.get(&hashed_key).map_err(|_e| {
+                                        ChainError::WitnessGeneration(
+                                            "Failed to access storage key".to_string(),
+                                        )
+                                    })?;
+                                }
+                            }
+                            // Store the tries to reuse when applying account updates
+                            used_storage_tries
+                                .insert(*account, (storage_trie_witness, storage_trie));
                         }
-                        // Store the tries to reuse when applying account updates
-                        used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
                     }
                 }
             }
