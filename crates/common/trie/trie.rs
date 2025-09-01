@@ -267,16 +267,21 @@ impl Trie {
         mut state_nodes: HashMap<NodeHash, NodeRLP>,
     ) -> Result<Self, TrieError> {
         // TODO: Try to remove this clone.
-        let Some(root) = state_nodes.get(&root_hash).cloned() else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
-            return Ok(Trie::new(in_memory_trie));
-        };
+        let root_rlp = state_nodes
+            .get(&root_hash)
+            .cloned()
+            .expect("Trie should have root hash");
 
         fn inner(
-            storage: &mut HashMap<NodeHash, Vec<u8>>,
-            node: &NodeRLP,
+            all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
+            cur_node_hash: &NodeHash,
+            cur_node_rlp: NodeRLP,
+            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>, //TODO: I'd like this to be a NodeHash to Node map but the tree is built by NodeHash to RLPNode instead...
         ) -> Result<Node, TrieError> {
-            Ok(match Node::decode_raw(node)? {
+            let node = Node::decode_raw(&cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp);
+
+            Ok(match node {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
@@ -284,8 +289,8 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, &rlp)?.into(),
+                            *choice = match all_nodes.remove(&hash) {
+                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -298,8 +303,8 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, &rlp)?.into(),
+                    node.child = match all_nodes.remove(&hash) {
+                        Some(rlp) => inner(all_nodes, &hash, rlp.clone(), traversed_nodes)?.into(),
                         None => hash.into(),
                     };
 
@@ -309,8 +314,9 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut state_nodes, &root)?.into();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+        let mut necessary_nodes = HashMap::new();
+        let root = inner(&mut state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;
