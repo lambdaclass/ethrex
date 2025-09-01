@@ -177,7 +177,7 @@ impl EthrexReplayCommand {
 
                 let start = SystemTime::now();
 
-                let block_run_result = run_and_measure(replay(cache, &opts, l2), opts.bench).await;
+                let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
 
                 let replayer_mode = replayer_mode(opts.execute);
 
@@ -342,6 +342,12 @@ impl EthrexReplayCommand {
                 opts,
                 l2: _,
             })) => {
+                if cfg!(not(feature = "l2")) {
+                    return Err(eyre::Error::msg(
+                        "Please enable the `l2` feature to use L2 functionalities.",
+                    ));
+                }
+
                 Box::pin(async {
                     EthrexReplayCommand::Transaction(TransactionOpts {
                         tx_hash,
@@ -354,6 +360,12 @@ impl EthrexReplayCommand {
                 .await?;
             }
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
+                if cfg!(not(feature = "l2")) {
+                    return Err(eyre::Error::msg(
+                        "Please enable the `l2` feature to use L2 functionalities.",
+                    ));
+                }
+
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
@@ -362,7 +374,7 @@ impl EthrexReplayCommand {
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
-                run_and_measure(replay(cache, &opts, true), opts.bench).await?;
+                run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
         }
 
@@ -377,13 +389,13 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
     Ok((eth_client, network))
 }
 
-async fn replay(cache: Cache, opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<f64> {
+async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
     if opts.execute {
-        exec(BACKEND, cache, l2).await?;
+        exec(BACKEND, cache).await?;
     } else {
-        prove(BACKEND, cache, l2).await?;
+        prove(BACKEND, cache).await?;
     }
 
     Ok(gas_used)

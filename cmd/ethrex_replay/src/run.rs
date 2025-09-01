@@ -13,26 +13,28 @@ use std::{
 };
 use zkvm_interface::io::ProgramInput;
 
-pub async fn exec(backend: Backend, cache: Cache, l2: bool) -> eyre::Result<()> {
-    let input = if l2 {
-        get_l2_input(cache)?
-    } else {
-        get_l1_input(cache)?
-    };
+pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
+    #[cfg(feature = "l2")]
+    let input = get_l2_input(cache)?;
+    #[cfg(not(feature = "l2"))]
+    let input = get_l1_input(cache)?;
+
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+
     Ok(())
 }
 
-pub async fn prove(backend: Backend, cache: Cache, l2: bool) -> eyre::Result<()> {
-    let input = if l2 {
-        get_l2_input(cache)?
-    } else {
-        get_l1_input(cache)?
-    };
+pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
+    #[cfg(feature = "l2")]
+    let input = get_l2_input(cache)?;
+    #[cfg(not(feature = "l2"))]
+    let input = get_l1_input(cache)?;
+
     catch_unwind(AssertUnwindSafe(|| {
         ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))
     }))
     .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
+
     Ok(())
 }
 
@@ -103,6 +105,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     })
 }
 
+#[cfg(feature = "l2")]
 fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
