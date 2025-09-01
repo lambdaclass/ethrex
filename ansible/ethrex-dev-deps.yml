@@ -74,6 +74,68 @@
       set_fact:
         architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
 
+    - name: Install Docker prerequisite packages
+      become: true
+      apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: yes
+
+    - name: Ensure /etc/apt/keyrings exists
+      become: true
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Docker GPG key
+      become: true
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+      register: docker_gpg
+
+    - name: Add Docker apt repository
+      become: true
+      copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: "deb [arch={{ architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_lsb.codename }} stable\n"
+        mode: '0644'
+
+    - name: Update apt cache after adding Docker repo
+      become: true
+      apt:
+        update_cache: yes
+      when: docker_gpg is changed
+
+    - name: Install Docker Engine components
+      become: true
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure current user is in docker group
+      become: true
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Enable and start Docker service
+      become: true
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
     - name: Remove downloads on /tmp
       file:
         path: "/tmp/{{ item }}"
