@@ -399,7 +399,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
     let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
 
-    if fork == Fork::Osaka
+    if fork >= Fork::Osaka
         && (base_size > U256::from(1024)
             || modulus_size > U256::from(1024)
             || exponent_size > U256::from(1024))
