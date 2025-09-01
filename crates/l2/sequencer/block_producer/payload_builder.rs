@@ -213,13 +213,13 @@ pub async fn fill_transactions(
                 if range.clone().count() > PRIVILEGED_TX_BUDGET {
                     debug!("Ran out of space for privileged transactions");
                     txs.pop();
-                    context.vm.undo_last_tx()?;
+                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
                     continue;
                 }
                 if id != range.end {
                     debug!("Ignoring out-of-order privileged transaction");
                     txs.pop();
-                    context.vm.undo_last_tx()?;
+                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
                     continue;
                 }
                 range.end += 1;
