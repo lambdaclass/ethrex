@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756737671681,
+  "lastUpdate": 1756746117486,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10885,6 +10885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160756299677,
             "range": "± 231254991",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "12ace664e19cee360df58e2610f66e905aebccab",
+          "message": "ci(l1): fix daily hive job (#4222)\n\n**Motivation**\nHive job was not working properly since the local docker image was not\nloaded.",
+          "timestamp": "2025-09-01T16:11:12Z",
+          "tree_id": "35ed06d85281b6f79f485f7c862e115ac61d2d97",
+          "url": "https://github.com/lambdaclass/ethrex/commit/12ace664e19cee360df58e2610f66e905aebccab"
+        },
+        "date": 1756746101005,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161035725712,
+            "range": "± 271562435",
             "unit": "ns/iter"
           }
         ]
