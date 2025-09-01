@@ -34,4 +34,4 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:unstable
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main

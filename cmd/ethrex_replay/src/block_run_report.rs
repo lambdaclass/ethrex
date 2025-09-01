@@ -3,6 +3,8 @@ use std::{fmt::Display, time::Duration};
 use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
 
+use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum ReplayerMode {
@@ -11,6 +13,19 @@ pub enum ReplayerMode {
     ExecuteRISC0,
     ProveSP1,
     ProveRISC0,
+}
+
+impl ReplayerMode {
+    pub fn is_proving_mode(&self) -> bool {
+        matches!(self, ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0)
+    }
+
+    pub fn is_execution_mode(&self) -> bool {
+        matches!(
+            self,
+            ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0
+        )
+    }
 }
 
 impl Display for ReplayerMode {
@@ -70,6 +85,84 @@ impl BlockRunReport {
             self.replayer_mode,
             execution_result,
         )
+    }
+
+    pub fn to_slack_message(&self) -> SlackWebHookRequest {
+        SlackWebHookRequest {
+            blocks: vec![
+                SlackWebHookBlock::Header {
+                    text: Box::new(SlackWebHookBlock::PlainText {
+                        text: match (&self.run_result, &self.replayer_mode) {
+                            (Ok(_), ReplayerMode::Execute) => {
+                                String::from("✅ Successfully Executed Block")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteSP1) => {
+                                String::from("✅ Successfully Executed Block with SP1")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteRISC0) => {
+                                String::from("✅ Successfully Executed Block with RISC0")
+                            }
+                            (Ok(_), ReplayerMode::ProveSP1) => {
+                                String::from("✅ Successfully Proved Block with SP1")
+                            }
+                            (Ok(_), ReplayerMode::ProveRISC0) => {
+                                String::from("✅ Successfully Proved Block with RISC0")
+                            }
+                            (Err(_), ReplayerMode::Execute) => {
+                                String::from("⚠️ Failed to Execute Block")
+                            }
+                            (Err(_), ReplayerMode::ExecuteSP1) => {
+                                String::from("⚠️ Failed to Execute Block with SP1")
+                            }
+                            (Err(_), ReplayerMode::ExecuteRISC0) => {
+                                String::from("⚠️ Failed to Execute Block with RISC0")
+                            }
+                            (Err(_), ReplayerMode::ProveSP1) => {
+                                String::from("⚠️ Failed to Prove Block with SP1")
+                            }
+                            (Err(_), ReplayerMode::ProveRISC0) => {
+                                String::from("⚠️ Failed to Prove Block with RISC0")
+                            }
+                        },
+                        emoji: true,
+                    }),
+                },
+                SlackWebHookBlock::Section {
+                    text: Box::new(SlackWebHookBlock::Markdown {
+                        text: format!(
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}\n*Time Taken:* {time_taken}",
+                            network = self.network,
+                            number = self.number,
+                            gas = self.gas,
+                            txs = self.txs,
+                            execution_result = if self.run_result.is_err() {
+                                "Error: ".to_string()
+                                    + &self.run_result.as_ref().err().unwrap().to_string()
+                            } else {
+                                "Success".to_string()
+                            },
+                            time_taken = format_duration(self.time_taken),
+                        ),
+                    }),
+                },
+                SlackWebHookBlock::Actions {
+                    elements: vec![SlackWebHookActionElement::Button {
+                        text: SlackWebHookBlock::PlainText {
+                            text: String::from("View on Etherscan"),
+                            emoji: false,
+                        },
+                        url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                            format!("https://etherscan.io/block/{}", self.number)
+                        } else {
+                            format!(
+                                "https://{}.etherscan.io/block/{}",
+                                self.network, self.number
+                            )
+                        },
+                    }],
+                },
+            ],
+        }
     }
 }
 
