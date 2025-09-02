@@ -379,9 +379,8 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     let peer_table = peer_table();
-    let peer_handler = PeerHandler::new(peer_table.clone());
 
-    let store = init_store_restored(&data_dir, genesis, peer_handler).await;
+    let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
