@@ -72,7 +72,7 @@ impl Default for PeerInformation {
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: Kademlia,
-    pub peer_scores: Arc<Mutex<HashMap<H256, PeerInformation>>>,
+    pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
 }
 
 pub enum BlockRequestOrder {
@@ -111,7 +111,7 @@ impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {
             peer_table,
-            peer_scores: Default::default(),
+            peers_info: Default::default(),
         }
     }
 
@@ -683,7 +683,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut peers_info = self.peer_scores.lock().await;
+        let mut peers_info = self.peers_info.lock().await;
         let mut chunk_file = 0;
 
         loop {
@@ -979,7 +979,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut peers_info = self.peer_scores.lock().await;
+        let mut peers_info = self.peers_info.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update
@@ -1213,7 +1213,7 @@ impl PeerHandler {
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
-        let mut peers_info = self.peer_scores.lock().await;
+        let mut peers_info = self.peers_info.lock().await;
         // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
         let current_account_hashes = account_storage_roots

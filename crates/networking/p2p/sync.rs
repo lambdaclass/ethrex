@@ -1184,7 +1184,7 @@ pub async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
-        let mut peer_info = peers.peer_scores.lock().await;
+        let mut peer_info = peers.peers_info.lock().await;
 
         let (peer_id, mut peer_channel) = peers
             .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut peer_info)
