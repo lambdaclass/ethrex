@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756845710451,
+  "lastUpdate": 1756846048078,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11245,6 +11245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162927022258,
             "range": "± 308756313",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f836841fa7fbfa0e44adab1c3c8c39ef5aaf370b",
+          "message": "feat(levm): osaka modexp gas cost changes (#4206)\n\n**Motivation**\nImplement gas cost calculation updates defined in\n[EIP-7883](https://eips.ethereum.org/EIPS/eip-7883)\nAdd boundary checks defined in\n[spec](https://github.com/ethereum/execution-specs/blob/51cabd86502df7af596f5c78a0c4e00a4f92822c/src/ethereum/osaka/vm/precompiled_contracts/modexp.py#L31)\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Adds gas cost calculation for modexp precompile as of Osaka fork\n* Adds boundary checks for modexp inputs as of Osaka fork\n* Gate base fee being charged if modules & base where == 0 under\npre-osaka fork (Not in the spec & caused tests to fail)\n* `PrecompileFn` now takes a `fork: Fork` argument (there was no other\nway around this)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4155",
+          "timestamp": "2025-09-02T19:54:51Z",
+          "tree_id": "3c07720c0410bac1e4344b66ff9ca80b2adf6ef3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f836841fa7fbfa0e44adab1c3c8c39ef5aaf370b"
+        },
+        "date": 1756846030349,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 160493872349,
+            "range": "± 192081154",
             "unit": "ns/iter"
           }
         ]
