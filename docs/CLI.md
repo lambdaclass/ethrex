@@ -74,8 +74,9 @@ P2P options:
 
       --p2p.enabled
 
+
       --p2p.port <PORT>
-          TCP port for P2P.
+          TCP port for P2P protocol.
 
           [default: 30303]
 
