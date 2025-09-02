@@ -179,10 +179,6 @@ impl Syncer {
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
-        let pending_block = match store.get_pending_block(sync_head).await {
-            Ok(res) => res,
-            Err(e) => return Err(e.into()),
-        };
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
@@ -224,14 +220,6 @@ impl Syncer {
                 last_block_number
             );
 
-            // If we have a pending block from new_payload request
-            // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
-            }
-
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
             if let Some(index) = block_headers
@@ -265,6 +253,7 @@ impl Syncer {
                 block_sync_state
                     .process_incoming_headers(
                         block_headers,
+                        sync_head,
                         sync_head_found,
                         self.blockchain.clone(),
                         self.peers.clone(),
@@ -457,6 +446,7 @@ impl BlockSyncState {
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
+        sync_head: H256,
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
@@ -467,6 +457,7 @@ impl BlockSyncState {
                 state
                     .process_incoming_headers(
                         block_headers,
+                        sync_head,
                         sync_head_found,
                         blockchain,
                         peers,
@@ -520,25 +511,25 @@ impl FullBlockSyncState {
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
+        sync_head: H256,
+        mut sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
         self.current_headers.extend(block_headers);
+        // If we have the sync_head as a pending block form a new_payload request and its parent_hash matches the hash of the latest received header
+        // we set the sync_head as found and later, after requesting all blocks, we'll add the pending block in current_blocks for execution.
+        if let Some(ref block) = self.store.get_pending_block(sync_head).await? {
+            if let Some(ref last_block) = self.current_headers.last() {
+                if block.header.parent_hash == last_block.hash() {
+                    sync_head_found = true;
+                }
+            }
+        }
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
             return Ok(());
-        }
-        // If we already have the sync head header block there's no need to request it.
-        let mut sync_head_header = None;
-        if self
-            .store
-            .get_pending_block(self.current_headers[self.current_headers.len() - 1].hash())
-            .await
-            .is_ok()
-        {
-            sync_head_header = self.current_headers.pop();
         }
         // If we have enough headers to fill execution batches, request the matching bodies
         while self.current_headers.len() >= *EXECUTE_BATCH_SIZE
@@ -559,9 +550,9 @@ impl FullBlockSyncState {
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
-        // Since we didn't request the pending block we include it in current_blocks to execute all of them.
-        if let Some(block_header) = sync_head_header {
-            if let Some(block) = self.store.get_pending_block(block_header.hash()).await? {
+        // Since there's a pending block that's the descendant of the last requested hash we include it in current_blocks to execute all of them.
+        if let Some(block) = self.store.get_pending_block(sync_head).await? {
+            if sync_head_found {
                 self.current_blocks.push(block);
             }
         }
