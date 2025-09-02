@@ -297,6 +297,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
             // Process account updates
@@ -343,12 +344,12 @@ impl StoreEngine for Store {
 
                 if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let number_value = block_number.encode_to_vec();
+                    let number_value = block_number.to_le_bytes().to_vec();
                     batch.put_cf(cf, hash_key, number_value);
                 }
 
                 if let Some(cf) = &cf_canonical {
-                    let number_key = block_number.encode_to_vec();
+                    let number_key = block_number.to_le_bytes().to_vec();
                     let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
                     batch.put_cf(cf, number_key, hash_value);
                 }
@@ -423,7 +424,7 @@ impl StoreEngine for Store {
 
                 if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let number_value = block_number.encode_to_vec();
+                    let number_value = block_number.to_le_bytes().to_vec();
                     batch.put_cf(cf, hash_key, number_value);
                 }
 
@@ -465,7 +466,7 @@ impl StoreEngine for Store {
 
             batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
 
-            let number_key = header.number.encode_to_vec();
+            let number_key = header.number.to_le_bytes().to_vec();
             batch_ops.push((
                 CF_BLOCK_NUMBERS.to_string(),
                 BlockHashRLP::from(block_hash).bytes().clone(),
@@ -517,7 +518,7 @@ impl StoreEngine for Store {
             let cf_canonical = db
                 .cf_handle(CF_CANONICAL_BLOCK_HASHES)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-            batch.delete_cf(&cf_canonical, block_number.encode_to_vec());
+            batch.delete_cf(&cf_canonical, block_number.to_le_bytes().to_vec());
 
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
@@ -612,7 +613,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let number_value = block_number.encode_to_vec();
+        let number_value = block_number.to_le_bytes().to_vec();
         self.write_async(CF_BLOCK_NUMBERS, hash_key, number_value)
             .await
     }
@@ -624,9 +625,15 @@ impl StoreEngine for Store {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
         match self.read_async(CF_BLOCK_NUMBERS, hash_key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -813,7 +820,7 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let number_key = block_number.encode_to_vec();
+        let number_key = block_number.to_le_bytes().to_vec();
 
         match self
             .read_async(CF_CANONICAL_BLOCK_HASHES, number_key)
@@ -840,7 +847,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
-        let value = block_number.encode_to_vec();
+        let value = block_number.to_le_bytes().to_vec();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
@@ -848,9 +855,15 @@ impl StoreEngine for Store {
         let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
 
         match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -859,9 +872,15 @@ impl StoreEngine for Store {
         let key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
 
         match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -870,9 +889,15 @@ impl StoreEngine for Store {
         let key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
 
         match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -881,9 +906,15 @@ impl StoreEngine for Store {
         let key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
 
         match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -893,7 +924,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
-        let value = block_number.encode_to_vec();
+        let value = block_number.to_le_bytes().to_vec();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
@@ -901,9 +932,15 @@ impl StoreEngine for Store {
         let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
 
         match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -962,7 +999,7 @@ impl StoreEngine for Store {
             for (block_number, block_hash) in canonical_blocks {
                 batch_ops.push((
                     CF_CANONICAL_BLOCK_HASHES.to_string(),
-                    block_number.encode_to_vec(),
+                    block_number.to_le_bytes().to_vec(),
                     BlockHashRLP::from(block_hash).bytes().clone(),
                 ));
             }
@@ -972,7 +1009,7 @@ impl StoreEngine for Store {
         batch_ops.push((
             CF_CHAIN_DATA.to_string(),
             latest_key,
-            head_number.encode_to_vec(),
+            head_number.to_le_bytes().to_vec(),
         ));
 
         if let Some(safe_number) = safe {
@@ -980,7 +1017,7 @@ impl StoreEngine for Store {
             batch_ops.push((
                 CF_CHAIN_DATA.to_string(),
                 safe_key,
-                safe_number.encode_to_vec(),
+                safe_number.to_le_bytes().to_vec(),
             ));
         }
 
@@ -989,7 +1026,7 @@ impl StoreEngine for Store {
             batch_ops.push((
                 CF_CHAIN_DATA.to_string(),
                 finalized_key,
-                finalized_number.encode_to_vec(),
+                finalized_number.to_le_bytes().to_vec(),
             ));
         }
 
@@ -1323,9 +1360,15 @@ impl StoreEngine for Store {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
         match self.read_sync(CF_BLOCK_NUMBERS, hash_key)? {
-            Some(number_bytes) => BlockNumber::decode(number_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
+            Some(number_bytes) => {
+                if number_bytes.len() == 8 {
+                    let bytes: [u8; 8] = number_bytes[..8].try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
+                } else {
+                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -1334,7 +1377,7 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let number_key = block_number.encode_to_vec();
+        let number_key = block_number.to_le_bytes().to_vec();
 
         match self.read_sync(CF_CANONICAL_BLOCK_HASHES, number_key)? {
             Some(hash_bytes) => {
