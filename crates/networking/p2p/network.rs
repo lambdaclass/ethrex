@@ -352,7 +352,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             (*bytecodes_downloaded as f64 / *bytecodes_to_download as f64) * 100.0
         };
 
-        debug!(
+        info!(
             r#"P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers
