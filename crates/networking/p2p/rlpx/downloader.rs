@@ -419,8 +419,6 @@ impl GenServer for Downloader {
                     let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
                     self.send_through_response_channel(task_sender, msg).await;
                 }
-
-                // Nothing to do after completion, stop actor
                 CastResponse::Stop
             }
             DownloaderCastRequest::AccountRange {

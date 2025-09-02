@@ -22,7 +22,9 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
-        downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse},
+        downloader::{
+            Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
+        },
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
@@ -89,21 +91,21 @@ pub enum BlockRequestOrder {
 }
 
 #[derive(Clone)]
-pub(crate) struct StorageTaskResult {
-    pub(crate) start_index: usize,
-    pub(crate) account_storages: Vec<Vec<(H256, U256)>>,
-    pub(crate) peer_id: H256,
-    pub(crate) remaining_start: usize,
-    pub(crate) remaining_end: usize,
-    pub(crate) remaining_hash_range: (H256, Option<H256>),
+pub struct StorageTaskResult {
+    pub start_index: usize,
+    pub account_storages: Vec<Vec<(H256, U256)>>,
+    pub peer_id: H256,
+    pub remaining_start: usize,
+    pub remaining_end: usize,
+    pub remaining_hash_range: (H256, Option<H256>),
 }
 
-pub(crate) struct BytecodeTaskResult {
-    pub(crate) start_index: usize,
-    pub(crate) bytecodes: Vec<Bytes>,
-    pub(crate) peer_id: H256,
-    pub(crate) remaining_start: usize,
-    pub(crate) remaining_end: usize,
+pub struct BytecodeTaskResult {
+    pub start_index: usize,
+    pub bytecodes: Vec<Bytes>,
+    pub peer_id: H256,
+    pub remaining_start: usize,
+    pub remaining_end: usize,
 }
 
 #[derive(Debug)]
@@ -281,7 +283,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
 
         let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
@@ -310,7 +312,7 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
@@ -408,7 +410,7 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some(mut free_downloader_channels) =
+            let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
                 })
@@ -421,7 +423,7 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
+            let Some((start_block, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -436,8 +438,6 @@ impl PeerHandler {
                 continue;
             };
 
-            let tx = task_sender.clone();
-
             downloaders
                 .entry(free_peer_id)
                 .and_modify(|downloader_is_free| {
@@ -446,39 +446,20 @@ impl PeerHandler {
 
             debug!("Downloader {free_peer_id} is now busy");
 
-            // run download_chunk_from_peer in a different Tokio task
-            tokio::spawn(async move {
-                trace!(
-                    "Sync Log 5: Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
-                );
-                debug!(
-                    "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
-                );
+            let available_downloader =
+                Downloader::new(free_peer_id, free_downloader_channels.clone());
 
-                let headers = Self::download_chunk_from_peer(
-                    free_peer_id,
-                    &mut free_downloader_channels,
-                    startblock,
+            if let Err(_) = available_downloader
+                .start()
+                .cast(DownloaderCastRequest::Headers {
+                    task_sender: task_sender.clone(),
+                    start_block,
                     chunk_limit,
-                )
-                .await
-                .inspect_err(|err| {
-                    trace!("Sync Log 6: {free_peer_id} failed to download chunk: {err}")
                 })
-                .unwrap_or_default();
-
-                tx.send((
-                    headers,
-                    free_peer_id,
-                    free_downloader_channels,
-                    startblock,
-                    chunk_limit,
-                ))
                 .await
-                .inspect_err(|err| {
-                    error!("Failed to send headers result through channel. Error: {err}")
-                })
-            });
+            {
+                tasks_queue_not_started.push_front((start_block, chunk_limit));
+            }
 
             // 4) assign the tasks to the peers
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
@@ -532,59 +513,6 @@ impl PeerHandler {
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
         Some(ret)
-    }
-
-    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
-    ///
-    /// If it fails, returns an error message.
-    async fn download_chunk_from_peer(
-        peer_id: H256,
-        peer_channel: &mut PeerChannels,
-        startblock: u64,
-        chunk_limit: u64,
-    ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
-        debug!("Requesting block headers from peer {peer_id}");
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: HashOrNumber::Number(startblock),
-            limit: chunk_limit,
-            skip: 0,
-            reverse: false,
-        });
-        let mut receiver = peer_channel.receiver.lock().await;
-
-        // FIXME! modify the cast and wait for a `call` version
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request))
-            .await
-            .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
-        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                        if id == request_id =>
-                    {
-                        return Some(block_headers);
-                    }
-                    // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None, // EOF
-                }
-            }
-        })
-        .await
-        .map_err(|_| PeerHandlerError::BlockHeaders)?
-        .ok_or(PeerHandlerError::BlockHeaders)?;
-
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-            Ok(block_headers)
-        } else {
-            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
-            Err(PeerHandlerError::InvalidHeaders)
-        }
     }
 
     /// Internal method to request block bodies from any suitable peer given their block hashes
@@ -2189,15 +2117,6 @@ impl PeerHandler {
 
         Ok(None)
     }
-}
-
-/// Validates the block headers received from a peer by checking that the parent hash of each header
-/// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
-    block_headers.windows(2).all(|headers| match order {
-        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
-        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
-    })
 }
 
 fn format_duration(duration: Duration) -> String {
