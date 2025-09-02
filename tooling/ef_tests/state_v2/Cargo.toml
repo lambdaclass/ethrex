@@ -11,6 +11,8 @@ ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-l2-rpc.workspace = true
+ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
+zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
 
 secp256k1.workspace = true
 serde.workspace = true
@@ -33,3 +35,4 @@ default = ["c-kzg", "blst"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["ethrex-vm/blst"]
 block = []
+sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]

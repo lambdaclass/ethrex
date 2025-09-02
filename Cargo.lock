@@ -3317,6 +3317,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2-rpc",
  "ethrex-levm",
+ "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
@@ -3327,6 +3328,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.16",
  "tokio",
+ "zkvm_interface",
 ]
 
 [[package]]
