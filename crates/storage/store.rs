@@ -24,7 +24,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -75,12 +75,12 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!("Starting storage engine ({engine_type:?})");
+    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+        info!(engine = ?engine_type, path = %path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(_path)?),
+                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -91,7 +91,6 @@ impl Store {
             },
         };
 
-        info!("Started store engine");
         Ok(store)
     }
 
@@ -586,7 +585,7 @@ impl Store {
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
-        info!("Storing initial state from genesis");
+        debug!("Storing initial state from genesis");
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
@@ -630,10 +629,7 @@ impl Store {
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
-        info!(
-            "Storing genesis block with number {} and hash {}",
-            genesis_block_number, genesis_hash
-        );
+        info!(hash = %genesis_hash, "Storing genesis block");
 
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
@@ -1166,25 +1162,6 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint().await
     }
 
-    /// Sets storage trie paths in need of healing, grouped by hashed address
-    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
-    pub async fn set_storage_heal_paths(
-        &self,
-        paths: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError> {
-        self.engine.set_storage_heal_paths(paths).await
-    }
-
-    /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removes them from the Store
-    #[allow(clippy::type_complexity)]
-    pub async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        self.engine.take_storage_heal_paths(limit).await
-    }
-
     /// Sets the state trie paths in need of healing
     pub async fn set_state_heal_paths(
         &self,
@@ -1196,17 +1173,6 @@ impl Store {
     /// Gets the state trie paths in need of healing
     pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         self.engine.get_state_heal_paths().await
-    }
-
-    /// Write an account batch into the current state snapshot
-    pub async fn write_snapshot_account_batch(
-        &self,
-        account_hashes: Vec<H256>,
-        account_states: Vec<AccountState>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .write_snapshot_account_batch(account_hashes, account_states)
-            .await
     }
 
     /// Write a storage batch into the current storage snapshot
@@ -1231,11 +1197,6 @@ impl Store {
         self.engine
             .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
             .await
-    }
-
-    /// Clears all checkpoint data created during the last snap sync
-    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state().await
     }
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1270,17 +1231,9 @@ impl Store {
         self.engine.get_storage_trie_rebuild_pending().await
     }
 
-    /// Clears the state and storage snapshots
-    pub async fn clear_snapshot(&self) -> Result<(), StoreError> {
-        self.engine.clear_snapshot().await
-    }
-
-    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    pub fn read_account_snapshot(
-        &self,
-        start: H256,
-    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.read_account_snapshot(start)
+    /// Clears all checkpoint data created during the last snap sync
+    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state().await
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key

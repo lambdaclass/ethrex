@@ -14,23 +14,21 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    time::{Duration, Instant},
+    collections::{HashMap, VecDeque},
+    time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
 use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
-pub const LOGGING_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
-const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -57,30 +55,9 @@ type MembatchKey = (Nibbles, Nibbles);
 type Membatch = HashMap<MembatchKey, MembatchEntry>;
 
 #[derive(Debug, Clone)]
-pub enum StorageHealerCallMsg {
-    IsFinished,
-}
-#[derive(Debug, Clone)]
-pub enum StorageHealerOutMsg {
-    FinishedStale { is_finished: bool, is_stale: bool },
-}
-
-#[derive(Debug, Clone)]
-pub enum StorageHealerMsg {
-    /// Overloaded msg, checkup does two things
-    /// It prints the status of the connection
-    /// And if a request is timed out, we also clean it up
-    CheckUp,
-    /// This message is sent by a peer indicating what is needed to download
-    /// We process the request
-    TrieNodes(TrieNodes),
-}
-
-#[derive(Debug, Clone)]
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
     peer_id: H256,
-    sent_time: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -225,18 +202,6 @@ pub async fn heal_storage_trie(
             state.failed_downloads = 0;
             state.empty_count = 0;
             state.disconnected_count = 0;
-
-            if state.download_queue.len() < 350 {
-                info!(
-                    "Logging the inflight requests at the end {:?}, taskset len {}",
-                    state
-                        .requests
-                        .iter()
-                        .map(|(key, value)| { (key, value.peer_id, value.sent_time) })
-                        .collect::<Vec<_>>(),
-                    requests_task_joinset.len()
-                );
-            }
         }
 
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
@@ -280,12 +245,7 @@ pub async fn heal_storage_trie(
         )
         .await;
 
-        let result = requests_task_joinset.try_join_next();
-        if let Some(res) = result {
-            if state.download_queue.len() < 350 {
-                info!("Tracking what happened to the tasks at the end {res:?}")
-            }
-        }
+        let _ = requests_task_joinset.try_join_next();
 
         let trie_nodes_result = match task_receiver.try_recv() {
             Ok(trie_nodes) => trie_nodes,
@@ -309,11 +269,6 @@ pub async fn heal_storage_trie(
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 ) else {
-                    if state.download_queue.len() < 350 {
-                        info!(
-                            "We received none from zip_requeue_node_responses_score_peer while low download value {trie_nodes:?}"
-                        )
-                    }
                     continue;
                 };
 
@@ -330,12 +285,9 @@ pub async fn heal_storage_trie(
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
-            Err(RequestStorageTrieNodes::SendMessageError(id, err)) => {
+            Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
-                if state.download_queue.len() < 350 {
-                    info!("In request {id} found error {err:?}");
-                }
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
@@ -381,7 +333,6 @@ async fn ask_peers_for_nodes(
             InflightRequest {
                 requests: inflight_requests_data,
                 peer_id: peer.0,
-                sent_time: Instant::now(),
             },
         );
         let gtn = GetTrieNodes {
@@ -393,27 +344,14 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
-        let logging_flag = download_queue.len() < 350;
-
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            if logging_flag {
-                info!("the task {req_id} has been started");
-            }
-            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn, logging_flag).await;
-            if logging_flag {
-                info!(
-                    "the task {req_id} has finished getting the request_storage_trienodes {response:?}"
-                );
-            }
+            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
             })?;
-            if logging_flag {
-                info!("the task {req_id} has finished sending the thing");
-            }
             Ok(req_id)
         });
     }
@@ -475,9 +413,6 @@ fn zip_requeue_node_responses_score_peer(
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
-        if download_queue.len() < 350 {
-            info!("We are receiving empty responses at the end of the download queue {request:?}");
-        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
@@ -518,9 +453,6 @@ fn zip_requeue_node_responses_score_peer(
         }
         Some(nodes)
     } else {
-        if download_queue.len() < 350 {
-            info!("This should get logged already {request:?}");
-        }
         *failed_downloads += 1;
         peer.score -= 1;
         download_queue.extend(request.requests);
@@ -528,6 +460,7 @@ fn zip_requeue_node_responses_score_peer(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
@@ -552,22 +485,15 @@ fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone(), membatch).inspect_err(
-                |err| {
-                    error!("{err} in determine missing children while searching {node_response:?}")
-                },
-            )?;
+            determine_missing_children(&node_response, store.clone()).inspect_err(|err| {
+                error!("{err} in determine missing children while searching {node_response:?}")
+            })?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(
-                &node_response,
-                store.clone(),
-                membatch,
-                roots_healed,
-                to_write,
-            )
-            .inspect_err(|err| error!("{err} in commit node while committing {node_response:?}"))?;
+            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
+                error!("{err} in commit node while committing {node_response:?}")
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -649,7 +575,6 @@ fn get_initial_downloads(
 pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
-    membatch: &Membatch,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
@@ -676,21 +601,6 @@ pub fn determine_missing_children(
                 {
                     count += 1;
 
-                    // paths.extend(determine_membatch_missing_children(
-                    //     NodeRequest {
-                    //         acc_path: node_response.node_request.acc_path.clone(),
-                    //         storage_path: node_response
-                    //             .node_request
-                    //             .storage_path
-                    //             .append_new(index as u8),
-                    //         parent: node_response.node_request.storage_path.clone(),
-                    //     },
-                    //     &child.compute_hash(),
-                    //     membatch,
-                    //     store.clone(),
-                    //     nodes_to_write
-                    // )?);
-
                     paths.extend(vec![NodeRequest {
                         acc_path: node_response.node_request.acc_path.clone(),
                         storage_path: node_response
@@ -714,20 +624,6 @@ pub fn determine_missing_children(
                     .is_none()
             {
                 count += 1;
-                // paths.extend(determine_membatch_missing_children(
-                //     NodeRequest {
-                //         acc_path: node_response.node_request.acc_path.clone(),
-                //         storage_path: node_response
-                //             .node_request
-                //             .storage_path
-                //             .concat(node.prefix.clone()),
-                //         parent: node_response.node_request.storage_path.clone(),
-                //     },
-                //     &node.child.compute_hash(),
-                //     membatch,
-                //     store.clone(),
-                //     nodes_to_write
-                // )?);
 
                 paths.extend(vec![NodeRequest {
                     acc_path: node_response.node_request.acc_path.clone(),
@@ -745,32 +641,8 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
-// This function searches for the nodes we have to download that are childs from the membatch
-fn determine_membatch_missing_children(
-    node_request: NodeRequest,
-    hash: &NodeHash,
-    membatch: &Membatch,
-    store: Store,
-    nodes_to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
-) -> Result<Vec<NodeRequest>, StoreError> {
-    if let Some(membatch_entry) = membatch.get(&(
-        node_request.acc_path.clone(),
-        node_request.storage_path.clone(),
-    )) {
-        if membatch_entry.node_response.node.compute_hash() == *hash {
-            determine_missing_children(&membatch_entry.node_response, store, membatch)
-                .map(|(paths, count)| paths)
-        } else {
-            Ok(vec![node_request])
-        }
-    } else {
-        Ok(vec![node_request])
-    }
-}
-
 fn commit_node(
     node: &NodeResponse,
-    store: Store,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
@@ -804,7 +676,6 @@ fn commit_node(
     if parent_entry.missing_children_count == 0 {
         commit_node(
             &parent_entry.node_response,
-            store,
             membatch,
             roots_healed,
             to_write,

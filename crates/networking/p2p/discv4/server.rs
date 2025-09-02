@@ -18,18 +18,17 @@ use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    discv4::codec::Discv4Codec,
-    utils::{is_msg_expired, unmap_ipv4in6_address},
-};
-use crate::{
-    discv4::messages::{
-        ENRResponseMessage, Message, NeighborsMessage, Packet, PacketDecodeErr, PingMessage,
-        PongMessage,
+    discv4::{
+        codec::Discv4Codec,
+        messages::{
+            ENRResponseMessage, Message, NeighborsMessage, Packet, PacketDecodeErr, PingMessage,
+            PongMessage,
+        },
     },
     kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
-    utils::{get_msg_expiration_from_seconds, node_id},
+    utils::{get_msg_expiration_from_seconds, is_msg_expired, node_id, unmap_ipv4in6_address},
 };
 
 const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
@@ -56,19 +55,15 @@ pub enum OutMessage {
     Done,
 }
 
+type UdpFramedSplitSink = SplitSink<UdpFramed<Discv4Codec, Arc<UdpSocket>>, (Message, std::net::SocketAddr)>;
+
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    sink: Option<
-        Arc<
-            Mutex<
-                SplitSink<UdpFramed<Discv4Codec, Arc<UdpSocket>>, (Message, std::net::SocketAddr)>,
-            >,
-        >,
-    >,
+    sink: Option<Arc<Mutex<UdpFramedSplitSink>>>,
     kademlia: Kademlia,
 }
 
@@ -101,7 +96,7 @@ impl DiscoveryServer {
 
         for bootnode in &bootnodes {
             let _ = discovery_server
-                .send_ping(&bootnode)
+                .send_ping(bootnode)
                 .await
                 .inspect_err(|e| {
                     error!("Failed to ping bootnode: {e}");

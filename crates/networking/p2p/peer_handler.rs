@@ -33,8 +33,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
+    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, current_unix_time, dump_to_file, get_account_state_snapshot_file,
+        SendMessageError, dump_to_file, get_account_state_snapshot_file,
         get_account_storages_snapshot_file,
     },
 };
@@ -65,6 +66,24 @@ pub struct PeerHandler {
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
+}
+
+#[derive(Clone)]
+struct StorageTaskResult {
+    start_index: usize,
+    account_storages: Vec<Vec<(H256, U256)>>,
+    peer_id: H256,
+    remaining_start: usize,
+    remaining_end: usize,
+    remaining_hash_range: (H256, Option<H256>),
+}
+#[derive(Debug)]
+struct StorageTask {
+    start_index: usize,
+    end_index: usize,
+    start_hash: H256,
+    // end_hash is None if the task is for the first big storage request
+    end_hash: Option<H256>,
 }
 
 async fn ask_peer_head_number(
@@ -135,22 +154,6 @@ impl PeerHandler {
     pub fn dummy() -> PeerHandler {
         let dummy_peer_table = Kademlia::new();
         PeerHandler::new(dummy_peer_table)
-    }
-
-    /// Helper method to record a succesful peer response as well as record previous failed responses from other peers
-    /// We make this distinction for snap requests as the data we request might have become stale
-    /// So we cannot know whether a peer returning an empty response is a failure until another peer returns the requested data
-    async fn record_snap_peer_success(&self, succesful_peer_id: H256, mut peer_ids: HashSet<H256>) {
-        // Reward succesful peer
-        self.record_peer_success(succesful_peer_id).await;
-        // Penalize previous peers that returned empty/invalid responses
-        peer_ids.remove(&succesful_peer_id);
-        for peer_id in peer_ids {
-            info!(
-                "[SYNCING] Penalizing peer {peer_id} as it failed to return data cornfirmed as non-stale"
-            );
-            self.record_peer_failure(peer_id).await;
-        }
     }
 
     // TODO: Implement the logic for recording peer successes
@@ -236,6 +239,10 @@ impl PeerHandler {
         let mut retries = 1;
 
         while sync_head_number == 0 {
+            if retries > 10 {
+                // sync_head might be invalid
+                return None;
+            }
             let peers_table = self
                 .peer_table
                 .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
@@ -776,11 +783,11 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
         &self,
-        state_root: H256,
         start: H256,
         limit: H256,
         account_state_snapshots_dir: String,
-        staleness_timestamp: u64,
+        pivot_header: &mut BlockHeader,
+        block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
@@ -1016,124 +1023,23 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            let free_downloader_channels_clone = free_downloader_channels.clone();
 
-            if current_unix_time() > staleness_timestamp {
-                break;
+            if block_is_stale(pivot_header) {
+                info!("request_account_range became stale, updating pivot");
+                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
+                    .await
+                    .expect("Should be able to update pivot")
             }
 
-            tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                    id: request_id,
-                    root_hash: state_root,
-                    starting_hash: chunk_start,
-                    limit_hash: chunk_end,
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (free_downloader_channels_clone.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                if let Some((accounts, proof)) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            if let RLPxMessage::AccountRange(AccountRange {
-                                id,
-                                accounts,
-                                proof,
-                            }) = receiver.recv().await?
-                            {
-                                if id == request_id {
-                                    return Some((accounts, proof));
-                                }
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    if accounts.is_empty() {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        return Ok(());
-                    }
-                    // Unzip & validate response
-                    let proof = encodable_to_proof(&proof);
-                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                        .clone()
-                        .into_iter()
-                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                        .unzip();
-                    let encoded_accounts = account_states
-                        .iter()
-                        .map(|acc| acc.encode_to_vec())
-                        .collect::<Vec<_>>();
-
-                    let Ok(should_continue) = verify_range(
-                        state_root,
-                        &chunk_start,
-                        &account_hashes,
-                        &encoded_accounts,
-                        &proof,
-                    ) else {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        tracing::error!("Received invalid account range");
-                        return Ok(());
-                    };
-
-                    // If the range has more accounts to fetch, we send the new chunk
-                    let chunk_left = if should_continue {
-                        let last_hash = match account_hashes.last() {
-                            Some(last_hash) => last_hash,
-                            None => {
-                                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                                    .await
-                                    .ok();
-                                error!("Account hashes last failed, this shouldn't happen");
-                                return Err(PeerHandlerError::AccountHashes);
-                            }
-                        };
-                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                        let new_start = H256::from_uint(&new_start_u256);
-                        Some((new_start, chunk_end))
-                    } else {
-                        None
-                    };
-                    tx.send((
-                        accounts
-                            .into_iter()
-                            .filter(|unit| unit.hash <= chunk_end)
-                            .collect(),
-                        free_peer_id,
-                        chunk_left,
-                    ))
-                    .await
-                    .ok();
-                } else {
-                    tracing::debug!("Failed to get account range");
-                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                }
-                Ok::<(), PeerHandlerError>(())
-            });
+            tokio::spawn(PeerHandler::request_account_range_worker(
+                free_peer_id,
+                chunk_start,
+                chunk_end,
+                pivot_header.state_root,
+                free_downloader_channels_clone,
+                tx,
+            ));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -1171,6 +1077,126 @@ impl PeerHandler {
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
+    }
+
+    #[allow(clippy::type_complexity)]
+    async fn request_account_range_worker(
+        free_peer_id: H256,
+        chunk_start: H256,
+        chunk_end: H256,
+        state_root: H256,
+        mut free_downloader_channels_clone: PeerChannels,
+        tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    ) -> Result<(), PeerHandlerError> {
+        debug!(
+            "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+        );
+        let request_id = rand::random();
+        let request = RLPxMessage::GetAccountRange(GetAccountRange {
+            id: request_id,
+            root_hash: state_root,
+            starting_hash: chunk_start,
+            limit_hash: chunk_end,
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        if let Err(err) = (free_downloader_channels_clone.connection)
+            .cast(CastMessage::BackendMessage(request))
+            .await
+        {
+            error!("Failed to send message to peer: {err:?}");
+            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                .await
+                .ok();
+            return Ok(());
+        }
+        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                if let RLPxMessage::AccountRange(AccountRange {
+                    id,
+                    accounts,
+                    proof,
+                }) = receiver.recv().await?
+                {
+                    if id == request_id {
+                        return Some((accounts, proof));
+                    }
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+        {
+            if accounts.is_empty() {
+                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                    .await
+                    .ok();
+                // Too spammy
+                // tracing::error!("Received empty account range");
+                return Ok(());
+            }
+            // Unzip & validate response
+            let proof = encodable_to_proof(&proof);
+            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                .clone()
+                .into_iter()
+                .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                .unzip();
+            let encoded_accounts = account_states
+                .iter()
+                .map(|acc| acc.encode_to_vec())
+                .collect::<Vec<_>>();
+
+            let Ok(should_continue) = verify_range(
+                state_root,
+                &chunk_start,
+                &account_hashes,
+                &encoded_accounts,
+                &proof,
+            ) else {
+                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                    .await
+                    .ok();
+                tracing::error!("Received invalid account range");
+                return Ok(());
+            };
+
+            // If the range has more accounts to fetch, we send the new chunk
+            let chunk_left = if should_continue {
+                let last_hash = match account_hashes.last() {
+                    Some(last_hash) => last_hash,
+                    None => {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        error!("Account hashes last failed, this shouldn't happen");
+                        return Err(PeerHandlerError::AccountHashes);
+                    }
+                };
+                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                let new_start = H256::from_uint(&new_start_u256);
+                Some((new_start, chunk_end))
+            } else {
+                None
+            };
+            tx.send((
+                accounts
+                    .into_iter()
+                    .filter(|unit| unit.hash <= chunk_end)
+                    .collect(),
+                free_peer_id,
+                chunk_left,
+            ))
+            .await
+            .ok();
+        } else {
+            tracing::debug!("Failed to get account range");
+            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                .await
+                .ok();
+        }
+        Ok::<(), PeerHandlerError>(())
     }
 
     /// Requests bytecodes for the given code hashes
@@ -1467,33 +1493,24 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        state_root: H256,
-        account_storage_roots: Vec<(H256, H256)>,
+        account_storage_roots: &mut AccountStorageRoots,
         account_storages_snapshots_dir: String,
         mut chunk_index: u64,
-        downloaded_count: &mut u64,
-        staleness_timestamp: u64,
+        pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
         // 1) split the range in chunks of same length
         let chunk_size = 300;
-        let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
+        let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        #[derive(Debug)]
-        struct Task {
-            start_index: usize,
-            end_index: usize,
-            start_hash: H256,
-            // end_hash is None if the task is for the first big storage request
-            end_hash: Option<H256>,
-        }
-        let mut tasks_queue_not_started = VecDeque::<Task>::new();
+        let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
-            tasks_queue_not_started.push_back(Task {
+            let chunk_end = (chunk_start + chunk_size)
+                .min(account_storage_roots.accounts_with_storage_root.len());
+            tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
                 start_hash: H256::zero(),
@@ -1507,24 +1524,16 @@ impl PeerHandler {
             .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
 
-        let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
-
-        #[derive(Clone)]
-        struct TaskResult {
-            start_index: usize,
-            account_storages: Vec<Vec<(H256, U256)>>,
-            peer_id: H256,
-            remaining_start: usize,
-            remaining_end: usize,
-            remaining_hash_range: (H256, Option<H256>),
-        }
+        let mut all_account_storages =
+            vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
 
         // channel to send the result of dumping storages
-        let (dump_storage_result_sender, mut dump_storage_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
+        let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =
+            tokio::task::JoinSet::new();
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
@@ -1537,19 +1546,24 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
+        // TODO: in a refactor, delete this replace with a structure that can handle removes
+        let mut accounts_done: Vec<H256> = Vec::new();
+        let current_account_hashes = account_storage_roots
+            .accounts_with_storage_root
+            .iter()
+            .map(|a| *a.0)
+            .collect::<Vec<_>>();
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > 1024 * 1024 * 1024 * 8
             {
-                let current_account_hashes = account_storage_roots
-                    .iter()
-                    .map(|a| a.0)
-                    .collect::<Vec<_>>();
                 let current_account_storages = std::mem::take(&mut all_account_storages);
-                all_account_storages = vec![vec![]; account_storage_roots.len()];
+                all_account_storages =
+                    vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
                 let snapshot = current_account_hashes
+                    .clone()
                     .into_iter()
                     .zip(current_account_storages)
                     .collect::<Vec<_>>()
@@ -1562,21 +1576,23 @@ impl PeerHandler {
                         .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
                 }
                 let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
-                let dump_account_result_sender_cloned = dump_storage_result_sender.clone();
-                tokio::task::spawn(async move {
+                if !disk_joinset.is_empty() {
+                    disk_joinset
+                        .join_next()
+                        .await
+                        .expect("Shouldn't be empty")
+                        .expect("Shouldn't have a join error")
+                        .inspect_err(|err| {
+                            error!("We found this error while dumping to file {err:?}")
+                        })
+                        .map_err(PeerHandlerError::DumpError)?;
+                }
+                disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
                         account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    let result = dump_to_file(path, snapshot);
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send storage dump result through channel. Error: {err}"
-                            )
-                        })
+                    dump_to_file(path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1586,15 +1602,15 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            /*             if new_last_metrics_update >= Duration::from_secs(1) {
                 *METRICS.storages_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
                 *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
                 *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            }
+            } */
 
             if let Ok(result) = task_receiver.try_recv() {
-                let TaskResult {
+                let StorageTaskResult {
                     start_index,
                     mut account_storages,
                     peer_id,
@@ -1608,11 +1624,15 @@ impl PeerHandler {
                     *downloader_is_free = true;
                 });
 
+                for account in &current_account_hashes[start_index..remaining_start] {
+                    accounts_done.push(*account);
+                }
+
                 if remaining_start < remaining_end {
                     trace!("Failed to download chunk from peer {peer_id}");
                     if hash_start.is_zero() {
                         // Task is common storage range request
-                        let task = Task {
+                        let task = StorageTask {
                             start_index: remaining_start,
                             end_index: remaining_end,
                             start_hash: H256::zero(),
@@ -1623,7 +1643,7 @@ impl PeerHandler {
                     } else if let Some(hash_end) = hash_end {
                         // Task was a big storage account result
                         if hash_start <= hash_end {
-                            let task = Task {
+                            let task = StorageTask {
                                 start_index: remaining_start,
                                 end_index: remaining_end,
                                 start_hash: hash_start,
@@ -1631,10 +1651,14 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
+                            accounts_done.push(current_account_hashes[remaining_start]);
+                            account_storage_roots
+                                .healed_accounts
+                                .insert(current_account_hashes[start_index]);
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
-                            let task = Task {
+                            let task = StorageTask {
                                 start_index: remaining_start + 1,
                                 end_index: remaining_end,
                                 start_hash: H256::zero(),
@@ -1672,7 +1696,7 @@ impl PeerHandler {
                                 H256::from_uint(&end_hash_u256)
                             };
 
-                            let task = Task {
+                            let task = StorageTask {
                                 start_index: remaining_start,
                                 end_index: remaining_start + 1,
                                 start_hash,
@@ -1702,11 +1726,11 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
-                *downloaded_count += account_storages.len() as u64;
+                /*                 *downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
                 if !hash_start.is_zero() {
                     *downloaded_count -= 1;
-                }
+                } */
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1716,9 +1740,7 @@ impl PeerHandler {
 
                 *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
 
-                debug!(
-                    "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
-                );
+                debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
                     "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
                     tasks_queue_not_started.len()
@@ -1731,29 +1753,6 @@ impl PeerHandler {
                         all_account_storages[start_index + i] = storage;
                     }
                 }
-            }
-
-            // Check if any write storage task finished
-            if let Ok(Err(dump_storage_data)) = dump_storage_result_receiver.try_recv() {
-                if dump_storage_data.error == ErrorKind::StorageFull {
-                    return Err(PeerHandlerError::StorageFull);
-                }
-                // If the dumping failed, retry it
-                let dump_storage_result_sender_cloned = dump_storage_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let DumpError { path, contents, .. } = dump_storage_data;
-                    // Write the storage data
-                    let result = dump_to_file(path, contents);
-                    // Send the result through the channel
-                    dump_storage_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send storage dump result through channel. Error: {err}"
-                            )
-                        })
-                });
             }
 
             let peer_channels = self
@@ -1820,10 +1819,11 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            let free_downloader_channels_clone = free_downloader_channels.clone();
 
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
+                    .accounts_with_storage_root
                     .iter()
                     .skip(task.start_index)
                     .take(task.end_index - task.start_index)
@@ -1838,171 +1838,20 @@ impl PeerHandler {
                 );
             }
 
-            if current_unix_time() > staleness_timestamp {
+            if block_is_stale(pivot_header) {
+                info!("request_storage_ranges became stale, breaking");
                 break;
             }
 
-            tokio::spawn(async move {
-                let start = task.start_index;
-                let end = task.end_index;
-                let start_hash = task.start_hash;
-
-                let empty_task_result = TaskResult {
-                    start_index: task.start_index,
-                    account_storages: Vec::new(),
-                    peer_id: free_peer_id,
-                    remaining_start: task.start_index,
-                    remaining_end: task.end_index,
-                    remaining_hash_range: (start_hash, task.end_hash),
-                };
-                let request_id = rand::random();
-                let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
-                    id: request_id,
-                    root_hash: state_root,
-                    account_hashes: chunk_account_hashes,
-                    starting_hash: start_hash,
-                    limit_hash: task.end_hash.unwrap_or(HASH_MAX),
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (free_downloader_channels_clone.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send(empty_task_result).await.ok();
-                    return Ok(());
-                }
-                let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::StorageRanges(StorageRanges {
-                                id,
-                                slots,
-                                proof,
-                            })) if id == request_id => return Some((slots, proof)),
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten();
-                let Some((slots, proof)) = request_result else {
-                    tracing::debug!("Failed to get storage range");
-                    tx.send(empty_task_result).await.ok();
-                    return Ok(());
-                };
-                if slots.is_empty() && proof.is_empty() {
-                    tx.send(empty_task_result).await.ok();
-                    tracing::debug!("Received empty account range");
-                    return Ok(());
-                }
-                // Check we got some data and no more than the requested amount
-                if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-                    tx.send(empty_task_result).await.ok();
-                    return Ok(());
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
-                let mut should_continue = false;
-                // Validate each storage range
-                let mut storage_roots = chunk_storage_roots.into_iter();
-                let last_slot_index = slots.len() - 1;
-                for (i, next_account_slots) in slots.into_iter().enumerate() {
-                    // We won't accept empty storage ranges
-                    if next_account_slots.is_empty() {
-                        // This shouldn't happen
-                        error!("Received empty storage range, skipping");
-                        tx.send(empty_task_result.clone()).await.ok();
-                        return Ok(());
-                    }
-                    let encoded_values = next_account_slots
-                        .iter()
-                        .map(|slot| slot.data.encode_to_vec())
-                        .collect::<Vec<_>>();
-                    let hashed_keys: Vec<_> =
-                        next_account_slots.iter().map(|slot| slot.hash).collect();
-
-                    let storage_root = match storage_roots.next() {
-                        Some(root) => root,
-                        None => {
-                            tx.send(empty_task_result.clone()).await.ok();
-                            error!("No storage root for account {i}");
-                            return Err(PeerHandlerError::NoStorageRoots);
-                        }
-                    };
-
-                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if i == last_slot_index && !proof.is_empty() {
-                        let Ok(sc) = verify_range(
-                            storage_root,
-                            &start_hash,
-                            &hashed_keys,
-                            &encoded_values,
-                            &proof,
-                        ) else {
-                            tx.send(empty_task_result).await.ok();
-                            return Ok(());
-                        };
-                        should_continue = sc;
-                    } else if verify_range(
-                        storage_root,
-                        &start_hash,
-                        &hashed_keys,
-                        &encoded_values,
-                        &[],
-                    )
-                    .is_err()
-                    {
-                        tx.send(empty_task_result.clone()).await.ok();
-                        return Ok(());
-                    }
-
-                    account_storages.push(
-                        next_account_slots
-                            .iter()
-                            .map(|slot| (slot.hash, slot.data))
-                            .collect(),
-                    );
-                }
-                let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-                    let last_account_storage = match account_storages.last() {
-                        Some(storage) => storage,
-                        None => {
-                            tx.send(empty_task_result.clone()).await.ok();
-                            error!("No account storage found, this shouldn't happen");
-                            return Err(PeerHandlerError::NoAccountStorages);
-                        }
-                    };
-                    let (last_hash, _) = match last_account_storage.last() {
-                        Some(last_hash) => last_hash,
-                        None => {
-                            tx.send(empty_task_result.clone()).await.ok();
-                            error!("No last hash found, this shouldn't happen");
-                            return Err(PeerHandlerError::NoAccountStorages);
-                        }
-                    };
-                    let next_hash_u256 =
-                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
-                    let next_hash = H256::from_uint(&next_hash_u256);
-                    (start + account_storages.len() - 1, end, next_hash)
-                } else {
-                    (start + account_storages.len(), end, H256::zero())
-                };
-                let task_result = TaskResult {
-                    start_index: start,
-                    account_storages,
-                    peer_id: free_peer_id,
-                    remaining_start,
-                    remaining_end,
-                    remaining_hash_range: (remaining_start_hash, task.end_hash),
-                };
-                tx.send(task_result).await.ok();
-                Ok::<(), PeerHandlerError>(())
-            });
+            tokio::spawn(PeerHandler::request_storage_ranges_worker(
+                task,
+                free_peer_id,
+                pivot_header.state_root,
+                free_downloader_channels_clone,
+                chunk_account_hashes,
+                chunk_storage_roots,
+                tx,
+            ));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -2011,8 +1860,9 @@ impl PeerHandler {
 
         {
             let current_account_hashes = account_storage_roots
+                .accounts_with_storage_root
                 .iter()
-                .map(|a| a.0)
+                .map(|a| *a.0)
                 .collect::<Vec<_>>();
             let current_account_storages = std::mem::take(&mut all_account_storages);
 
@@ -2037,13 +1887,197 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
 
-        *METRICS.storages_downloads_tasks_queued.lock().await =
+        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
             tasks_queue_not_started.len() as u64;
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
+        disk_joinset
+            .join_all()
+            .await
+            .into_iter()
+            .map(|result| {
+                result
+                    .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+            })
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(PeerHandlerError::DumpError)?;
+
+        for account_done in accounts_done {
+            account_storage_roots
+                .accounts_with_storage_root
+                .remove(&account_done);
+        }
 
         Ok(chunk_index + 1)
+    }
+
+    async fn request_storage_ranges_worker(
+        task: StorageTask,
+        free_peer_id: H256,
+        state_root: H256,
+        mut free_downloader_channels_clone: PeerChannels,
+        chunk_account_hashes: Vec<H256>,
+        chunk_storage_roots: Vec<H256>,
+        tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
+    ) -> Result<(), PeerHandlerError> {
+        let start = task.start_index;
+        let end = task.end_index;
+        let start_hash = task.start_hash;
+
+        let empty_task_result = StorageTaskResult {
+            start_index: task.start_index,
+            account_storages: Vec::new(),
+            peer_id: free_peer_id,
+            remaining_start: task.start_index,
+            remaining_end: task.end_index,
+            remaining_hash_range: (start_hash, task.end_hash),
+        };
+        let request_id = rand::random();
+        let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+            id: request_id,
+            root_hash: state_root,
+            account_hashes: chunk_account_hashes,
+            starting_hash: start_hash,
+            limit_hash: task.end_hash.unwrap_or(HASH_MAX),
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        if let Err(err) = (free_downloader_channels_clone.connection)
+            .cast(CastMessage::BackendMessage(request))
+            .await
+        {
+            error!("Failed to send message to peer: {err:?}");
+            tx.send(empty_task_result).await.ok();
+            return Ok(());
+        }
+        let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
+                        if id == request_id =>
+                    {
+                        return Some((slots, proof));
+                    }
+                    Some(_) => continue,
+                    None => return None,
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some((slots, proof)) = request_result else {
+            tracing::debug!("Failed to get storage range");
+            tx.send(empty_task_result).await.ok();
+            return Ok(());
+        };
+        if slots.is_empty() && proof.is_empty() {
+            tx.send(empty_task_result).await.ok();
+            tracing::debug!("Received empty account range");
+            return Ok(());
+        }
+        // Check we got some data and no more than the requested amount
+        if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
+            tx.send(empty_task_result).await.ok();
+            return Ok(());
+        }
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
+        let mut should_continue = false;
+        // Validate each storage range
+        let mut storage_roots = chunk_storage_roots.into_iter();
+        let last_slot_index = slots.len() - 1;
+        for (i, next_account_slots) in slots.into_iter().enumerate() {
+            // We won't accept empty storage ranges
+            if next_account_slots.is_empty() {
+                // This shouldn't happen
+                error!("Received empty storage range, skipping");
+                tx.send(empty_task_result.clone()).await.ok();
+                return Ok(());
+            }
+            let encoded_values = next_account_slots
+                .iter()
+                .map(|slot| slot.data.encode_to_vec())
+                .collect::<Vec<_>>();
+            let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
+
+            let storage_root = match storage_roots.next() {
+                Some(root) => root,
+                None => {
+                    tx.send(empty_task_result.clone()).await.ok();
+                    error!("No storage root for account {i}");
+                    return Err(PeerHandlerError::NoStorageRoots);
+                }
+            };
+
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if i == last_slot_index && !proof.is_empty() {
+                let Ok(sc) = verify_range(
+                    storage_root,
+                    &start_hash,
+                    &hashed_keys,
+                    &encoded_values,
+                    &proof,
+                ) else {
+                    tx.send(empty_task_result).await.ok();
+                    return Ok(());
+                };
+                should_continue = sc;
+            } else if verify_range(
+                storage_root,
+                &start_hash,
+                &hashed_keys,
+                &encoded_values,
+                &[],
+            )
+            .is_err()
+            {
+                tx.send(empty_task_result.clone()).await.ok();
+                return Ok(());
+            }
+
+            account_storages.push(
+                next_account_slots
+                    .iter()
+                    .map(|slot| (slot.hash, slot.data))
+                    .collect(),
+            );
+        }
+        let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
+            let last_account_storage = match account_storages.last() {
+                Some(storage) => storage,
+                None => {
+                    tx.send(empty_task_result.clone()).await.ok();
+                    error!("No account storage found, this shouldn't happen");
+                    return Err(PeerHandlerError::NoAccountStorages);
+                }
+            };
+            let (last_hash, _) = match last_account_storage.last() {
+                Some(last_hash) => last_hash,
+                None => {
+                    tx.send(empty_task_result.clone()).await.ok();
+                    error!("No last hash found, this shouldn't happen");
+                    return Err(PeerHandlerError::NoAccountStorages);
+                }
+            };
+            let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
+            let next_hash = H256::from_uint(&next_hash_u256);
+            (start + account_storages.len() - 1, end, next_hash)
+        } else {
+            (start + account_storages.len(), end, H256::zero())
+        };
+        let task_result = StorageTaskResult {
+            start_index: start,
+            account_storages,
+            peer_id: free_peer_id,
+            remaining_start,
+            remaining_end,
+            remaining_hash_range: (remaining_start_hash, task.end_hash),
+        };
+        tx.send(task_result).await.ok();
+        Ok::<(), PeerHandlerError>(())
     }
 
     pub async fn request_state_trienodes(
@@ -2096,26 +2130,14 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
-        logging_flag: bool,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        if logging_flag {
-            info!("request_storage_trienodes {id} started");
-        }
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        if logging_flag {
-            info!("request_storage_trienodes {id} has finished creating the get trie nodes");
-        }
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(
-            peer_channel,
-            request,
-            id,
-            logging_flag,
-        )
-        .await
-        .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
+            .await
+            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
 
     /// Returns the PeerData for each connected Peer
@@ -2210,6 +2232,8 @@ fn format_duration(duration: Duration) -> String {
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
+
+#[derive(Debug)]
 pub struct DumpError {
     pub path: String,
     pub contents: Vec<u8>,
@@ -2256,6 +2280,8 @@ pub enum PeerHandlerError {
     NoStorageRoots,
     #[error("No response from peer")]
     NoResponseFromPeer,
+    #[error("Dumping snapshots to disk failed {0:?}")]
+    DumpError(DumpError),
 }
 
 #[derive(Debug, Clone, std::hash::Hash)]
