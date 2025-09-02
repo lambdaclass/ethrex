@@ -1069,9 +1069,9 @@ impl Syncer {
             )
             .await;
         }
-        // TODO: 💀💀💀 either remove or change to a debug flag
-        validate_state_root(store.clone(), pivot_header.state_root).await;
-        validate_storage_root(store.clone(), pivot_header.state_root).await;
+        
+        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
         let mut bytecode_hashes: Vec<H256> = store
@@ -1332,14 +1332,14 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    store
+    let is_valid = store
         .clone()
         .iter_accounts(state_root)
         .expect("We should be able to open the store")
         .par_bridge()
-        .for_each(|(hashed_address, account_state)|
+        .map(|(hashed_address, account_state)|
     {
         let store_clone = store.clone();
         let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
@@ -1359,6 +1359,9 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
                 account_state.storage_root
             );
         }
-    });
+        tree_validated
+    })
+    .all(|valid| valid);
     info!("Finished validate_storage_root");
+    is_valid
 }
