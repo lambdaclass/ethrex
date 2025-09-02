@@ -34,26 +34,40 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels}, metrics::METRICS, network::P2PContext, rlpx::{
-        connection::{codec::RLPxCodec, handshake}, error::RLPxError, eth::{
+    kademlia::{Kademlia, PeerChannels},
+    metrics::METRICS,
+    network::P2PContext,
+    rlpx::{
+        Message,
+        connection::{codec::RLPxCodec, handshake},
+        error::RLPxError,
+        eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
-        }, l2::{
-            self, l2_connection::{
-                self, broadcast_l2_message, handle_based_capability_message, handle_l2_broadcast, L2Cast, L2ConnState
-            }, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL
-        }, p2p::{
+        },
+        l2::{
+            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            l2_connection::{
+                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+                handle_l2_broadcast,
+            },
+        },
+        p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
-        }, utils::{log_peer_debug, log_peer_error, log_peer_warn}, Message
-    }, snap::{
+        },
+        utils::{log_peer_debug, log_peer_error, log_peer_warn},
+    },
+    snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
-    }, tx_broadcaster::{self, InMessage, TxBroadcaster}, types::Node
+    },
+    tx_broadcaster::{self, InMessage, TxBroadcaster},
+    types::Node,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
@@ -174,17 +188,21 @@ impl RLPxConnection {
             context,
             peer_addr,
             stream: Arc::new(stream),
-            tx_broadcaster_handle
+            tx_broadcaster_handle,
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
     }
 
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) -> RLPxConnectionHandle {
+    pub async fn spawn_as_initiator(
+        context: P2PContext,
+        node: &Node,
+        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
+    ) -> RLPxConnectionHandle {
         let inner_state = InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
-            tx_broadcaster_handle
+            tx_broadcaster_handle,
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
@@ -299,10 +317,7 @@ impl GenServer for RLPxConnection {
                     if !txs.transactions.is_empty() {
                         log_peer_debug(
                             &established_state.node,
-                            &format!(
-                                "Sending {} transactions to peer",
-                                txs.transactions.len()
-                            ),
+                            &format!("Sending {} transactions to peer", txs.transactions.len()),
                         );
                         let new_msg = Message::Transactions(Transactions {
                             transactions: txs.transactions,
@@ -811,9 +826,13 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         continue;
                     }
                 }
-                state.tx_broadcaster_handle.cast(InMessage::BroadcastTxs).await.unwrap_or_else(|err| {
-                    error!("Failed to send transactions to tx broadcaster: {err}");
-                });
+                state
+                    .tx_broadcaster_handle
+                    .cast(InMessage::BroadcastTxs)
+                    .await
+                    .unwrap_or_else(|err| {
+                        error!("Failed to send transactions to tx broadcaster: {err}");
+                    });
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {

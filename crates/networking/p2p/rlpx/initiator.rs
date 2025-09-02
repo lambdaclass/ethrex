@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{send_after, CastResponse, GenServer, GenServerHandle},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 
 use tracing::{debug, info};
@@ -50,7 +50,10 @@ impl RLPxInitiator {
         }
     }
 
-    pub async fn spawn(context: P2PContext, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) -> Result<(), RLPxInitiatorError> {
+    pub async fn spawn(
+        context: P2PContext,
+        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
+    ) -> Result<(), RLPxInitiatorError> {
         info!("Starting RLPx Initiator");
 
         let state = RLPxInitiator::new(context, tx_broadcaster_handle);
@@ -74,7 +77,12 @@ impl RLPxInitiator {
             if !already_tried_peers.contains(&node_id) && contact.knows_us {
                 already_tried_peers.insert(node_id);
 
-                RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node, self.tx_broadcaster_handle.clone()).await;
+                RLPxConnection::spawn_as_initiator(
+                    self.context.clone(),
+                    &contact.node,
+                    self.tx_broadcaster_handle.clone(),
+                )
+                .await;
 
                 METRICS.record_new_rlpx_conn_attempt().await;
                 tried_connections += 1;

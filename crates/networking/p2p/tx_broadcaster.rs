@@ -5,11 +5,14 @@ use ethrex_common::types::Transaction;
 use rand::random;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{send_interval, CastResponse, GenServer, GenServerHandle},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
 use tracing::{debug, error, info};
 
-use crate::{kademlia::Kademlia, rlpx::{connection::server::CastMessage, eth::transactions::Transactions}};
+use crate::{
+    kademlia::Kademlia,
+    rlpx::{connection::server::CastMessage, eth::transactions::Transactions},
+};
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
@@ -61,7 +64,12 @@ impl TxBroadcaster {
         let accept_prob = 1.0 / peer_sqrt;
         for (peer_id, mut peer_channels) in peers {
             if random::<f64>() < accept_prob {
-                let txs = txs_to_broadcast.clone().into_iter().map(|tx| tx.transaction().clone()).collect::<Vec<Transaction>>().clone();
+                let txs = txs_to_broadcast
+                    .clone()
+                    .into_iter()
+                    .map(|tx| tx.transaction().clone())
+                    .collect::<Vec<Transaction>>()
+                    .clone();
                 peer_channels.connection.cast(CastMessage::Transactions(
                     Transactions { transactions: txs }
                 )).await.unwrap_or_else(|err| {

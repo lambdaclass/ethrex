@@ -129,11 +129,12 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery side car: {e}");
     })?;
 
-    let tx_broadcaster_handle = TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start Tx Broadcaster: {e}");
-        })?;
+    let tx_broadcaster_handle =
+        TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
+            .await
+            .inspect_err(|e| {
+                error!("Failed to start Tx Broadcaster: {e}");
+            })?;
 
     RLPxInitiator::spawn(context.clone(), tx_broadcaster_handle.clone()) // todo add tx broadcaster handle
         .await
@@ -141,12 +142,17 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
             error!("Failed to start RLPx Initiator: {e}");
         })?;
 
-    context.tracker.spawn(serve_p2p_requests(context.clone(), tx_broadcaster_handle));
+    context
+        .tracker
+        .spawn(serve_p2p_requests(context.clone(), tx_broadcaster_handle));
 
     Ok(())
 }
 
-pub(crate) async fn serve_p2p_requests(context: P2PContext, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) {
+pub(crate) async fn serve_p2p_requests(
+    context: P2PContext,
+    tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
+) {
     let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
@@ -169,7 +175,13 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext, tx_broadcaster_handl
             continue;
         }
 
-        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream, tx_broadcaster_handle.clone()).await;
+        let _ = RLPxConnection::spawn_as_receiver(
+            context.clone(),
+            peer_addr,
+            stream,
+            tx_broadcaster_handle.clone(),
+        )
+        .await;
     }
 }
 

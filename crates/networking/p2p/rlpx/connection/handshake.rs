@@ -64,7 +64,12 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound, tx_broadcaster_handle) = match state {
-        InnerState::Initiator(Initiator { context, node, tx_broadcaster_handle, .. }) => {
+        InnerState::Initiator(Initiator {
+            context,
+            node,
+            tx_broadcaster_handle,
+            ..
+        }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
@@ -82,7 +87,13 @@ pub(crate) async fn perform(
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
             log_peer_debug(&node, "Completed handshake as initiator");
-            (context, node, Framed::new(stream, codec), false, tx_broadcaster_handle)
+            (
+                context,
+                node,
+                Framed::new(stream, codec),
+                false,
+                tx_broadcaster_handle,
+            )
         }
         InnerState::Receiver(Receiver {
             context,
@@ -107,7 +118,13 @@ pub(crate) async fn perform(
                 remote_state.public_key,
             );
             log_peer_debug(&node, "Completed handshake as receiver");
-            (context, node, Framed::new(stream, codec), true, tx_broadcaster_handle)
+            (
+                context,
+                node,
+                Framed::new(stream, codec),
+                true,
+                tx_broadcaster_handle,
+            )
         }
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()));
@@ -139,7 +156,7 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
-            tx_broadcaster_handle
+            tx_broadcaster_handle,
         },
         stream,
     ))
