@@ -323,7 +323,6 @@ impl StoreEngine for Store {
             let cf_headers = db.cf_handle(CF_HEADERS);
             let cf_bodies = db.cf_handle(CF_BODIES);
             let cf_block_numbers = db.cf_handle(CF_BLOCK_NUMBERS);
-            let cf_canonical = db.cf_handle(CF_CANONICAL_BLOCK_HASHES);
             let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
 
             for block in update_batch.blocks {
@@ -346,12 +345,6 @@ impl StoreEngine for Store {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let number_value = block_number.to_le_bytes().to_vec();
                     batch.put_cf(cf, hash_key, number_value);
-                }
-
-                if let Some(cf) = &cf_canonical {
-                    let number_key = block_number.to_le_bytes().to_vec();
-                    let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                    batch.put_cf(cf, number_key, hash_value);
                 }
 
                 if let Some(cf) = &cf_tx_locations {
@@ -518,7 +511,7 @@ impl StoreEngine for Store {
             let cf_canonical = db
                 .cf_handle(CF_CANONICAL_BLOCK_HASHES)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-            batch.delete_cf(&cf_canonical, block_number.to_le_bytes().to_vec());
+            batch.delete_cf(&cf_canonical, block_number.to_le_bytes());
 
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
@@ -564,13 +557,11 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockBody>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
-        match self.read_async(CF_BODIES, hash_key).await? {
-            Some(body_bytes) => {
-                let body_rlp = BlockBodyRLP::from_bytes(body_bytes);
-                body_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_BODIES, hash_key)
+            .await?
+            .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     fn get_block_header_by_hash(
@@ -579,13 +570,10 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHeader>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
-        match self.read_sync(CF_HEADERS, hash_key)? {
-            Some(header_bytes) => {
-                let header_rlp = BlockHeaderRLP::from_bytes(header_bytes);
-                header_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_sync(CF_HEADERS, hash_key)?
+            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
@@ -598,13 +586,11 @@ impl StoreEngine for Store {
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
-        match self.read_async(CF_PENDING_BLOCKS, hash_key).await? {
-            Some(block_bytes) => {
-                let block_rlp = BlockRLP::from_bytes(block_bytes);
-                block_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_PENDING_BLOCKS, hash_key)
+            .await?
+            .map(|bytes| BlockRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_block_number(
@@ -624,18 +610,15 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockNumber>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
-        match self.read_async(CF_BLOCK_NUMBERS, hash_key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_BLOCK_NUMBERS, hash_key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     async fn add_transaction_location(
@@ -672,14 +655,11 @@ impl StoreEngine for Store {
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         let tx_key = transaction_hash.as_bytes().to_vec();
 
-        match self.read_async(CF_TRANSACTION_LOCATIONS, tx_key).await? {
-            Some(location_bytes) => {
-                let location_tuple: (BlockNumber, BlockHash, Index) =
-                    <(BlockNumber, BlockHash, Index)>::decode(&location_bytes)?;
-                Ok(Some(location_tuple))
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_TRANSACTION_LOCATIONS, tx_key)
+            .await?
+            .map(|bytes| <(BlockNumber, BlockHash, Index)>::decode(&bytes))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_receipt(
@@ -720,12 +700,11 @@ impl StoreEngine for Store {
 
         let key = (block_hash, index).encode_to_vec();
 
-        match self.read_async(CF_RECEIPTS, key).await? {
-            Some(receipt_bytes) => Receipt::decode(receipt_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
-            None => Ok(None),
-        }
+        self.read_async(CF_RECEIPTS, key)
+            .await?
+            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
@@ -759,14 +738,10 @@ impl StoreEngine for Store {
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
-
-        match self.read_sync(CF_ACCOUNT_CODES, hash_key)? {
-            Some(code_bytes) => {
-                let code_rlp = AccountCodeRLP::from_bytes(code_bytes);
-                code_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_sync(CF_ACCOUNT_CODES, hash_key)?
+            .map(|bytes| AccountCodeRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn get_transaction_by_hash(
@@ -822,16 +797,11 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         let number_key = block_number.to_le_bytes().to_vec();
 
-        match self
-            .read_async(CF_CANONICAL_BLOCK_HASHES, number_key)
+        self.read_async(CF_CANONICAL_BLOCK_HASHES, number_key)
             .await?
-        {
-            Some(hash_bytes) => {
-                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
-                hash_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -854,69 +824,57 @@ impl StoreEngine for Store {
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
 
-        match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
 
-        match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
 
-        match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
 
-        match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     async fn update_pending_block_number(
@@ -931,18 +889,15 @@ impl StoreEngine for Store {
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
 
-        match self.read_async(CF_CHAIN_DATA, key).await? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     fn open_storage_trie(
@@ -1049,13 +1004,11 @@ impl StoreEngine for Store {
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         let key = payload_id.encode_to_vec();
 
-        match self.read_async(CF_PAYLOADS, key).await? {
-            Some(payload_bytes) => {
-                let payload_rlp = PayloadBundleRLP::from_bytes(payload_bytes);
-                payload_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_PAYLOADS, key)
+            .await?
+            .map(|bytes| PayloadBundleRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn update_payload(
@@ -1101,13 +1054,11 @@ impl StoreEngine for Store {
     async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
 
-        match self.read_async(CF_SNAP_STATE, key).await? {
-            Some(hash_bytes) => {
-                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
-                hash_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_SNAP_STATE, key)
+            .await?
+            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn set_state_trie_key_checkpoint(
@@ -1148,12 +1099,11 @@ impl StoreEngine for Store {
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::StateHealPaths);
 
-        match self.read_async(CF_SNAP_STATE, key).await? {
-            Some(paths_bytes) => Vec::<(Nibbles, H256)>::decode(paths_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
-            None => Ok(None),
-        }
+        self.read_async(CF_SNAP_STATE, key)
+            .await?
+            .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn write_snapshot_storage_batch(
@@ -1270,12 +1220,11 @@ impl StoreEngine for Store {
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
 
-        match self.read_async(CF_SNAP_STATE, key).await? {
-            Some(pending_bytes) => Vec::<(H256, H256)>::decode(pending_bytes.as_slice())
-                .map(Some)
-                .map_err(StoreError::from),
-            None => Ok(None),
-        }
+        self.read_async(CF_SNAP_STATE, key)
+            .await?
+            .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn read_storage_snapshot(
@@ -1344,13 +1293,11 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         let key = BlockHashRLP::from(block).bytes().clone();
 
-        match self.read_async(CF_INVALID_ANCESTORS, key).await? {
-            Some(hash_bytes) => {
-                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
-                hash_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_async(CF_INVALID_ANCESTORS, key)
+            .await?
+            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     fn get_block_number_sync(
@@ -1359,18 +1306,14 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockNumber>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
-        match self.read_sync(CF_BLOCK_NUMBERS, hash_key)? {
-            Some(number_bytes) => {
-                if number_bytes.len() == 8 {
-                    let bytes: [u8; 8] = number_bytes[..8].try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(Some(BlockNumber::from_le_bytes(bytes)))
-                } else {
-                    Err(StoreError::Custom("Invalid BlockNumber length".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
+        self.read_sync(CF_BLOCK_NUMBERS, hash_key)?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     fn get_canonical_block_hash_sync(
@@ -1379,13 +1322,10 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         let number_key = block_number.to_le_bytes().to_vec();
 
-        match self.read_sync(CF_CANONICAL_BLOCK_HASHES, number_key)? {
-            Some(hash_bytes) => {
-                let hash_rlp = BlockHashRLP::from_bytes(hash_bytes);
-                hash_rlp.to().map(Some).map_err(StoreError::from)
-            }
-            None => Ok(None),
-        }
+        self.read_sync(CF_CANONICAL_BLOCK_HASHES, number_key)?
+            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn write_storage_trie_nodes_batch(
