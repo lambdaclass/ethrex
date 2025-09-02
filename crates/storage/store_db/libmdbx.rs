@@ -218,10 +218,16 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        if self
+        .open_state_trie(*ethrex_trie::EMPTY_TRIE_HASH)?
+        .db()
+        .get(block_header.state_root.into())?
+        .is_some(){
+            info!("Block number {} has state in DB", block_header.state_root);
+        }
         self.write::<CanonicalBlockHashes>(block_header.number, block_hash.into()).await?;
         self.write::<BlockNumbers>(block_hash.into(), block_header.number).await?;
-        self.write::<Headers>(block_hash.into(), block_header.into())
-            .await
+        self.write::<Headers>(block_hash.into(), block_header.into()).await
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {

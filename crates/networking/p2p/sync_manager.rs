@@ -59,7 +59,7 @@ impl SyncManager {
 
         info!("Fetching blocks from peers");
         // Fetch blocks from peers and store them in DB (as we lost all blocks)
-        for i in (8497589 - 128)..(8497589+1) {
+        for i in (8497589 - 2048)..(8497589+2048) {
             let mut block_header = None;
             while block_header.is_none() {
                 info!("Requesting block with number {i}");
