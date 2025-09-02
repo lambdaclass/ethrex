@@ -373,7 +373,7 @@ pub async fn init_l1(
     opts: Options,
 ) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
-
+    info!("Opening datadir @ {data_dir}");
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
