@@ -8,6 +8,8 @@ pub mod libmdbx_dupsort_locked;
 pub mod libmdbx_locked;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb_locked;
 #[cfg(test)]
 mod test_utils;
 pub mod utils;

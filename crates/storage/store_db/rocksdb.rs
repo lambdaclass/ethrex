@@ -8,7 +8,8 @@ use ethrex_common::{
     utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
-use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
+use crate::trie_db::rocksdb_locked::RocksDBLockedTrieDB;
+use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options, WriteBatch};
 use std::sync::Arc;
 
 use crate::{
@@ -41,7 +42,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    db: Arc<DB>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl Store {
@@ -137,14 +138,21 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = DB::open_cf_descriptors(&db_options, path, cf_descriptors)
-            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &db_options,
+            path,
+            cf_descriptors,
+        )
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
         Ok(Self { db: Arc::new(db) })
     }
 
     // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<&rocksdb::ColumnFamily, StoreError> {
+    fn cf_handle(
+        &self,
+        cf_name: &str,
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
@@ -163,7 +171,7 @@ impl Store {
             let cf = db.cf_handle(&cf_name).ok_or_else(|| {
                 StoreError::Custom(format!("Column family not found: {}", cf_name))
             })?;
-            db.put_cf(cf, key, value)
+            db.put_cf(&cf, key, value)
                 .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
         })
         .await
@@ -182,7 +190,7 @@ impl Store {
             let cf = db.cf_handle(&cf_name).ok_or_else(|| {
                 StoreError::Custom(format!("Column family not found: {}", cf_name))
             })?;
-            db.get_cf(cf, key)
+            db.get_cf(&cf, key)
                 .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
         })
         .await
@@ -196,7 +204,7 @@ impl Store {
     {
         let cf = self.cf_handle(cf_name)?;
         self.db
-            .get_cf(cf, key)
+            .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
     }
 
@@ -214,7 +222,7 @@ impl Store {
                 let cf = db.cf_handle(&cf_name).ok_or_else(|| {
                     StoreError::Custom(format!("Column family not found: {}", cf_name))
                 })?;
-                batch.put_cf(cf, key, value);
+                batch.put_cf(&cf, key, value);
             }
 
             db.write(batch)
@@ -258,7 +266,7 @@ impl StoreEngine for Store {
             // Process account updates
             if let Some(cf_state) = db.cf_handle(CF_STATE_TRIE_NODES) {
                 for (node_hash, node_data) in update_batch.account_updates {
-                    batch.put_cf(cf_state, node_hash.as_ref(), node_data);
+                    batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
                 }
             }
 
@@ -268,7 +276,7 @@ impl StoreEngine for Store {
                     for (node_hash, node_data) in storage_updates {
                         let mut key = address_hash.as_bytes().to_vec();
                         key.extend_from_slice(node_hash.as_ref());
-                        batch.put_cf(cf_storage, key, node_data);
+                        batch.put_cf(&cf_storage, key, node_data);
                     }
                 }
             }
@@ -284,31 +292,31 @@ impl StoreEngine for Store {
                 let block_hash = block.hash();
                 let block_number = block.header.number;
 
-                if let Some(cf) = cf_headers {
+                if let Some(cf) = &cf_headers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
                     batch.put_cf(cf, hash_key, header_value);
                 }
 
-                if let Some(cf) = cf_bodies {
+                if let Some(cf) = &cf_bodies {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
                     batch.put_cf(cf, hash_key, body_value);
                 }
 
-                if let Some(cf) = cf_block_numbers {
+                if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let number_value = block_number.encode_to_vec();
                     batch.put_cf(cf, hash_key, number_value);
                 }
 
-                if let Some(cf) = cf_canonical {
+                if let Some(cf) = &cf_canonical {
                     let number_key = block_number.encode_to_vec();
                     let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
                     batch.put_cf(cf, number_key, hash_value);
                 }
 
-                if let Some(cf) = cf_tx_locations {
+                if let Some(cf) = &cf_tx_locations {
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         let tx_hash = transaction.hash();
                         let location_key = tx_hash.as_bytes();
@@ -325,7 +333,7 @@ impl StoreEngine for Store {
                     for (index, receipt) in receipts.into_iter().enumerate() {
                         let key = (block_hash, index as u64).encode_to_vec();
                         let value = receipt.encode_to_vec();
-                        batch.put_cf(cf_receipts, key, value);
+                        batch.put_cf(&cf_receipts, key, value);
                     }
                 }
             }
@@ -335,7 +343,7 @@ impl StoreEngine for Store {
                 for (code_hash, code) in update_batch.code_updates {
                     let code_key = code_hash.as_bytes();
                     let code_value = AccountCodeRLP::from(code).bytes().clone();
-                    batch.put_cf(cf_codes, code_key, code_value);
+                    batch.put_cf(&cf_codes, code_key, code_value);
                 }
             }
 
@@ -364,25 +372,25 @@ impl StoreEngine for Store {
                 let block_hash = block.hash();
                 let block_number = block.header.number;
 
-                if let Some(cf) = cf_headers {
+                if let Some(cf) = &cf_headers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
                     batch.put_cf(cf, hash_key, header_value);
                 }
 
-                if let Some(cf) = cf_bodies {
+                if let Some(cf) = &cf_bodies {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
                     batch.put_cf(cf, hash_key, body_value);
                 }
 
-                if let Some(cf) = cf_block_numbers {
+                if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let number_value = block_number.encode_to_vec();
                     batch.put_cf(cf, hash_key, number_value);
                 }
 
-                if let Some(cf) = cf_tx_locations {
+                if let Some(cf) = &cf_tx_locations {
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         let tx_hash = transaction.hash();
                         let location_key = tx_hash.as_bytes();
@@ -472,7 +480,7 @@ impl StoreEngine for Store {
             let cf_canonical = db
                 .cf_handle(CF_CANONICAL_BLOCK_HASHES)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-            batch.delete_cf(cf_canonical, block_number.encode_to_vec());
+            batch.delete_cf(&cf_canonical, block_number.encode_to_vec());
 
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
@@ -691,11 +699,11 @@ impl StoreEngine for Store {
                 .cf_handle(CF_SNAP_STATE)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let mut iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
             let mut batch = WriteBatch::default();
 
             while let Some(Ok((key, _))) = iter.next() {
-                batch.delete_cf(cf, key);
+                batch.delete_cf(&cf, key);
             }
 
             db.write(batch)
@@ -886,9 +894,12 @@ impl StoreEngine for Store {
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        // For now, we use the same implementation as open_state_trie
-        // In the future, we could implement a read-only version
-        self.open_state_trie(state_root)
+        let db = RocksDBLockedTrieDB::new(
+            self.db.clone(),
+            CF_STATE_TRIE_NODES,
+            None,
+        )?;
+        Ok(Trie::open(Box::new(db), state_root))
     }
 
     fn open_locked_storage_trie(
@@ -896,7 +907,12 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root)
+        let db = RocksDBLockedTrieDB::new(
+            self.db.clone(),
+            CF_STORAGE_TRIES_NODES,
+            Some(hashed_address),
+        )?;
+        Ok(Trie::open(Box::new(db), storage_root))
     }
 
     async fn forkchoice_update(
@@ -989,7 +1005,7 @@ impl StoreEngine for Store {
 
         loop {
             let key = (*block_hash, index).encode_to_vec();
-            match self.db.get_cf(cf, key)? {
+            match self.db.get_cf(&cf, key)? {
                 Some(receipt_bytes) => {
                     let receipt = Receipt::decode(receipt_bytes.as_slice())?;
                     receipts.push(receipt);
@@ -1211,7 +1227,7 @@ impl StoreEngine for Store {
 
             let mut results = Vec::new();
             let mut iter = db.iterator_cf(
-                cf,
+                &cf,
                 rocksdb::IteratorMode::From(&start_key, rocksdb::Direction::Forward),
             );
             let mut count = 0;
