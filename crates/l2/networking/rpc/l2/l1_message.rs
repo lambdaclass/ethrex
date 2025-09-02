@@ -10,7 +10,7 @@ use crate::{
 };
 
 use ethrex_l2_common::{
-    l1_messages::{get_block_l1_messages, get_l1_message_hash},
+    l1_messages::{L1MessageProof, get_block_l1_messages, get_l1_message_hash},
     merkle_tree::compute_merkle_proof,
 };
 
@@ -92,7 +92,7 @@ impl RpcHandler for GetL1MessageProof {
                 return Ok(Value::Null);
             };
 
-            let proof = ethrex_rpc::clients::eth::L1MessageProof {
+            let proof = L1MessageProof {
                 batch_number,
                 message_id: message.message_id,
                 message_hash: *message_hash,
