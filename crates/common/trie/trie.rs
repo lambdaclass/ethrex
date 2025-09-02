@@ -268,7 +268,7 @@ impl Trie {
     ) -> Result<Self, TrieError> {
         let root_rlp = state_nodes
             .remove(&root_hash)
-            .expect("Trie should have root hash");
+            .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
             all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
