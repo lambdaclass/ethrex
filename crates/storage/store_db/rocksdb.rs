@@ -312,7 +312,8 @@ impl StoreEngine for Store {
                 for (address_hash, storage_updates) in update_batch.storage_updates {
                     for (node_hash, node_data) in storage_updates {
                         // Key: address_hash + node_hash
-                        let mut key = address_hash.as_bytes().to_vec();
+                        let mut key = Vec::with_capacity(64);
+                        key.extend_from_slice(address_hash.as_bytes());
                         key.extend_from_slice(node_hash.as_ref());
                         batch.put_cf(&cf_storage, key, node_data);
                     }
@@ -330,9 +331,9 @@ impl StoreEngine for Store {
                 let block_hash = block.hash();
 
                 if let Some(cf) = &cf_headers {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                    batch.put_cf(cf, hash_key, header_value);
+                    let hash_key_rlp = BlockHashRLP::from(block_hash);
+                    let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                    batch.put_cf(cf, hash_key_rlp.bytes(), header_value_rlp.bytes());
                 }
 
                 if let Some(cf) = &cf_bodies {
@@ -343,8 +344,7 @@ impl StoreEngine for Store {
 
                 if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let number_value = block_number.to_le_bytes().to_vec();
-                    batch.put_cf(cf, hash_key, number_value);
+                    batch.put_cf(cf, hash_key, block_number.to_le_bytes());
                 }
 
                 if let Some(cf) = &cf_tx_locations {
@@ -417,8 +417,7 @@ impl StoreEngine for Store {
 
                 if let Some(cf) = &cf_block_numbers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let number_value = block_number.to_le_bytes().to_vec();
-                    batch.put_cf(cf, hash_key, number_value);
+                    batch.put_cf(cf, hash_key, block_number.to_le_bytes());
                 }
 
                 if let Some(cf) = &cf_tx_locations {
@@ -599,7 +598,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let number_value = block_number.to_le_bytes().to_vec();
+        let number_value = block_number.to_le_bytes();
         self.write_async(CF_BLOCK_NUMBERS, hash_key, number_value)
             .await
     }
@@ -817,7 +816,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
-        let value = block_number.to_le_bytes().to_vec();
+        let value = block_number.to_le_bytes();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
@@ -882,7 +881,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
-        let value = block_number.to_le_bytes().to_vec();
+        let value = block_number.to_le_bytes();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
@@ -1122,7 +1121,8 @@ impl StoreEngine for Store {
 
         for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
             // Create composite key: account_hash + storage_key
-            let mut composite_key = account_hash.as_bytes().to_vec();
+            let mut composite_key = Vec::with_capacity(64);
+            composite_key.extend_from_slice(account_hash.as_bytes());
             composite_key.extend_from_slice(key.as_bytes());
 
             // Convert U256 to bytes
@@ -1163,7 +1163,8 @@ impl StoreEngine for Store {
 
             for (key, value) in keys.into_iter().zip(values.into_iter()) {
                 // Create composite key: account_hash + storage_key
-                let mut composite_key = account_hash.as_bytes().to_vec();
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(account_hash.as_bytes());
                 composite_key.extend_from_slice(key.as_bytes());
 
                 // Convert U256 to bytes
@@ -1241,7 +1242,8 @@ impl StoreEngine for Store {
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
             // Create start key: account_hash + start
-            let mut start_key = account_hash.as_bytes().to_vec();
+            let mut start_key = Vec::with_capacity(64);
+            start_key.extend_from_slice(account_hash.as_bytes());
             start_key.extend_from_slice(start.as_bytes());
 
             let mut results = Vec::new();
@@ -1337,7 +1339,8 @@ impl StoreEngine for Store {
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
                 // Create composite key: address_hash + node_hash
-                let mut key = address_hash.as_bytes().to_vec();
+                let mut key = Vec::with_capacity(64);
+                key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
                 batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
             }
