@@ -33,7 +33,6 @@ dependencies = [
  "fallible-iterator 0.3.0",
  "gimli 0.29.0",
  "memmap2 0.9.8",
- "memmap2 0.9.8",
  "object 0.35.0",
  "rustc-demangle",
  "smallvec",
