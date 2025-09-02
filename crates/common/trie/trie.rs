@@ -266,10 +266,8 @@ impl Trie {
         root_hash: NodeHash,
         mut state_nodes: HashMap<NodeHash, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        // TODO: Try to remove this clone.
         let root_rlp = state_nodes
-            .get(&root_hash)
-            .cloned()
+            .remove(&root_hash)
             .expect("Trie should have root hash");
 
         fn inner(
