@@ -1496,7 +1496,7 @@ mod tests {
     fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
         let calldata = Bytes::from(hex::decode(calldata).unwrap());
         let expected_output = Bytes::from(hex::decode(expected_output).unwrap());
-        let output = ecpairing(&calldata, &mut gas).unwrap();
+        let output = ecpairing(&calldata, &mut gas, Fork::Cancun).unwrap();
         assert_eq!(output, expected_output);
         assert!(gas.is_zero());
     }
