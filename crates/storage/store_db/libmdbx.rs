@@ -584,6 +584,8 @@ impl StoreEngine for Store {
         info!("Have {} headers in store", stat.entries());
         let stat = txn.table_stat::<Bodies>().unwrap();
         info!("Have {} bodies in store", stat.entries());
+        let stat = txn.table_stat::<StateTrieNodes>().unwrap();
+        info!("Have {} nodes in state trie", stat.entries());
         let mut cursor = txn.cursor::<Headers>().unwrap();
         while let Ok(Some((_, block_header))) = cursor.next() {
             let header = block_header.to()?;
