@@ -42,7 +42,7 @@ pub async fn build_payload(
     payload: Block,
     store: &Store,
     rollup_store: &StoreRollup,
-    max_gas_limit: u64,
+    max_gas_limit: Option<u64>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -109,7 +109,7 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
     rollup_store: &StoreRollup,
-    max_gas_limit: u64,
+    max_gas_limit: Option<u64>,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
@@ -134,9 +134,13 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough gas to run more transactions within the configured max_gas_limit
-        if context.payload.header.gas_limit - context.remaining_gas + TX_GAS_COST >= max_gas_limit {
-            debug!("No more gas to run transactions");
-            break;
+        if let Some(max_gas_limit) = max_gas_limit {
+            if context.payload.header.gas_limit - context.remaining_gas + TX_GAS_COST
+                >= max_gas_limit
+            {
+                debug!("No more gas to run transactions");
+                break;
+            }
         }
 
         // Check if we have enough space for the StateDiff to run more transactions
@@ -161,13 +165,15 @@ pub async fn fill_transactions(
         }
 
         // Check if we have enough gas to run the transaction within the configured max_gas_limit
-        if context.payload.header.gas_limit - context.remaining_gas + head_tx.tx.gas_limit()
-            >= max_gas_limit
-        {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
-            // We don't have enough gas left for the transaction, so we skip all txs from this account
-            txs.pop();
-            continue;
+        if let Some(max_gas_limit) = max_gas_limit {
+            if context.payload.header.gas_limit - context.remaining_gas + head_tx.tx.gas_limit()
+                >= max_gas_limit
+            {
+                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                // We don't have enough gas left for the transaction, so we skip all txs from this account
+                txs.pop();
+                continue;
+            }
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)

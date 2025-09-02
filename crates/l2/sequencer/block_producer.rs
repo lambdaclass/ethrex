@@ -52,7 +52,7 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
-    max_gas_limit: u64,
+    max_gas_limit: Option<u64>,
 }
 
 impl BlockProducer {
