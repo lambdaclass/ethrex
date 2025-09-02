@@ -25,7 +25,7 @@ use crate::{
         downloader::{
             Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
         },
-        eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
+        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
