@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756828500388,
+  "lastUpdate": 1756829620036,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11065,6 +11065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162390905821,
             "range": "± 294806217",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a1b29d495901fccfc612756508634aa1fa7344d6",
+          "message": "fix(l1): fix high memory usage in `ethrex_replay` (#4254)\n\n**Motivation**\n\nFix memory problems when executing with SP1 on replay with heavy blocks.\nThe cause was that SP1 embedded allocator has a max of 1GB memory\nallocated and we were exceeding even 3GB. This improves memory usage of\nethrex replay itself (independently of the zkvm used) and as a\nconsequence we don't have these kind of errors anymore because memory\nusage is now drastically lower.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nBytehound of a normal run for a [heavy mainnet\nblock](https://etherscan.io/block/23242537).\nPre Fix:\n<img width=\"3320\" height=\"1394\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/991eb712-a249-43d0-9296-183a42618445\"\n/>\n\nPost Fix:\n<img width=\"3320\" height=\"1410\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/8fcbae6e-5994-4828-a335-1bcf2686cd27\"\n/>\n\nFrom 3.2GB RAM to 42MB\n~20% improvement in performance. From 10s to 8s.\n\nCloses #4089",
+          "timestamp": "2025-09-02T15:17:49Z",
+          "tree_id": "c3c2a74912f1ce109a41725e6a8fcf1eefbaa3e4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a1b29d495901fccfc612756508634aa1fa7344d6"
+        },
+        "date": 1756829602475,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159052289275,
+            "range": "± 503758269",
             "unit": "ns/iter"
           }
         ]
