@@ -60,15 +60,20 @@ impl SyncManager {
         info!("Fetching blocks from peers");
         // Fetch blocks from peers and store them in DB (as we lost all blocks)
         for i in (8497589 - 128)..8497589 {
-            let (_, mut peer) = peer_handler
+            let mut block_header = None;
+            while block_header.is_none() {
+                info!("Requesting block with number {i}");
+                let (_, mut peer) = peer_handler
                 .get_peer_channel_with_retry(&[Capability::eth(69)])
                 .await
                 .unwrap();
-            let block_header = peer_handler
+                block_header = peer_handler
                 .get_block_header(&mut peer, i as u64)
                 .await
-                .unwrap()
                 .unwrap();
+            }
+            let block_header = block_header.unwrap();
+            info!("Adding block header for block {}", block_header.number);
             store_clone
                 .add_block_header(block_header.hash(), block_header)
                 .await
