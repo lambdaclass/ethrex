@@ -10,14 +10,14 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
-
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, peer_table, public_key_from_signing_key},
+    kademlia::Kademlia,
+    network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
+    utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -124,7 +124,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -141,6 +141,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        init_datadir(&opts.datadir),
     )
     .await;
 
@@ -169,7 +170,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -191,18 +192,19 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
-        blockchain,
+        blockchain.clone(),
         get_client_version(),
         based_context,
     );
-
-    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+        blockchain,
+        peer_table.peers.clone(),
+    ));
 }
 
 #[cfg(feature = "dev")]
@@ -365,12 +367,7 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
-) -> eyre::Result<(
-    String,
-    CancellationToken,
-    Arc<Mutex<KademliaTable>>,
-    Arc<Mutex<NodeRecord>>,
-)> {
+) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
@@ -393,7 +390,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
