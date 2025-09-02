@@ -27,7 +27,9 @@ impl Receipts68 {
         }
         let mut transformed_receipts = vec![];
         for r in &receipts {
-            transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
+            if !r.is_empty() {
+                transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
+            }
         }
         Self {
             id,
