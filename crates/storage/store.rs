@@ -480,7 +480,8 @@ impl Store {
                                 H256::from_slice(&hashed_address),
                                 account_state.storage_root,
                             )?;
-                            vacant.insert(TrieLogger::open_trie(trie))
+                            let root = trie.hash_no_commit();
+                            vacant.insert(TrieLogger::open_trie(trie, root))
                         }
                     };
 

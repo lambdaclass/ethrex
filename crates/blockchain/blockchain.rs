@@ -174,8 +174,8 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-
-        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+        let root = trie.hash_no_commit();
+        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie, root);
 
         let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
@@ -254,8 +254,9 @@ impl Blockchain {
                 if !acc_keys.is_empty() {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
+                        let root = storage_trie.hash_no_commit();
                         let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie);
+                            TrieLogger::open_trie(storage_trie, root);
                         // Access all the keys
                         for storage_key in acc_keys {
                             let hashed_key = hash_key(storage_key);

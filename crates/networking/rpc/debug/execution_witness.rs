@@ -1,4 +1,3 @@
-use core::hash;
 use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
@@ -180,50 +179,57 @@ pub fn execution_witness_from_rpc_chain_config(
             dbg!("3");
 
             // let storage_trie = Trie::open(&state_trie.db.clone, storage_root);
-            let mut states_nodes_clone: HashMap<NodeHash, Vec<u8>> = state_nodes
+            let states_nodes_clone: HashMap<NodeHash, Vec<u8>> = state_nodes
                 .clone()
                 .into_iter()
                 .map(|(k, v)| (NodeHash::Hashed(k), v))
                 .collect();
 
-            states_nodes_clone.remove(&NodeHash::Hashed(storage_root));
-
             let Ok(storage_trie) =
-                Trie::from_nodes(NodeHash::Hashed(storage_root), states_nodes_clone).map_err(|e| {
-                    ExecutionWitnessError::RebuildTrie(format!(
-                        "Storage trie for address {address:#x}: {e}"
-                    ))
-                })
+                Trie::from_nodes(NodeHash::Hashed(storage_root), states_nodes_clone.clone())
+                    .map_err(|e| {
+                        ExecutionWitnessError::RebuildTrie(format!(
+                            "Storage trie for address {address:#x}: {e}"
+                        ))
+                    })
             else {
                 continue;
             };
-            // let mut found_hashed_keys = Vec::new();
-            // for key in keys.iter() {
-            //     let hash = hash_key(key);
-            //     if storage_trie.get(&hash).is_ok() {
-            //         found_hashed_keys.push(hash);
-            //         dbg!("found key");
-            //     }
-            // }
+
+            let mut found_hashed_keys = Vec::new();
+            for key in keys.iter() {
+                let hash = hash_key(key);
+                if let Ok(Some(abcd)) = storage_trie.get(&hash) {
+                    found_hashed_keys.push(hash);
+                    dbg!(abcd);
+                    dbg!(states_nodes_clone.get(&NodeHash::Hashed(*key)));
+                    dbg!("found key");
+                }
+            }
 
             // dbg!("4");
             // dbg!(&state_nodes.len());
-            // dbg!(storage_root);
+            dbg!(storage_root);
 
-            let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
-            // for a in found_hashed_keys {
-            //     if storage_trie.get(&a).is_err() {
-            //         dbg!("INCONSISTENT");
-            //         panic!();
-            //     }
-            // }
+            let (storage_trie_witness, storage_trie_wrapped) =
+                TrieLogger::open_trie(storage_trie, storage_root);
+
+            dbg!(&storage_trie_wrapped.hash_no_commit());
+            dbg!(&storage_trie_wrapped.root);
+
+            for a in found_hashed_keys {
+                if storage_trie_wrapped.get(&a).is_err() {
+                    dbg!("INCONSISTENT");
+                    panic!();
+                }
+            }
 
             // are the storage slots correct?
             for slot in keys.iter() {
                 // dbg!("4.1");
                 // dbg!(slot);
                 // println!("{:?}", hex::encode(hash_key(slot)));
-                if let Ok(storage_slot) = storage_trie.get(&hash_key(slot)).map_err(|e| {
+                if let Ok(storage_slot) = storage_trie_wrapped.get(&hash_key(slot)).map_err(|e| {
                     ExecutionWitnessError::Custom(format!(
                         "Failed to get storage slot {slot:#x} for address {address:#x}: {e}"
                     ))
