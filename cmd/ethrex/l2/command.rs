@@ -557,7 +557,7 @@ pub struct ContractPauseOptions {
 }
 
 impl ContractPauseOptions {
-    async fn call_contract(&self, s: &str, params: Vec<Value>) -> eyre::Result<()> {
+    async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
         let client = EthClient::new(self.rpc_url.as_str())?;
         let signer = parse_signer(
             self.private_key,
@@ -565,7 +565,7 @@ impl ContractPauseOptions {
             self.remote_signer_public_key,
         )?;
 
-        call_contract(&client, &signer, self.contract_address, s, params).await?;
+        call_contract(&client, &signer, self.contract_address, selector, params).await?;
         Ok(())
     }
 }
