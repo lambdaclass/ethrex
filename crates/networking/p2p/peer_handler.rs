@@ -115,61 +115,6 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
-async fn ask_peer_head_number(
-    peer_id: H256,
-    peer_channel: &mut PeerChannels,
-    sync_head: H256,
-    retries: i32,
-) -> Result<u64, PeerHandlerError> {
-    // TODO: Better error handling
-    trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
-    let request_id = rand::random();
-    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-        id: request_id,
-        startblock: HashOrNumber::Hash(sync_head),
-        limit: 1,
-        skip: 0,
-        reverse: false,
-    });
-
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(request.clone()))
-        .await
-        .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
-    debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
-
-    match tokio::time::timeout(Duration::from_millis(500), async move {
-        peer_channel.receiver.lock().await.recv().await
-    })
-    .await
-    {
-        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
-            if id == request_id && !block_headers.is_empty() {
-                let sync_head_number = block_headers
-                    .last()
-                    .ok_or(PeerHandlerError::BlockHeaders)?
-                    .number;
-                trace!(
-                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
-                );
-                Ok(sync_head_number)
-            } else {
-                Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
-                // TODO merge:
-                //Err(format!(
-                //    "Received unexpected response from peer {peer_id}. We expected id {request_id}, and we got {id} and we received {} block headers",
-                //    block_headers.len()
-                //))
-            }
-        }
-        Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
-        Ok(_other_msgs) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
-        Err(_err) => Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id)),
-    }
-}
-
 impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {
