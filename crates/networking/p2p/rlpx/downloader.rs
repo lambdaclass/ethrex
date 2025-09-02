@@ -495,9 +495,16 @@ impl GenServer for Downloader {
 
                     // If the range has more accounts to fetch, we send the new chunk
                     let chunk_left = if should_continue {
-                        let last_hash = account_hashes
-                            .last()
-                            .expect("we already checked this isn't empty");
+                        let last_hash = match account_hashes.last() {
+                            Some(last_hash) => last_hash,
+                            None => {
+                                let msg =
+                                    (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
+                                self.send_through_response_channel(task_sender, msg).await;
+                                error!("Account hashes last failed, this shouldn't happen");
+                                return CastResponse::Stop;
+                            }
+                        };
                         let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
                         let new_start = H256::from_uint(&new_start_u256);
                         Some((new_start, limit_hash))

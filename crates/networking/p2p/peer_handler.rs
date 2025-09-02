@@ -32,8 +32,8 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
+            AccountRangeUnit, ByteCodes, GetByteCodes, GetStorageRanges, GetTrieNodes,
+            StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
@@ -923,7 +923,6 @@ impl PeerHandler {
                 continue;
             };
 
-            let tx = task_sender.clone();
             downloaders
                 .entry(free_peer_id)
                 .and_modify(|downloader_is_free| {
@@ -931,7 +930,7 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let free_downloader_channels_clone = free_downloader_channels.clone();
+            let available_downloader = Downloader::new(free_peer_id, free_downloader_channels);
 
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
@@ -940,14 +939,18 @@ impl PeerHandler {
                     .expect("Should be able to update pivot")
             }
 
-            tokio::spawn(PeerHandler::request_account_range_worker(
-                free_peer_id,
-                chunk_start,
-                chunk_end,
-                pivot_header.state_root,
-                free_downloader_channels_clone,
-                tx,
-            ));
+            if let Err(_) = available_downloader
+                .start()
+                .cast(DownloaderCastRequest::AccountRange {
+                    task_sender: task_sender.clone(),
+                    root_hash: pivot_header.state_root,
+                    starting_hash: chunk_start,
+                    limit_hash: chunk_end,
+                })
+                .await
+            {
+                tasks_queue_not_started.push_front((chunk_start, chunk_end));
+            }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
@@ -985,126 +988,6 @@ impl PeerHandler {
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
-    }
-
-    #[allow(clippy::type_complexity)]
-    async fn request_account_range_worker(
-        free_peer_id: H256,
-        chunk_start: H256,
-        chunk_end: H256,
-        state_root: H256,
-        mut free_downloader_channels_clone: PeerChannels,
-        tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
-    ) -> Result<(), PeerHandlerError> {
-        debug!(
-            "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-        );
-        let request_id = rand::random();
-        let request = RLPxMessage::GetAccountRange(GetAccountRange {
-            id: request_id,
-            root_hash: state_root,
-            starting_hash: chunk_start,
-            limit_hash: chunk_end,
-            response_bytes: MAX_RESPONSE_BYTES,
-        });
-        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-        if let Err(err) = (free_downloader_channels_clone.connection)
-            .cast(CastMessage::BackendMessage(request))
-            .await
-        {
-            error!("Failed to send message to peer: {err:?}");
-            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
-            return Ok(());
-        }
-        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                if let RLPxMessage::AccountRange(AccountRange {
-                    id,
-                    accounts,
-                    proof,
-                }) = receiver.recv().await?
-                {
-                    if id == request_id {
-                        return Some((accounts, proof));
-                    }
-                }
-            }
-        })
-        .await
-        .ok()
-        .flatten()
-        {
-            if accounts.is_empty() {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                    .await
-                    .ok();
-                // Too spammy
-                // tracing::error!("Received empty account range");
-                return Ok(());
-            }
-            // Unzip & validate response
-            let proof = encodable_to_proof(&proof);
-            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                .clone()
-                .into_iter()
-                .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                .unzip();
-            let encoded_accounts = account_states
-                .iter()
-                .map(|acc| acc.encode_to_vec())
-                .collect::<Vec<_>>();
-
-            let Ok(should_continue) = verify_range(
-                state_root,
-                &chunk_start,
-                &account_hashes,
-                &encoded_accounts,
-                &proof,
-            ) else {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                    .await
-                    .ok();
-                tracing::error!("Received invalid account range");
-                return Ok(());
-            };
-
-            // If the range has more accounts to fetch, we send the new chunk
-            let chunk_left = if should_continue {
-                let last_hash = match account_hashes.last() {
-                    Some(last_hash) => last_hash,
-                    None => {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        error!("Account hashes last failed, this shouldn't happen");
-                        return Err(PeerHandlerError::AccountHashes);
-                    }
-                };
-                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                let new_start = H256::from_uint(&new_start_u256);
-                Some((new_start, chunk_end))
-            } else {
-                None
-            };
-            tx.send((
-                accounts
-                    .into_iter()
-                    .filter(|unit| unit.hash <= chunk_end)
-                    .collect(),
-                free_peer_id,
-                chunk_left,
-            ))
-            .await
-            .ok();
-        } else {
-            tracing::debug!("Failed to get account range");
-            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
-        }
-        Ok::<(), PeerHandlerError>(())
     }
 
     /// Requests bytecodes for the given code hashes
