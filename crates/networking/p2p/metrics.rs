@@ -63,7 +63,6 @@ pub struct Metrics {
     pub header_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_headers: Arc<Mutex<Option<Duration>>>,
 
     // Account tries
     pub downloaded_account_tries: Arc<Mutex<u64>>,
@@ -72,24 +71,28 @@ pub struct Metrics {
     pub accounts_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
-    pub account_tries_state_root: Arc<Mutex<Option<H256>>>,
+    pub account_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub account_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage tries
-    pub storage_tries_to_download: Arc<Mutex<u64>>,
-    pub downloaded_storage_tries: Arc<Mutex<u64>>,
     pub free_storages_downloaders: Arc<Mutex<u64>>,
-    pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage slots
     pub downloaded_storage_slots: Arc<Mutex<u64>>,
-
-    // Storage tries state roots
-    pub storage_tries_state_roots_to_compute: Arc<Mutex<u64>>,
+    pub storage_accounts_known: Arc<Mutex<u64>>,
+    pub storage_accounts_healed: Arc<Mutex<u64>>,
+    pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_state_roots_computed: IntCounter,
-    pub storage_tries_state_roots_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_state_roots_end_time: Arc<Mutex<Option<SystemTime>>>,
+
+    // Healing
+    pub healing_empty_try_recv: Arc<Mutex<u64>>,
+    pub global_state_trie_leafs_healed: Arc<Mutex<u64>>,
+    pub global_storage_tries_leafs_healed: Arc<Mutex<u64>>,
+    pub heal_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub heal_start_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Bytecodes
     pub bytecodes_to_download: Arc<Mutex<u64>>,
@@ -549,6 +552,7 @@ impl Default for Metrics {
             // Common
             sync_head_block: Arc::new(Mutex::new(0)),
             sync_head_hash: Arc::new(Mutex::new(H256::default())),
+
             // Headers
             headers_to_download: Arc::new(Mutex::new(0)),
             downloaded_headers: Arc::new(Mutex::new(0)),
@@ -557,7 +561,7 @@ impl Default for Metrics {
             header_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_headers: Arc::new(Mutex::new(None)),
+
             // Account tries
             downloaded_account_tries: Arc::new(Mutex::new(0)),
             total_accounts_downloaders: Arc::new(Mutex::new(0)),
@@ -565,13 +569,11 @@ impl Default for Metrics {
             accounts_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             account_tries_download_start_time: Arc::new(Mutex::new(None)),
             account_tries_download_end_time: Arc::new(Mutex::new(None)),
-            account_tries_state_root: Arc::new(Mutex::new(None)),
+            account_tries_insert_start_time: Arc::new(Mutex::new(None)),
+            account_tries_insert_end_time: Arc::new(Mutex::new(None)),
 
             // Storage tries
-            storage_tries_to_download: Arc::new(Mutex::new(0)),
-            downloaded_storage_tries: Arc::new(Mutex::new(0)),
             free_storages_downloaders: Arc::new(Mutex::new(0)),
-            storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
@@ -579,10 +581,18 @@ impl Default for Metrics {
             downloaded_storage_slots: Arc::new(Mutex::new(0)),
 
             // Storage tries state roots
-            storage_tries_state_roots_to_compute: Arc::new(Mutex::new(0)),
             storage_tries_state_roots_computed,
-            storage_tries_state_roots_start_time: Arc::new(Mutex::new(None)),
-            storage_tries_state_roots_end_time: Arc::new(Mutex::new(None)),
+            storage_accounts_known: Arc::new(Mutex::new(0)),
+            storage_accounts_healed: Arc::new(Mutex::new(0)),
+            storage_tries_insert_end_time: Arc::new(Mutex::new(None)),
+            storage_tries_insert_start_time: Arc::new(Mutex::new(None)),
+
+            // Healing
+            healing_empty_try_recv: Arc::new(Mutex::new(0)),
+            global_state_trie_leafs_healed: Arc::new(Mutex::new(0)),
+            global_storage_tries_leafs_healed: Arc::new(Mutex::new(0)),
+            heal_end_time: Arc::new(Mutex::new(None)),
+            heal_start_time: Arc::new(Mutex::new(None)),
 
             // Bytecodes
             bytecodes_to_download: Arc::new(Mutex::new(0)),
