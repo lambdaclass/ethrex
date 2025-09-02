@@ -17,6 +17,9 @@ on:
     types:
       - completed
 
+permissions:
+  contents: read
+
 jobs:
   notify-on-failure:
     name: Notify Slack on failure (main)
