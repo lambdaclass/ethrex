@@ -87,13 +87,21 @@ pub enum BlockRequestOrder {
 }
 
 #[derive(Clone)]
-struct StorageTaskResult {
-    start_index: usize,
-    account_storages: Vec<Vec<(H256, U256)>>,
-    peer_id: H256,
-    remaining_start: usize,
-    remaining_end: usize,
-    remaining_hash_range: (H256, Option<H256>),
+pub(crate) struct StorageTaskResult {
+    pub(crate) start_index: usize,
+    pub(crate) account_storages: Vec<Vec<(H256, U256)>>,
+    pub(crate) peer_id: H256,
+    pub(crate) remaining_start: usize,
+    pub(crate) remaining_end: usize,
+    pub(crate) remaining_hash_range: (H256, Option<H256>),
+}
+
+pub(crate) struct BytecodeTaskResult {
+    pub(crate) start_index: usize,
+    pub(crate) bytecodes: Vec<Bytes>,
+    pub(crate) peer_id: H256,
+    pub(crate) remaining_start: usize,
+    pub(crate) remaining_end: usize,
 }
 
 #[derive(Debug)]
@@ -1256,14 +1264,7 @@ impl PeerHandler {
         let mut all_bytecodes = vec![Bytes::new(); all_bytecode_hashes.len()];
 
         // channel to send the tasks to the peers
-        struct TaskResult {
-            start_index: usize,
-            bytecodes: Vec<Bytes>,
-            peer_id: H256,
-            remaining_start: usize,
-            remaining_end: usize,
-        }
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<BytecodeTaskResult>(1000);
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
@@ -1293,7 +1294,7 @@ impl PeerHandler {
             }
 
             if let Ok(result) = task_receiver.try_recv() {
-                let TaskResult {
+                let BytecodeTaskResult {
                     start_index,
                     bytecodes,
                     peer_id,
@@ -1415,7 +1416,7 @@ impl PeerHandler {
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
-                let empty_task_result = TaskResult {
+                let empty_task_result = BytecodeTaskResult {
                     start_index: chunk_start,
                     bytecodes: vec![],
                     peer_id: free_peer_id,
@@ -1470,7 +1471,7 @@ impl PeerHandler {
                         .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
                         .map(|(b, _hash)| b)
                         .collect();
-                    let result = TaskResult {
+                    let result = BytecodeTaskResult {
                         start_index: chunk_start,
                         remaining_start: chunk_start + validated_codes.len(),
                         bytecodes: validated_codes,
