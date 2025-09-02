@@ -846,7 +846,7 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 512 * 1 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1555,8 +1555,7 @@ impl PeerHandler {
             .collect::<Vec<_>>();
 
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > 1024 * 1024 * 512 * 1
             {
                 let current_account_storages = std::mem::take(&mut all_account_storages);
                 all_account_storages =
