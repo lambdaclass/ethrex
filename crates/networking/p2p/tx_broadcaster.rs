@@ -1,13 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Transaction;
+use rand::random;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_interval},
+    tasks::{send_interval, CastResponse, GenServer, GenServerHandle},
 };
 use tracing::{debug, error, info};
 
-use crate::{kademlia::Kademlia, rlpx::connection::server::CastMessage};
+use crate::{kademlia::Kademlia, rlpx::{connection::server::CastMessage, eth::transactions::Transactions}};
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
@@ -29,7 +31,7 @@ impl TxBroadcaster {
     pub async fn spawn(
         kademlia: Kademlia,
         blockchain: Arc<Blockchain>,
-    ) -> Result<(), TxBroadcasterError> {
+    ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
@@ -39,13 +41,13 @@ impl TxBroadcaster {
 
         let server = state.clone().start();
 
-        send_interval(
+        /*send_interval(
             Duration::from_secs(1),
             server.clone(),
             InMessage::BroadcastTxs,
-        );
+        );*/
 
-        Ok(())
+        Ok(server)
     }
 
     async fn broadcast_txs(&self) -> Result<(), TxBroadcasterError> {
@@ -54,13 +56,26 @@ impl TxBroadcaster {
             .mempool
             .get_txs_for_broadcast()
             .map_err(|_| TxBroadcasterError::Broadcast)?;
-        let peers = self.kademlia.get_peer_channels(&[]).await;
+        let peers = self.kademlia.get_peer_channels(&[]).await; // todo get only active peers?
+        let peer_sqrt = (peers.len() as f64).sqrt();
+        // we want to send to sqrt(peer_count) on average
+        // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
+        let accept_prob = 1.0 / peer_sqrt;
         for (peer_id, mut peer_channels) in peers {
-            peer_channels.connection.cast(CastMessage::SendNewPooledTxHashes(
-                txs_to_broadcast.clone(),
-            )).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send new pooled tx hashes");
-            });
+            if random::<f64>() < accept_prob {
+                let txs = txs_to_broadcast.clone().into_iter().map(|tx| tx.transaction().clone()).collect::<Vec<Transaction>>().clone();
+                peer_channels.connection.cast(CastMessage::Transactions(
+                    Transactions { transactions: txs }
+                )).await.unwrap_or_else(|err| {
+                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+                });
+            } else {
+                peer_channels.connection.cast(CastMessage::SendNewPooledTxHashes(
+                    txs_to_broadcast.clone(),
+                )).await.unwrap_or_else(|err| {
+                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send new pooled tx hashes");
+                });
+            }
         }
         self.blockchain.mempool.clear_broadcasted_txs();
         Ok(())

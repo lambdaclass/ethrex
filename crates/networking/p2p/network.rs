@@ -12,13 +12,14 @@ use crate::{
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
-    tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
+    tx_broadcaster::{self, TxBroadcaster, TxBroadcasterError},
     types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::BTreeMap,
     io,
@@ -128,24 +129,24 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery side car: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone()) // todo add tx broadcaster handle
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start RLPx Initiator: {e}");
-        })?;
-
-    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
+    let tx_broadcaster_handle = TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
-    context.tracker.spawn(serve_p2p_requests(context.clone()));
+    RLPxInitiator::spawn(context.clone(), tx_broadcaster_handle.clone()) // todo add tx broadcaster handle
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start RLPx Initiator: {e}");
+        })?;
+
+    context.tracker.spawn(serve_p2p_requests(context.clone(), tx_broadcaster_handle));
 
     Ok(())
 }
 
-pub(crate) async fn serve_p2p_requests(context: P2PContext) {
+pub(crate) async fn serve_p2p_requests(context: P2PContext, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) {
     let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
@@ -168,7 +169,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream, tx_broadcaster_handle.clone()).await;
     }
 }
 

@@ -34,39 +34,26 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels},
-    metrics::METRICS,
-    network::P2PContext,
-    rlpx::{
-        Message,
-        connection::{codec::RLPxCodec, handshake},
-        error::RLPxError,
-        eth::{
+    kademlia::{Kademlia, PeerChannels}, metrics::METRICS, network::P2PContext, rlpx::{
+        connection::{codec::RLPxCodec, handshake}, error::RLPxError, eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
-        },
-        l2::{
-            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            l2_connection::{
-                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
-                handle_l2_broadcast,
-            },
-        },
-        p2p::{
+        }, l2::{
+            self, l2_connection::{
+                self, broadcast_l2_message, handle_based_capability_message, handle_l2_broadcast, L2Cast, L2ConnState
+            }, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL
+        }, p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
-        },
-        utils::{log_peer_debug, log_peer_error, log_peer_warn},
-    },
-    snap::{
+        }, utils::{log_peer_debug, log_peer_error, log_peer_warn}, Message
+    }, snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
-    },
-    types::Node,
+    }, tx_broadcaster::{self, InMessage, TxBroadcaster}, types::Node
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
@@ -83,6 +70,7 @@ type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
+    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +78,7 @@ pub struct Receiver {
     pub(crate) context: P2PContext,
     pub(crate) peer_addr: SocketAddr,
     pub(crate) stream: Arc<TcpStream>,
+    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +112,7 @@ pub struct Established {
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
+    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 impl Established {
@@ -157,6 +147,7 @@ pub enum CastMessage {
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
     L2(L2Cast),
+    Transactions(Transactions),
 }
 
 pub enum OutMessage {
@@ -178,20 +169,23 @@ impl RLPxConnection {
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
+        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
     ) -> RLPxConnectionHandle {
         let inner_state = InnerState::Receiver(Receiver {
             context,
             peer_addr,
             stream: Arc::new(stream),
+            tx_broadcaster_handle
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
     }
 
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
+    pub async fn spawn_as_initiator(context: P2PContext, node: &Node, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) -> RLPxConnectionHandle {
         let inner_state = InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
+            tx_broadcaster_handle
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
@@ -300,6 +294,23 @@ impl GenServer for RLPxConnection {
                         L2Cast::BlockBroadcast => {
                             l2::l2_connection::send_new_block(established_state).await
                         }
+                    }
+                }
+                Self::CastMsg::Transactions(txs) => {
+                    if !txs.transactions.is_empty() {
+                        log_peer_debug(
+                            &established_state.node,
+                            &format!(
+                                "Sending {} transactions to peer",
+                                txs.transactions.len()
+                            ),
+                        );
+                        let new_msg = Message::Transactions(Transactions {
+                            transactions: txs.transactions,
+                        });
+                        send(established_state, new_msg).await
+                    } else {
+                        Ok(())
                     }
                 }
                 _ => Err(RLPxError::MessageNotHandled(
@@ -797,28 +808,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
-                let mut valid_txs = vec![];
                 for tx in txs.transactions {
-                    // Mark as broadcasted for the sender so we don't include it in the next
-                    // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
-                    // For broadcast itself, `handle_broadcast` filters by task id already.
-                    state.broadcasted_txs.insert(tx.hash()); //todo remove
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
-                    valid_txs.push(tx);
                 }
-                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
-                // subset and send only the hashes to everyone else.
-                // Consider sending to the sqrt of the number of peers like geth does.
-                if !valid_txs.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
-                    );
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?; // Change to tx broadcaster
-                }
+                state.tx_broadcaster_handle.cast(InMessage::BroadcastTxs).await.unwrap_or_else(|err| {
+                    error!("Failed to send transactions to tx broadcaster: {err}");
+                });
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
