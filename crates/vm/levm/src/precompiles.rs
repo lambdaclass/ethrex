@@ -389,6 +389,19 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
+    // Defer converting to a U256 after the zero check.
+    if fork < Fork::Osaka {
+        let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
+        let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
+        const ZERO_BYTES: [u8; 32] = [0u8; 32];
+
+        if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
+            // On Berlin or newer there is a floor cost for the modexp precompile
+            increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
+            return Ok(Bytes::new());
+        }
+    }
+
     // The try_into are infallible and the compiler optimizes them out, even without unsafe.
     // https://godbolt.org/z/h8rW8M3c4
     let base_size = u256_from_big_endian_const::<32>(calldata[0..32].try_into()?);
@@ -405,17 +418,6 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         if modulus_size > U256::from(1024) {
             return Err(PrecompileError::ModExpModulusTooLarge.into());
         }
-    }
-
-    // Defer converting to a U256 after the zero check.
-    let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
-    let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
-    const ZERO_BYTES: [u8; 32] = [0u8; 32];
-
-    if fork < Fork::Osaka && base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
-        // On Berlin or newer there is a floor cost for the modexp precompile
-        increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
-        return Ok(Bytes::new());
     }
 
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
@@ -458,10 +460,6 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    if base_size == 0 && modulus_size == 0 {
-        return Ok(Bytes::new());
-    }
 
     let result = mod_exp(base, exponent, modulus);
 
