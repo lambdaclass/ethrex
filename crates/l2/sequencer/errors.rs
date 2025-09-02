@@ -47,6 +47,8 @@ pub enum SequencerError {
     AlignedNetworkError(String),
     #[error("Failed to start EthrexMonitor: {0}")]
     MonitorError(#[from] MonitorError),
+    #[error("Block gas limit cannot be greater than batch gas limit")]
+    GasLimitError,
 }
 
 #[derive(Debug, thiserror::Error)]
