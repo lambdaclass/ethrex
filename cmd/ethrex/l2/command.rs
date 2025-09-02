@@ -36,6 +36,10 @@ use tracing::info;
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 
+const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
+const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
+const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";
+
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -457,10 +461,14 @@ impl Command {
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
-                if opts.call_contract("pause()", vec![]).await.is_ok() {
+                if opts
+                    .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
+                    .await
+                    .is_ok()
+                {
                     info!("Paused OnChainProposer contract");
                     info!("Doing revert on OnChainProposer...");
-                    opts.call_contract("revertBatch(uint256)", vec![Value::Uint(batch.into())])
+                    opts.call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
                         .await?
                 } else {
                     info!("Private key not given, not updating contract.");
@@ -494,7 +502,11 @@ impl Command {
                     .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
                     .await?;
 
-                if opts.call_contract("unpause()", vec![]).await.is_ok() {
+                if opts
+                    .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
+                    .await
+                    .is_ok()
+                {
                     info!("Unpaused OnChainProposer...");
                 };
             }
@@ -502,7 +514,7 @@ impl Command {
                 contract_pause_options: opts,
             } => {
                 info!("Pausing contract {}", opts.contract_address);
-                opts.call_contract("pause()", vec![])
+                opts.call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
                     .await
                     .inspect(|_| info!("Succesfully paused contract"))?;
             }
@@ -510,7 +522,7 @@ impl Command {
                 contract_pause_options: opts,
             } => {
                 info!("Unpausing contract {}", opts.contract_address);
-                opts.call_contract("unpause()", vec![])
+                opts.call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
                     .await
                     .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
