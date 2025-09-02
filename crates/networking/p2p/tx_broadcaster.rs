@@ -61,17 +61,16 @@ impl TxBroadcaster {
         let peer_sqrt = (peers.len() as f64).sqrt();
         // we want to send to sqrt(peer_count) on average
         // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
-        let accept_prob = 1.0 / peer_sqrt;
+        let accept_prob = 1.0 / f64::max(1.0, peer_sqrt);
+        let full_txs = txs_to_broadcast
+            .clone()
+            .into_iter()
+            .map(|tx| tx.transaction().clone())
+            .collect::<Vec<Transaction>>();
         for (peer_id, mut peer_channels) in peers {
             if random::<f64>() < accept_prob {
-                let txs = txs_to_broadcast
-                    .clone()
-                    .into_iter()
-                    .map(|tx| tx.transaction().clone())
-                    .collect::<Vec<Transaction>>()
-                    .clone();
                 peer_channels.connection.cast(CastMessage::Transactions(
-                    Transactions { transactions: txs }
+                    Transactions { transactions: full_txs.clone() },
                 )).await.unwrap_or_else(|err| {
                     error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
                 });
