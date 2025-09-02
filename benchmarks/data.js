@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756846048078,
+  "lastUpdate": 1756847213496,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11275,6 +11275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160493872349,
             "range": "± 192081154",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "50249e0f68c965568e6155d2a14e3a64c49f9f87",
+          "message": "chore(l1): added docker compose init + metric flags to snapsync make target (#4251)\n\n**Motivation**\n\nAdd metrics + a docker compose with prometheus and grafana\n\n**Description**\n\nThis PR add a couple of commands before the actual execution of the node\nin the `server-sync` make target to start prometheus and grafana as\ncontainers and later add the metrics flags to the node execution.\n\nLocally this starts grafana at `3001` with default us/pass and allow to\nsee the block metrics as well as the resource (CPU/Memory/etc) ones.",
+          "timestamp": "2025-09-02T20:13:47Z",
+          "tree_id": "622492a7429e1570df8e4fca9b0eebb56a6f995c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/50249e0f68c965568e6155d2a14e3a64c49f9f87"
+        },
+        "date": 1756847195626,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164353944569,
+            "range": "± 320995489",
             "unit": "ns/iter"
           }
         ]
