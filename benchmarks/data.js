@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756847864373,
+  "lastUpdate": 1756850351089,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11335,6 +11335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162189357716,
             "range": "± 883483686",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13ea64344e4fb71835d5ca76e7aac67845465e98",
+          "message": "feat(l1): start building payloads as soon as we get an fcu (#4029)\n\n**Motivation**\n* Start the block building process as soon as we get a payload from a\nFCU\n* Only wait for the building process to finish when we get a\n`GetPayload` message\n* Keep latest 10 payloads in memory instead of filling up the DB with\nold payloads\n* Continuosly rebuild payload until requested/ slot time is up\n* Only remove transactions from mempool when we execute a payload\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `Blockchain` methods `initiate_payload_build` & `get_payload` to\nstart & finish a payload build process\n* Add `Blockchain` field `payloads` containing a vector of payload ids\nand payload building tasks/ built payloads (max 10 at a time)\n* Remove any instance of payloads being stored in the DB\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3920\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-09-02T21:08:24Z",
+          "tree_id": "9ca01e6a36d7b6e2ef5cf80ed71a49070005c2cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/13ea64344e4fb71835d5ca76e7aac67845465e98"
+        },
+        "date": 1756850332913,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 159323107275,
+            "range": "± 574579922",
             "unit": "ns/iter"
           }
         ]
