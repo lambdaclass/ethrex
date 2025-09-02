@@ -41,6 +41,8 @@ use tracing::{debug, error, info, warn};
 const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+/// Amount of seconds between blocks
+const SECONDS_PER_BLOCK: u64 = 12;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -1181,7 +1183,8 @@ pub async fn update_pivot(
 ) -> Result<BlockHeader, SyncError> {
     let block_number = pivot_header.number;
     let block_timestamp = pivot_header.timestamp;
-    let new_pivot_block_number = block_number + (current_unix_time() - block_timestamp) / 12;
+    let new_pivot_block_number =
+        block_number + (current_unix_time() - block_timestamp) / SECONDS_PER_BLOCK;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
         block_number, block_timestamp, new_pivot_block_number
