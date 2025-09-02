@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756840118942,
+  "lastUpdate": 1756843719065,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11155,6 +11155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 160775904428,
             "range": "± 374820248",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0f821ad9a68d9fcf1469b62d5aa5cc54bf37aa79",
+          "message": "test(levm,l1): run state tests as if they were blocks instead of transactions (#4179)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- The final goal is to run state tests with SP1, that's why we need to\nrun them as blocks. This is a first step in that direction.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Fix `sign_inplace` for Legacy Transactions.\n- Remove code that checks that withdrawal request and consolidation\nrequest accounts have code. This breaks 2 tests but it's completely\nworth it I'd say. It is an unrealistic case that doesn't happen in\nmainnet nor testnets.\n- [Geth skips these tests\ntoo](https://github.com/ethereum/go-ethereum/blob/72d92698a474059f3a73798c6312699c1f210497/tests/block_test.go#L84-L85)\n- I had to remove this because in the state tests scenarios these\naccounts don't exist.\n- I had to skip `HighGasPrice` EFTests because we need to fix the gas\nprice for our Legacy and Type 1 transactions, it should be U256 #3629\n- Now we accurately get the transaction from a test case, without doing\nthe shady stuff we were previously doing.\n- We also sign the transaction with the private key of the sender\nbecause it has to be valid.\n- Corrects all kinds of things we were doing wrong because when running\nthe transaction only we didn't have problems. For example, make an\naccurate `Genesis` block. (Which wasn't very trivial I'd say)\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4183\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-02T19:08:56Z",
+          "tree_id": "89b7fbd11d3103e87da7e8c44dafab8773c46d6d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0f821ad9a68d9fcf1469b62d5aa5cc54bf37aa79"
+        },
+        "date": 1756843701272,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162325948986,
+            "range": "± 304725144",
             "unit": "ns/iter"
           }
         ]
