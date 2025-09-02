@@ -1598,41 +1598,37 @@ impl PeerHandler {
         state_root: H256,
         paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
-        let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
 
-        let request_id = rand::random();
-        let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-            id: request_id,
-            root_hash: state_root,
-            // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-            paths: paths
-                .iter()
-                .map(|vec| vec![Bytes::from(vec.path.encode_compact())])
-                .collect(),
-            bytes: MAX_RESPONSE_BYTES,
-        });
-        let nodes =
-            super::utils::send_message_and_wait_for_response(peer_channel, request, request_id)
-                .await
-                .map_err(RequestStateTrieNodesError::SendMessageError)?;
+        let paths_bytes = paths
+            .iter()
+            .map(|vec| vec![Bytes::from(vec.path.encode_compact())])
+            .collect();
+        let available_downloader = Downloader::new(Default::default(), peer_channel.clone());
+        match available_downloader
+            .start()
+            .call(DownloaderCallRequest::TrieNodes {
+                root_hash: state_root,
+                paths: paths_bytes,
+            })
+            .await
+        {
+            Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
+                for (index, node) in nodes.iter().enumerate() {
+                    if node.compute_hash().finalize() != paths[index].hash {
+                        error!(
+                            "A peer is sending wrong data for the state trie node {:?}",
+                            paths[index].path
+                        );
+                        return Err(RequestStateTrieNodesError::InvalidHash);
+                    }
+                }
 
-        if nodes.is_empty() || nodes.len() > expected_nodes {
-            return Err(RequestStateTrieNodesError::InvalidData);
-        }
-
-        for (index, node) in nodes.iter().enumerate() {
-            if node.compute_hash().finalize() != paths[index].hash {
-                error!(
-                    "A peer is sending wrong data for the state trie node {:?}",
-                    paths[index].path
-                );
-                return Err(RequestStateTrieNodesError::InvalidHash);
+                Ok(nodes)
             }
+            _ => return Err(RequestStateTrieNodesError::InvalidData),
         }
-
-        Ok(nodes)
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and
