@@ -31,7 +31,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -359,7 +359,7 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        let mut state_nodes = HashMap::new();
+        let mut state_nodes = BTreeMap::new();
         for node in used_trie_nodes.into_iter() {
             let hash = Keccak256::digest(&node);
             state_nodes.insert(H256::from_slice(hash.as_slice()), node);
