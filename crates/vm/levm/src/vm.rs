@@ -11,6 +11,7 @@ use crate::{
     },
     l2_precompiles,
     memory::Memory,
+    opcodes::Opcode,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
@@ -26,6 +27,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
+    str::FromStr,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -189,6 +191,34 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+
+            if self.env.origin
+                == H160::from_str("0xBa0480473020a42D1077a6E4F044fbA8e1De9a73").unwrap()
+            {
+                let op = Opcode::from(opcode);
+
+                println!(
+                    "pc: {} op: {:?} gas: {}",
+                    self.current_call_frame.pc, op, self.current_call_frame.gas_remaining
+                );
+
+                if self.current_call_frame.pc > 13513 {
+                    let callframe = &self.current_call_frame;
+                    println!(
+                        "Final Stack (bottom to top): {:?}",
+                        &callframe.stack.values[callframe.stack.offset..]
+                            .iter()
+                            .rev()
+                            .map(|value| format!("0x{:x}", value))
+                            .collect::<Vec<_>>()
+                    );
+                    let final_memory: Vec<u8> =
+                        callframe.memory.buffer.borrow()[callframe.memory.current_base
+                            ..callframe.memory.current_base + callframe.memory.len]
+                            .to_vec();
+                    println!("Final Memory: 0x{}", hex::encode(final_memory));
+                }
+            }
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.

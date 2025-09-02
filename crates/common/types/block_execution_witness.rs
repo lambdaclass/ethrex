@@ -361,6 +361,7 @@ impl ExecutionWitnessResult {
     /// Retrieves the account code for a specific account.
     /// Returns an Err if the code is not found.
     pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
+        println!("Code hash: {}", hex::encode(code_hash));
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
