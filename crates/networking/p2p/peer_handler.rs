@@ -516,53 +516,27 @@ impl PeerHandler {
         &self,
         block_hashes: Vec<H256>,
     ) -> Option<(Vec<BlockBody>, H256)> {
-        let block_hashes_len = block_hashes.len();
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-            id: request_id,
-            block_hashes: block_hashes.clone(),
-        });
-        let (peer_id, mut peer_channel) = self
+        let (peer_id, peer_channel) = self
             .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
             .await?;
-        let mut receiver = peer_channel.receiver.lock().await;
-        if let Err(err) = peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request))
+        let available_downloader = Downloader::new(peer_id, peer_channel.clone());
+        match available_downloader
+            .start()
+            .call(DownloaderCallRequest::BlockBodies { block_hashes })
             .await
         {
-            self.record_peer_failure(peer_id).await;
-            debug!("Failed to send message to peer: {err:?}");
-            return None;
-        }
-        if let Some(block_bodies) = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
-                        if id == request_id =>
-                    {
-                        return Some(block_bodies);
-                    }
-                    // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None,
-                }
+            Ok(DownloaderCallResponse::BlockBodies(block_bodies)) => {
+                self.record_peer_success(peer_id).await;
+                return Some((block_bodies, peer_id));
             }
-        })
-        .await
-        .ok()
-        .flatten()
-        .and_then(|bodies| {
-            // Check that the response is not empty and does not contain more bodies than the ones requested
-            (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-        }) {
-            self.record_peer_success(peer_id).await;
-            return Some((block_bodies, peer_id));
+            _ => {
+                warn!(
+                    "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
+                );
+                self.record_peer_failure(peer_id).await;
+                None
+            }
         }
-
-        warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
-        self.record_peer_failure(peer_id).await;
-        None
     }
 
     /// Requests block bodies from any suitable peer given their block hashes
