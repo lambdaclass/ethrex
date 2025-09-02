@@ -7,13 +7,16 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::{
     configs::AlignedConfig,
@@ -26,7 +29,10 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    common::{
+        errors,
+        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    },
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -213,15 +219,23 @@ impl L1ProofSender {
 
         debug!("Sending proof to Aligned");
 
-        submit(
+        let algined_verification_result = submit(
             self.network.clone(),
             &verification_data,
             fee_estimation,
             wallet,
             nonce,
         )
-        .await
-        .map_err(|err| {
+        .await;
+
+        if let Err(errors::SubmitError::InvalidProof(_)) = algined_verification_result.as_ref() {
+            warn!("Deleting invalid ALIGNED proof");
+            self.rollup_store
+                .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                .await?;
+        }
+
+        algined_verification_result.map_err(|err| {
             ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
         })?;
 
@@ -276,13 +290,36 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid TDX proof") {
+                warn!("Deleting invalid TDX proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
+                    .await?;
+            } else if error.contains("Invalid RISC0 proof") {
+                warn!("Deleting invalid RISC0 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
+                    .await?;
+            } else if error.contains("Invalid SP1 proof") {
+                warn!("Deleting invalid SP1 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            }
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)

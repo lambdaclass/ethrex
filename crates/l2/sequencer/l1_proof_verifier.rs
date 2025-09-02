@@ -12,10 +12,13 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_sp1_vk};
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
@@ -170,13 +173,28 @@ impl L1ProofVerifier {
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.l1_signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid ALIGNED proof") {
+                warn!("Deleting invalid ALIGNED proof");
+                for i in 0..aggregated_proofs_count {
+                    let batch_number = first_batch_number + i;
+                    self.rollup_store
+                        .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                        .await?;
+                }
+            }
+        }
+        let verify_tx_hash = send_verify_tx_result?;
 
         // Store the verify transaction hash for each batch that was aggregated.
         for i in 0..aggregated_proofs_count {

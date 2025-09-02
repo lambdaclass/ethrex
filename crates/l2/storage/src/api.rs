@@ -138,6 +138,12 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         proof_type: ProverType,
     ) -> Result<Option<BatchProof>, RollupStoreError>;
 
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError>;
+
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
     async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError>;
