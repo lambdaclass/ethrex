@@ -6,7 +6,7 @@ use std::time::Duration;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
@@ -39,7 +39,7 @@ use crate::utils::{
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -57,6 +57,7 @@ async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        init_datadir(&opts.datadir),
     )
     .await;
 
@@ -157,7 +158,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     let store = init_store(&data_dir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
+    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2, true);
 
     let signer = get_signer(&data_dir);
 
@@ -169,7 +170,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -264,7 +265,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     }
     info!("Server shut down started...");
     let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
+    info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
     store_node_config_file(node_config, node_config_path).await;
