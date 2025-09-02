@@ -412,6 +412,9 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         )));
     }
 
+    // The following check has to come second to the previous upper bound check because, according to the EF tests, upper bound checks for Osaka
+    // take precedence over this zero check for base_size_bytes and modulus_size_bytes.
+    // Eg: test fork_Osaka-state_test-exp_1025_base_0_mod_0 expects and error.
     if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
