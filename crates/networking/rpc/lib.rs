@@ -1,3 +1,4 @@
+// This is added because otherwise some tests would fail due to reaching the recursion limit
 #![recursion_limit = "400"]
 
 mod admin;
