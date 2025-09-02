@@ -350,10 +350,13 @@ impl StoreEngine for Store {
                 if let Some(cf) = &cf_tx_locations {
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         let tx_hash = transaction.hash();
-                        let location_key = tx_hash.as_bytes();
+                        // Key: tx_hash + block_hash
+                        let mut composite_key = Vec::with_capacity(64);
+                        composite_key.extend_from_slice(tx_hash.as_bytes());
+                        composite_key.extend_from_slice(block_hash.as_bytes());
                         let location_value =
                             (block_number, block_hash, index as u64).encode_to_vec();
-                        batch.put_cf(cf, location_key, location_value);
+                        batch.put_cf(cf, composite_key, location_value);
                     }
                 }
             }
@@ -423,10 +426,13 @@ impl StoreEngine for Store {
                 if let Some(cf) = &cf_tx_locations {
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         let tx_hash = transaction.hash();
-                        let location_key = tx_hash.as_bytes();
+                        // Key: tx_hash + block_hash
+                        let mut composite_key = Vec::with_capacity(64);
+                        composite_key.extend_from_slice(tx_hash.as_bytes());
+                        composite_key.extend_from_slice(block_hash.as_bytes());
                         let location_value =
                             (block_number, block_hash, index as u64).encode_to_vec();
-                        batch.put_cf(cf, location_key, location_value);
+                        batch.put_cf(cf, composite_key, location_value);
                     }
                 }
             }
@@ -502,21 +508,39 @@ impl StoreEngine for Store {
     }
 
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let mut batch = WriteBatch::default();
 
-        tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
+        let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
+            return Ok(());
+        };
 
-            let cf_canonical = db
-                .cf_handle(CF_CANONICAL_BLOCK_HASHES)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-            batch.delete_cf(&cf_canonical, block_number.to_le_bytes());
+        let cf_canonical = self
+            .db
+            .cf_handle(CF_CANONICAL_BLOCK_HASHES)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        batch.delete_cf(&cf_canonical, block_number.to_le_bytes());
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        let cf_bodies = self
+            .db
+            .cf_handle(CF_BODIES)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        batch.delete_cf(&cf_bodies, hash.as_bytes());
+
+        let cf_headers = self
+            .db
+            .cf_handle(CF_HEADERS)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        batch.delete_cf(&cf_headers, hash.as_bytes());
+
+        let cf_block_numbers = self
+            .db
+            .cf_handle(CF_BLOCK_NUMBERS)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        batch.delete_cf(&cf_block_numbers, hash.as_bytes());
+
+        self.db
+            .write(batch)
+            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
     async fn get_block_bodies(
@@ -524,6 +548,7 @@ impl StoreEngine for Store {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
+        // TODO: read bulk like libmdbx
         let mut bodies = Vec::new();
 
         for block_number in from..=to {
@@ -539,6 +564,7 @@ impl StoreEngine for Store {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
+        // TODO: read bulk like libmdbx
         let mut bodies = Vec::new();
 
         for hash in hashes {
@@ -627,12 +653,18 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        let tx_key = transaction_hash.as_bytes().to_vec();
+        // Key: tx_hash + block_hash
+        let mut composite_key = Vec::with_capacity(64);
+        composite_key.extend_from_slice(transaction_hash.as_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+
         let location_value = (block_number, block_hash, index).encode_to_vec();
-        self.write_async(CF_TRANSACTION_LOCATIONS, tx_key, location_value)
+        self.write_async(CF_TRANSACTION_LOCATIONS, composite_key, location_value)
             .await
     }
 
+    // TODO: REVIEW LOGIC AGAINST LIBMDBX
+    // Check also keys
     async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
@@ -640,25 +672,83 @@ impl StoreEngine for Store {
         let mut batch_ops = Vec::new();
 
         for (tx_hash, block_number, block_hash, index) in locations {
-            let tx_key = tx_hash.as_bytes().to_vec();
+            // Key: tx_hash + block_hash
+            let mut composite_key = Vec::with_capacity(64);
+            composite_key.extend_from_slice(tx_hash.as_bytes());
+            composite_key.extend_from_slice(block_hash.as_bytes());
+
             let location_value = (block_number, block_hash, index).encode_to_vec();
-            batch_ops.push((CF_TRANSACTION_LOCATIONS.to_string(), tx_key, location_value));
+            batch_ops.push((
+                CF_TRANSACTION_LOCATIONS.to_string(),
+                composite_key,
+                location_value,
+            ));
         }
 
         self.write_batch_async(batch_ops).await
     }
 
+    // TODO: REVIEW LOGIC AGAINST LIBMDBX
+    // Check also keys
     async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let tx_key = transaction_hash.as_bytes().to_vec();
+        let db = self.db.clone();
+        let tx_hash_key = transaction_hash.as_bytes().to_vec();
 
-        self.read_async(CF_TRANSACTION_LOCATIONS, tx_key)
-            .await?
-            .map(|bytes| <(BlockNumber, BlockHash, Index)>::decode(&bytes))
-            .transpose()
-            .map_err(StoreError::from)
+        tokio::task::spawn_blocking(move || {
+            let cf = db
+                .cf_handle(CF_TRANSACTION_LOCATIONS)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+            let mut iter = db.prefix_iterator_cf(&cf, &tx_hash_key);
+            let mut transaction_locations = Vec::new();
+
+            // Collect all possible locations for this transaction_hash
+            while let Some(Ok((key, value))) = iter.next() {
+                // Check if the key exactly matches our transaction_hash
+                if key.len() >= tx_hash_key.len()
+                    && &key[0..tx_hash_key.len()] == tx_hash_key.as_slice()
+                {
+                    match <(BlockNumber, BlockHash, Index)>::decode(&value) {
+                        Ok(location) => transaction_locations.push(location),
+                        Err(_) => continue, // Skip invalid entries
+                    }
+                } else {
+                    break; // No more keys with our prefix
+                }
+            }
+
+            if transaction_locations.is_empty() {
+                return Ok(None);
+            }
+
+            // If there is only one location, return it directly
+            if transaction_locations.len() == 1 {
+                return Ok(transaction_locations.into_iter().next());
+            }
+
+            // If there are multiple locations, filter by the canonical chain
+            for (block_number, block_hash, index) in transaction_locations {
+                let canonical_hash = {
+                    let cf_canonical = db
+                        .cf_handle(CF_CANONICAL_BLOCK_HASHES)
+                        .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+                    db.get_cf(&cf_canonical, block_number.to_le_bytes())?
+                        .and_then(|bytes| BlockHashRLP::from_bytes(bytes).to().ok())
+                };
+
+                if canonical_hash == Some(block_hash) {
+                    return Ok(Some((block_number, block_hash, index)));
+                }
+            }
+
+            Ok(None)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn add_receipt(
@@ -688,6 +778,7 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
+    // TODO: Check differences with libmdbx
     async fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -778,16 +869,6 @@ impl StoreEngine for Store {
             None => return Ok(None),
         };
         Ok(Some(Block::new(header, body)))
-    }
-
-    async fn get_block_by_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<Option<Block>, StoreError> {
-        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        self.get_block_by_hash(block_hash).await
     }
 
     async fn get_canonical_block_hash(
