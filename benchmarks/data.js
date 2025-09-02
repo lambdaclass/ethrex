@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756843719065,
+  "lastUpdate": 1756845552326,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11185,6 +11185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 162325948986,
             "range": "± 304725144",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ea88ae472db9fbed0b3c2725624f70ee1b100fcb",
+          "message": "fix(l2): make CommonBridgeL1 pausable  (#4215)\n\n**Motivation**\n\nWe want to make CommonBridge.sol pausable\n\n**Description**\n\n- Add `PausableUpgradeable` to CommonBridge\n- Add `ethrex l2 pause` and `ethrex l2 unpause subcommands`\n\nCloses #3126",
+          "timestamp": "2025-09-02T19:43:08Z",
+          "tree_id": "78cd473ed19b5cb6bc778c2613c9d651f438b27f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ea88ae472db9fbed0b3c2725624f70ee1b100fcb"
+        },
+        "date": 1756845533644,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164376465939,
+            "range": "± 720998153",
             "unit": "ns/iter"
           }
         ]
