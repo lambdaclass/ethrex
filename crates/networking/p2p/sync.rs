@@ -811,16 +811,6 @@ impl Syncer {
                 .await?;
             info!("Finish downloading account ranges from peers");
 
-            /*             let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
-            *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-            let mut downloaded_account_storages = 0;
-
-            METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now()); */
-
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -873,19 +863,6 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
-
-            /*             METRICS
-                .storage_tries_download_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-            info!("Starting to compute the state root...");
-
-            let account_store_start = Instant::now(); */
-
-            /*             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
-
-            let account_store_time = Instant::now().saturating_duration_since(account_store_start); */
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
@@ -943,17 +920,6 @@ impl Syncer {
             }
             info!("Finished request_storage_ranges");
 
-            /*             let storages_store_start = Instant::now();
-
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            *METRICS.storage_tries_state_roots_to_compute.lock().await =
-                downloaded_account_storages; */
-
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
@@ -1006,33 +972,7 @@ impl Syncer {
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
-            info!("Finished writing to db");
 
-            for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
-                .lock()
-                .map_err(|_| SyncError::MaybeBigAccount)?
-                .iter()
-            {
-                let account_state = store
-                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
-                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
-
-                if *computed_storage_root != account_state.storage_root {
-                    debug!(
-                        "Incomplete or incorrect download for account hash {:?}, expected: {:?}, computed: {:?}",
-                        *account_hash, account_state.storage_root, *computed_storage_root,
-                    );
-                }
-            }
-            /*
-            METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start); */
             info!("Finished storing storage tries");
         }
 
@@ -1351,9 +1291,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
             );
 
         let tree_validated = account_state.storage_root == computed_storage_root;
-        if tree_validated {
-            //info!("Succesfully validated tree, {computed_storage_root} found");
-        } else {
+        if !tree_validated {
             error!(
                 "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
                 account_state.storage_root
