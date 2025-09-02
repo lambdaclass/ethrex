@@ -1,16 +1,15 @@
-use ethrex_common::H256;
-use std::{
-    collections::HashMap,
-};
-
+use super::peer_handler::PeerHandlerError;
 use crate::kademlia;
+use crate::kademlia::PeerChannels;
+use crate::rlpx::p2p::Capability;
+use ethrex_common::H256;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct PeerScores {
     scores: HashMap<H256, i64>,
 }
 
-#[async_trait::async_trait]
 impl PeerScores {
     pub fn new() -> Self {
         Self {
@@ -41,11 +40,17 @@ impl PeerScores {
     pub fn record_critical_failure(&mut self, peer_id: H256) {
         self.scores.insert(peer_id, i64::MIN);
     }
+}
 
+impl PeerScores {
     /// Returns the peer with the highest score.
-    /// If `update_peers_from_kademlia` is true, it updates the peer list 
+    /// If `update_peers_from_kademlia` is true, it updates the peer list
     /// from the Kademlia table before selecting the best peer.
-    pub async fn get_best_peer(&self, kademlia_table: &kademlia::Kademlia, update_peers_from_kademlia: bool) -> Option<H256> {
+    pub async fn get_best_peer<'a>(
+        &'a mut self,
+        kademlia_table: &kademlia::Kademlia,
+        update_peers_from_kademlia: bool,
+    ) -> Option<&'a H256> {
         if update_peers_from_kademlia {
             // update peers from Kademlia
             for peer_id in kademlia_table.peers.lock().await.keys() {
@@ -53,8 +58,28 @@ impl PeerScores {
             }
         }
 
-        self.scores.iter()
+        self.scores
+            .iter()
             .max_by(|(_k1, v1), (_k2, v2)| v1.cmp(v2))
             .map(|(k, _v)| k)
+    }
+
+    pub async fn get_peer_channel_with_highest_score(
+        &self,
+        kademlia_table: &kademlia::Kademlia,
+        capabilities: &[Capability],
+    ) -> Result<Option<(H256, Option<PeerChannels>)>, PeerHandlerError> {
+        let best_peer = self
+            .scores
+            .iter()
+            .max_by(|(_k1, v1), (_k2, v2)| v1.cmp(v2))
+            .map(|(k, _v)| k)
+            .ok_or(PeerHandlerError::NoPeers)?;
+
+        if let Some(channel) = kademlia_table.peers.lock().await.get(best_peer) {
+            return Ok(Some((*best_peer, channel.channels.clone())));
+        }
+
+        Ok(None)
     }
 }

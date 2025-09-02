@@ -174,7 +174,7 @@ impl PeerHandler {
     pub async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
-        scores: &mut HashMap<H256, i64>,
+        scores: &mut PeerScores,
     ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
         let (mut free_peer_id, mut free_peer_channel) = self
             .peer_table
@@ -913,12 +913,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    scores.record_failure(peer_id);
                     continue;
                 }
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                scores.record_success(peer_id);
 
                 downloaded_count += accounts.len() as u64;
 
@@ -989,8 +987,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get_score(peer_id);
+                let max_peer_id_score = scores.get_score(&free_peer_id);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
@@ -1292,15 +1290,13 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    scores.record_failure(peer_id);
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                scores.record_success(peer_id);
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1341,8 +1337,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get_score(peer_id);
+                let max_peer_id_score = scores.get_score(&free_peer_id);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
@@ -1710,8 +1706,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score -= 1;
+                    scores.record_failure(peer_id);
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1721,10 +1716,7 @@ impl PeerHandler {
                     }
                 }
 
-                let peer_score = scores.entry(peer_id).or_default();
-                if *peer_score < 10 {
-                    *peer_score += 1;
-                }
+                scores.record_success(peer_id);
 
                 /*                 *downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
@@ -1785,8 +1777,8 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get_score(peer_id);
+                let max_peer_id_score = scores.get_score(&free_peer_id);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
                 }
