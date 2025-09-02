@@ -21,12 +21,9 @@ use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
     rlpx::{
-        connection::server::CastMessage,
         downloader::{
             Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
         },
-        eth::blocks::{BlockHeaders, GetBlockHeaders, HashOrNumber},
-        message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
     },
@@ -1693,54 +1690,15 @@ impl PeerHandler {
         peer_channel: &mut PeerChannels,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: HashOrNumber::Number(block_number),
-            limit: 1,
-            skip: 0,
-            reverse: false,
-        });
-        info!("get_block_header: requesting header with number {block_number}");
-
-        let mut receiver = peer_channel.receiver.lock().await;
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
+        let available_downloader = Downloader::new(Default::default(), peer_channel.clone());
+        match available_downloader
+            .start()
+            .call(DownloaderCallRequest::BlockHeader { block_number })
             .await
-            .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
-        let response =
-            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
-                .await;
-
-        // TODO: we need to check, this seems a scenario where the peer channel does teardown
-        // after we sent the backend message
-        let Some(Ok(response)) = response
-            .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
-            .transpose()
-        else {
-            warn!("The RLPxConnection closed the backend channel");
-            return Ok(None);
-        };
-
-        match response {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
-                if id == request_id && !block_headers.is_empty() {
-                    return Ok(Some(
-                        block_headers
-                            .last()
-                            .ok_or(PeerHandlerError::BlockHeaders)?
-                            .clone(),
-                    ));
-                }
-            }
-            _other_msgs => {
-                info!("Received unexpected message from peer");
-            }
+        {
+            Ok(DownloaderCallResponse::BlockHeader(block_header)) => Ok(Some(block_header)),
+            _ => Ok(None),
         }
-
-        Ok(None)
     }
 }
 

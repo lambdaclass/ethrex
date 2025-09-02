@@ -33,7 +33,7 @@ pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 
 pub const RECEIPTS_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const BLOCK_BODIES_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
-pub const BLOCK_HEADERS_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+pub const BLOCK_HEADERS_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const BYTECODE_REPLY_TIMEOUT: Duration = Duration::from_secs(4);
 pub const ACCOUNT_RANGE_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 pub const STORAGE_RANGE_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -85,6 +85,9 @@ pub enum DownloaderCallRequest {
         root_hash: H256,
         paths: Vec<Vec<Bytes>>,
     },
+    BlockHeader {
+        block_number: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -94,6 +97,7 @@ pub enum DownloaderCallResponse {
     Receipts(Option<Vec<Vec<Receipt>>>), // Requested receipts to a given block hash
     BlockBodies(Vec<BlockBody>),         // Requested block bodies to given block hashes
     TrieNodes(Vec<Node>),                // Requested trie nodes
+    BlockHeader(BlockHeader),            // Header of a specific block
 }
 
 #[derive(Clone)]
@@ -338,6 +342,59 @@ impl GenServer for Downloader {
                     return CallResponse::Stop(DownloaderCallResponse::TrieNodes(nodes));
                 }
                 return CallResponse::Stop(DownloaderCallResponse::NotFound);
+            }
+            DownloaderCallRequest::BlockHeader { block_number } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(block_number),
+                    limit: 1,
+                    skip: 0,
+                    reverse: false,
+                });
+                debug!("get_block_header: requesting header with number {block_number}");
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(_) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request.clone()))
+                    .await
+                {
+                    debug!("Failed sendign cast request to peer channel");
+                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                }
+
+                let response = tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
+                    receiver.recv().await
+                })
+                .await;
+
+                // TODO: we need to check, this seems a scenario where the peer channel does teardown
+                // after we sent the backend message
+                let Some(Ok(response)) = response
+                    .inspect_err(|_err| debug!("Timeout while waiting for sync head from peer"))
+                    .transpose()
+                else {
+                    warn!("The RLPxConnection closed the backend channel");
+                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                };
+
+                match response {
+                    RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
+                        if id == request_id && !block_headers.is_empty() {
+                            let block_header =
+                                block_headers.last().expect("vec can't be empty").clone();
+                            CallResponse::Stop(DownloaderCallResponse::BlockHeader(block_header))
+                        } else {
+                            CallResponse::Stop(DownloaderCallResponse::NotFound)
+                        }
+                    }
+                    _other_msgs => {
+                        debug!("Received unexpected message from peer");
+                        CallResponse::Stop(DownloaderCallResponse::NotFound)
+                    }
+                }
             }
         }
     }
