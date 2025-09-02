@@ -1,3 +1,4 @@
+use crate::trie_db::rocksdb_locked::RocksDBLockedTrieDB;
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -8,8 +9,10 @@ use ethrex_common::{
     utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
-use crate::trie_db::rocksdb_locked::RocksDBLockedTrieDB;
-use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options, WriteBatch};
+use rocksdb::{
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options,
+    SliceTransform, WriteBatch,
+};
 use std::sync::Arc;
 
 use crate::{
@@ -51,32 +54,39 @@ impl Store {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        // Optimized performance configurations for blockchain data
-        db_options.set_max_open_files(-1); // Unlimited
+        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
+
+        db_options.set_max_open_files(-1);
         db_options.set_use_fsync(false);
         db_options.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
         db_options.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
-        db_options.set_disable_auto_compactions(false);
 
-        // Memory management
-        db_options.set_write_buffer_size(256 * 1024 * 1024); // 256MB
-        db_options.set_max_write_buffer_number(6);
-        db_options.set_min_write_buffer_number_to_merge(2);
+        db_options.set_level_zero_file_num_compaction_trigger(4);
+        db_options.set_level_zero_slowdown_writes_trigger(20);
+        db_options.set_level_zero_stop_writes_trigger(36);
+        db_options.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
         db_options.set_max_bytes_for_level_base(1024 * 1024 * 1024); // 1GB
         db_options.set_max_bytes_for_level_multiplier(10.0);
-
-        // Compaction settings
         db_options.set_level_compaction_dynamic_level_bytes(true);
-        db_options.set_max_background_jobs(8);
 
-        // Bloom filter for better read performance
-        db_options.set_bloom_locality(1);
+        let cpu_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8) as i32;
+        db_options.set_max_background_jobs(cpu_count.min(16));
 
-        // WAL settings for durability vs performance balance
+        db_options.set_db_write_buffer_size(2 * 1024 * 1024 * 1024); // 2GB total
+        db_options.set_write_buffer_size(256 * 1024 * 1024); // 256MB 
+        db_options.set_max_write_buffer_number(6);
+        db_options.set_min_write_buffer_number_to_merge(2);
+
         db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
-        db_options.set_max_total_wal_size(512 * 1024 * 1024); // 512MB
+        db_options.set_max_total_wal_size(1024 * 1024 * 1024); // 1GB 
+        db_options.set_wal_ttl_seconds(3600); // Cleanup
 
-        // Column families matching libmdbx tables
+        db_options.set_compaction_readahead_size(2 * 1024 * 1024); // 2MB readahead
+        db_options.set_enable_pipelined_write(true);
+        db_options.set_allow_concurrent_memtable_write(true);
+
         let column_families = vec![
             CF_CANONICAL_BLOCK_HASHES,
             CF_BLOCK_NUMBERS,
@@ -99,31 +109,69 @@ impl Store {
         for cf_name in column_families {
             let mut cf_opts = Options::default();
 
-            // Optimized per column family based on data patterns
+            let mut base_block_opts = BlockBasedOptions::default();
+            base_block_opts.set_block_cache(&cache);
+            cf_opts.set_block_based_table_factory(&base_block_opts);
+
+            cf_opts.set_level_zero_file_num_compaction_trigger(4);
+            cf_opts.set_level_zero_slowdown_writes_trigger(20);
+            cf_opts.set_level_zero_stop_writes_trigger(36);
+
             match cf_name {
                 CF_HEADERS | CF_BODIES => {
-                    // Block data - larger values, infrequent updates
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_cache(&cache);
+                    block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    block_opts.set_cache_index_and_filter_blocks(true);
+                    cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_CANONICAL_BLOCK_HASHES | CF_BLOCK_NUMBERS => {
-                    // Frequently accessed small values
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_cache(&cache);
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false);
+                    block_opts.set_cache_index_and_filter_blocks(true);
+                    cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
-                    // Trie nodes - many small writes, read heavy
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB 
                     cf_opts.set_max_write_buffer_number(6);
-                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
-                    // Enable bloom filter for trie lookups
-                    let mut block_opts = rocksdb::BlockBasedOptions::default();
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter 
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB 
+                    block_opts.set_block_cache(&cache);
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_cache_index_and_filter_blocks(true);
+                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+
+                    // Prefix extractor
+                    cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
+                }
+                CF_RECEIPTS | CF_ACCOUNT_CODES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_cache(&cache);
+                    block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -131,7 +179,12 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024);
+                    block_opts.set_block_cache(&cache);
+                    cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
 
@@ -894,11 +947,7 @@ impl StoreEngine for Store {
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(
-            self.db.clone(),
-            CF_STATE_TRIE_NODES,
-            None,
-        )?;
+        let db = RocksDBLockedTrieDB::new(self.db.clone(), CF_STATE_TRIE_NODES, None)?;
         Ok(Trie::open(Box::new(db), state_root))
     }
 
