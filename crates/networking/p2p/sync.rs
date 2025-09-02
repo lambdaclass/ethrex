@@ -1079,10 +1079,7 @@ impl Syncer {
             .expect("we couldn't iterate over accounts")
             .map(|(_, state)| state.code_hash)
             .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        for mut bytecode_hashes in std::iter::from_fn(move || {
-            Some(bytecode_iter.by_ref().take(10_000).collect())
-                .filter(|chunk: &Vec<_>| !chunk.is_empty())
-        }) {
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
             // Download bytecodes
             bytecode_hashes.sort();
             bytecode_hashes.dedup();
@@ -1363,4 +1360,11 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
         }
     });
     info!("Finished validate_storage_root");
+}
+
+fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
+where
+    T: Iterator<Item = H256>,
+{
+    Some(bytecode_iter.by_ref().take(10_000).collect()).filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
