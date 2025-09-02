@@ -854,17 +854,14 @@ impl Syncer {
                 info!("Inserting accounts into the state trie");
 
                 let store_clone = store.clone();
-                let current_state_root =
-                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
-
-                        for (account_hash, account) in account_states_snapshot {
-                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                        }
-                        let current_state_root = trie.hash()?;
-                        Ok(current_state_root)
-                    })
-                    .await??;
+                let current_state_root = tokio::task::spawn_blocking(move || {
+                    insert_into_state_trie(
+                        store_clone,
+                        computed_state_root,
+                        account_states_snapshot,
+                    )
+                })
+                .await??;
 
                 computed_state_root = current_state_root;
             }
@@ -1128,6 +1125,20 @@ impl Syncer {
             .await?;
         Ok(())
     }
+}
+
+fn insert_into_state_trie(
+    store: Store,
+    computed_state_root: H256,
+    account_states_snapshot: Vec<(H256, AccountState)>,
+) -> Result<H256, SyncError> {
+    let mut trie = store.open_state_trie(computed_state_root)?;
+
+    for (account_hash, account) in account_states_snapshot {
+        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+    }
+    let current_state_root = trie.hash()?;
+    Ok(current_state_root)
 }
 
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
