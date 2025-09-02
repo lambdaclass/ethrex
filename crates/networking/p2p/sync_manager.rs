@@ -54,6 +54,9 @@ impl SyncManager {
             store: store.clone(),
         };
 
+        let store_clone = store.clone();
+        tokio::spawn(async move {
+
         info!("Fetching blocks from peers");
         // Fetch blocks from peers and store them in DB (as we lost all blocks)
         for i in (8497589 - 128)..8497589 {
@@ -66,15 +69,16 @@ impl SyncManager {
                 .await
                 .unwrap()
                 .unwrap();
-            store
+            store_clone
                 .add_block_header(block_header.hash(), block_header)
                 .await
                 .unwrap();
         }
         info!("Restoring latest block number to 8497589");
-        store.update_latest_block_number(8497589).await.unwrap();
+        store_clone.update_latest_block_number(8497589).await.unwrap();
         info!("Restoring canonical chain");
-        store.restore_canonical_chain().await.unwrap();
+        store_clone.restore_canonical_chain().await.unwrap();
+        });
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store
