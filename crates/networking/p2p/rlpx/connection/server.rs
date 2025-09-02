@@ -1,15 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{
-    H256,
-    types::{MempoolTransaction, Transaction},
-};
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -66,7 +58,7 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    tx_broadcaster::{self, InMessage, TxBroadcaster},
+    tx_broadcaster::{InMessage, TxBroadcaster},
     types::Node,
 };
 

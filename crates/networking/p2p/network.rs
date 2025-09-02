@@ -12,7 +12,7 @@ use crate::{
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
-    tx_broadcaster::{self, TxBroadcaster, TxBroadcasterError},
+    tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
     types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;

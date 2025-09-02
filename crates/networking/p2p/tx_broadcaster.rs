@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use rand::random;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
+    tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tracing::{debug, error, info};
 
