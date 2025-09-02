@@ -176,6 +176,10 @@ impl Syncer {
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
+        let pending_block = match store.get_pending_block(sync_head).await {
+            Ok(res) => res,
+            Err(e) => return Err(e.into()),
+        };
 
         loop {
             debug!("Sync Log 1: In snap sync");
@@ -221,6 +225,14 @@ impl Syncer {
                 first_block_number,
                 last_block_number
             );
+
+            // If we have a pending block from new_payload request
+            // attach it to the end if it matches the parent_hash of the latest received header
+            if let Some(ref block) = pending_block {
+                if block.header.parent_hash == last_block_hash {
+                    block_headers.push(block.header.clone());
+                }
+            }
 
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
@@ -308,10 +320,6 @@ impl Syncer {
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
-        let pending_block = match store.get_pending_block(sync_head).await {
-            Ok(res) => res,
-            Err(e) => return Err(e.into()),
-        };
 
         loop {
             debug!("Sync Log 1: In Full Sync");
@@ -365,14 +373,6 @@ impl Syncer {
                 first_block_number,
                 last_block_number
             );
-
-            // If we have a pending block from new_payload request
-            // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
-            }
 
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
