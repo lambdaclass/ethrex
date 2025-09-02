@@ -461,6 +461,10 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
+    if base_size == 0 && modulus_size == 0 {
+        return Ok(Bytes::new());
+    }
+
     let result = mod_exp(base, exponent, modulus);
 
     let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
