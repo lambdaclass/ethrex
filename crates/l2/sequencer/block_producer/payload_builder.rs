@@ -32,7 +32,7 @@ use tokio::time::Instant;
 use tracing::{debug, error};
 
 /// Max privileged tx to allow per batch
-const PRIVILEGED_TX_BUDGET: usize = 300;
+const PRIVILEGED_TX_BUDGET: u64 = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -210,7 +210,7 @@ pub async fn fill_transactions(
         if head_tx.tx_type() == TxType::Privileged {
             let id = head_tx.nonce();
             if let Some(range) = privileged_range.as_mut() {
-                if range.clone().count() > PRIVILEGED_TX_BUDGET {
+                if range.end - range.start > PRIVILEGED_TX_BUDGET {
                     debug!("Ran out of space for privileged transactions");
                     txs.pop();
                     undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
