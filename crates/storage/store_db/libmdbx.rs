@@ -579,13 +579,40 @@ impl StoreEngine for Store {
     }
 
     async fn restore_canonical_chain(&self) -> Result<(), StoreError> {
+        let total_db_size = self.db.stat().unwrap().total_size();
+        let total_db_entries = self.db.stat().unwrap().entries();
         let txn = self.db.begin_readwrite().unwrap();
-        let stat = txn.table_stat::<Headers>().unwrap();
-        info!("Have {} headers in store", stat.entries());
-        let stat = txn.table_stat::<Bodies>().unwrap();
-        info!("Have {} bodies in store", stat.entries());
-        let stat = txn.table_stat::<StateTrieNodes>().unwrap();
-        info!("Have {} nodes in state trie", stat.entries());
+        let bn_stat = txn.table_stat::<BlockNumbers>().unwrap().entries();
+        let h_stat = txn.table_stat::<Headers>().unwrap().entries();
+        let b_stat = txn.table_stat::<Bodies>().unwrap().entries();
+        let ac_stat = txn.table_stat::<AccountCodes>().unwrap().entries();
+        let r_stat = txn.table_stat::<Receipts>().unwrap().entries();
+        let tl_stat = txn.table_stat::<TransactionLocations>().unwrap().entries();
+        let cd_stat = txn.table_stat::<ChainData>().unwrap().entries();
+        let sn_stat = txn.table_stat::<StateTrieNodes>().unwrap().entries();
+        let stn_stat = txn.table_stat::<StorageTriesNodes>().unwrap().entries();
+        let cbh_stat = txn.table_stat::<CanonicalBlockHashes>().unwrap().entries();
+        let p_stat = txn.table_stat::<Payloads>().unwrap().entries();
+        let pb_stat = txn.table_stat::<PendingBlocks>().unwrap().entries();
+        let ia_stat = txn.table_stat::<InvalidAncestors>().unwrap().entries();
+        info!("DB ENTRIES PER TABLE:
+        - BLOCK_NUMBERS: {bn_stat}
+        - HEADERS: {h_stat}
+        - BODIES: {b_stat}
+        - ACCOUNT_CODES: {ac_stat}
+        - RECEIPTS: {r_stat}
+        - TRANSACTION_LOCATIONS: {tl_stat}
+        - CHAIN_DATA: {cd_stat}
+        - STATE_TRIE_NODES: {sn_stat}
+        - STORAGE_TRIE_NODES: {stn_stat}
+        - CANONICAL_BLOCK_HAHSES: {cbh_stat}
+        - PAYLOADS: {p_stat}
+        - PENDING_BLOCKS {pb_stat}
+        - INVALID_ANCESTORS: {ia_stat}
+        TOTAL_ENTRIES: {total_db_entries}
+        TOTAL_SIZE (Bytes): {total_db_size}
+        "
+        );
         let mut cursor = txn.cursor::<Headers>().unwrap();
         while let Ok(Some((_, block_header))) = cursor.next() {
             let header = block_header.to()?;
