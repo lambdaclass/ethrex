@@ -782,7 +782,7 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         while block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+            pivot_header = update_pivot(pivot_header, &self.peers, block_sync_state).await?;
         }
         debug!(
             "Selected block {} as pivot for snap sync",
@@ -897,7 +897,7 @@ impl Syncer {
             loop {
                 while block_is_stale(&pivot_header) {
                     pivot_header =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                        update_pivot(pivot_header, &self.peers, block_sync_state).await?;
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
@@ -1043,8 +1043,7 @@ impl Syncer {
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
             if block_is_stale(&pivot_header) {
-                pivot_header =
-                    update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                pivot_header = update_pivot(pivot_header, &self.peers, block_sync_state).await?;
             }
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
@@ -1176,13 +1175,17 @@ fn compute_storage_roots(
 }
 
 pub async fn update_pivot(
-    block_number: u64,
+    pivot_header: BlockHeader,
     peers: &PeerHandler,
     block_sync_state: &mut BlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
-    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
-    // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
+    let block_number = pivot_header.number;
+    let block_timestamp = pivot_header.timestamp;
+    let new_pivot_block_number = block_number + (current_unix_time() - block_timestamp) / 12;
+    debug!(
+        "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
+        block_number, block_timestamp, new_pivot_block_number
+    );
     loop {
         let mut scores = peers.peer_scores.lock().await;
 

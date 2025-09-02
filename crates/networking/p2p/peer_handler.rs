@@ -1027,7 +1027,7 @@ impl PeerHandler {
 
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
-                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
+                *pivot_header = update_pivot(pivot_header.clone(), self, block_sync_state)
                     .await
                     .expect("Should be able to update pivot")
             }
