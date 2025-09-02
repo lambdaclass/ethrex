@@ -69,11 +69,6 @@ impl Store {
         db_options.set_max_bytes_for_level_multiplier(10.0);
         db_options.set_level_compaction_dynamic_level_bytes(true);
 
-        let cpu_count = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8) as i32;
-        db_options.set_max_background_jobs(cpu_count.min(16));
-
         db_options.set_db_write_buffer_size(2 * 1024 * 1024 * 1024); // 2GB total
         db_options.set_write_buffer_size(256 * 1024 * 1024); // 256MB 
         db_options.set_max_write_buffer_number(6);
@@ -283,18 +278,6 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    // Helper method to add canonical block hash
-    async fn add_canonical_block_hash(
-        &self,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        let number_key = block_number.encode_to_vec();
-        let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-        self.write_async(CF_CANONICAL_BLOCK_HASHES, number_key, hash_value)
-            .await
     }
 
     // Helper method to encode ChainDataIndex as key
