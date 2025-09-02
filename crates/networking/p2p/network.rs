@@ -136,7 +136,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
                 error!("Failed to start Tx Broadcaster: {e}");
             })?;
 
-    RLPxInitiator::spawn(context.clone(), tx_broadcaster_handle.clone()) // todo add tx broadcaster handle
+    RLPxInitiator::spawn(context.clone(), tx_broadcaster_handle.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");

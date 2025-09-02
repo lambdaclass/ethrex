@@ -57,7 +57,7 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self.kademlia.get_peer_channels(&[]).await; // todo get only active peers?
+        let peers = self.kademlia.get_peer_channels(&[]).await;
         let peer_sqrt = (peers.len() as f64).sqrt();
         // we want to send to sqrt(peer_count) on average
         // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
