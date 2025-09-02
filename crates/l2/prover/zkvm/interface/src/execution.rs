@@ -234,16 +234,6 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    // if there are no transactions and no withdrawals, the batch is empty
-    let is_batch_empty = !blocks.iter().any(|block| {
-        !block.body.transactions.is_empty()
-            || !block
-                .body
-                .withdrawals
-                .as_ref()
-                .is_none_or(|withdrawals| withdrawals.is_empty())
-    });
-
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
@@ -293,7 +283,16 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
-        if !(is_batch_empty && cfg!(feature = "l2")) {
+        let is_block_empty = !block.body.transactions.is_empty()
+            || !block
+                .body
+                .withdrawals
+                .as_ref()
+                .is_none_or(|withdrawals| withdrawals.is_empty());
+
+        // In L1 there are system contract calls that need to be executed
+        // even if the block is empty, so we only skip execution of L2 blocks
+        if !is_block_empty || !cfg!(feature = "l2") {
             // Execute block
             #[cfg(feature = "l2")]
             let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
