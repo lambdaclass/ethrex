@@ -32,7 +32,8 @@ struct HiveResult {
 
 impl HiveResult {
     fn new(suite: String, fork: String, passed_tests: usize, total_tests: usize) -> Self {
-        let success_percentage = (passed_tests as f64 / total_tests as f64) * 100.0;
+        // Mark as 100% if result is NaN
+        let success_percentage = ((passed_tests as f64 / total_tests as f64) * 100.0).max(100.0);
 
         let (category, display_name) = match suite.as_str() {
             "engine-api" => ("Engine", "Paris"),
