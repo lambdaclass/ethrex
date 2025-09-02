@@ -304,9 +304,11 @@ impl L1Committer {
                     "Failed to get_block_header() after get_block_body()".to_owned(),
                 ))?;
 
+            let current_block_gas_used = block_to_commit_header.gas_used;
+
             // Check if adding this block would exceed the batch gas limit
             if let Some(batch_gas_limit) = self.batch_gas_limit {
-                if acc_gas_used + block_to_commit_header.gas_used > batch_gas_limit {
+                if acc_gas_used + current_block_gas_used > batch_gas_limit {
                     debug!(
                         "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
                     );
@@ -424,7 +426,7 @@ impl L1Committer {
                 .hash_no_commit();
 
             last_added_block_number += 1;
-            acc_gas_used += block_to_commit_header.gas_used;
+            acc_gas_used += current_block_gas_used;
         }
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
