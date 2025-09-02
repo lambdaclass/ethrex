@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756847213496,
+  "lastUpdate": 1756847864373,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11305,6 +11305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164353944569,
             "range": "± 320995489",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a776a321a2f4378c48252769b8afa206568c5a64",
+          "message": "feat(l1): chunk bytecode downloads (#4255)\n\n**Motivation**\n\nWe want to chunk download of bytecodes, in order to reduce RAM usage.\n\n**Description**\n\nThis splits download of bytecodes into chunks of fixed size.",
+          "timestamp": "2025-09-02T20:19:30Z",
+          "tree_id": "87e3932448739940c5f5b6fc5f54b199bf54afaa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a776a321a2f4378c48252769b8afa206568c5a64"
+        },
+        "date": 1756847846437,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162189357716,
+            "range": "± 883483686",
             "unit": "ns/iter"
           }
         ]
