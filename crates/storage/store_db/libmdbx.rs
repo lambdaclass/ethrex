@@ -575,13 +575,15 @@ impl StoreEngine for Store {
         &self,
     ) -> Result<(), StoreError> {
         let txn = self.db.begin_readwrite().unwrap();
+        let stat = txn.table_stat::<Headers>().unwrap();
+        info!("Have {} headers in store", stat.entries());
         let mut cursor = txn.cursor::<Headers>().unwrap();
         while let Ok(Some((_, block_header))) = cursor.next() {
             let header = block_header.to()?;
             let number = header.number;
             let hash = header.hash();
             info!("Restoring canonical block {number} -> {hash}");
-            self.write::<CanonicalBlockHashes>(number, hash.into());
+            self.write::<CanonicalBlockHashes>(number, hash.into()).await.unwrap();
 
         }
         Ok(())
