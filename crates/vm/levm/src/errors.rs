@@ -204,6 +204,8 @@ pub enum PrecompileError {
     ModExpExpTooLarge,
     #[error("Mod-exp modulus length is too large")]
     ModExpModulusTooLarge,
+    #[error("Coordinate Exceeds Field Modulus")]
+    CoordinateExceedsFieldModulus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
