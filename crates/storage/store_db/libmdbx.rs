@@ -13,7 +13,6 @@ use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
-use core::num;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
@@ -219,6 +218,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        self.write::<CanonicalBlockHashes>(block_header.number, block_hash.into()).await?;
         self.write::<Headers>(block_hash.into(), block_header.into())
             .await
     }
