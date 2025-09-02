@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     kademlia::Kademlia,
-    rlpx::{connection::server::CastMessage, eth::transactions::Transactions},
+    rlpx::{Message, connection::server::CastMessage, eth::transactions::Transactions},
 };
 
 #[derive(Debug, Clone)]
@@ -73,10 +73,13 @@ impl TxBroadcaster {
             .into_iter()
             .map(|tx| tx.transaction().clone())
             .collect::<Vec<Transaction>>();
+        let txs_message = Message::Transactions(Transactions {
+            transactions: full_txs,
+        });
         for (peer_id, mut peer_channels) in peers {
             if random::<f64>() < accept_prob {
-                peer_channels.connection.cast(CastMessage::Transactions(
-                    Transactions { transactions: full_txs.clone() },
+                peer_channels.connection.cast(CastMessage::BackendMessage(
+                    txs_message.clone(),
                 )).await.unwrap_or_else(|err| {
                     error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
                 });

@@ -38,7 +38,7 @@ use crate::{
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+            transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
         l2::{
@@ -148,7 +148,6 @@ pub enum CastMessage {
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
     L2(L2Cast),
-    Transactions(Transactions),
 }
 
 pub enum OutMessage {
@@ -292,20 +291,6 @@ impl GenServer for RLPxConnection {
                         L2Cast::BlockBroadcast => {
                             l2::l2_connection::send_new_block(established_state).await
                         }
-                    }
-                }
-                Self::CastMsg::Transactions(txs) => {
-                    if !txs.transactions.is_empty() {
-                        log_peer_debug(
-                            &established_state.node,
-                            &format!("Sending {} transactions to peer", txs.transactions.len()),
-                        );
-                        let new_msg = Message::Transactions(Transactions {
-                            transactions: txs.transactions,
-                        });
-                        send(established_state, new_msg).await
-                    } else {
-                        Ok(())
                     }
                 }
                 _ => Err(RLPxError::MessageNotHandled(
