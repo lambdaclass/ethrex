@@ -13,9 +13,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{
-        BlockRequestOrder, BytecodeTaskResult, HASH_MAX, StorageTaskResult,
-    },
+    peer_handler::{BlockRequestOrder, BytecodeTaskResult, HASH_MAX, StorageTaskResult},
     rlpx::{
         Message as RLPxMessage,
         connection::server::CastMessage,

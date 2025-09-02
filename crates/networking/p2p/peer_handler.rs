@@ -14,6 +14,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
+use spawned_concurrency::tasks::GenServer;
 use tokio::{sync::Mutex, time::Instant};
 
 use crate::{
@@ -21,6 +22,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
+        downloader::{Downloader, DownloaderCallRequest, DownloaderCallResponse},
         eth::{
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
@@ -275,17 +277,21 @@ impl PeerHandler {
                 .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
-            for (peer_id, mut peer_channel) in peers_table {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
-                    Ok(number) => {
+            for (peer_id, peer_channels) in peers_table {
+                let mut downloader = Downloader::new(peer_id, peer_channels).start();
+                match downloader
+                    .call(DownloaderCallRequest::CurrentHead { sync_head })
+                    .await
+                {
+                    Ok(DownloaderCallResponse::CurrentHead(number)) => {
                         sync_head_number = number;
                         if number != 0 {
                             break;
                         }
                     }
-                    Err(err) => {
+                    _ => {
                         debug!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
+                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}"
                         );
                     }
                 }
@@ -1264,7 +1270,8 @@ impl PeerHandler {
         let mut all_bytecodes = vec![Bytes::new(); all_bytecode_hashes.len()];
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<BytecodeTaskResult>(1000);
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<BytecodeTaskResult>(1000);
 
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table

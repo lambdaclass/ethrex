@@ -1,9 +1,9 @@
 pub mod connection;
+pub mod downloader;
 pub mod error;
 pub mod eth;
 pub mod initiator;
 pub mod l2;
-mod downloader;
 pub mod message;
 pub mod p2p;
 pub mod snap;
