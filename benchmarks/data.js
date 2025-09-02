@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756850351089,
+  "lastUpdate": 1756853446947,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11365,6 +11365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159323107275,
             "range": "± 574579922",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2e24dc04e6009728a46aa9b28f15880d3499b5c3",
+          "message": "fix(l1, l2): use `BTreeMap` for `InMemoryTrieDB` and optimize stateless execution by avoiding state cloning (#4264)\n\n**Motivation**\n\nStateless execution with SP1 is stable, but it still takes too much time\nto execute and prove compared with other tools.\n\n1. We were aware that we were cloning the entire state on each trie\nrebuild (state and account storage ones).\n2. `HashMap` insertions are expensive for the prover. By changing the\ndata structure used under the hood, we can avoid these operations.\n\n**Description**\n\n- Use a `BTreeMap` as the `InMemoryTrieDB` inner storage instead of a\n`HashMap`.\n- Pass a reference to the state nodes map instead of cloning it every\ntime we want to build a trie.\n\n**Results**\n\n*`mainnet`'s 23276522  block Execution Time with SP1 Before (145s)*\n\n```\n2025-09-02T17:16:17.815246Z  INFO ethrex_replay::fetcher: Retrieving execution data for block 23276522 (329 block behind latest)\n2025-09-02T17:16:17.821839Z  INFO ethrex_replay::fetcher: Getting block 23276522 data from cache\n2025-09-02T17:16:17.822414Z  INFO ethrex_replay::bench: Starting prover program\n2025-09-02T17:16:17.824406Z  WARN sp1_sdk::env: SP1_PROVER environment variable not set, defaulting to 'cpu'\nstderr: WARNING: Using insecure random number generator.\n2025-09-02T17:18:45.292679Z  INFO execute: sp1_prover: gas: 7777466726\n2025-09-02T17:18:45.298342Z  INFO ethrex_prover_lib::backends::sp1: Successfully executed SP1 program in 145.31s\n2025-09-02T17:18:45.299427Z  INFO ethrex_replay::bench: Total gas from block/s: 22330686\n```\n\n*`mainnet`'s 23276522  block Execution Time with SP1 After (35s)*\n\n```\n2025-09-02T18:56:28.782876Z  INFO ethrex_replay::fetcher: Retrieving execution data for block 23276522 (827 block behind latest)\n2025-09-02T18:56:28.789067Z  INFO ethrex_replay::fetcher: Getting block 23276522 data from cache\n2025-09-02T18:56:28.789627Z  INFO ethrex_replay::bench: Starting prover program\n2025-09-02T18:56:28.791437Z  WARN sp1_sdk::env: SP1_PROVER environment variable not set, defaulting to 'cpu'\nstderr: WARNING: Using insecure random number generator.\n2025-09-02T18:57:05.758187Z  INFO execute: sp1_prover: gas: 1629109439\n2025-09-02T18:57:05.760484Z  INFO ethrex_prover_lib::backends::sp1: Successfully executed SP1 program in 34.81s\n2025-09-02T18:57:05.761603Z  INFO ethrex_replay::bench: Total gas from block/s: 22330686\n```\n\n*`mainnet`'s 23276522 block Execution with SP1 Flamegraph Before\n(`get_storage_slot` = ~80%)*\n\n<img width=\"1512\" height=\"457\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/b0bd9b36-a998-4228-ac9e-8b583fd986d5\"\n/>\n\n*`mainnet`'s 23276522 block Execution with SP1 Flamegraph After\n(`get_storage_slot` = ~18%)*\n\n<img width=\"1512\" height=\"437\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/4e90f631-3e14-47ac-a3dd-ba4871237b83\"\n/>",
+          "timestamp": "2025-09-02T21:52:08Z",
+          "tree_id": "45052b9f52e859d812880da8a9ec0c71b6da4518",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e24dc04e6009728a46aa9b28f15880d3499b5c3"
+        },
+        "date": 1756853429986,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 158947428557,
+            "range": "± 246278598",
             "unit": "ns/iter"
           }
         ]
