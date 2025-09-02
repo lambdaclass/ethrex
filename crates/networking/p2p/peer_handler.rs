@@ -12,7 +12,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
-use ethrex_trie::{Node, verify_range};
+use ethrex_trie::Node;
 use rand::{random, seq::SliceRandom};
 use spawned_concurrency::tasks::GenServer;
 use tokio::{sync::Mutex, time::Instant};
@@ -31,12 +31,8 @@ use crate::{
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
-        snap::{
-            AccountRangeUnit, ByteCodes, GetByteCodes, GetStorageRanges, GetTrieNodes,
-            StorageRanges, TrieNodes,
-        },
+        snap::{AccountRangeUnit, ByteCodes, GetByteCodes, GetTrieNodes, TrieNodes},
     },
-    snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
         SendMessageError, dump_to_file, get_account_state_snapshot_file,
