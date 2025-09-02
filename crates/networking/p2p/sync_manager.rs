@@ -57,11 +57,9 @@ impl SyncManager {
         info!("Fetching blocks from peers");
         // Fetch blocks from peers and store them in DB (as we lost all blocks)
         for i in (8497589 - 128)..8497589 {
-            let mut scores = peer_handler.peer_scores.lock().await;
             let (_, mut peer) = peer_handler
-                .get_peer_channel_with_highest_score(&[Capability::eth(69)], &mut scores)
+                .get_peer_channel_with_retry(&[Capability::eth(69)])
                 .await
-                .unwrap()
                 .unwrap();
             let block_header = peer_handler
                 .get_block_header(&mut peer, i as u64)
