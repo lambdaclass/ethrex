@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756829620036,
+  "lastUpdate": 1756835548914,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11095,6 +11095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 159052289275,
             "range": "± 503758269",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fc077fdcfff125223deea014e228a0ec1e738cd0",
+          "message": "feat(l1,levm): implement CLZ opcode (#4188)\n\n**Motivation**\n\nImplementing the Fusaka fork, specifically [EIP\n7939](https://eips.ethereum.org/EIPS/eip-7939)\n\n**Description**\n\n- Added the CLZ opcode\n- Made it so the test runner runs the tests for it\n\nDepends on #4163 for tests\n\nCloses #4159",
+          "timestamp": "2025-09-02T16:59:54Z",
+          "tree_id": "8414b36a246160f2972771fa33a31a1d7f5d98f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fc077fdcfff125223deea014e228a0ec1e738cd0"
+        },
+        "date": 1756835531285,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 161345628078,
+            "range": "± 363320293",
             "unit": "ns/iter"
           }
         ]
