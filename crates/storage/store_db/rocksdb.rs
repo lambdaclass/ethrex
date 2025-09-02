@@ -1,4 +1,4 @@
-use crate::trie_db::rocksdb_locked::RocksDBLockedTrieDB;
+use crate::{rlp::Rlp, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -56,7 +56,7 @@ impl Store {
 
         let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
 
-        db_options.set_max_open_files(-1);
+        db_options.set_max_open_files(1024);
         db_options.set_use_fsync(false);
         db_options.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
         db_options.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
@@ -310,6 +310,7 @@ impl StoreEngine for Store {
             if let Some(cf_storage) = db.cf_handle(CF_STORAGE_TRIES_NODES) {
                 for (address_hash, storage_updates) in update_batch.storage_updates {
                     for (node_hash, node_data) in storage_updates {
+                        // Key: address_hash + node_hash
                         let mut key = address_hash.as_bytes().to_vec();
                         key.extend_from_slice(node_hash.as_ref());
                         batch.put_cf(&cf_storage, key, node_data);
@@ -325,8 +326,8 @@ impl StoreEngine for Store {
             let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
 
             for block in update_batch.blocks {
-                let block_hash = block.hash();
                 let block_number = block.header.number;
+                let block_hash = block.hash();
 
                 if let Some(cf) = &cf_headers {
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
@@ -335,9 +336,9 @@ impl StoreEngine for Store {
                 }
 
                 if let Some(cf) = &cf_bodies {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                    batch.put_cf(cf, hash_key, body_value);
+                    let hash_key: Rlp<H256> = block_hash.into();
+                    let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                    batch.put_cf(cf, hash_key.bytes(), body_value.bytes());
                 }
 
                 if let Some(cf) = &cf_block_numbers {
