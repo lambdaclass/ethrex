@@ -59,7 +59,7 @@ impl SyncManager {
 
         info!("Fetching blocks from peers");
         // Fetch blocks from peers and store them in DB (as we lost all blocks)
-        for i in (8497589 - 2048)..(8497589+2048) {
+        for i in (8662709 - 5000)..(8662709) {
             let mut block_header = None;
             while block_header.is_none() {
                 info!("Requesting block with number {i}");
@@ -79,8 +79,8 @@ impl SyncManager {
                 .await
                 .unwrap();
         }
-        info!("Restoring latest block number to 8497589");
-        store_clone.update_latest_block_number(8497589).await.unwrap();
+        info!("Restoring latest block number to 8662709");
+        store_clone.update_latest_block_number(8662709).await.unwrap();
         info!("Restoring canonical chain");
         store_clone.restore_canonical_chain().await.unwrap();
         });

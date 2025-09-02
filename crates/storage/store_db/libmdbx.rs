@@ -223,7 +223,7 @@ impl StoreEngine for Store {
         .db()
         .get(block_header.state_root.into())?
         .is_some(){
-            info!("Block number {} has state in DB", block_header.state_root);
+            info!("Block number {} has state in DB WHOORAYYY", block_header.state_root);
         }
         self.write::<CanonicalBlockHashes>(block_header.number, block_hash.into()).await?;
         self.write::<BlockNumbers>(block_hash.into(), block_header.number).await?;
