@@ -1070,8 +1070,8 @@ impl Syncer {
             .await;
         }
         // TODO: 💀💀💀 either remove or change to a debug flag
-        validate_state_root(store.clone(), pivot_header.state_root).await;
-        validate_storage_root(store.clone(), pivot_header.state_root).await;
+        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
         let mut bytecode_hashes: Vec<H256> = store
@@ -1332,7 +1332,8 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
+    let mut success = AtomicBool::new(true);
     info!("Starting validate_storage_root");
     store
         .clone()
@@ -1358,7 +1359,9 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
                 "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
                 account_state.storage_root
             );
+            success.store(false, Ordering::Relaxed);
         }
     });
     info!("Finished validate_storage_root");
+    *success.get_mut()
 }
