@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756764957367,
+  "lastUpdate": 1756828500388,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11035,6 +11035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 161782600464,
             "range": "± 342574259",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e7df1cce1bc62fadbbc5c954394123cb29bf89f0",
+          "message": "ci(l1): replace old cache and add workflow to verify that we keep consistency (#4209)\n\n**Motivation**\n\nCI was broken again due to replay cache format changes.\n\n**Description**\n\n- Update cache to the new format\n- Add workflow to verify that we are consistent with the cache stored\n- Execute in 7 minutes\n[here](https://github.com/lambdaclass/ethrex/actions/runs/17333409316/job/49214515851?pr=4209)",
+          "timestamp": "2025-09-02T15:00:15Z",
+          "tree_id": "625d0aa5f1384773740888afb5610b2b9578c63e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e7df1cce1bc62fadbbc5c954394123cb29bf89f0"
+        },
+        "date": 1756828483683,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162390905821,
+            "range": "± 294806217",
             "unit": "ns/iter"
           }
         ]
