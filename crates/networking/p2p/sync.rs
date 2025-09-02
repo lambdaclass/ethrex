@@ -1070,8 +1070,8 @@ impl Syncer {
             .await;
         }
         // TODO: 💀💀💀 either remove or change to a debug flag
-        validate_state_root(store.clone(), pivot_header.state_root).await;
-        validate_storage_root(store.clone(), pivot_header.state_root).await;
+        //validate_state_root(store.clone(), pivot_header.state_root).await;
+        //validate_storage_root(store.clone(), pivot_header.state_root).await;
         info!("Finished healing");
 
         let mut bytecode_hashes: Vec<H256> = store
