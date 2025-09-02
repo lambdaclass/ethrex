@@ -219,6 +219,7 @@ impl StoreEngine for Store {
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
         self.write::<CanonicalBlockHashes>(block_header.number, block_hash.into()).await?;
+        self.write::<BlockNumbers>(block_hash.into(), block_header.number).await?;
         self.write::<Headers>(block_hash.into(), block_header.into())
             .await
     }
