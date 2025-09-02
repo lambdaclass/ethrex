@@ -242,10 +242,14 @@ fn execute_stateless(
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
+    // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
+    // (once in get_first_invalid_block_hash(), later in validate_block()).
+    wrapped_db.initialize_block_header_hashes(blocks)?;
+
     // Validate execution witness' block hashes, except parent block hash (latest block hash).
     // this will also initialize hashes in the `blocks` slice so that we don't hash twice
     // (which is expensive in zkVMs).
-    if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash(blocks) {
+    if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
         return Err(StatelessExecutionError::InvalidBlockHash(
             invalid_block_header,
         ));

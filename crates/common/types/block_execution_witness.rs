@@ -222,15 +222,11 @@ impl ExecutionWitnessResult {
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
-    /// hash of block_number + 1. None if there's no such hash. Also initializes
-    /// the hashes on `blocks_to_execute` for performance in zkVMs.
+    /// hash of block_number + 1. None if there's no such hash.
     ///
     /// Keep in mind that the last block hash (which is a batch's parent hash)
     /// can't be validated against the next header, because it has no successor.
-    pub fn get_first_invalid_block_hash(
-        &self,
-        blocks_to_execute: &[Block],
-    ) -> Result<Option<u64>, ExecutionWitnessError> {
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
         // Enforces there's at least one block header, so windows() call doesn't panic.
         if self.block_headers.is_empty() {
             return Err(ExecutionWitnessError::NoBlockHeaders);
@@ -257,20 +253,6 @@ impl ExecutionWitnessResult {
             if next_header.parent_hash != header.hash() {
                 return Ok(Some(*number));
             }
-        }
-
-        // Initialize already calculated hashes for `blocks`
-        for block in blocks_to_execute {
-            let hash = self
-                .block_headers
-                .get(&block.header.number)
-                .map(|header| header.hash())
-                .ok_or(ExecutionWitnessError::Unreachable(
-                    "execution witness does not contain the block header of a block to execute"
-                        .to_string(),
-                ))?;
-            // drop Result, don't care if it was already initialized
-            let _ = block.header.hash.set(hash);
         }
 
         Ok(None)
@@ -390,6 +372,27 @@ impl ExecutionWitnessResult {
                 "Could not find code for hash {code_hash}"
             ))),
         }
+    }
+
+    /// Hashes all block headers, initializing their inner `hash` field
+    pub fn initialize_block_header_hashes(
+        &self,
+        blocks: &[Block],
+    ) -> Result<(), ExecutionWitnessError> {
+        for block in blocks {
+            let hash = self
+                .block_headers
+                .get(&block.header.number)
+                .map(|header| header.hash())
+                .ok_or(ExecutionWitnessError::Custom(
+                    "execution witness does not contain the block header of a block to execute"
+                        .to_string(),
+                ))?;
+            // this returns err if it's already set, so we drop the Result as don't
+            // care if it was already initialized.
+            let _ = block.header.hash.set(hash);
+        }
+        Ok(())
     }
 }
 

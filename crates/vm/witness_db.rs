@@ -38,12 +38,8 @@ impl ExecutionWitnessWrapper {
         self.lock_mutex()?.state_trie_root()
     }
 
-    pub fn get_first_invalid_block_hash(
-        &self,
-        blocks_to_execute: &[Block],
-    ) -> Result<Option<u64>, ExecutionWitnessError> {
-        self.lock_mutex()?
-            .get_first_invalid_block_hash(blocks_to_execute)
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
+        self.lock_mutex()?.get_first_invalid_block_hash()
     }
 
     pub fn get_block_parent_header(
@@ -53,6 +49,13 @@ impl ExecutionWitnessWrapper {
         self.lock_mutex()?
             .get_block_parent_header(block_number)
             .cloned()
+    }
+
+    pub fn initialize_block_header_hashes(
+        &self,
+        blocks: &[Block],
+    ) -> Result<(), ExecutionWitnessError> {
+        self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
 }
 
