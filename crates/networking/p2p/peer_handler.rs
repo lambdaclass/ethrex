@@ -25,10 +25,7 @@ use crate::{
         downloader::{
             Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
         },
-        eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
-            receipts::GetReceipts,
-        },
+        eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
@@ -626,48 +623,19 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
-        let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            let (_, mut peer_channel) = self
+            let (peer_id, peer_channels) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
+
+            let available_downloader = Downloader::new(peer_id, peer_channels);
+            match available_downloader
+                .start()
+                .call(DownloaderCallRequest::Receipts { block_hashes })
                 .await
             {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(receipts)) => {
-                            if receipts.get_id() == request_id {
-                                return Some(receipts.get_receipts());
-                            }
-                            return None;
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|receipts|
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-            {
-                return Some(receipts);
+                Ok(DownloaderCallResponse::Receipts(Some(receipts))) => return Some(receipts),
+                _ => return None,
             }
         }
         None
