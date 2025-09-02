@@ -8,7 +8,7 @@ use ethrex_blockchain::{
     },
 };
 use ethrex_common::{
-    Address,
+    Address, U256,
     types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType},
 };
 use ethrex_l2_common::l1_messages::get_block_l1_messages;
@@ -188,6 +188,10 @@ pub async fn fill_transactions(
             }
         }
 
+        // Copy remaining gas and block value before executing the transaction
+        let previous_remaining_gas = context.remaining_gas;
+        let previous_block_value = context.block_value;
+
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
@@ -216,8 +220,7 @@ pub async fn fill_transactions(
             txs.pop();
 
             // This transaction state change is too big, we need to undo it.
-            context.vm.undo_last_tx()?;
-
+            undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
             continue;
         }
 
@@ -433,4 +436,15 @@ fn calculate_tx_diff_size(
 
 fn is_privileged_tx(tx: &Transaction) -> bool {
     matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
+}
+
+fn undo_last_tx(
+    context: &mut PayloadBuildContext,
+    previous_remaining_gas: u64,
+    previous_block_value: U256,
+) -> Result<(), BlockProducerError> {
+    context.vm.undo_last_tx()?;
+    context.remaining_gas = previous_remaining_gas;
+    context.block_value = previous_block_value;
+    Ok(())
 }
