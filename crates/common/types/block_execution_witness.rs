@@ -122,7 +122,7 @@ impl ExecutionWitnessResult {
             self.state_nodes
                 .iter()
                 .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
-                .collect(), //TODO: See if we can change the type of state_nodes so that we don't need to clone here.
+                .collect(),
         )
         .ok()
     }

@@ -276,7 +276,7 @@ impl Trie {
             all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
             cur_node_hash: &NodeHash,
             cur_node_rlp: NodeRLP,
-            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>, //TODO: I'd like this to be a NodeHash to Node map but the tree is built by NodeHash to RLPNode instead...
+            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
             let node = Node::decode_raw(&cur_node_rlp)?;
             traversed_nodes.insert(*cur_node_hash, cur_node_rlp);
