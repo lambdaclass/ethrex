@@ -289,6 +289,46 @@ impl Store {
     fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
         (index as u8).encode_to_vec()
     }
+
+    // Helper method for bulk reads - equivalent to LibMDBX read_bulk
+    async fn read_bulk_async<K, V, F>(
+        &self,
+        cf_name: &str,
+        keys: Vec<K>,
+        deserialize_fn: F,
+    ) -> Result<Vec<V>, StoreError>
+    where
+        K: AsRef<[u8]> + Send + 'static,
+        V: Send + 'static,
+        F: Fn(Vec<u8>) -> Result<V, StoreError> + Send + 'static,
+    {
+        let db = self.db.clone();
+        let cf_name = cf_name.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: {}", cf_name))
+            })?;
+
+            let mut results = Vec::new();
+
+            for key in keys {
+                match db.get_cf(&cf, key)? {
+                    Some(bytes) => {
+                        let value = deserialize_fn(bytes)?;
+                        results.push(value);
+                    }
+                    None => {
+                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
+                    }
+                }
+            }
+
+            Ok(results)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
 }
 
 #[async_trait::async_trait]
@@ -548,14 +588,32 @@ impl StoreEngine for Store {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        // TODO: read bulk like libmdbx
-        let mut bodies = Vec::new();
+        let numbers: Vec<BlockNumber> = (from..=to).collect();
 
-        for block_number in from..=to {
-            if let Some(body) = self.get_block_body(block_number).await? {
-                bodies.push(body);
-            }
-        }
+        // Step 1: Bulk read canonical block hashes
+        let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
+
+        let hashes = self
+            .read_bulk_async(CF_CANONICAL_BLOCK_HASHES, number_keys, |bytes| {
+                BlockHashRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            })
+            .await?;
+
+        // Step 2: Bulk read block bodies using the hashes
+        let hash_keys: Vec<Vec<u8>> = hashes
+            .iter()
+            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .collect();
+
+        let bodies = self
+            .read_bulk_async(CF_BODIES, hash_keys, |bytes| {
+                BlockBodyRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            })
+            .await?;
 
         Ok(bodies)
     }
@@ -564,14 +622,18 @@ impl StoreEngine for Store {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        // TODO: read bulk like libmdbx
-        let mut bodies = Vec::new();
+        let hash_keys: Vec<Vec<u8>> = hashes
+            .iter()
+            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .collect();
 
-        for hash in hashes {
-            if let Some(body) = self.get_block_body_by_hash(hash).await? {
-                bodies.push(body);
-            }
-        }
+        let bodies = self
+            .read_bulk_async(CF_BODIES, hash_keys, |bytes| {
+                BlockBodyRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            })
+            .await?;
 
         Ok(bodies)
     }
@@ -1090,13 +1152,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        let payload_bundle = PayloadBundle {
-            block,
-            block_value: U256::zero(),
-            blobs_bundle: Default::default(),
-            completed: false,
-            requests: vec![],
-        };
+        let payload_bundle = PayloadBundle::from_block(block);
         let key = payload_id.encode_to_vec();
         let value = PayloadBundleRLP::from(payload_bundle).bytes().clone();
         self.write_async(CF_PAYLOADS, key, value).await
@@ -1122,6 +1178,7 @@ impl StoreEngine for Store {
         self.write_async(CF_PAYLOADS, key, value).await
     }
 
+    // TODO: REVIEW LOGIC AGAINST LIBMDBX
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let cf = self.cf_handle(CF_RECEIPTS)?;
         let mut receipts = Vec::new();
@@ -1330,10 +1387,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
+    // TODO: REVIEW LOGIC AGAINST LIBMDBX
     async fn read_storage_snapshot(
         &self,
-        start: H256,
         account_hash: H256,
+        start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
         let db = self.db.clone();
         let max_reads = crate::store::MAX_SNAPSHOT_READS;
