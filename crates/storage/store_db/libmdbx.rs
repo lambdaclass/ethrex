@@ -577,6 +577,8 @@ impl StoreEngine for Store {
         let txn = self.db.begin_readwrite().unwrap();
         let stat = txn.table_stat::<Headers>().unwrap();
         info!("Have {} headers in store", stat.entries());
+        let stat = txn.table_stat::<Bodies>().unwrap();
+        info!("Have {} bodies in store", stat.entries());
         let mut cursor = txn.cursor::<Headers>().unwrap();
         while let Ok(Some((_, block_header))) = cursor.next() {
             let header = block_header.to()?;
