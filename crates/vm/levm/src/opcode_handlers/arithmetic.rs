@@ -1,9 +1,9 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::{U256, U512, types::Fork};
 
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
@@ -259,6 +259,23 @@ impl<'a> VM<'a> {
 
             Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
+    }
+
+    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
+        if self.env.config.fork < Fork::Osaka {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CLZ)?;
+
+        let value = self.current_call_frame.stack.pop1()?;
+
+        self.current_call_frame
+            .stack
+            .push1(U256::from(value.leading_zeros()))?;
+
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 
