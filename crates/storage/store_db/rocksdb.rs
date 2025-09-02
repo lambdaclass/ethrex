@@ -1024,48 +1024,69 @@ impl StoreEngine for Store {
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
         head_number: BlockNumber,
-        _head_hash: BlockHash,
+        head_hash: BlockHash,
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        // Get current latest block number to know what to clean up
+        let latest = self.get_latest_block_number().await?.unwrap_or(0);
+        let db = self.db.clone();
 
-        if let Some(canonical_blocks) = new_canonical_blocks {
-            for (block_number, block_hash) in canonical_blocks {
-                batch_ops.push((
-                    CF_CANONICAL_BLOCK_HASHES.to_string(),
-                    block_number.to_le_bytes().to_vec(),
-                    BlockHashRLP::from(block_hash).bytes().clone(),
-                ));
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+
+            // Update canonical block hashes
+            if let Some(canonical_blocks) = new_canonical_blocks {
+                let cf_canonical = db
+                    .cf_handle(CF_CANONICAL_BLOCK_HASHES)
+                    .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+                for (block_number, block_hash) in canonical_blocks {
+                    let number_key = block_number.to_le_bytes();
+                    let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
+                    batch.put_cf(&cf_canonical, number_key, hash_value);
+                }
             }
-        }
 
-        let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-        batch_ops.push((
-            CF_CHAIN_DATA.to_string(),
-            latest_key,
-            head_number.to_le_bytes().to_vec(),
-        ));
+            // Remove anything after the head from the canonical chain (like LibMDBX)
+            if let Some(cf_canonical) = db.cf_handle(CF_CANONICAL_BLOCK_HASHES) {
+                for number in (head_number + 1)..=(latest) {
+                    batch.delete_cf(&cf_canonical, number.to_le_bytes());
+                }
+            }
 
-        if let Some(safe_number) = safe {
-            let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-            batch_ops.push((
-                CF_CHAIN_DATA.to_string(),
-                safe_key,
-                safe_number.to_le_bytes().to_vec(),
-            ));
-        }
+            // Make head canonical
+            if let Some(cf_canonical) = db.cf_handle(CF_CANONICAL_BLOCK_HASHES) {
+                let head_key = head_number.to_le_bytes();
+                let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+                batch.put_cf(&cf_canonical, head_key, head_value);
+            }
 
-        if let Some(finalized_number) = finalized {
-            let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-            batch_ops.push((
-                CF_CHAIN_DATA.to_string(),
-                finalized_key,
-                finalized_number.to_le_bytes().to_vec(),
-            ));
-        }
+            // Update chain data
+            if let Some(cf_chain_data) = db.cf_handle(CF_CHAIN_DATA) {
+                let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+                batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
 
-        self.write_batch_async(batch_ops).await
+                if let Some(safe_number) = safe {
+                    let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+                    batch.put_cf(&cf_chain_data, safe_key, safe_number.to_le_bytes());
+                }
+
+                if let Some(finalized_number) = finalized {
+                    let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                    batch.put_cf(
+                        &cf_chain_data,
+                        finalized_key,
+                        finalized_number.to_le_bytes(),
+                    );
+                }
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
