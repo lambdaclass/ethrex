@@ -1449,7 +1449,7 @@ impl PeerHandler {
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
-        let mut scores = self.peer_scores.lock().await;
+        let mut peers_info = self.peer_scores.lock().await;
         // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
         let current_account_hashes = account_storage_roots
@@ -1614,7 +1614,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    let peer_info = scores.entry(peer_id).or_default();
+                    let peer_info = peers_info.entry(peer_id).or_default();
                     peer_info.score -= 1;
                     continue;
                 }
@@ -1625,7 +1625,7 @@ impl PeerHandler {
                     }
                 }
 
-                let peer_info = scores.entry(peer_id).or_default();
+                let peer_info = peers_info.entry(peer_id).or_default();
                 if peer_info.score < 10 {
                     peer_info.score += 1;
                 }
@@ -1689,10 +1689,12 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(peer_id).unwrap();
-                let max_peer_id_score = scores.get(&free_peer_id).unwrap();
-                if peer_id_score.score >= max_peer_id_score.score {
-                    free_peer_id = *peer_id;
+                if let (Some(peer_info), Some(free_peer_info)) =
+                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
+                {
+                    if peer_info.score >= free_peer_info.score {
+                        free_peer_id = *peer_id;
+                    }
                 }
             }
 
