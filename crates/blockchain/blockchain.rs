@@ -1073,7 +1073,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 }
 
 /// Calculates the blob gas required by a transaction
-fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
+pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
