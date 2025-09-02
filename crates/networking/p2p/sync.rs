@@ -1014,30 +1014,29 @@ impl Syncer {
         validate_storage_root(store.clone(), pivot_header.state_root).await;
         info!("Finished healing");
 
-        let mut bytecode_hashes: Vec<H256> = store
+        let mut bytecode_iter = store
             .iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
             .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
-            .collect();
-        bytecode_hashes.sort();
-        bytecode_hashes.dedup();
-
-        // Download bytecodes
-        info!(
-            "Starting bytecode download of {} hashes",
-            bytecode_hashes.len()
-        );
-        let bytecodes = self
-            .peers
-            .request_bytecodes(&bytecode_hashes)
-            .await
-            .map_err(SyncError::PeerHandler)?
-            .ok_or(SyncError::BytecodesNotFound)?;
-
-        store
-            .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-            .await?;
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+            // Download bytecodes
+            bytecode_hashes.sort();
+            bytecode_hashes.dedup();
+            info!(
+                "Starting bytecode download of {} hashes",
+                bytecode_hashes.len()
+            );
+            let bytecodes = self
+                .peers
+                .request_bytecodes(&bytecode_hashes)
+                .await
+                .map_err(SyncError::PeerHandler)?
+                .ok_or(SyncError::BytecodesNotFound)?;
+            store
+                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .await?;
+        }
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1299,4 +1298,11 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
         }
     });
     info!("Finished validate_storage_root");
+}
+
+fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
+where
+    T: Iterator<Item = H256>,
+{
+    Some(bytecode_iter.by_ref().take(10_000).collect()).filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
