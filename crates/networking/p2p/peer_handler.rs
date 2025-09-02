@@ -135,6 +135,41 @@ impl PeerHandler {
     /// This is used when the peer returns invalid data or is otherwise unreliable
     async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
+    /// Marks a peer as free (available for requests)
+    async fn mark_peer_as_free(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| {
+                info.available = true;
+                info.request_time = None
+            });
+        debug!("Downloader {peer_id} freed");
+    }
+
+    /// Marks a peer as busy (currently handling a request)
+    async fn mark_peer_as_busy(&self, peer_id: H256) {
+        self.peers_info
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|info| {
+                info.available = false;
+                info.request_time = Some(Instant::now())
+            });
+        debug!("Downloader {peer_id} marked as busy");
+    }
+
+    /// Helper function called in between snap sync steps.
+    /// Prevents peers from being marked as busy indefinitely.
+    async fn refresh_peers_availability(&self) {
+        for (_, peer) in self.peers_info.lock().await.iter_mut() {
+            peer.available = true;
+            peer.request_time = None;
+        }
+    }
+
     /// TODO: docs
     pub async fn get_peer_channel_with_highest_score(
         &self,
@@ -190,11 +225,6 @@ impl PeerHandler {
         let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
 
         let mut ret = Vec::<BlockHeader>::new();
-
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
 
         let mut sync_head_number = 0_u64;
 
@@ -276,11 +306,6 @@ impl PeerHandler {
             tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, u64, u64)>(1000);
 
         let mut current_show = 0;
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
-            peers_table
-                .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
-        );
 
         // 3) create tasks that will request a chunk of headers from a peer
 
@@ -299,7 +324,8 @@ impl PeerHandler {
                 *METRICS.header_downloads_tasks_queued.lock().await =
                     tasks_queue_not_started.len() as u64;
 
-                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.total_header_downloaders.lock().await =
+                    self.peers_info.lock().await.len() as u64;
             }
 
             if let Ok((headers, peer_id, startblock, previous_chunk_limit)) =
@@ -308,11 +334,7 @@ impl PeerHandler {
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true; // mark the downloader as free
-                    });
-
-                    debug!("Downloader {peer_id} freed");
+                    self.mark_peer_as_free(peer_id).await;
 
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
@@ -355,11 +377,7 @@ impl PeerHandler {
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true; // mark the downloader as free
-                });
-                debug!("Downloader {peer_id} freed");
+                self.mark_peer_as_free(peer_id).await;
             }
 
             let peer_channels = self
@@ -368,20 +386,24 @@ impl PeerHandler {
                 .await;
 
             for (peer_id, _peer_channels) in &peer_channels {
-                if downloaders.contains_key(peer_id) {
+                let mut peers_info = self.peers_info.lock().await;
+                if peers_info.contains_key(peer_id) {
                     // Peer is already in the downloaders list, skip it
                     continue;
                 }
 
-                downloaders.insert(*peer_id, true);
+                peers_info.insert(*peer_id, PeerInformation::default());
 
                 debug!("{peer_id} added as downloader");
             }
 
-            let free_downloaders = downloaders
+            let free_downloaders = self
+                .peers_info
+                .lock()
+                .await
                 .clone()
                 .into_iter()
-                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .filter(|(_downloader_id, peer_info)| peer_info.available)
                 .collect::<Vec<_>>();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -409,7 +431,7 @@ impl PeerHandler {
                 debug!(
                     "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
                 );
-                downloaders.remove(&free_peer_id);
+                self.peers_info.lock().await.remove(&free_peer_id);
                 continue;
             };
 
@@ -428,11 +450,7 @@ impl PeerHandler {
                 continue;
             };
 
-            downloaders
-                .entry(free_peer_id)
-                .and_modify(|downloader_is_free| {
-                    *downloader_is_free = false; // mark the downloader as busy
-                });
+            self.mark_peer_as_busy(free_peer_id).await;
 
             debug!("Downloader {free_peer_id} is now busy");
 
@@ -461,9 +479,10 @@ impl PeerHandler {
             }
         }
 
+        let downloaders_count = self.peers_info.lock().await.len() as u64;
         *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
-        *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.free_header_downloaders.lock().await = downloaders_count;
+        *METRICS.total_header_downloaders.lock().await = downloaders_count;
         *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
 
         let elapsed = start_time.elapsed().unwrap_or_default();
@@ -473,6 +492,7 @@ impl PeerHandler {
             ret.len(),
             format_duration(elapsed)
         );
+        self.refresh_peers_availability().await;
 
         {
             let downloaded_headers = ret.len();
