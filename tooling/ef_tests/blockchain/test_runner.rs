@@ -216,11 +216,6 @@ fn exception_is_expected(
                 ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
             ) | (
                 BlockChainExpectedException::BlockException(
-                    BlockExpectedException::SystemContractEmpty
-                ),
-                ChainError::EvmError(EvmError::SystemContractEmpty(_))
-            ) | (
-                BlockChainExpectedException::BlockException(
                     BlockExpectedException::SystemContractCallFailed
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))

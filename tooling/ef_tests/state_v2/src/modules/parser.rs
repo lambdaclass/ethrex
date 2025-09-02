@@ -23,7 +23,7 @@ pub struct RunnerOptions {
 }
 
 //TODO: Use this constant, improve it.
-const IGNORED_TESTS: [&str; 12] = [
+const IGNORED_TESTS: [&str; 14] = [
     "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
     "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
     "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
@@ -36,6 +36,8 @@ const IGNORED_TESTS: [&str; 12] = [
     "InitCollisionParis.json",
     "InitCollision.json",
     "contract_create.json", // Skip for now as it requires special transaction type handling
+    "HighGasPrice.json", // Skip until we fix gas price unit (u64 -> U256) https://github.com/lambdaclass/ethrex/issues/3629
+    "HighGasPriceParis.json", // Skip until we fix gas price unit (u64 -> U256) https://github.com/lambdaclass/ethrex/issues/3629
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.

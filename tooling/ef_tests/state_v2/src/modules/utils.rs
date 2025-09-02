@@ -1,5 +1,8 @@
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::{U256, types::Genesis};
+use ethrex_common::{
+    U256,
+    types::{Fork, Genesis},
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
@@ -9,7 +12,7 @@ use std::sync::Arc;
 
 use crate::modules::{
     error::RunnerError,
-    types::{Env, Test, TestCase},
+    types::{Env, Test, TestCase, genesis_from_test_and_fork},
 };
 
 /// Calculates the price of the gas based on the fields the test case has. For transaction types
@@ -32,8 +35,11 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
 }
 
 /// Loads the pre state of the test (the initial state of specific accounts) into the Genesis.
-pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store, Genesis) {
-    let genesis = Genesis::from(test);
+pub async fn load_initial_state(
+    test: &Test,
+    fork: &Fork,
+) -> (GeneralizedDatabase, H256, Store, Genesis) {
+    let genesis = genesis_from_test_and_fork(test, fork);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     storage.add_initial_state(genesis.clone()).await.unwrap();
