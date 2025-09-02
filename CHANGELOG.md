@@ -21,6 +21,7 @@
 ### 2025-08-25
 
 - Improve calldatacopy opcode further [#4150](https://github.com/lambdaclass/ethrex/pull/4150)
+- Remove unneeded RLP encoding from key/values in libmdbx / redb storage [#4020](https://github.com/lambdaclass/ethrex/pull/4020)
 
 ### 2025-08-22
 

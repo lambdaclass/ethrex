@@ -2,10 +2,10 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    AccountCodeRLP, BlockBodyRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store_db::Bytes32;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
@@ -18,7 +18,6 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
     Transaction, payload::PayloadBundle,
 };
-use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -119,10 +118,9 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_sync::<CanonicalBlockHashes>(number)?
-            .map(|block_hash| block_hash.to())
-            .transpose()
-            .map_err(StoreError::from)
+        Ok(self
+            .read_sync::<CanonicalBlockHashes>(number)?
+            .map(H256::from))
     }
 }
 
@@ -616,9 +614,7 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(H256::from))
     }
 
     fn get_canonical_block_hash_sync(
@@ -626,9 +622,7 @@ impl StoreEngine for Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_sync::<CanonicalBlockHashes>(number)
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(H256::from))
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -995,9 +989,7 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
             .await
-            .map(|o| o.map(|a| a.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(BlockHash::from))
     }
 
     async fn set_latest_valid_ancestor(
@@ -1179,25 +1171,33 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+    ( CanonicalBlockHashes ) BlockNumber => Bytes32
 );
 
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ///
+    /// Key: block hash
+    ( BlockNumbers ) Bytes32 => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ///
+    /// Key: block hash
+    ( Headers ) Bytes32 => BlockHeaderRLP
 );
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ///
+    /// Key: block hash
+    ( Bodies ) Bytes32 => BlockBodyRLP
 );
 table!(
     /// Account codes table.
-    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
+    ///
+    /// Keyt account code hash => account code
+    ( AccountCodes ) Bytes32 => AccountCodeRLP
 );
 
 dupsort!(
@@ -1213,7 +1213,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) Bytes32 => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1244,25 +1244,28 @@ table!(
 
 table!(
     /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
+    ///
+    /// Key: Block hash
+    ( PendingBlocks ) Bytes32 => BlockRLP
 );
 
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+    ///
+    /// Key: Account hash
+    /// Value: (storage key, storage value)[storage key]
+    ( StorageSnapShot ) Bytes32 => (Bytes32, Bytes32)[Bytes32]
 );
 
 table!(
     /// Stores invalid ancestors
-    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+    ///
+    /// Key: block hash
+    /// Value: block hash
+    ( InvalidAncestors ) Bytes32 => Bytes32
 );
 
-// Storage values are stored as bytes instead of using their rlp encoding
-// As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
-pub struct AccountStorageKeyBytes(pub [u8; 32]);
-pub struct AccountStorageValueBytes(pub [u8; 32]);
-
-impl Encodable for AccountStorageKeyBytes {
+impl Encodable for Bytes32 {
     type Encoded = [u8; 32];
 
     fn encode(self) -> Self::Encoded {
@@ -1270,47 +1273,9 @@ impl Encodable for AccountStorageKeyBytes {
     }
 }
 
-impl Decodable for AccountStorageKeyBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageKeyBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for AccountStorageValueBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageValueBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageValueBytes(b.try_into()?))
-    }
-}
-
-impl From<H256> for AccountStorageKeyBytes {
-    fn from(value: H256) -> Self {
-        AccountStorageKeyBytes(value.0)
-    }
-}
-
-impl From<U256> for AccountStorageValueBytes {
-    fn from(value: U256) -> Self {
-        AccountStorageValueBytes(u256_to_big_endian(value))
-    }
-}
-
-impl From<AccountStorageKeyBytes> for H256 {
-    fn from(value: AccountStorageKeyBytes) -> Self {
-        H256(value.0)
-    }
-}
-
-impl From<AccountStorageValueBytes> for U256 {
-    fn from(value: AccountStorageValueBytes) -> Self {
-        U256::from_big_endian(&value.0)
+impl Decodable for Bytes32 {
+    fn decode(b: &[u8]) -> anyhow::Result<Bytes32> {
+        Ok(Self(b.try_into()?))
     }
 }
 
@@ -1637,7 +1602,7 @@ mod tests {
     fn indexed_chunk_storage_limit_exceeded() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) Bytes32[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
@@ -1670,7 +1635,7 @@ mod tests {
     fn indexed_chunk_storage_store_max_limit() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) Bytes32[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
