@@ -287,56 +287,59 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
+        // In L1 there are system contract calls that need to be executed
+        // even if the block is empty, so we only skip execution of L2 blocks
         let is_block_empty = !block.body.transactions.is_empty()
             || !block
                 .body
                 .withdrawals
                 .as_ref()
                 .is_none_or(|withdrawals| withdrawals.is_empty());
-
-        // In L1 there are system contract calls that need to be executed
-        // even if the block is empty, so we only skip execution of L2 blocks
-        if !is_block_empty || !cfg!(feature = "l2") {
-            // Execute block
-            #[cfg(feature = "l2")]
-            let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
-            #[cfg(not(feature = "l2"))]
-            let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
-            let result = vm
-                .execute_block(block)
-                .map_err(StatelessExecutionError::EvmError)?;
-            let receipts = result.receipts;
-            let account_updates = vm
-                .get_state_transitions()
-                .map_err(StatelessExecutionError::EvmError)?;
-
-            // Update db for the next block
-            wrapped_db
-                .apply_account_updates(&account_updates)
-                .map_err(StatelessExecutionError::ExecutionWitness)?;
-
-            // Update acc_account_updates
-            for account in account_updates {
-                let address = account.address;
-                if let Some(existing) = acc_account_updates.get_mut(&address) {
-                    existing.merge(account);
-                } else {
-                    acc_account_updates.insert(address, account);
-                }
-            }
-
-            non_privileged_count += block.body.transactions.len()
-                - get_block_privileged_transactions(&block.body.transactions).len();
-
-            validate_gas_used(&receipts, &block.header)
-                .map_err(StatelessExecutionError::GasValidationError)?;
-            validate_receipts_root(&block.header, &receipts)
-                .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
-            // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(StatelessExecutionError::RequestsRootValidationError)?;
-            acc_receipts.push(receipts);
+        if is_block_empty && cfg!(feature = "l2") {
+            parent_block_header = &block.header;
+            continue;
         }
+
+        // Execute block
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
+        let result = vm
+            .execute_block(block)
+            .map_err(StatelessExecutionError::EvmError)?;
+        let receipts = result.receipts;
+        let account_updates = vm
+            .get_state_transitions()
+            .map_err(StatelessExecutionError::EvmError)?;
+
+        // Update db for the next block
+        wrapped_db
+            .apply_account_updates(&account_updates)
+            .map_err(StatelessExecutionError::ExecutionWitness)?;
+
+        // Update acc_account_updates
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+
+        non_privileged_count += block.body.transactions.len()
+            - get_block_privileged_transactions(&block.body.transactions).len();
+
+        validate_gas_used(&receipts, &block.header)
+            .map_err(StatelessExecutionError::GasValidationError)?;
+        validate_receipts_root(&block.header, &receipts)
+            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
+        validate_requests_hash(&block.header, &chain_config, &result.requests)
+            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
+        acc_receipts.push(receipts);
+
         parent_block_header = &block.header;
     }
 
