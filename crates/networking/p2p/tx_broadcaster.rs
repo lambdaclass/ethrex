@@ -41,12 +41,6 @@ impl TxBroadcaster {
 
         let server = state.clone().start();
 
-        /*send_interval(
-            Duration::from_secs(1),
-            server.clone(),
-            InMessage::BroadcastTxs,
-        );*/
-
         Ok(server)
     }
 
@@ -56,6 +50,10 @@ impl TxBroadcaster {
             .mempool
             .get_txs_for_broadcast()
             .map_err(|_| TxBroadcasterError::Broadcast)?;
+        if txs_to_broadcast.is_empty() {
+            debug!("No transactions to broadcast");
+            return Ok(());
+        }
         let peers = self.kademlia.get_peer_channels(&[]).await; // todo get only active peers?
         let peer_sqrt = (peers.len() as f64).sqrt();
         // we want to send to sqrt(peer_count) on average

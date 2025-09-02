@@ -130,7 +130,6 @@ pub(crate) async fn perform(
             negotiated_eth_capability: None,
             negotiated_snap_capability: None,
             last_block_range_update_block: 0,
-            broadcasted_txs: HashSet::new(),
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),

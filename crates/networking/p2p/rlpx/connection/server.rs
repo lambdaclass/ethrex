@@ -94,7 +94,6 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    pub(crate) broadcasted_txs: HashSet<H256>,
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
@@ -479,7 +478,6 @@ async fn send_new_pooled_tx_hashes(
             let mut txs_to_send = Vec::with_capacity(tx_count);
             for tx in tx_chunk {
                 txs_to_send.push((**tx).clone());
-                state.broadcasted_txs.insert(tx.hash());
             }
 
             send(
@@ -504,7 +502,7 @@ async fn send_all_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let filter = |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.hash()) };
+        let filter = |_: &Transaction| -> bool { true };
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool
@@ -518,7 +516,6 @@ async fn send_all_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
                 let mut txs_to_send = Vec::with_capacity(tx_count);
                 for tx in tx_chunk {
                     txs_to_send.push((**tx).clone());
-                    state.broadcasted_txs.insert(tx.hash());
                 }
 
                 send(
@@ -939,39 +936,7 @@ async fn handle_broadcast(
     (id, broadcasted_msg): (task::Id, Arc<Message>),
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
-        //todo refactor to an outside message to be called by tx broadcaster instead of broadcast
         match broadcasted_msg.as_ref() {
-            Message::Transactions(txs) => {
-                let peer_sqrt = (state.connection_broadcast_send.receiver_count() as f64).sqrt();
-                // we want to send to sqrt(peer_count) on average
-                // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
-                let accept_prob = 1.0 / peer_sqrt;
-                if random::<f64>() < accept_prob {
-                    return Ok(());
-                }
-                let mut filtered = Vec::with_capacity(txs.transactions.len());
-                for tx in &txs.transactions {
-                    let tx_hash = tx.hash();
-                    if state.broadcasted_txs.contains(&tx_hash) {
-                        continue;
-                    }
-                    filtered.push(tx.clone());
-                    state.broadcasted_txs.insert(tx_hash);
-                }
-                if !filtered.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!(
-                            "Sending {} transactions to peer from broadcast",
-                            filtered.len()
-                        ),
-                    );
-                    let new_msg = Message::Transactions(Transactions {
-                        transactions: filtered,
-                    });
-                    send(state, new_msg).await?;
-                }
-            }
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
             }
@@ -995,16 +960,6 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
-        txs_msg @ Message::Transactions(_) => {
-            let txs = Arc::new(txs_msg);
-            let task_id = tokio::task::id();
-            let Ok(_) = state.connection_broadcast_send.send((task_id, txs)) else {
-                let error_message = "Could not broadcast received transactions";
-                log_peer_error(&state.node, error_message);
-                return Err(RLPxError::BroadcastError(error_message.to_owned()));
-            };
-            Ok(())
-        }
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
