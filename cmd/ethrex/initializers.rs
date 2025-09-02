@@ -21,7 +21,7 @@ use ethrex_p2p::{
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-use local_ip_address::local_ip;
+use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
@@ -297,7 +297,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
 
     // TODO: for now we just use the local ip
     // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = local_ip().expect("Failed to get local ip");
+    let p2p_node_ip = local_ipv6().expect("Failed to get local ip");
+    info!("{p2p_node_ip:?}");
 
     let local_public_key = public_key_from_signing_key(signer);
 
