@@ -13,6 +13,7 @@ use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
+use core::num;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
@@ -31,11 +32,10 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
-use tracing::info;
-use core::num;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::info;
 
 pub struct Store {
     db: Arc<Database>,
@@ -571,9 +571,7 @@ impl StoreEngine for Store {
         .await
     }
 
-    async fn restore_canonical_chain(
-        &self,
-    ) -> Result<(), StoreError> {
+    async fn restore_canonical_chain(&self) -> Result<(), StoreError> {
         let txn = self.db.begin_readwrite().unwrap();
         let stat = txn.table_stat::<Headers>().unwrap();
         info!("Have {} headers in store", stat.entries());
@@ -585,8 +583,9 @@ impl StoreEngine for Store {
             let number = header.number;
             let hash = header.hash();
             info!("Restoring canonical block {number} -> {hash}");
-            self.write::<CanonicalBlockHashes>(number, hash.into()).await.unwrap();
-
+            self.write::<CanonicalBlockHashes>(number, hash.into())
+                .await
+                .unwrap();
         }
         Ok(())
     }
@@ -648,12 +647,14 @@ impl StoreEngine for Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         for i in 0..BlockNumber::MAX {
-            if let Some(Ok(hash)) = self.read::<CanonicalBlockHashes>(i)
-            .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))? {
+            if let Some(Ok(hash)) = self
+                .read::<CanonicalBlockHashes>(i)
+                .await
+                .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
+            {
                 info!("Block to hash: {i} -> {hash}");
             }
-        };
+        }
         self.read::<CanonicalBlockHashes>(number)
             .await
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))?

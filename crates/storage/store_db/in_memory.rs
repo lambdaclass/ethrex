@@ -86,13 +86,11 @@ impl StoreEngine for Store {
     async fn update_latest_block_number(
         &self,
         _block_number: BlockNumber,
-    ) -> Result<(), StoreError> { 
-     todo!()
+    ) -> Result<(), StoreError> {
+        todo!()
     }
 
-    async fn restore_canonical_chain(
-        &self,
-    ) -> Result<(), StoreError> {
+    async fn restore_canonical_chain(&self) -> Result<(), StoreError> {
         todo!()
     }
 

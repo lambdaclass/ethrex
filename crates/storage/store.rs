@@ -101,9 +101,7 @@ impl Store {
         self.engine.update_latest_block_number(block_number).await
     }
 
-    pub async fn restore_canonical_chain(
-        &self,
-    ) -> Result<(), StoreError> {
+    pub async fn restore_canonical_chain(&self) -> Result<(), StoreError> {
         self.engine.restore_canonical_chain().await
     }
 

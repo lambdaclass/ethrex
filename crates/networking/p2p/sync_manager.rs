@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
+    rlpx::p2p::Capability,
     sync::{SyncMode, Syncer},
 };
 
@@ -40,7 +41,7 @@ impl SyncManager {
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
-            peer_handler,
+            peer_handler.clone(),
             snap_enabled.clone(),
             cancel_token,
             blockchain,
@@ -52,6 +53,30 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
         };
+
+        info!("Fetching blocks from peers");
+        // Fetch blocks from peers and store them in DB (as we lost all blocks)
+        for i in (8497589 - 128)..8497589 {
+            let mut scores = peer_handler.peer_scores.lock().await;
+            let (_, mut peer) = peer_handler
+                .get_peer_channel_with_highest_score(&[Capability::eth(69)], &mut scores)
+                .await
+                .unwrap()
+                .unwrap();
+            let block_header = peer_handler
+                .get_block_header(&mut peer, i as u64)
+                .await
+                .unwrap()
+                .unwrap();
+            store
+                .add_block_header(block_header.hash(), block_header)
+                .await
+                .unwrap();
+        }
+        info!("Restoring latest block number to 8497589");
+        store.update_latest_block_number(8497589).await.unwrap();
+        info!("Restoring canonical chain");
+        store.restore_canonical_chain().await.unwrap();
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store

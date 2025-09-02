@@ -220,14 +220,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain latest block number
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
+    async fn update_latest_block_number(&self, block_number: BlockNumber)
+    -> Result<(), StoreError>;
 
-    async fn restore_canonical_chain(
-        &self,
-    ) -> Result<(), StoreError>;
+    async fn restore_canonical_chain(&self) -> Result<(), StoreError>;
 
     /// Update pending block number
     async fn update_pending_block_number(

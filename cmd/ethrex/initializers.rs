@@ -12,7 +12,7 @@ use ethrex_config::networks::Network;
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
     kademlia::Kademlia,
-    network::{peer_table, P2PContext},
+    network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::{l2::l2_connection::P2PBasedContext, p2p::Capability},
     sync_manager::SyncManager,
@@ -76,28 +76,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
-    store
-}
-
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store_restored(data_dir: &str, genesis: Genesis, peer_handler: PeerHandler) -> Store {
-    let store = open_store(data_dir);
-    // Fetch blocks from peers and store them in DB (as we lost all blocks)
-    for i in (8497589-128)..8497589 {
-        let mut scores = peer_handler.peer_scores.lock().await;
-        let (_, mut peer) = peer_handler.get_peer_channel_with_highest_score(&[Capability::eth(69)], &mut scores).await.unwrap().unwrap();
-        let block_header = peer_handler.get_block_header(&mut peer, i as u64).await.unwrap().unwrap();
-        store.add_block_header(block_header.hash(), block_header).await.unwrap();
-
-    }
-    info!("Restoring latest block number to 8497589");
-    store.update_latest_block_number(8497589).await.unwrap();
-    info!("Restoring canonical chain");
-    store.restore_canonical_chain().await.unwrap();
+    store.update_latest_block_number(0).await.unwrap();
     store
         .add_initial_state(genesis)
         .await
@@ -418,7 +397,6 @@ pub async fn init_l1(
         &local_p2p_node,
         &signer,
     )));
-
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
