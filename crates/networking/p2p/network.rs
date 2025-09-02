@@ -128,16 +128,16 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery side car: {e}");
     })?;
 
-    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start Tx Broadcaster: {e}");
-        })?;
-
     RLPxInitiator::spawn(context.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
+        })?;
+
+    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
