@@ -81,111 +81,126 @@ impl TrieDB for RocksDBTrieDB {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use ethrex_trie::NodeHash;
-//     use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
-//     use tempdir::TempDir;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_trie::NodeHash;
+    use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
+    use tempdir::TempDir;
 
-//     #[test]
-//     fn test_trie_db_basic_operations() {
-//         let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
-//         let db_path = temp_dir.path().join("test_db");
+    #[test]
+    fn test_trie_db_basic_operations() {
+        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
 
-//         // Setup RocksDB with column family
-//         let mut db_options = Options::default();
-//         db_options.create_if_missing(true);
-//         db_options.create_missing_column_families(true);
+        // Setup RocksDB with column family
+        let mut db_options = Options::default();
+        db_options.create_if_missing(true);
+        db_options.create_missing_column_families(true);
 
-//         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-//         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&db_options, db_path, vec![cf_descriptor]).unwrap();
-//         let db = Arc::new(db);
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &db_options,
+            db_path,
+            vec![cf_descriptor],
+        )
+        .unwrap();
+        let db = Arc::new(db);
 
-//         // Create TrieDB
-//         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        // Create TrieDB
+        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
-//         // Test data
-//         let node_hash = NodeHash::from(H256::from([1u8; 32]));
-//         let node_data = vec![1, 2, 3, 4, 5];
+        // Test data
+        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_data = vec![1, 2, 3, 4, 5];
 
-//         // Test put_batch
-//         trie_db
-//             .put_batch(vec![(node_hash, node_data.clone())])
-//             .unwrap();
+        // Test put_batch
+        trie_db
+            .put_batch(vec![(node_hash, node_data.clone())])
+            .unwrap();
 
-//         // Test get
-//         let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-//         assert_eq!(retrieved_data, node_data);
+        // Test get
+        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+        assert_eq!(retrieved_data, node_data);
 
-//         // Test get nonexistent
-//         let nonexistent_hash = NodeHash::from(H256::from([2u8; 32]));
-//         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
-//     }
+        // Test get nonexistent
+        let nonexistent_hash = NodeHash::from(H256::from([2u8; 32]));
+        assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
+    }
 
-//     #[test]
-//     fn test_trie_db_with_address_prefix() {
-//         let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
-//         let db_path = temp_dir.path().join("test_db");
+    #[test]
+    fn test_trie_db_with_address_prefix() {
+        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
 
-//         // Setup RocksDB with column family
-//         let mut db_options = Options::default();
-//         db_options.create_if_missing(true);
-//         db_options.create_missing_column_families(true);
+        // Setup RocksDB with column family
+        let mut db_options = Options::default();
+        db_options.create_if_missing(true);
+        db_options.create_missing_column_families(true);
 
-//         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-//         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&db_options, db_path, vec![cf_descriptor]).unwrap();
-//         let db = Arc::new(db);
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &db_options,
+            db_path,
+            vec![cf_descriptor],
+        )
+        .unwrap();
+        let db = Arc::new(db);
 
-//         // Create TrieDB with address prefix
-//         let address = H256::from([0xaa; 32]);
-//         let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
+        // Create TrieDB with address prefix
+        let address = H256::from([0xaa; 32]);
+        let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
 
-//         // Test data
-//         let node_hash = NodeHash::from(H256::from([1u8; 32]));
-//         let node_data = vec![1, 2, 3, 4, 5];
+        // Test data
+        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_data = vec![1, 2, 3, 4, 5];
 
-//         // Test put_batch
-//         trie_db
-//             .put_batch(vec![(node_hash, node_data.clone())])
-//             .unwrap();
+        // Test put_batch
+        trie_db
+            .put_batch(vec![(node_hash, node_data.clone())])
+            .unwrap();
 
-//         // Test get
-//         let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-//         assert_eq!(retrieved_data, node_data);
-//     }
+        // Test get
+        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+        assert_eq!(retrieved_data, node_data);
+    }
 
-//     #[test]
-//     fn test_trie_db_batch_operations() {
-//         let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
-//         let db_path = temp_dir.path().join("test_db");
+    #[test]
+    fn test_trie_db_batch_operations() {
+        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let db_path = temp_dir.path().join("test_db");
 
-//         // Setup RocksDB with column family
-//         let mut db_options = Options::default();
-//         db_options.create_if_missing(true);
-//         db_options.create_missing_column_families(true);
+        // Setup RocksDB with column family
+        let mut db_options = Options::default();
+        db_options.create_if_missing(true);
+        db_options.create_missing_column_families(true);
 
-//         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-//         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&db_options, db_path, vec![cf_descriptor]).unwrap();
-//         let db = Arc::new(db);
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &db_options,
+            db_path,
+            vec![cf_descriptor],
+        )
+        .unwrap();
+        let db = Arc::new(db);
 
-//         // Create TrieDB
-//         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        // Create TrieDB
+        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
-//         // Test data
-//         let batch_data = vec![
-//             (NodeHash::from(H256::from([1u8; 32])), vec![1, 2, 3]),
-//             (NodeHash::from(H256::from([2u8; 32])), vec![4, 5, 6]),
-//             (NodeHash::from(H256::from([3u8; 32])), vec![7, 8, 9]),
-//         ];
+        // Test data
+        let batch_data = vec![
+            (NodeHash::from(H256::from([1u8; 32])), vec![1, 2, 3]),
+            (NodeHash::from(H256::from([2u8; 32])), vec![4, 5, 6]),
+            (NodeHash::from(H256::from([3u8; 32])), vec![7, 8, 9]),
+        ];
 
-//         // Test batch put
-//         trie_db.put_batch(batch_data.clone()).unwrap();
+        // Test batch put
+        trie_db.put_batch(batch_data.clone()).unwrap();
 
-//         // Test batch get
-//         for (node_hash, expected_data) in batch_data {
-//             let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-//             assert_eq!(retrieved_data, expected_data);
-//         }
-//     }
-// }
+        // Test batch get
+        for (node_hash, expected_data) in batch_data {
+            let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+            assert_eq!(retrieved_data, expected_data);
+        }
+    }
+}
