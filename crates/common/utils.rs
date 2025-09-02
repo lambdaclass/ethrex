@@ -61,6 +61,16 @@ pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     hex::decode(trimmed)
 }
 
+/// Returns a shortened 0x-prefixed hex representation like `0x1234…cdef`.
+/// If the formatted value is short, it is returned as-is.
+pub fn short_hex<T: core::fmt::LowerHex>(value: T) -> String {
+    let s = format!("{:#x}", value);
+    if s.len() <= 10 {
+        return s;
+    }
+    format!("{}…{}", &s[..6], &s[s.len() - 4..])
+}
+
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;

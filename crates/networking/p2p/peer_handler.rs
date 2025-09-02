@@ -661,7 +661,7 @@ impl PeerHandler {
             return Some((block_bodies, peer_id));
         }
 
-        warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
+        warn!(peer_id = %format!("{:#x}", peer_id), "Peer returned no block bodies");
         self.record_peer_failure(peer_id).await;
         None
     }
