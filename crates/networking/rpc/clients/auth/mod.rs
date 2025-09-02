@@ -64,11 +64,11 @@ impl EngineClient {
     pub async fn engine_exchange_capabilities(&self) -> Result<Vec<String>, EngineClientError> {
         let request = ExchangeCapabilitiesRequest::from(Self::capabilities()).into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(ExchangeCapabilitiesError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 let error_message = if let Some(data) = error_response.error.data {
                     format!("{}: {:?}", error_response.error.message, data)
                 } else {
@@ -76,7 +76,6 @@ impl EngineClient {
                 };
                 Err(ExchangeCapabilitiesError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -90,11 +89,11 @@ impl EngineClient {
             payload_attributes,
         });
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(ForkChoiceUpdatedError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 let error_message = if let Some(data) = error_response.error.data {
                     format!("{}: {:?}", error_response.error.message, data)
                 } else {
@@ -102,7 +101,6 @@ impl EngineClient {
                 };
                 Err(ForkChoiceUpdatedError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -112,11 +110,11 @@ impl EngineClient {
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
         let request = GetPayloadV4Request { payload_id }.into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 let error_message = if let Some(data) = error_response.error.data {
                     format!("{}: {:?}", error_response.error.message, data)
                 } else {
@@ -124,7 +122,6 @@ impl EngineClient {
                 };
                 Err(GetPayloadError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -142,11 +139,11 @@ impl EngineClient {
         }
         .into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(NewPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 let error_message = if let Some(data) = error_response.error.data {
                     format!("{}: {:?}", error_response.error.message, data)
                 } else {
@@ -154,7 +151,6 @@ impl EngineClient {
                 };
                 Err(NewPayloadError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
