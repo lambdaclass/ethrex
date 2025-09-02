@@ -31,7 +31,7 @@ use crate::{
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
-        snap::{AccountRangeUnit, ByteCodes, GetByteCodes, GetTrieNodes, TrieNodes},
+        snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
     },
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
@@ -1162,7 +1162,6 @@ impl PeerHandler {
                 continue;
             };
 
-            let tx = task_sender.clone();
             downloaders
                 .entry(free_peer_id)
                 .and_modify(|downloader_is_free| {
@@ -1177,76 +1176,23 @@ impl PeerHandler {
                 .copied()
                 .collect();
 
-            let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            tokio::spawn(async move {
-                let empty_task_result = BytecodeTaskResult {
-                    start_index: chunk_start,
-                    bytecodes: vec![],
-                    peer_id: free_peer_id,
-                    remaining_start: chunk_start,
-                    remaining_end: chunk_end,
-                };
-                debug!(
-                    "Requesting bytecode from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetByteCodes(GetByteCodes {
-                    id: request_id,
-                    hashes: hashes_to_request.clone(),
-                    bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (free_downloader_channels_clone.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send(empty_task_result).await.ok();
-                    return;
-                }
-                if let Some(codes) = tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                                if id == request_id =>
-                            {
-                                return Some(codes);
-                            }
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
+            let free_downloader_channels_clone = free_downloader_channels.clone();
+
+            let available_downloader =
+                Downloader::new(free_peer_id, free_downloader_channels_clone.clone());
+
+            if let Err(_) = available_downloader
+                .start()
+                .cast(DownloaderCastRequest::ByteCode {
+                    task_sender: task_sender.clone(),
+                    hashes_to_request,
+                    chunk_start,
+                    chunk_end,
                 })
                 .await
-                .ok()
-                .flatten()
-                {
-                    if codes.is_empty() {
-                        tx.send(empty_task_result).await.ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        return;
-                    }
-                    // Validate response by hashing bytecodes
-                    let validated_codes: Vec<Bytes> = codes
-                        .into_iter()
-                        .zip(hashes_to_request)
-                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
-                        .map(|(b, _hash)| b)
-                        .collect();
-                    let result = BytecodeTaskResult {
-                        start_index: chunk_start,
-                        remaining_start: chunk_start + validated_codes.len(),
-                        bytecodes: validated_codes,
-                        peer_id: free_peer_id,
-                        remaining_end: chunk_end,
-                    };
-                    tx.send(result).await.ok();
-                } else {
-                    tracing::error!("Failed to get bytecode");
-                    tx.send(empty_task_result).await.ok();
-                }
-            });
+            {
+                tasks_queue_not_started.push_front((chunk_start, chunk_end));
+            }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
