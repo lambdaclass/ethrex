@@ -966,10 +966,12 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = peers_info.get(peer_id).unwrap().score;
-                let max_peer_id_score = peers_info.get(&free_peer_id).unwrap().score;
-                if peer_id_score >= max_peer_id_score {
-                    free_peer_id = *peer_id;
+                if let (Some(peer_info), Some(free_peer_info)) =
+                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
+                {
+                    if peer_info.score >= free_peer_info.score {
+                        free_peer_id = *peer_id;
+                    }
                 }
             }
 
@@ -1313,10 +1315,12 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = peers_info.get(peer_id).unwrap().score;
-                let max_peer_id_score = peers_info.get(&free_peer_id).unwrap().score;
-                if peer_id_score >= max_peer_id_score {
-                    free_peer_id = *peer_id;
+                if let (Some(peer_info), Some(free_peer_info)) =
+                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
+                {
+                    if peer_info.score >= free_peer_info.score {
+                        free_peer_id = *peer_id;
+                    }
                 }
             }
 
