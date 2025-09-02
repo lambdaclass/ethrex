@@ -14,7 +14,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
@@ -204,6 +204,11 @@ impl PeerHandler {
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
         let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
+        while peer_channels.is_empty() {
+            info!("No peers, zzz");
+            sleep(Duration::from_secs(5)).await;
+            peer_channels = self.peer_table.get_peer_channels(capabilities).await;
+        }
 
         peer_channels.shuffle(&mut rand::rngs::OsRng);
 
