@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use rand::random;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle},
+    tasks::{CastResponse, GenServer, send_interval},
 };
 use tracing::{debug, error, info};
 
@@ -34,7 +34,7 @@ impl TxBroadcaster {
     pub async fn spawn(
         kademlia: Kademlia,
         blockchain: Arc<Blockchain>,
-    ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
+    ) -> Result<(), TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
@@ -44,7 +44,13 @@ impl TxBroadcaster {
 
         let server = state.clone().start();
 
-        Ok(server)
+        send_interval(
+            Duration::from_secs(1),
+            server.clone(),
+            InMessage::BroadcastTxs,
+        );
+
+        Ok(())
     }
 
     async fn broadcast_txs(&self) -> Result<(), TxBroadcasterError> {

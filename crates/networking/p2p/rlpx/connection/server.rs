@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_common::types::MempoolTransaction;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -58,7 +58,6 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    tx_broadcaster::{InMessage, TxBroadcaster},
     types::Node,
 };
 
@@ -76,7 +75,6 @@ type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
-    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 #[derive(Clone, Debug)]
@@ -84,7 +82,6 @@ pub struct Receiver {
     pub(crate) context: P2PContext,
     pub(crate) peer_addr: SocketAddr,
     pub(crate) stream: Arc<TcpStream>,
-    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,7 +114,6 @@ pub struct Established {
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
-    pub(crate) tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 impl Established {
@@ -174,27 +170,20 @@ impl RLPxConnection {
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
-        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
     ) -> RLPxConnectionHandle {
         let inner_state = InnerState::Receiver(Receiver {
             context,
             peer_addr,
             stream: Arc::new(stream),
-            tx_broadcaster_handle,
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
     }
 
-    pub async fn spawn_as_initiator(
-        context: P2PContext,
-        node: &Node,
-        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
-    ) -> RLPxConnectionHandle {
+    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
         let inner_state = InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
-            tx_broadcaster_handle,
         });
         let connection = RLPxConnection { inner_state };
         connection.start()
@@ -509,11 +498,10 @@ async fn send_all_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         .iter()
         .any(|cap| state.capabilities.contains(cap))
     {
-        let filter = |_: &Transaction| -> bool { true };
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool
-            .filter_transactions_with_filter_fn(&filter)?
+            .get_all_txs()?
             .into_values()
             .flatten()
             .collect();
@@ -818,13 +806,6 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         continue;
                     }
                 }
-                state
-                    .tx_broadcaster_handle
-                    .cast(InMessage::BroadcastTxs)
-                    .await
-                    .unwrap_or_else(|err| {
-                        error!("Failed to send transactions to tx broadcaster: {err}");
-                    });
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {

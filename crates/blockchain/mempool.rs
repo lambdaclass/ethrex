@@ -170,6 +170,26 @@ impl Mempool {
         self.filter_transactions_with_filter_fn(&filter_tx)
     }
 
+    /// Gets all the transactions in the mempool
+    pub fn get_all_txs(&self) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
+            HashMap::with_capacity(128);
+        let tx_pool = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        for (_, tx) in tx_pool.iter() {
+            txs_by_sender
+                .entry(tx.sender())
+                .or_insert_with(|| Vec::with_capacity(128))
+                .push(tx.clone())
+        }
+
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        Ok(txs_by_sender)
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions_with_filter_fn(

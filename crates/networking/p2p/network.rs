@@ -19,7 +19,6 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::BTreeMap,
     io,
@@ -129,30 +128,24 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery side car: {e}");
     })?;
 
-    let tx_broadcaster_handle =
-        TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start Tx Broadcaster: {e}");
-            })?;
+    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start Tx Broadcaster: {e}");
+        })?;
 
-    RLPxInitiator::spawn(context.clone(), tx_broadcaster_handle.clone())
+    RLPxInitiator::spawn(context.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
         })?;
 
-    context
-        .tracker
-        .spawn(serve_p2p_requests(context.clone(), tx_broadcaster_handle));
+    context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
 }
 
-pub(crate) async fn serve_p2p_requests(
-    context: P2PContext,
-    tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
-) {
+pub(crate) async fn serve_p2p_requests(context: P2PContext) {
     let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
@@ -175,13 +168,7 @@ pub(crate) async fn serve_p2p_requests(
             continue;
         }
 
-        let _ = RLPxConnection::spawn_as_receiver(
-            context.clone(),
-            peer_addr,
-            stream,
-            tx_broadcaster_handle.clone(),
-        )
-        .await;
+        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 

@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CastResponse, GenServer, send_after},
 };
 
 use tracing::{debug, info};
 
-use crate::{metrics::METRICS, network::P2PContext, tx_broadcaster::TxBroadcaster};
+use crate::{metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
@@ -34,29 +34,23 @@ pub struct RLPxInitiator {
     target_peers: u64,
     /// The rate at which to try new connections.
     new_connections_per_lookup: u64,
-
-    tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
 }
 
 impl RLPxInitiator {
-    pub fn new(context: P2PContext, tx_broadcaster_handle: GenServerHandle<TxBroadcaster>) -> Self {
+    pub fn new(context: P2PContext) -> Self {
         Self {
             context,
             initial_lookup_interval: Duration::from_secs(3),
             lookup_interval: Duration::from_secs(5 * 60),
             target_peers: 50,
             new_connections_per_lookup: 5000,
-            tx_broadcaster_handle,
         }
     }
 
-    pub async fn spawn(
-        context: P2PContext,
-        tx_broadcaster_handle: GenServerHandle<TxBroadcaster>,
-    ) -> Result<(), RLPxInitiatorError> {
+    pub async fn spawn(context: P2PContext) -> Result<(), RLPxInitiatorError> {
         info!("Starting RLPx Initiator");
 
-        let state = RLPxInitiator::new(context, tx_broadcaster_handle);
+        let state = RLPxInitiator::new(context);
 
         let mut server = RLPxInitiator::start(state.clone());
 
@@ -77,12 +71,7 @@ impl RLPxInitiator {
             if !already_tried_peers.contains(&node_id) && contact.knows_us {
                 already_tried_peers.insert(node_id);
 
-                RLPxConnection::spawn_as_initiator(
-                    self.context.clone(),
-                    &contact.node,
-                    self.tx_broadcaster_handle.clone(),
-                )
-                .await;
+                RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
 
                 METRICS.record_new_rlpx_conn_attempt().await;
                 tried_connections += 1;
