@@ -11,7 +11,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash, payload::PayloadBundle,
+        code_hash,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -1045,22 +1045,6 @@ impl Store {
             nodes.push(node);
         }
         Ok(nodes)
-    }
-
-    pub async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.engine.add_payload(payload_id, block).await
-    }
-
-    pub async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        self.engine.get_payload(payload_id).await
-    }
-
-    pub async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.engine.update_payload(payload_id, payload).await
     }
 
     pub fn get_receipts_for_block(

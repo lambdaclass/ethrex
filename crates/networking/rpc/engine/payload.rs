@@ -236,11 +236,10 @@ impl RpcHandler for GetPayloadV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context).await?;
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
-        validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
+        validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
         let response = ExecutionPayload::from_block(payload_bundle.block);
 
@@ -259,9 +258,8 @@ impl RpcHandler for GetPayloadV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context).await?;
-        validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -296,9 +294,8 @@ impl RpcHandler for GetPayloadV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context).await?;
-        validate_fork(&payload.block, Fork::Cancun, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        validate_fork(&payload_bundle.block, Fork::Cancun, &context)?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -333,17 +330,15 @@ impl RpcHandler for GetPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context).await?;
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
-        if !chain_config.is_prague_activated(payload.block.header.timestamp) {
+        if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
-                chain_config.get_fork(payload.block.header.timestamp)
+                chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
-
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -681,15 +676,7 @@ async fn try_execute_payload(
             warn!("Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))
         }
-        Err(ChainError::Custom(e)) => {
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
-        }
-        Err(ChainError::InvalidTransaction(e)) => {
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
-        }
-        Err(ChainError::WitnessGeneration(e)) => {
+        Err(e) => {
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
@@ -723,16 +710,6 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     Ok(payload_id)
 }
 
-async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
-    debug!("Requested payload with id: {:#018x}", payload_id);
-    let Some(payload) = context.storage.get_payload(payload_id).await? else {
-        return Err(RpcErr::UnknownPayload(format!(
-            "Payload with id {payload_id:#018x} not found",
-        )));
-    };
-    Ok(payload)
-}
-
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
@@ -744,42 +721,34 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     Ok(())
 }
 
-async fn build_payload_if_necessary(
-    payload_id: u64,
-    payload: PayloadBundle,
-    context: RpcApiContext,
-) -> Result<PayloadBundle, RpcErr> {
-    if payload.completed {
-        Ok(payload)
-    } else {
-        let (blobs_bundle, requests, block_value, block) = {
-            let PayloadBuildResult {
-                blobs_bundle,
-                block_value,
-                requests,
-                payload,
-                ..
-            } = context
-                .blockchain
-                .build_payload(payload.block)
-                .await
-                .map_err(|err| RpcErr::Internal(err.to_string()))?;
-            (blobs_bundle, requests, block_value, payload)
-        };
-
-        let new_payload = PayloadBundle {
-            block,
-            block_value,
+async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
+    debug!("Requested payload with id: {:#018x}", payload_id);
+    let (blobs_bundle, requests, block_value, block) = {
+        let PayloadBuildResult {
             blobs_bundle,
+            block_value,
             requests,
-            completed: true,
-        };
+            payload,
+            ..
+        } = context
+            .blockchain
+            .get_payload(payload_id)
+            .await
+            .map_err(|err| match err {
+                ChainError::UnknownPayload => {
+                    RpcErr::UnknownPayload(format!("Payload with id {payload_id:#018x} not found",))
+                }
+                err => RpcErr::Internal(err.to_string()),
+            })?;
+        (blobs_bundle, requests, block_value, payload)
+    };
 
-        context
-            .storage
-            .update_payload(payload_id, new_payload.clone())
-            .await?;
+    let new_payload = PayloadBundle {
+        block,
+        block_value,
+        blobs_bundle,
+        requests,
+    };
 
-        Ok(new_payload)
-    }
+    Ok(new_payload)
 }

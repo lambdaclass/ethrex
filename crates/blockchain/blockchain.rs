@@ -30,11 +30,13 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -44,6 +46,8 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+
+const MAX_PAYLOADS: usize = 10;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -67,6 +71,9 @@ pub struct Blockchain {
     /// Whether performance logs should be emitted
     pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
+    /// Mapping from a payload id to either a complete payload or a payload build task
+    /// We need to keep completed payloads around in case consensus requests them twice
+    pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +107,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled,
         }
     }
@@ -111,6 +119,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled: false,
         }
     }
@@ -688,6 +697,14 @@ impl Blockchain {
     /// Remove a transaction from the mempool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
+    }
+
+    /// Remove all transactions in the executed block from the pool (if we have them)
+    pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
+        for tx in &block.body.transactions {
+            self.mempool.remove_transaction(&tx.hash())?;
+        }
+        Ok(())
     }
 
     /*
