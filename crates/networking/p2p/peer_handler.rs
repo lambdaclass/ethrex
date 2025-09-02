@@ -1643,10 +1643,30 @@ impl PeerHandler {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
+        let available_downloader = Downloader::new(Default::default(), peer_channel.clone());
+        match available_downloader
+            .start()
+            .call(DownloaderCallRequest::TrieNodes {
+                root_hash: get_trie_nodes.root_hash,
+                paths: get_trie_nodes.paths,
+            })
             .await
-            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
+        {
+            Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
+                // TODO: This might not be correct, verify
+                let nodes = nodes
+                    .iter()
+                    .map(|node| Bytes::from(node.encode_raw()))
+                    .collect();
+                Ok(TrieNodes { id, nodes })
+            }
+            _ => {
+                return Err(RequestStorageTrieNodes::SendMessageError(
+                    id,
+                    SendMessageError::PeerBusy,
+                ));
+            } // TODO: THIS ERROR IS NOT ADECUATE
+        }
     }
 
     /// Returns the PeerData for each connected Peer
