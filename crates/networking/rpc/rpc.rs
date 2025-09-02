@@ -67,6 +67,47 @@ use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
+use axum::response::IntoResponse;
+
+pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let pprof = prof_ctl
+        .dump_pprof()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(pprof)
+}
+
+/// Checks whether jemalloc profiling is activated an returns an error response if not.
+fn require_profiling_activated(
+    prof_ctl: &jemalloc_pprof::JemallocProfCtl,
+) -> Result<(), (StatusCode, String)> {
+    if prof_ctl.activated() {
+        Ok(())
+    } else {
+        Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "heap profiling not activated".into(),
+        ))
+    }
+}
+
+pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+
+    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let svg = prof_ctl
+        .dump_flamegraph()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Response::builder()
+        .header(CONTENT_TYPE, "image/svg+xml")
+        .body(Body::from(svg))
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
@@ -163,6 +204,11 @@ pub async fn start_api(
     let cors = CorsLayer::permissive();
 
     let http_router = Router::new()
+        .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
+        .route(
+            "/debug/pprof/allocs/flamegraph",
+            axum::routing::get(handle_get_heap_flamegraph),
+        )
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
@@ -206,6 +252,7 @@ async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
+    println!("Http request");
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;

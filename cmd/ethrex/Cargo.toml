@@ -20,7 +20,7 @@ ethrex-l2.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-sdk.workspace = true
 ethrex-l2-rpc.workspace = true
-
+tikv-jemallocator = { version = "0.6.0", features = ["profiling", "stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
