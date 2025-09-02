@@ -2,18 +2,13 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHeader, Receipt, payload::PayloadBundle,
-};
+use ethrex_common::types::{Block, BlockBody, BlockHeader, Receipt, payload::PayloadBundle};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::Nibbles;
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 // Account types
 pub type AccountCodeRLP = Rlp<Bytes>;
-pub type AccountStateRLP = Rlp<AccountState>;
-pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
 
 // Block types
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
