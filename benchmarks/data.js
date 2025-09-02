@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756845552326,
+  "lastUpdate": 1756845710451,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11215,6 +11215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164376465939,
             "range": "± 720998153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f5e41d633f9663f9b03304e4a7f681f695327750",
+          "message": "feat(l2): discard invalid batch proofs (#3866)\n\n**Motivation**\n\nIn case a verify_batch transaction failed, the proof_sender would get\nstuck because the old proof would be retried instead of asking for a new\none\n\n**Description**\n\n- Add a function to rollup_store to delete a proof\n- Modify OnChainProposer to return an error message indicating which\nproof was determined to be invalid\n- Modify l1_proof_sender to identify the the invalid proof and delete it\n\n**How to test**\n\nBuild a working sp1 prover\n```\nmake build-prover PROVER=sp1 G=true\n```\n\ncopy the built binary to a different folder because we are going to\noverwrite it\n```\ncp target/release/ethrex_prover <destination-folder>\n```\n\nstart a local testnet with sp1 enabled (set `--sp1.deploy-verifier` on\nl2 Makefile deploy-l1 target)\n```\nETHREX_PROOF_COORDINATOR_DEV_MODE=false make restart\n```\n\nstart the valid prover and check that the batches are correctly proved\n```\ncd <destination-folder> \n```\n\n```\nSP1_PROVER=cuda ./ethrex_prover --http.addr 127.0.0.1 --http.port 3900 --log.level debug\n```\n\nkill the prover with ctrl-c\n\nmodify the prover code to generate invalid proofs (I commented all the\ncode from `execution_program` function and returned a `ProgramOutput`\nwith everything set to 0)\n\n```\nmake build-prover PROVER=sp1 G=true\n```\n\nand\n\n```\nSP1_PROVER=cuda make init-prover PROVER=sp1\n```\n\nyou should see on the sequencer logs `Deleting invalid SP1 proof` you\ncan then kill this invalid prover with ctrl-c and restart the original\ncorrect prover. Now the valid prover should receives the batch that was\npreviously sent to the invalid prover and batches should start verifying",
+          "timestamp": "2025-09-02T19:48:05Z",
+          "tree_id": "d32fd0bdd8827c20261320fa0eec8ec888451a61",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f5e41d633f9663f9b03304e4a7f681f695327750"
+        },
+        "date": 1756845692936,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 162927022258,
+            "range": "± 308756313",
             "unit": "ns/iter"
           }
         ]
