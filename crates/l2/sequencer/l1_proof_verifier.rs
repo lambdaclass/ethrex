@@ -11,7 +11,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_sp1_vk};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::EstimateGasError},
@@ -71,9 +71,7 @@ impl L1ProofVerifier {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
-        let sp1_vk = eth_client
-            .get_sp1_vk(committer_cfg.on_chain_proposer_address)
-            .await?;
+        let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
 
         Ok(Self {
             eth_client,
@@ -99,10 +97,8 @@ impl L1ProofVerifier {
     }
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
-        let first_batch_to_verify = 1 + self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let first_batch_to_verify =
+            1 + get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if self
             .rollup_store

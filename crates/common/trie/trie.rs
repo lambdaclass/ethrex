@@ -249,6 +249,12 @@ impl Trie {
         }
     }
 
+    pub fn empty_in_memory() -> Self {
+        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
+            HashMap::new(),
+        )))))
+    }
+
     /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
@@ -256,26 +262,24 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
-    pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
-        let mut storage = nodes
-            .iter()
-            .map(|node| {
-                (
-                    NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
-                    node.clone(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let Some(root) = root else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
-            return Ok(Trie::new(in_memory_trie));
-        };
+    pub fn from_nodes(
+        root_hash: NodeHash,
+        mut state_nodes: HashMap<NodeHash, NodeRLP>,
+    ) -> Result<Self, TrieError> {
+        let root_rlp = state_nodes
+            .remove(&root_hash)
+            .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
-            storage: &mut HashMap<NodeHash, Vec<u8>>,
-            node: &NodeRLP,
+            all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
+            cur_node_hash: &NodeHash,
+            cur_node_rlp: NodeRLP,
+            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
-            Ok(match Node::decode_raw(node)? {
+            let node = Node::decode_raw(&cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp);
+
+            Ok(match node {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
@@ -283,8 +287,8 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, &rlp)?.into(),
+                            *choice = match all_nodes.remove(&hash) {
+                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -297,8 +301,8 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, &rlp)?.into(),
+                    node.child = match all_nodes.remove(&hash) {
+                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                         None => hash.into(),
                     };
 
@@ -308,8 +312,9 @@ impl Trie {
             })
         }
 
-        let root = inner(&mut storage, root)?.into();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(storage))));
+        let mut necessary_nodes = HashMap::new();
+        let root = inner(&mut state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;

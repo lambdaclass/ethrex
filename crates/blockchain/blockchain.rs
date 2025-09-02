@@ -8,7 +8,6 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -31,6 +30,7 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -64,6 +64,8 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
 }
 
@@ -86,13 +88,19 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
+    pub fn new(
+        evm_engine: EvmEngine,
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+    ) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            perf_logs_enabled,
         }
     }
 
@@ -103,6 +111,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            perf_logs_enabled: false,
         }
     }
 
@@ -174,9 +183,10 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
+
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut keys: Vec<Vec<u8>> = Vec::new();
+        let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -204,10 +214,14 @@ impl Blockchain {
             let account_updates = vm.get_state_transitions()?;
 
             for account_update in &account_updates {
-                keys.push(account_update.address.as_bytes().to_vec());
-                for storage in account_update.added_storage.keys() {
-                    keys.push(storage.as_bytes().to_vec());
-                }
+                touched_account_storage_slots.insert(
+                    account_update.address,
+                    account_update
+                        .added_storage
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<H256>>(),
+                );
             }
 
             // Get the used block hashes from the logger
@@ -301,7 +315,7 @@ impl Blockchain {
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
-                keys.push(address.0.to_vec());
+                touched_account_storage_slots.entry(address).or_default();
             }
             trie = updated_trie;
         }
@@ -345,19 +359,25 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
+        let mut state_nodes = HashMap::new();
+        for node in used_trie_nodes.into_iter() {
+            let hash = Keccak256::digest(&node);
+            state_nodes.insert(H256::from_slice(hash.as_slice()), node);
+        }
+
         Ok(ExecutionWitnessResult {
-            keys: keys.into_iter().map(Bytes::from).collect(),
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
             block_headers,
             chain_config,
-            state_trie_nodes: used_trie_nodes.into_iter().map(Bytes::from).collect(),
             storage_tries: HashMap::new(),
             parent_block_header: self
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
+            state_nodes,
+            touched_account_storage_slots,
         })
     }
 
@@ -400,7 +420,10 @@ impl Blockchain {
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
-        Self::print_add_block_logs(block, since, executed, merkleized, stored);
+
+        if self.perf_logs_enabled {
+            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        }
         result
     }
 
@@ -589,15 +612,17 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        info!(
-            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len,
-            last_block_number,
-            last_block_gas_limit,
-            transactions_count,
-            total_gas_used,
-            throughput
-        );
+        if self.perf_logs_enabled {
+            info!(
+                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                blocks_len,
+                last_block_number,
+                last_block_gas_limit,
+                transactions_count,
+                total_gas_used,
+                throughput
+            );
+        }
 
         Ok(())
     }

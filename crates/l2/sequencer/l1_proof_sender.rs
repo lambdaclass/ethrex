@@ -6,7 +6,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::EstimateGasError},
@@ -132,10 +132,8 @@ impl L1ProofSender {
             ProofSenderError::UnexpectedError(err.to_string())
         })?;
 
-        let last_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
