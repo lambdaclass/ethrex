@@ -390,7 +390,10 @@ impl DumpProcessor {
 
     fn get_checkpoint(&self) -> ProcessingCheckpoint {
         ProcessingCheckpoint {
-            current_root: self.state_root,
+            current_root: self
+                .sync_state
+                .as_ref()
+                .map(|(current_root, _)| *current_root),
             current_file: self.writer.as_ref().map(|writer| writer.current_file),
         }
     }
