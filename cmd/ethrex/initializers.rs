@@ -78,6 +78,8 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     info!("Restoring latest block number to 8497589");
     store.update_latest_block_number(8497589).await.unwrap();
+    info!("Restoring canonical chain");
+    store.restore_canonical_chain().await.unwrap();
     store
         .add_initial_state(genesis)
         .await

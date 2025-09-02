@@ -90,6 +90,12 @@ impl StoreEngine for Store {
      todo!()
     }
 
+    async fn restore_canonical_chain(
+        &self,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {

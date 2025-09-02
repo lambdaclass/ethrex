@@ -225,6 +225,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<(), StoreError>;
 
+    async fn restore_canonical_chain(
+        &self,
+    ) -> Result<(), StoreError>;
+
     /// Update pending block number
     async fn update_pending_block_number(
         &self,

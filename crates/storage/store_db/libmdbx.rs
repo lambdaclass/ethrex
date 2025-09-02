@@ -32,6 +32,7 @@ use libmdbx::{
 };
 use serde_json;
 use tracing::info;
+use core::num;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -568,6 +569,22 @@ impl StoreEngine for Store {
             block_number.encode_to_vec(),
         )
         .await
+    }
+
+    async fn restore_canonical_chain(
+        &self,
+    ) -> Result<(), StoreError> {
+        let txn = self.db.begin_readwrite().unwrap();
+        let mut cursor = txn.cursor::<Headers>().unwrap();
+        while let Ok(Some((_, block_header))) = cursor.next() {
+            let header = block_header.to()?;
+            let number = header.number;
+            let hash = header.hash();
+            info!("Restoring canonical block {number} -> {hash}");
+            self.write::<CanonicalBlockHashes>(number, hash.into());
+
+        }
+        Ok(())
     }
 
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {

@@ -101,6 +101,12 @@ impl Store {
         self.engine.update_latest_block_number(block_number).await
     }
 
+    pub async fn restore_canonical_chain(
+        &self,
+    ) -> Result<(), StoreError> {
+        self.engine.restore_canonical_chain().await
+    }
+
     pub async fn new_from_genesis(
         store_path: &str,
         engine_type: EngineType,
