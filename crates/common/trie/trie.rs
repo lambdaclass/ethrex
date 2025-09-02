@@ -302,7 +302,7 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.remove(&hash) {
-                        Some(rlp) => inner(all_nodes, &hash, rlp.clone(), traversed_nodes)?.into(),
+                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                         None => hash.into(),
                     };
 
