@@ -12,7 +12,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
 use crate::{
@@ -74,7 +74,7 @@ impl DiscoveryServer {
         loop {
             let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
             let Ok(packet) = Packet::decode(&buf[..read])
-                .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
+                .inspect_err(|e| debug!(err = ?e, "Failed to decode packet"))
             else {
                 continue;
             };

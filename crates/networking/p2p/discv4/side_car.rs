@@ -214,7 +214,7 @@ impl DiscoverySideCar {
                     contact.ping_hash = Some(ping_hash);
                 }
                 Err(err) => {
-                    error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+                    debug!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
 
                     contact.disposable = true;
 
@@ -231,7 +231,7 @@ impl DiscoverySideCar {
             }
 
             if let Err(err) = self.send_find_node(&contact.node).await {
-                error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+                debug!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
                 contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
