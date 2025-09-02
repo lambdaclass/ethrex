@@ -396,9 +396,7 @@ pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H
         let total_peers = peers.len();
         info!(
             snap_active_peers,
-            active_peers,
-            total_peers,
-            "Peer stats updated"
+            active_peers, total_peers, "Peer stats updated"
         );
         interval.tick().await;
     }
