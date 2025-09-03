@@ -660,7 +660,7 @@ impl GenServer for Downloader {
                     };
                     self.send_through_response_channel(task_sender, msg).await;
                 } else {
-                    tracing::error!("Failed to get bytecode");
+                    tracing::debug!("Failed to get bytecode");
                     self.send_through_response_channel(task_sender, empty_task_result)
                         .await;
                 }
