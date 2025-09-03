@@ -25,5 +25,6 @@ futures.workspace = true
 risc0 = ["ethrex-replay/risc0"]
 sp1 = ["ethrex-replay/sp1"]
 gpu = ["ethrex-replay/gpu"]
+l2 = ["ethrex-replay/l2"]
 profiling = ["ethrex-replay/profiling"]
 ci = ["ethrex-replay/ci"]
