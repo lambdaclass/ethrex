@@ -771,28 +771,12 @@ impl StoreEngine for Store {
             let mut iter = db.prefix_iterator_cf(&cf, &tx_hash_key);
             let mut transaction_locations = Vec::new();
 
-            // Collect all possible locations for this transaction_hash
-            while let Some(Ok((key, value))) = iter.next() {
-                // Check if the key exactly matches our transaction_hash
-                if key.len() >= tx_hash_key.len()
-                    && &key[0..tx_hash_key.len()] == tx_hash_key.as_slice()
-                {
-                    match <(BlockNumber, BlockHash, Index)>::decode(&value) {
-                        Ok(location) => transaction_locations.push(location),
-                        Err(_) => continue, // Skip invalid entries
-                    }
-                } else {
-                    break; // No more keys with our prefix
-                }
+            while let Some(Ok((_key, value))) = iter.next() {
+                transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
             }
 
             if transaction_locations.is_empty() {
                 return Ok(None);
-            }
-
-            // If there is only one location, return it directly
-            if transaction_locations.len() == 1 {
-                return Ok(transaction_locations.into_iter().next());
             }
 
             // If there are multiple locations, filter by the canonical chain
