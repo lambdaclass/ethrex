@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756940628795,
+  "lastUpdate": 1756940639785,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11755,6 +11755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167246757012,
             "range": "± 609276013",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "80769968+emirongrr@users.noreply.github.com",
+            "name": "emirongrr",
+            "username": "emirongrr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f1c25d45e206d4e22ea66f2faf297757a32b7536",
+          "message": "feat(l1): print loaded chain config on startup (#4027) (#4034)\n\n**Motivation**\n\nWhen starting the execution client, operators need clear and immediate\ninformation about the loaded chain configuration to verify correct setup\nand aid debugging. Currently, this information is not displayed at\nstartup.\n\n\n**Description**\n\nThis PR adds logging output on startup that prints the chain ID, and\nlists of pre-merge and post-merge hard forks with relevant block numbers\nor timestamps.\n\nIf there are any requested changes or feedback regarding the\nimplementation, I would be happy to address them. Please feel free to\nlet me know, and I’ll gladly make the necessary adjustments.\n\n<img width=\"1300\" height=\"419\" alt=\"terminal\"\nsrc=\"https://github.com/user-attachments/assets/9026e084-47b3-4bb3-9617-0bee0f4c05d1\"\n/>\n\n\nCloses #4027\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-09-03T22:10:33Z",
+          "tree_id": "eaeb1717dd03e6cc10de2e8d4dd935a2e8dd588e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f1c25d45e206d4e22ea66f2faf297757a32b7536"
+        },
+        "date": 1756940600139,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166377428011,
+            "range": "± 435650847",
             "unit": "ns/iter"
           }
         ]
