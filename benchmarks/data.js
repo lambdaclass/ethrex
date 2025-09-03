@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756884049932,
+  "lastUpdate": 1756895491932,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11395,6 +11395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 158947428557,
             "range": "± 246278598",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c4c8f2a3a45bc97ea97348450f0f99695de0153b",
+          "message": "perf(levm): use x86-64-v2 cpu target on linux by default (#4252)\n\n**Motivation**\n\nReleases are made with this target already\n\n\nhttps://github.com/lambdaclass/ethrex/blob/0cae720162fd889eb18417010e5f091c6d097d35/.github/workflows/tag_release.yaml#L33\n\nSetting it by default for linux targets at the repo level ensures more\nconsistency, specially when making benchmarks.\n\nThe reports i make in other prs about performance showing bench\ncomparisions use the v2, but because i manually edit the dockerfile\neverytime, which is an unnecesary manual process.\n\nx86_64-v2 basically is around the first Intel Core processors and should\nsupport most processors whereas x86_64-v1 goes back to the very first\nx86\n\nBy default rust uses v1.",
+          "timestamp": "2025-09-03T09:31:52Z",
+          "tree_id": "5dea5c6a1db363867d9b9cbc1e655e476962a981",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c4c8f2a3a45bc97ea97348450f0f99695de0153b"
+        },
+        "date": 1756895474147,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171125273685,
+            "range": "± 665030845",
             "unit": "ns/iter"
           }
         ]
