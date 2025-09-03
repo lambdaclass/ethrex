@@ -606,6 +606,11 @@ impl<'a> VM<'a> {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
+        // Add the address for the P256 verify precompile post-Osaka
+        if self.env.config.fork >= Fork::Osaka {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
+        }
+
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in self.tx.access_list().clone() {
             initial_accessed_addresses.insert(address);

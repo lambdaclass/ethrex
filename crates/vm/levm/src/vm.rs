@@ -299,8 +299,14 @@ impl Substate {
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
             _ => return Err(InternalError::InvalidFork.into()),
         };
+
         for i in 1..=max_precompile_address {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
+        }
+
+        // Add the address for the P256 verify precompile post-Osaka
+        if env.config.fork >= Fork::Osaka {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.

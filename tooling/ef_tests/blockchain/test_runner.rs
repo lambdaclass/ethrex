@@ -42,6 +42,12 @@ pub fn parse_and_execute(
         "0xf0672af9718013a1f396a9268e91e220ff09e7fa97480844e31da500f8ef291f", //All opcodes test
     ];
 
+    // Names of tests to run, to run entire specific .json files. Checked against the TestUnit URl
+    let specific_fusaka_tests_to_run: Vec<&str> = vec![
+        "/tests/frontier/precompiles/test_precompiles.py",
+        "/tests/frontier/precompiles/test_precompile_absence.py",
+    ];
+
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
@@ -53,6 +59,9 @@ pub fn parse_and_execute(
                     && !hashes_of_fusaka_tests_to_run
                         .iter()
                         .any(|hash| *hash == test.info.hash.clone().unwrap())
+                    && !specific_fusaka_tests_to_run
+                        .iter()
+                        .any(|name| test.info.url.clone().unwrap().contains(*name))
                     || match evm {
                         EvmEngine::LEVM => false,
                         EvmEngine::REVM => true,
