@@ -346,14 +346,14 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_bpo2_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2)
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo1)
+        } else if self.is_prague_activated(block_timestamp) {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun)
-        } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
-        } else if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
         } else {
             None
         }
