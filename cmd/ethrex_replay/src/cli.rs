@@ -1,6 +1,6 @@
 use std::{io::Write, time::SystemTime};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
@@ -107,6 +107,8 @@ pub enum CacheSubcommand {
 }
 
 #[derive(Parser, Clone)]
+#[clap(group = ArgGroup::new("replay_mode").required(true))]
+#[clap(group = ArgGroup::new("data_source").required(true))]
 pub struct EthrexReplayOptions {
     #[arg(long, group = "replay_mode")]
     pub execute: bool,
