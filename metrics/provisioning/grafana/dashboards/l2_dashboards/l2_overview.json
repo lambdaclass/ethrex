@@ -632,6 +632,7 @@
         "type": "prometheus",
         "uid": "prom-001"
       },
+      "description": "This is NOT the real proving time as measured by the prover, but the time between:\n1. Sending the batch program inputs to a prover\n2. Receiving this batch's proof\n\nThis should be used for development only and runs on the assumption that:\n1. There's a single prover\n2. Communication does not fail\n3. Communication adds negligible overhead in comparison with proving time",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -754,7 +755,7 @@
           "refId": "A"
         }
       ],
-      "title": "Batch Proving Time",
+      "title": "Batch Proving Time (read desc)",
       "transformations": [
         {
           "id": "joinByLabels",
@@ -1382,6 +1383,22 @@
               }
             }
           }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                },
+                "fieldName": "batch_proving_time (lastNotNull)"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
         }
       ],
       "type": "xychart"
@@ -1957,6 +1974,22 @@
                 "operation": "aggregate"
               }
             }
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                },
+                "fieldName": "batch_proving_time (lastNotNull)"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
           }
         }
       ],
@@ -2884,5 +2917,5 @@
   "timezone": "browser",
   "title": "Ethrex L2 - Overview",
   "uid": "6bc1afe8-ee95-407b-80d3-d76bd84d5091a",
-  "version": 2
+  "version": 1
 }
