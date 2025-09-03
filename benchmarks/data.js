@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756910724481,
+  "lastUpdate": 1756910924957,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11485,6 +11485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169050348205,
             "range": "± 461214688",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5dc636ae2a243a087a73379ec4f15a1c6d4a9da9",
+          "message": "chore(l1): remove old comments and code (#4269)\n\n**Motivation**\n\nDuring snapsync development we left old code and comments.\n\n**Description**\n\nRemoves old comments and a useless \"validation\" on big accounts, which\nis pointless because errors are expected (hence why healing is needed).",
+          "timestamp": "2025-09-03T13:56:02Z",
+          "tree_id": "68f5921ccced03fd177e3513c4a9de697ec72a75",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5dc636ae2a243a087a73379ec4f15a1c6d4a9da9"
+        },
+        "date": 1756910907212,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170422640977,
+            "range": "± 599006097",
             "unit": "ns/iter"
           }
         ]
