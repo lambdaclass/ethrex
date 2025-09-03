@@ -95,9 +95,6 @@ pub struct Metrics {
     // Bytecodes
     pub bytecodes_to_download: Arc<Mutex<u64>>,
     pub downloaded_bytecodes: Arc<Mutex<u64>>,
-    pub total_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub free_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub bytecode_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -593,9 +590,6 @@ impl Default for Metrics {
             // Bytecodes
             bytecodes_to_download: Arc::new(Mutex::new(0)),
             downloaded_bytecodes: Arc::new(Mutex::new(0)),
-            total_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            free_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            bytecode_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
 
