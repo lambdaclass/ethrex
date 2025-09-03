@@ -260,7 +260,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
         // Storage leaves metrics
         let storage_leaves_downloaded = *METRICS.downloaded_storage_slots.lock().await;
-        let storage_accounts_known = *METRICS.storage_accounts_known.lock().await;
+        let storage_accounts = *METRICS.storage_accounts_initial.lock().await;
         let storage_accounts_healed = *METRICS.storage_accounts_healed.lock().await;
         let storage_leaves_time = format_duration({
             let end_time = METRICS
@@ -362,7 +362,7 @@ elapsed: {elapsed}
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_time}
-storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initial known accounts {storage_accounts_known}, initial healed accounts {storage_accounts_healed} 
+storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initialy accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
 storage leaves insertion: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {bytecodes_downloaded}, remaining: {bytecodes_remaining}, elapsed: {bytecodes_download_time})"#

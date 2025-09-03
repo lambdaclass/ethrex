@@ -77,7 +77,7 @@ pub struct Metrics {
 
     // Storage slots
     pub downloaded_storage_slots: Arc<Mutex<u64>>,
-    pub storage_accounts_known: Arc<Mutex<u64>>,
+    pub storage_accounts_initial: Arc<Mutex<u64>>,
     pub storage_accounts_healed: Arc<Mutex<u64>>,
     pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
@@ -574,7 +574,7 @@ impl Default for Metrics {
 
             // Storage tries state roots
             storage_tries_state_roots_computed,
-            storage_accounts_known: Arc::new(Mutex::new(0)),
+            storage_accounts_initial: Arc::new(Mutex::new(0)),
             storage_accounts_healed: Arc::new(Mutex::new(0)),
             storage_tries_insert_end_time: Arc::new(Mutex::new(None)),
             storage_tries_insert_start_time: Arc::new(Mutex::new(None)),

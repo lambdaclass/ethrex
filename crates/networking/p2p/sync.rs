@@ -871,6 +871,8 @@ impl Syncer {
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+            *METRICS.storage_accounts_initial.lock().await =
+                storage_accounts.accounts_with_storage_root.len() as u64;
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
@@ -896,7 +898,7 @@ impl Syncer {
                 };
 
                 info!(
-                    "Started request_storage_ranges with {} accounts with storage root known",
+                    "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 chunk_index = self
@@ -911,7 +913,7 @@ impl Syncer {
                     .map_err(SyncError::PeerHandler)?;
 
                 info!(
-                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
+                    "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
                     // because we don't know if the storage root is still valid
@@ -923,6 +925,8 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
+            *METRICS.storage_accounts_healed.lock().await =
+                storage_accounts.healed_accounts.len() as u64;
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
