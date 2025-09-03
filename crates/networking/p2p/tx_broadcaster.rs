@@ -98,12 +98,6 @@ impl TxBroadcaster {
 
         for (peer_id, mut peer_channels, capabilities) in peers {
             if random::<f64>() < accept_prob {
-                info!(
-                    "Sending full transactions to peer {:#x}, amount {}, blob txs {}",
-                    peer_id,
-                    full_txs.len(),
-                    blob_txs.len()
-                );
                 // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
                 peer_channels.connection.cast(CastMessage::BackendMessage(
                     txs_message.clone(),
