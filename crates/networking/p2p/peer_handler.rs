@@ -230,7 +230,7 @@ impl PeerHandler {
     }
 
     /// Returns a random available `Downloader` with supported capabilities,
-    /// or None if there areno peers are available
+    /// or None if there are no peers are available
     async fn get_random_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
         self.update_peers_info().await;
 
@@ -682,7 +682,8 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
-        if (0..REQUEST_RETRY_ATTEMPTS).next().is_some() {
+        let mut attempts = 0;
+        while attempts < REQUEST_RETRY_ATTEMPTS {
             let available_downloader = loop {
                 match self
                     .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
@@ -692,19 +693,22 @@ impl PeerHandler {
                     None => {
                         debug!("No available downloader found, retrying...");
                         tokio::time::sleep(Duration::from_secs(10)).await;
+                        attempts += 1;
                         continue;
                     }
                 }
             };
 
-            match available_downloader
+            if let Ok(DownloaderCallResponse::Receipts(Some(receipts))) = available_downloader
                 .start()
-                .call(DownloaderCallRequest::Receipts { block_hashes })
+                .call(DownloaderCallRequest::Receipts {
+                    block_hashes: block_hashes.clone(),
+                })
                 .await
             {
-                Ok(DownloaderCallResponse::Receipts(Some(receipts))) => return Some(receipts),
-                _ => return None,
-            }
+                return Some(receipts);
+            };
+            attempts += 1;
         }
         None
     }

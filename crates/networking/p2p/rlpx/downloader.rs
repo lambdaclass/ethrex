@@ -365,7 +365,7 @@ impl GenServer for Downloader {
                     .await
                     .is_err()
                 {
-                    debug!("Failed sendign cast request to peer channel");
+                    debug!("Failed sending cast request to peer channel");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
                 }
 
@@ -510,7 +510,7 @@ impl GenServer for Downloader {
                     return CastResponse::Stop;
                 }
                 if let Some((accounts, proof)) =
-                    tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
+                    tokio::time::timeout(ACCOUNT_RANGE_REPLY_TIMEOUT, async move {
                         loop {
                             match receiver.recv().await {
                                 Some(RLPxMessage::AccountRange(AccountRange {
