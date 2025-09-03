@@ -32,10 +32,9 @@ pub struct Evm {
     #[cfg(feature = "revm")]
     pub state: EvmState,
 
-    // non-REVM build
+    // LEVM build
     #[cfg(not(feature = "revm"))]
     pub db: GeneralizedDatabase,
-
     #[cfg(not(feature = "revm"))]
     pub vm_type: VMType,
 }
