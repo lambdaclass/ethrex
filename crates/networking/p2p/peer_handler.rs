@@ -54,7 +54,6 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerInformation {
     pub score: i64,
-    pub available: bool,
     pub request_time: Option<Instant>,
 }
 
@@ -62,9 +61,14 @@ impl Default for PeerInformation {
     fn default() -> Self {
         Self {
             score: 0,
-            available: true,
             request_time: None,
         }
+    }
+}
+
+impl PeerInformation {
+    pub fn is_available(&self) -> bool {
+        self.request_time.is_none()
     }
 }
 
@@ -141,10 +145,7 @@ impl PeerHandler {
             .lock()
             .await
             .entry(peer_id)
-            .and_modify(|info| {
-                info.available = true;
-                info.request_time = None
-            });
+            .and_modify(|info| info.request_time = None);
         debug!("Downloader {peer_id} freed");
     }
 
@@ -154,20 +155,30 @@ impl PeerHandler {
             .lock()
             .await
             .entry(peer_id)
-            .and_modify(|info| {
-                info.available = false;
-                info.request_time = Some(Instant::now())
-            });
+            .and_modify(|info| info.request_time = Some(Instant::now()));
         debug!("Downloader {peer_id} marked as busy");
     }
 
-    // TODO: once peer handler becames an actor, call this periodically
     /// Helper function called in between snap sync steps.
     /// Prevents peers from being marked as busy indefinitely.
     async fn refresh_peers_availability(&self) {
         for (_, peer) in self.peers_info.lock().await.iter_mut() {
-            peer.available = true;
             peer.request_time = None;
+        }
+    }
+
+    // TODO: once peer handler becomes an actor, call this periodically
+    /// Helper function that frees peers after being busy
+    /// for more than the tolerated time
+    pub async fn reset_timed_out_busy_peers(&self) {
+        for (_, peer) in self.peers_info.lock().await.iter_mut() {
+            if peer
+                .request_time
+                .is_some_and(|time| time.elapsed() > PEER_REPLY_TIMEOUT)
+            {
+                debug!("Resetting peer that was busy for too long");
+                peer.request_time = None;
+            }
         }
     }
 
@@ -240,7 +251,7 @@ impl PeerHandler {
             .await
             .clone()
             .into_iter()
-            .filter(|(_downloader_id, peer_info)| peer_info.available)
+            .filter(|(_downloader_id, peer_info)| peer_info.is_available())
             .collect::<Vec<_>>();
 
         if free_downloaders.is_empty() {
@@ -277,7 +288,7 @@ impl PeerHandler {
             .await
             .clone()
             .into_iter()
-            .filter(|(_downloader_id, peer_info)| peer_info.available)
+            .filter(|(_downloader_id, peer_info)| peer_info.is_available())
             .collect::<Vec<_>>();
 
         if free_downloaders.is_empty() {
@@ -420,6 +431,7 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
 
         loop {
+            self.reset_timed_out_busy_peers().await;
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
@@ -588,6 +600,7 @@ impl PeerHandler {
         self.refresh_peers_availability().await;
 
         let available_downloader = loop {
+            self.reset_timed_out_busy_peers().await;
             match self
                 .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
                 .await
@@ -685,6 +698,7 @@ impl PeerHandler {
         let mut attempts = 0;
         while attempts < REQUEST_RETRY_ATTEMPTS {
             let available_downloader = loop {
+                self.reset_timed_out_busy_peers().await;
                 match self
                     .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
                     .await
@@ -777,6 +791,7 @@ impl PeerHandler {
         let mut chunk_file = 0;
 
         loop {
+            self.reset_timed_out_busy_peers().await;
             if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -1011,6 +1026,7 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         loop {
+            self.reset_timed_out_busy_peers().await;
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
