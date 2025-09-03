@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, db::TrieDbReader, error::TrieError, nibbles::Nibbles};
+use crate::{db::TrieDbReader, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -172,7 +172,7 @@ impl Node {
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         path: Nibbles,
         value: impl Into<ValueOrHash>,
     ) -> Result<Node, TrieError> {
@@ -187,7 +187,7 @@ impl Node {
     /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
     pub fn remove(
         self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
@@ -202,7 +202,7 @@ impl Node {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {

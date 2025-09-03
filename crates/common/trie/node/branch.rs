@@ -1,8 +1,6 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{
-    TrieDB, ValueRLP, db::TrieDbReader, error::TrieError, nibbles::Nibbles, node_hash::NodeHash,
-};
+use crate::{ValueRLP, db::TrieDbReader, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -64,7 +62,7 @@ impl BranchNode {
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         mut self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         mut path: Nibbles,
         value: ValueOrHash,
     ) -> Result<Node, TrieError> {
@@ -116,7 +114,7 @@ impl BranchNode {
     /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
     pub fn remove(
         mut self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         mut path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
@@ -235,7 +233,7 @@ impl BranchNode {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {

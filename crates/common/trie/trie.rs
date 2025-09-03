@@ -121,12 +121,13 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        let read_tx = self.db.read_tx();
         Ok(match self.root {
-            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
+            NodeRef::Node(ref node, _) => node.get(read_tx.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
+                Node::decode(&read_tx.get(hash)?.ok_or(TrieError::InconsistentTree)?)
                     .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
+                    .get(read_tx.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,
         })
@@ -138,10 +139,11 @@ impl Trie {
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
+            let read_tx = self.db.read_tx();
             self.root
-                .get_node(self.db.as_ref())?
+                .get_node(read_tx.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
+                .insert(read_tx.as_ref(), path, value)?
                 .into()
         } else {
             // If the trie is empty, just add a leaf.
@@ -159,11 +161,12 @@ impl Trie {
         }
 
         // If the trie is not empty, call the root node's removal logic.
+        let read_tx = self.db.read_tx();
         let (node, value) = self
             .root
-            .get_node(self.db.as_ref())?
+            .get_node(read_tx.as_ref())?
             .ok_or(TrieError::InconsistentTree)?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+            .remove(read_tx.as_ref(), Nibbles::from_bytes(&path))?;
         self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
