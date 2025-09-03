@@ -1,0 +1,19 @@
+[package]
+version = "0.1.0"
+name = "zkvm-openvm-program"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+openvm = { git = "https://github.com/openvm-org/openvm.git", features = [
+    "std",
+], tag = "v1.4.0" }
+rkyv = "0.8.10"
+
+zkvm_interface = { path = "../" }
+
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git" }
+
+[features]
+l2 = ["zkvm_interface/l2"]

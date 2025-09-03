@@ -21,6 +21,7 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
         Backend::SP1 => backends::sp1::execute(input),
         #[cfg(feature = "risc0")]
         Backend::RISC0 => backends::risc0::execute(input),
+        Backend::OpenVM => backends::openvm::execute(input),
     }
 }
 
@@ -35,6 +36,7 @@ pub fn prove(
         Backend::SP1 => backends::sp1::prove(input, aligned_mode).map(ProveOutput::SP1),
         #[cfg(feature = "risc0")]
         Backend::RISC0 => backends::risc0::prove(input, aligned_mode).map(ProveOutput::RISC0),
+        Backend::OpenVM => backends::openvm::prove(input, aligned_mode).map(ProveOutput::OpenVM),
     }
 }
 
@@ -48,5 +50,6 @@ pub fn to_batch_proof(
         ProveOutput::SP1(proof) => backends::sp1::to_batch_proof(proof, aligned_mode),
         #[cfg(feature = "risc0")]
         ProveOutput::RISC0(receipt) => backends::risc0::to_batch_proof(receipt, aligned_mode),
+        ProveOutput::OpenVM(_proof) => backends::openvm::to_batch_proof(aligned_mode),
     }
 }

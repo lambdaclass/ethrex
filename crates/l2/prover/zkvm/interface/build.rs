@@ -1,3 +1,5 @@
+use openvm_sdk::keygen::AppVerifyingKey;
+
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
@@ -91,4 +93,30 @@ fn build_sp1_program() {
         std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", format!("{}\n", vk))
             .expect("could not write SP1 vk to file");
     };
+}
+
+fn build_openvm_program() {
+    use openvm_build::GuestOptions;
+    use openvm_sdk::Sdk;
+    use serde::Serialize;
+
+    let sdk = Sdk::standard();
+
+    let guest_opts = GuestOptions::default();
+
+    let target_path = "./openvm/out/riscv32im-openvm-elf";
+
+    let _elf = sdk
+        .build(guest_opts, target_path, &None, None)
+        .expect("could not build OpenVM program");
+
+    let (_app_pk, app_vk) = sdk.app_keygen();
+
+    let vk = bincode::serialize(&app_vk).expect("could not serialize OpenVM vk");
+
+    std::fs::write(
+        "./openvm/out/riscv32im-openvm-vk",
+        format!("0x{}\n", hex::encode(vk)),
+    )
+    .expect("could not write OpenVM vk to file");
 }
