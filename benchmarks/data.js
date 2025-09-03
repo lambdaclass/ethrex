@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756910929606,
+  "lastUpdate": 1756911902610,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11545,6 +11545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170097998484,
             "range": "± 871585328",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3bcc9cf6221dfbb98317ba67ecb6edb6a28238ce",
+          "message": "ci(l1): fix daily hive report. (#4274)\n\n**Motivation**\nDaily Hive report is broken\n\n**Description**\n- Fixes edge case where there are zero tests of a suite\n- Revert back to stable Pectra release since the Osaka devnets only have\nosaka tests.",
+          "timestamp": "2025-09-03T14:11:52Z",
+          "tree_id": "9d970199c20293d9bbde222d67a5ae8307306293",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3bcc9cf6221dfbb98317ba67ecb6edb6a28238ce"
+        },
+        "date": 1756911881944,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169694279767,
+            "range": "± 2094764566",
             "unit": "ns/iter"
           }
         ]
