@@ -1,6 +1,6 @@
 #![no_main]
 
-use guest_program::{execution::execution_program, input::JSONProgramInput};
+use guest_program::{execution::execution_program, input::ProgramInput};
 use rkyv::rancor::Error;
 
 sp1_zkvm::entrypoint!(main);

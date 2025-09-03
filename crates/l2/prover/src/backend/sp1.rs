@@ -4,7 +4,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
-use guest_program::input::{JSONProgramInput, ProgramInput};
+use guest_program::input::ProgramInput;
 use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
