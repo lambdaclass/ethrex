@@ -582,7 +582,7 @@ impl Default for Metrics {
             storage_tries_insert_start_time: Arc::new(Mutex::new(None)),
 
             // Healing
-            healing_empty_try_recv: Arc::new(Mutex::new(0)),
+            healing_empty_try_recv: Arc::new(Mutex::new(1)),
             global_state_trie_leafs_healed: Arc::new(Mutex::new(0)),
             global_storage_tries_leafs_healed: Arc::new(Mutex::new(0)),
             heal_end_time: Arc::new(Mutex::new(None)),

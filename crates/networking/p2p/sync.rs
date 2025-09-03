@@ -989,6 +989,7 @@ impl Syncer {
             info!("Finished storing storage tries");
         }
 
+        *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
         info!("Starting Healing Process");
         let mut global_state_leafs_healed: u64 = 0;
         let mut global_storage_leafs_healed: u64 = 0;
@@ -1022,6 +1023,7 @@ impl Syncer {
             )
             .await;
         }
+        *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);

@@ -321,7 +321,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
         });
         let healed_accounts = *METRICS.global_state_trie_leafs_healed.lock().await;
         let healed_storages = *METRICS.global_storage_tries_leafs_healed.lock().await;
-        let heal_current_throttle = if *METRICS.healing_empty_try_recv.lock().await != 0 {
+        let heal_current_throttle = if *METRICS.healing_empty_try_recv.lock().await == 0 {
             "\x1b[31mDatabase\x1b[0m"
         } else {
             "\x1b[32mPeers\x1b[0m"
