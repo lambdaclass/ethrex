@@ -544,7 +544,6 @@ pub enum BlockExpectedException {
     IncorrectExcessBlobGas,
     IncorrectBlockFormat,
     InvalidRequest,
-    SystemContractEmpty,
     SystemContractCallFailed,
     Other, //TODO: Implement exceptions
 }
