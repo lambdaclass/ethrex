@@ -88,14 +88,6 @@ async fn heal_state_trie(
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
-    // TODO:
-    // Spawn a bytecode fetcher for this block
-    // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-    //     bytecode_receiver,
-    //     peers.clone(),
-    //     store.clone(),
-    // ));
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
         hash: state_root,
