@@ -365,7 +365,7 @@ healing: global accounts healed {healed_accounts} global storage slots healed {h
 bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {bytecodes_downloaded}, remaining: {bytecodes_remaining}, elapsed: {bytecodes_download_time})"#
         );
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 

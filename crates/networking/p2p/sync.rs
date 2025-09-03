@@ -24,6 +24,7 @@ use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
@@ -842,6 +843,7 @@ impl Syncer {
                 );
 
                 info!("Inserting accounts into the state trie");
+                *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -863,6 +865,7 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
+            *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
