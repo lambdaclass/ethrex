@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756932369378,
+  "lastUpdate": 1756935229690,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11695,6 +11695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168259417764,
             "range": "± 621078208",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f89343e9dbad04839f3b35f41790ea55176295c5",
+          "message": "refactor(l1, l2): `ethrex-replay` (#4228)\n\n**Motivation**\n\n`ethrex-replay`'s code was messy and unnecessarily large, and its API\nwas a little bit inconsistent\n\n**Description**\n\n- Refactors API\n    - `ethrex-replay execute block` -> `ethrex-replay block --execute`.\n    - `ethrex-replay execute blocks` -> `ethrex-replay blocks --execute`\n- `ethrex-replay execute block-range` -> `ethrex-replay block-range\n--execute`\n    - `ethrex-replay prove block` -> `ethrex-replay block-range --prove`\n- `ethrex-replay prove blocks` -> `ethrex-replay block-range --prove`\n- `ethrex-replay prove block-range` -> `ethrex-replay block-range\n--prove`\n- `ethrex-replay execute transaction` -> `ethrex-replay transaction\n--execute`\n- `ethrex-replay execute transaction --l2` -> `ethrex-replay l2\ntransaction --execute`\n- `ethrex-replay execute batch` -> `ethrex-replay l2 batch --execute`\n    - `ethrex-replay prove batch` -> `ethrex-replay l2 batch --prove`\n- Adds `log` function to `BlockExecutionReport`.\n- Adds `replay` function to abstract repeated replay logic.\n- Adds `setup` function to abstract repeated setup logic.\n- Adds some structs for common options between different\ncommands/subcommands.\n- Infer `Network` from chain ID.\n- Change `usize` to `u64` for block numbers.\n- Adapts `ethrex-replayer` to the changes.\n- Adapts Makefile to the changes.\n\n**Note**\n\n1. There's still room for more refactors, but this one settles down the\nnew structure.\n2. The `l2` feature flag cannot be removed as it requires a bigger\nrefactor in the `ethrex-prover` crate.",
+          "timestamp": "2025-09-03T20:39:57Z",
+          "tree_id": "e7f0c1ebe560431af83b32daa9c412121eb0df0e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f89343e9dbad04839f3b35f41790ea55176295c5"
+        },
+        "date": 1756935140042,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166670698242,
+            "range": "± 646164514",
             "unit": "ns/iter"
           }
         ]
