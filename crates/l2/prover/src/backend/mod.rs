@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
 use guest_program::output::ProgramOutput;
+use serde::{Deserialize, Serialize};
 
 pub mod exec;
 
