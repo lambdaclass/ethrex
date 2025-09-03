@@ -270,57 +270,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                let error_data = if let Some(error_data) = error_response.error.data {
-                    if &error_data == "0x" {
-                        "unknown error".to_owned()
-                    } else {
-                        let abi_decoded_error_data = hex::decode(
-                            error_data.strip_prefix("0x").ok_or(EthClientError::Custom(
-                                "Failed to strip_prefix in estimate_gas".to_owned(),
-                            ))?,
-                        )
-                        .map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to hex::decode in estimate_gas".to_owned(),
-                            )
-                        })?;
-                        let string_length = U256::from_big_endian(
-                            abi_decoded_error_data
-                                .get(36..68)
-                                .ok_or(EthClientError::Custom(
-                                    "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                        .to_owned(),
-                                ))?,
-                        );
-
-                        let string_len = if string_length > usize::MAX.into() {
-                            return Err(EthClientError::Custom(
-                                "Failed to convert string_length to usize in estimate_gas"
-                                    .to_owned(),
-                            ));
-                        } else {
-                            string_length.as_usize()
-                        };
-                        let string_data = abi_decoded_error_data.get(68..68 + string_len).ok_or(
-                            EthClientError::Custom(
-                                "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                    .to_owned(),
-                            ),
-                        )?;
-                        String::from_utf8(string_data.to_vec()).map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to String::from_utf8 in estimate_gas".to_owned(),
-                            )
-                        })?
-                    }
-                } else {
-                    "unknown error".to_owned()
-                };
-                Err(EstimateGasError::RPCError(format!(
-                    "{}: {}",
-                    error_response.error.message, error_data
-                ))
-                .into())
+                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
             }
         }
     }
