@@ -1394,6 +1394,12 @@ mod tests {
         test_store_suite(EngineType::Libmdbx).await;
     }
 
+    #[cfg(feature = "rocksdb")]
+    #[tokio::test]
+    async fn test_rocksdb_store() {
+        test_store_suite(EngineType::RocksDB).await;
+    }
+
     // Creates an empty store, runs the test and then removes the store (if needed)
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
