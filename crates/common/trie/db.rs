@@ -1,6 +1,6 @@
 use crate::{NodeHash, error::TrieError};
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
@@ -14,11 +14,11 @@ pub trait TrieDB: Send + Sync {
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
-    inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,
+    inner: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
-    pub const fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
     pub fn new_empty() -> Self {

@@ -15,7 +15,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
