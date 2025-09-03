@@ -4,6 +4,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use guest_program::input::{JSONProgramInput, ProgramInput};
 use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
@@ -11,7 +12,6 @@ use sp1_sdk::{
 };
 use std::time::Instant;
 use tracing::info;
-use zkvm_interface::input::{JSONProgramInput, ProgramInput};
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
