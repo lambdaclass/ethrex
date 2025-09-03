@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::Block;
 use ethrex_p2p::{
-    kademlia::KademliaTable,
+    kademlia::Kademlia,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -17,9 +17,7 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
-    sync::Arc,
 };
-use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
@@ -29,14 +27,15 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(table: Arc<Mutex<KademliaTable>>, node_record: NodeRecord) -> Self {
-        let mut connected_peers = vec![];
+    pub async fn new(table: Kademlia, node_record: NodeRecord) -> Self {
+        let connected_peers = table
+            .peers
+            .lock()
+            .await
+            .iter()
+            .map(|(_id, peer)| peer.node.clone())
+            .collect::<Vec<_>>();
 
-        for peer in table.lock().await.iter_peers() {
-            if peer.is_connected {
-                connected_peers.push(peer.node.clone());
-            }
-        }
         NodeConfigFile {
             known_peers: connected_peers,
             node_record,
