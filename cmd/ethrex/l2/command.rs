@@ -140,15 +140,6 @@ pub enum Command {
         #[arg(help = "ID of the batch to revert to")]
         batch: u64,
         #[arg(
-            long = "network",
-            default_value_t = Network::default(),
-            value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
-            env = "ETHREX_NETWORK",
-            value_parser = clap::value_parser!(Network),
-        )]
-        network: Network,
-        #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
             default_value_t = default_datadir(),
@@ -158,6 +149,21 @@ pub enum Command {
         datadir: String,
         #[command(flatten)]
         contract_pause_options: ContractPauseOptions,
+        #[arg(
+            default_value_t = false,
+            help = "If enabled the command will also delete the blocks from the Blockchain database",
+            long = "delete-blocks"
+        )]
+        delete_blocks: bool,
+        #[arg(
+            long = "network",
+            value_name = "GENESIS_FILE_PATH",
+            help = "Receives a `Genesis` struct in json format. Only required if using --delete-blocks",
+            env = "ETHREX_NETWORK",
+            value_parser = clap::value_parser!(Network),
+            required_if_eq("delete_blocks", "true"),
+        )]
+        network: Option<Network>,
     },
     #[command(about = "Pause L1 contracts")]
     Pause {
@@ -458,9 +464,11 @@ impl Command {
                 datadir,
                 network,
                 contract_pause_options: opts,
+                delete_blocks,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
+
                 if opts
                     .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
                     .await
@@ -473,34 +481,13 @@ impl Command {
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
-                info!("Updating store...");
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
-                let last_kept_block = rollup_store
-                    .get_block_numbers_by_batch(batch)
-                    .await?
-                    .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
-                    .unwrap_or(0);
 
-                let genesis = network.get_genesis()?;
-                let store = init_store(&data_dir, genesis).await;
+                let last_kept_block =
+                    delete_batch_from_rollup_store(batch, &rollup_store_dir).await?;
 
-                rollup_store.revert_to_batch(batch).await?;
-
-                let mut block_to_delete = last_kept_block + 1;
-                while store
-                    .get_canonical_block_hash(block_to_delete)
-                    .await?
-                    .is_some()
-                {
-                    store.remove_block(block_to_delete).await?;
-                    block_to_delete += 1;
+                if delete_blocks {
+                    delete_blocks_from_batch(&data_dir, network, last_kept_block).await?;
                 }
-                let last_kept_header = store
-                    .get_block_header(last_kept_block)?
-                    .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-                store
-                    .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                    .await?;
 
                 if opts
                     .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
@@ -580,4 +567,46 @@ impl ContractPauseOptions {
         call_contract(&client, &signer, self.contract_address, selector, params).await?;
         Ok(())
     }
+}
+
+async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> eyre::Result<u64> {
+    info!("Updating store...");
+    let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
+    let last_kept_block = rollup_store
+        .get_block_numbers_by_batch(batch)
+        .await?
+        .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
+        .unwrap_or(0);
+    rollup_store.revert_to_batch(batch).await?;
+    Ok(last_kept_block)
+}
+
+async fn delete_blocks_from_batch(
+    data_dir: &str,
+    network: Option<Network>,
+    last_kept_block: u64,
+) -> eyre::Result<()> {
+    let Some(network) = network else {
+        return Err(eyre::eyre!("Network not provided"));
+    };
+    let genesis = network.get_genesis()?;
+
+    let mut block_to_delete = last_kept_block + 1;
+    let store = init_store(data_dir, genesis).await;
+
+    while store
+        .get_canonical_block_hash(block_to_delete)
+        .await?
+        .is_some()
+    {
+        store.remove_block(block_to_delete).await?;
+        block_to_delete += 1;
+    }
+    let last_kept_header = store
+        .get_block_header(last_kept_block)?
+        .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
+    store
+        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .await?;
+    Ok(())
 }
