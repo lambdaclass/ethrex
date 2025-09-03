@@ -1,12 +1,10 @@
 .PHONY: prove-sp1-gpu-ci prove-risc0-gpu-ci
 
-NETWORK ?= mainnet
-
 # Block parameters
 ifdef BLOCK_NUMBER
 REPLAY_BLOCK_ARGS = --block ${BLOCK_NUMBER}
 endif
-REPLAY_BLOCK_ARGS += --rpc-url ${RPC_URL} --network ${NETWORK} --bench
+REPLAY_BLOCK_ARGS += --rpc-url ${RPC_URL} --bench
 
 ## Execution block
 execute:
