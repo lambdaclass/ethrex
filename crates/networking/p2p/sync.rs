@@ -1,6 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
+use crate::peer_score::PeerScores;
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -771,6 +772,7 @@ impl Syncer {
         store: Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
+        let mut peer_scores = PeerScores::default();
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
@@ -885,6 +887,7 @@ impl Syncer {
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
+                    &mut peer_scores,
                 )
                 .await?
                 {
@@ -993,6 +996,7 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
+                &mut peer_scores,
             )
             .await?;
             if !healing_done {
@@ -1131,7 +1135,7 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+        let peer_score = scores.get_score(&peer_id);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1141,8 +1145,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 1);
-            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            scores.record_failure(peer_id);
+            let peer_score = scores.get_score(&peer_id);
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1150,11 +1154,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        scores.entry(peer_id).and_modify(|score| {
-            if *score < 10 {
-                *score += 1;
-            }
-        });
+        scores.record_success(peer_id);
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

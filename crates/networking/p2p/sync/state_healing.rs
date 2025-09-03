@@ -37,14 +37,6 @@ pub const NODE_BATCH_SIZE: usize = 500;
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 const MAX_SCORE: i64 = 10;
 
-/// Max size of a bach to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
-/// Pace at which progress is shown via info tracing
-pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
-const MAX_SCORE: i64 = 10;
-
 use super::SyncError;
 
 #[derive(Debug)]
