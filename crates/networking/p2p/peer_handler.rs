@@ -885,9 +885,6 @@ impl PeerHandler {
                 .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.accounts_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
                 *METRICS.downloaded_account_tries.lock().await = downloaded_count;
             }
 
@@ -971,10 +968,6 @@ impl PeerHandler {
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-            }
 
             if free_downloaders.is_empty() {
                 continue;
@@ -1064,11 +1057,7 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
-        *METRICS.accounts_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_account_tries.lock().await = downloaded_count;
-        *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())

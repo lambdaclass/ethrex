@@ -31,7 +31,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
