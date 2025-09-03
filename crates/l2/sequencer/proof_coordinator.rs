@@ -335,6 +335,8 @@ impl ProofCoordinator {
                 let input = self.create_prover_input(batch_to_verify).await?;
                 debug!("Sending BatchResponse for block_number: {batch_to_verify}");
                 metrics!(
+                    tracing::warn!("setting request timestamp for batch {batch_to_verify}");
+                    tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
                     // First request starts a timer until a proof is received. The elapsed time will be
                     // the estimated proving time.
                     // This should be used for development only and runs on the assumption that:
@@ -342,6 +344,7 @@ impl ProofCoordinator {
                     //   2. Communication does not fail
                     //   3. Communication adds negligible overhead in comparison with proving time
                     self.request_timestamps.entry(batch_to_verify).or_insert(SystemTime::now());
+                    tracing::warn!("done, new request_teimstamps len: {}", self.request_timestamps.len());
                 );
                 ProofData::batch_response(batch_to_verify, input)
             };
@@ -375,6 +378,8 @@ impl ProofCoordinator {
             );
         } else {
             metrics!(
+                tracing::warn!("getting request timestamp for batch {batch_number}");
+                tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
                 let timestamp = self.request_timestamps.get(&batch_number).ok_or(
                     ProofCoordinatorError::InternalError(
                         "request timestamp could not be found".to_string(),
@@ -387,6 +392,8 @@ impl ProofCoordinator {
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
                 let _ = self.request_timestamps.remove(&batch_number);
+                tracing::warn!("removed request timestamp for batch {batch_number}");
+                tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
             );
             // If not, store it
             self.rollup_store
