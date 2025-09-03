@@ -44,7 +44,6 @@ use p256::{
     elliptic_curve::bigint::U256 as P256Uint,
 };
 use sha3::Digest;
-use std::io::Read;
 use std::ops::Mul;
 
 use crate::constants::{P256_A, P256_B, P256_N};
@@ -243,8 +242,10 @@ pub fn execute_precompile(
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[(P256_VERIFICATION_ADDRESS.0[18] as usize * 256)] =
-            Some(p_256_verify as PrecompileFn);
+        precompiles[u16::from_be_bytes([
+            P256_VERIFICATION_ADDRESS.0[18],
+            P256_VERIFICATION_ADDRESS.0[19],
+        ]) as usize] = Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
@@ -974,8 +975,10 @@ pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     increase_precompile_consumed_gas(P256_VERIFICATION_L1_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 160);
+    // Validate input data length is 160 bytes
+    if calldata.len() != 160 {
+        return Ok(Bytes::new());
+    }
 
     // Parse parameters
     let message_hash = calldata
@@ -998,17 +1001,12 @@ pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
         let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
 
         // Verify that the r and s values are in (0, n) (exclusive)
-        if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
-            return Ok(Bytes::new());
-        }
-
+        if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N ||
         // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
-        if x >= P256_P || y >= P256_P {
-            return Ok(Bytes::new());
-        }
-
+        x >= P256_P || y >= P256_P ||
         // Verify that the point (x,y) isn't at infinity
-        if (x, y) == (P256Uint::ZERO, P256Uint::ZERO) {
+        (x == P256Uint::ZERO && y == P256Uint::ZERO)
+        {
             return Ok(Bytes::new());
         }
 

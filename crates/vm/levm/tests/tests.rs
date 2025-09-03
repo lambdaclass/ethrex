@@ -2,8 +2,8 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_levm::l2_precompiles::p_256_verify;
 use ethrex_levm::precompiles::bls12_pairing_check;
+use ethrex_levm::precompiles::p_256_verify;
 
 #[test]
 fn pairing_infinity() {
