@@ -1,7 +1,6 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_score::PeerScores;
 use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -772,7 +771,8 @@ impl Syncer {
         store: Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
-        let mut peer_scores = PeerScores::default();
+        // @@@ let mut peer_scores = PeerScores::default();
+
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
@@ -887,7 +887,6 @@ impl Syncer {
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
-                    &mut peer_scores,
                 )
                 .await?
                 {
@@ -996,7 +995,6 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
-                &mut peer_scores,
             )
             .await?;
             if !healing_done {

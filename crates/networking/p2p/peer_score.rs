@@ -5,6 +5,9 @@ use crate::rlpx::p2p::Capability;
 use ethrex_common::H256;
 use std::collections::HashMap;
 
+const MAX_SCORE: i64 = 50;
+const MIN_SCORE: i64 = -50;
+
 #[derive(Debug, Clone, Default)]
 pub struct PeerScores {
     scores: HashMap<H256, i64>,
@@ -32,16 +35,16 @@ impl PeerScores {
     pub fn record_success(&mut self, peer_id: H256) {
         let score = self.scores.entry(peer_id).or_insert(0);
         *score = score.saturating_add(1);
-        if *score > 50 {
-            *score = 50;
+        if *score > MAX_SCORE {
+            *score = MAX_SCORE;
         }
     }
 
     pub fn record_failure(&mut self, peer_id: H256) {
         let score = self.scores.entry(peer_id).or_insert(0);
         *score = score.saturating_sub(1);
-        if *score < -50 {
-            *score = -50;
+        if *score < MIN_SCORE {
+            *score = MIN_SCORE;
         }
     }
 
@@ -75,7 +78,7 @@ impl PeerScores {
     pub async fn get_peer_channel_with_highest_score(
         &self,
         kademlia_table: &kademlia::Kademlia,
-        capabilities: &[Capability],
+        _capabilities: &[Capability],
     ) -> Result<Option<(H256, Option<PeerChannels>)>, PeerHandlerError> {
         let best_peer = self
             .scores
