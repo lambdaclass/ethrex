@@ -1033,6 +1033,7 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
         let mut bytecode_iter = store
             .iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
@@ -1056,6 +1057,7 @@ impl Syncer {
                 .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
                 .await?;
         }
+        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
