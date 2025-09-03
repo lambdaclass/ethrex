@@ -378,8 +378,8 @@ impl ProofCoordinator {
             );
         } else {
             metrics!(
-                let lock = self.request_timestamp.lock().await;
-                let request_timestamp = lock.get(&batch_number).ok_or(
+                let mut request_timestamps = self.request_timestamp.lock().await;
+                let request_timestamp = request_timestamps.get(&batch_number).ok_or(
                     ProofCoordinatorError::InternalError(
                         "request timestamp could not be found".to_string(),
                     ),
@@ -388,9 +388,9 @@ impl ProofCoordinator {
                     .elapsed()
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
                     .as_secs().try_into()
-                    .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?
-                    ;
+                    .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
+                let _ = request_timestamps.remove(&batch_number);
             );
             // If not, store it
             self.rollup_store
