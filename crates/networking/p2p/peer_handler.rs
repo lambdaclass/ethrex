@@ -129,11 +129,6 @@ async fn ask_peer_head_number(
                 Ok(sync_head_number)
             } else {
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
-                // TODO merge:
-                //Err(format!(
-                //    "Received unexpected response from peer {peer_id}. We expected id {request_id}, and we got {id} and we received {} block headers",
-                //    block_headers.len()
-                //))
             }
         }
         Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
@@ -1079,6 +1074,7 @@ impl PeerHandler {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     async fn request_account_range_worker(
         free_peer_id: H256,
         chunk_start: H256,
@@ -1131,8 +1127,6 @@ impl PeerHandler {
                 tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
-                // Too spammy
-                // tracing::error!("Received empty account range");
                 return Ok(());
             }
             // Unzip & validate response
@@ -1344,17 +1338,6 @@ impl PeerHandler {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -1599,13 +1582,6 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            /*             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.storages_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            } */
-
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
                     start_index,
@@ -1718,12 +1694,6 @@ impl PeerHandler {
                 }
 
                 scores.record_success(peer_id);
-
-                /*                 *downloaded_count += account_storages.len() as u64;
-                // If we didn't finish downloading the account, don't count it
-                if !hash_start.is_zero() {
-                    *downloaded_count -= 1;
-                } */
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1879,12 +1849,6 @@ impl PeerHandler {
             std::fs::write(path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
-
-        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
         disk_joinset
             .join_all()
             .await

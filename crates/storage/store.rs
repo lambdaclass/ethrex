@@ -11,7 +11,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash, payload::PayloadBundle,
+        code_hash,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -24,7 +24,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -75,12 +75,12 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!("Starting storage engine ({engine_type:?})");
+    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+        info!(engine = ?engine_type, path = %path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(_path)?),
+                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -91,7 +91,6 @@ impl Store {
             },
         };
 
-        info!("Started store engine");
         Ok(store)
     }
 
@@ -586,7 +585,7 @@ impl Store {
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
-        info!("Storing initial state from genesis");
+        debug!("Storing initial state from genesis");
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
@@ -630,10 +629,7 @@ impl Store {
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
-        info!(
-            "Storing genesis block with number {} and hash {}",
-            genesis_block_number, genesis_hash
-        );
+        info!(hash = %genesis_hash, "Storing genesis block");
 
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
@@ -1049,22 +1045,6 @@ impl Store {
             nodes.push(node);
         }
         Ok(nodes)
-    }
-
-    pub async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.engine.add_payload(payload_id, block).await
-    }
-
-    pub async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        self.engine.get_payload(payload_id).await
-    }
-
-    pub async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.engine.update_payload(payload_id, payload).await
     }
 
     pub fn get_receipts_for_block(

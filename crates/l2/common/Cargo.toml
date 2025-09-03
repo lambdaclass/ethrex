@@ -16,6 +16,7 @@ keccak-hash.workspace = true
 serde.workspace = true
 lambdaworks-crypto.workspace = true
 sha3.workspace = true
+secp256k1.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"

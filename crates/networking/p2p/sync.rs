@@ -72,7 +72,6 @@ pub enum SyncMode {
 }
 
 /// Manager in charge the sync process
-/// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct Syncer {
     /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
@@ -82,6 +81,9 @@ pub struct Syncer {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
+    /// This string indicates a folder where the snap algorithm will store temporary files that are
+    /// used during the syncing process
+    datadir: String,
 }
 
 impl Syncer {
@@ -90,12 +92,14 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
+        datadir: String,
     ) -> Self {
         Self {
             snap_enabled,
             peers,
             cancel_token,
             blockchain,
+            datadir,
         }
     }
 
@@ -110,6 +114,7 @@ impl Syncer {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
+            datadir: ".".to_string(),
         }
     }
 
@@ -785,10 +790,8 @@ impl Syncer {
         );
 
         let state_root = pivot_header.state_root;
-        let account_state_snapshots_dir =
-            get_account_state_snapshots_dir().ok_or(SyncError::AccountStateSnapshotsDirNotFound)?;
-        let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-            .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+        let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -808,29 +811,19 @@ impl Syncer {
                 .await?;
             info!("Finish downloading account ranges from peers");
 
-            /*             let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
-            *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-            let mut downloaded_account_storages = 0;
-
-            METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now()); */
-
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into())
+                let entry = entry.map_err(|err| {
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
                 let account_states_snapshot: Vec<(H256, AccountState)> =
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -870,19 +863,6 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
-
-            /*             METRICS
-                .storage_tries_download_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-            info!("Starting to compute the state root...");
-
-            let account_store_start = Instant::now(); */
-
-            /*             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
-
-            let account_store_time = Instant::now().saturating_duration_since(account_store_start); */
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
@@ -940,34 +920,22 @@ impl Syncer {
             }
             info!("Finished request_storage_ranges");
 
-            /*             let storages_store_start = Instant::now();
-
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            *METRICS.storage_tries_state_roots_to_compute.lock().await =
-                downloaded_account_storages; */
-
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
-            let account_storages_snapshots_dir = get_account_storages_snapshots_dir()
-                .ok_or(SyncError::AccountStoragesSnapshotsDirNotFound)?;
+            let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
-                let entry = entry.map_err(|_| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into())
+                let entry = entry.map_err(|err| {
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 
                 let snapshot_path = entry.path();
 
                 let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|_| SyncError::SnapshotReadError(snapshot_path.clone()))?;
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
                 let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
                     RLPDecode::decode(&snapshot_contents)
@@ -1004,33 +972,7 @@ impl Syncer {
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
-            info!("Finished writing to db");
 
-            for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
-                .lock()
-                .map_err(|_| SyncError::MaybeBigAccount)?
-                .iter()
-            {
-                let account_state = store
-                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
-                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
-
-                if *computed_storage_root != account_state.storage_root {
-                    debug!(
-                        "Incomplete or incorrect download for account hash {:?}, expected: {:?}, computed: {:?}",
-                        *account_hash, account_state.storage_root, *computed_storage_root,
-                    );
-                }
-            }
-            /*
-            METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start); */
             info!("Finished storing storage tries");
         }
 
@@ -1067,35 +1009,34 @@ impl Syncer {
             )
             .await;
         }
-        // TODO: 💀💀💀 either remove or change to a debug flag
-        validate_state_root(store.clone(), pivot_header.state_root).await;
-        validate_storage_root(store.clone(), pivot_header.state_root).await;
+
+        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
-        let mut bytecode_hashes: Vec<H256> = store
+        let mut bytecode_iter = store
             .iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
             .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
-            .collect();
-        bytecode_hashes.sort();
-        bytecode_hashes.dedup();
-
-        // Download bytecodes
-        info!(
-            "Starting bytecode download of {} hashes",
-            bytecode_hashes.len()
-        );
-        let bytecodes = self
-            .peers
-            .request_bytecodes(&bytecode_hashes)
-            .await
-            .map_err(SyncError::PeerHandler)?
-            .ok_or(SyncError::BytecodesNotFound)?;
-
-        store
-            .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-            .await?;
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+            // Download bytecodes
+            bytecode_hashes.sort();
+            bytecode_hashes.dedup();
+            info!(
+                "Starting bytecode download of {} hashes",
+                bytecode_hashes.len()
+            );
+            let bytecodes = self
+                .peers
+                .request_bytecodes(&bytecode_hashes)
+                .await
+                .map_err(SyncError::PeerHandler)?
+                .ok_or(SyncError::BytecodesNotFound)?;
+            store
+                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .await?;
+        }
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1190,7 +1131,7 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = scores.get_score(&peer_id);
+        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1200,8 +1141,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            scores.record_failure(peer_id);
-            let peer_score = scores.get_score(&peer_id);
+            scores.entry(peer_id).and_modify(|score| *score -= 1);
+            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1209,7 +1150,11 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        scores.record_success(peer_id);
+        scores.entry(peer_id).and_modify(|score| {
+            if *score < 10 {
+                *score += 1;
+            }
+        });
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
@@ -1268,8 +1213,8 @@ pub enum SyncError {
     BlockNumber(H256),
     #[error("No blocks found")]
     NoBlocks,
-    #[error("Failed to read snapshot from {0:?}")]
-    SnapshotReadError(PathBuf),
+    #[error("Failed to read snapshot from {0:?} with error {1:?}")]
+    SnapshotReadError(PathBuf, std::io::Error),
     #[error("Failed to RLP decode account_state_snapshot from {0:?}")]
     SnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
@@ -1326,14 +1271,14 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    store
+    let is_valid = store
         .clone()
         .iter_accounts(state_root)
         .expect("We should be able to open the store")
         .par_bridge()
-        .for_each(|(hashed_address, account_state)|
+        .map(|(hashed_address, account_state)|
     {
         let store_clone = store.clone();
         let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
@@ -1345,14 +1290,22 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
             );
 
         let tree_validated = account_state.storage_root == computed_storage_root;
-        if tree_validated {
-            //info!("Succesfully validated tree, {computed_storage_root} found");
-        } else {
+        if !tree_validated {
             error!(
                 "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
                 account_state.storage_root
             );
         }
-    });
+        tree_validated
+    })
+    .all(|valid| valid);
     info!("Finished validate_storage_root");
+    is_valid
+}
+
+fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
+where
+    T: Iterator<Item = H256>,
+{
+    Some(bytecode_iter.by_ref().take(10_000).collect()).filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
