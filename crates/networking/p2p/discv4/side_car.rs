@@ -1,5 +1,4 @@
 use std::{
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,7 +11,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after, send_interval},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
@@ -37,7 +36,8 @@ pub struct DiscoverySideCar {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    udp_socket: Arc<UdpSocket>,
+    sender4_socket: Arc<UdpSocket>,
+    sender6_socket: Arc<UdpSocket>,
 
     /// Interval between revalidation checks.
     revalidation_check_interval: Duration,
@@ -65,14 +65,16 @@ impl DiscoverySideCar {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        sender4_socket: Arc<UdpSocket>,
+        sender6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
             local_node_record,
             signer,
-            udp_socket,
+            sender4_socket,
+            sender6_socket,
             kademlia,
 
             revalidation_check_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
@@ -116,11 +118,12 @@ impl DiscoverySideCar {
             .try_into()
             .expect("first 32 bytes are the message hash");
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
@@ -142,18 +145,12 @@ impl DiscoverySideCar {
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
 
-        // Known issue #4232: currently udp_socket is only a IPv4 socket, so it will fail trying to send
-        // node to IPv6 addresses. For now we just print a trace to record the issue and return
-        if node.ip.is_ipv6() {
-            trace!("Sending FindNode message to ipv6 addresses, skipping.");
-            return Ok(());
-        }
-
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
-            .await
-            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
@@ -181,7 +178,6 @@ impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), DiscoverySideCarError> {
         info!("Starting Discovery Side Car");
@@ -191,8 +187,17 @@ impl DiscoverySideCar {
                 .expect("Failed to create local node record"),
         ));
 
-        let state =
-            DiscoverySideCar::new(local_node, local_node_record, signer, udp_socket, kademlia);
+        let send4_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let send6_socket = Arc::new(UdpSocket::bind("[::]:0").await?);
+
+        let state = DiscoverySideCar::new(
+            local_node,
+            local_node_record,
+            signer,
+            send4_socket,
+            send6_socket,
+            kademlia,
+        );
 
         let mut server = state.clone().start();
 

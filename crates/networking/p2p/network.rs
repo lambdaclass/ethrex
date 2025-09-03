@@ -120,7 +120,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     DiscoverySideCar::spawn(
         context.local_node.clone(),
         context.signer,
-        udp_socket,
         context.table.clone(),
     )
     .await

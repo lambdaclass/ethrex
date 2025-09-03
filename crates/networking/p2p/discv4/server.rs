@@ -48,7 +48,9 @@ pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    udp_socket: Arc<UdpSocket>,
+    listener_socket: Arc<UdpSocket>,
+    sender4_socket: Arc<UdpSocket>,
+    sender6_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
 
@@ -57,14 +59,18 @@ impl DiscoveryServer {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        listener_socket: Arc<UdpSocket>,
+        sender4_socket: Arc<UdpSocket>,
+        sender6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
             local_node_record,
             signer,
-            udp_socket,
+            listener_socket,
+            sender4_socket,
+            sender6_socket,
             kademlia,
         }
     }
@@ -72,7 +78,7 @@ impl DiscoveryServer {
     async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
-            let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
+            let (read, from) = self.listener_socket.recv_from(&mut buf).await?;
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
@@ -117,11 +123,12 @@ impl DiscoveryServer {
             .try_into()
             .expect("first 32 bytes are the message hash");
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -150,7 +157,12 @@ impl DiscoveryServer {
 
         pong.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -175,7 +187,12 @@ impl DiscoveryServer {
 
         msg.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -199,11 +216,11 @@ impl DiscoveryServer {
 
         msg.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, from)
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
+        let send_socket = match from.is_ipv4() {
+            true => &self.sender4_socket,
+            false => &self.sender6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, from).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -273,11 +290,16 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
+        let send4_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let send6_socket = Arc::new(UdpSocket::bind("[::]:0").await?);
+
         let state = DiscoveryServer::new(
             local_node,
             local_node_record,
             signer,
             udp_socket,
+            send4_socket,
+            send6_socket,
             kademlia.clone(),
         );
 
