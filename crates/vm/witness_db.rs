@@ -81,6 +81,7 @@ impl VmDatabase for ExecutionWitnessWrapper {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        dbg!(address);
         dbg!(
             self.lock_mutex()
                 .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?

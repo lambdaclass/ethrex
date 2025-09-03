@@ -481,7 +481,7 @@ impl Store {
                                 account_state.storage_root,
                             )?;
                             let root = trie.hash_no_commit();
-                            vacant.insert(TrieLogger::open_trie(trie, root))
+                            vacant.insert(TrieLogger::open_trie(trie, NodeHash::from(root).into()))
                         }
                     };
 

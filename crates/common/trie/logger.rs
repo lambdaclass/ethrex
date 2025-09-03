@@ -6,7 +6,7 @@ use std::{
 use ethereum_types::H256;
 use ethrex_rlp::decode::RLPDecode;
 
-use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
+use crate::{Node, NodeHash, NodeRef, Trie, TrieDB, TrieError};
 
 pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
 
@@ -21,9 +21,9 @@ impl TrieLogger {
         Ok(lock.clone())
     }
 
-    pub fn open_trie(trie: Trie, root: H256) -> (TrieWitness, Trie) {
+    pub fn open_trie(trie: Trie, root: NodeRef) -> (TrieWitness, Trie) {
         // let root = trie.hash_no_commit();
-        dbg!(root);
+        // dbg!(root);
         let db = trie.db;
         let witness = Arc::new(Mutex::new(HashSet::new()));
         let logger = TrieLogger {

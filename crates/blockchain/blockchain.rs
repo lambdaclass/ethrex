@@ -27,6 +27,7 @@ use ethrex_metrics::metrics;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::NodeHash;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
@@ -175,7 +176,8 @@ impl Blockchain {
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
         let root = trie.hash_no_commit();
-        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie, root);
+        let (state_trie_witness, mut trie) =
+            TrieLogger::open_trie(trie, NodeHash::from(root).into());
 
         let mut touched_account_storage_slots = HashMap::new();
         // This will become the state trie + storage trie
@@ -256,7 +258,7 @@ impl Blockchain {
                     {
                         let root = storage_trie.hash_no_commit();
                         let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie, root);
+                            TrieLogger::open_trie(storage_trie, NodeHash::from(root).into());
                         // Access all the keys
                         for storage_key in acc_keys {
                             let hashed_key = hash_key(storage_key);

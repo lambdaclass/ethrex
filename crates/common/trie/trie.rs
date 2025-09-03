@@ -71,14 +71,23 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Box<dyn TrieDB>, root: NodeRef) -> Self {
+        if let NodeRef::Hash(NodeHash::Hashed(a)) = root {
+            if a == *EMPTY_TRIE_HASH {
+                return Self {
+                    db,
+                    root: Default::default(),
+                };
+            }
+        }
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
-                NodeHash::from(root).into()
-            } else {
-                Default::default()
-            },
+            root,
+            // root: if root != *EMPTY_TRIE_HASH {
+            //     NodeHash::from(root).into()
+            // } else {
+            //     Default::default()
+            // },
         }
     }
 
@@ -93,13 +102,20 @@ impl Trie {
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
-            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
+            NodeRef::Node(ref node, _) => {
+                // dbg!("Node");
+                node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
+            }
             NodeRef::Hash(hash) if hash.is_valid() => {
+                dbg!("Hash");
                 Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
-            _ => None,
+            _ => {
+                dbg!("None");
+                None
+            }
         })
     }
 
@@ -285,12 +301,20 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, &rlp)?.into(),
+                            *choice = match storage.get(&hash).cloned() {
+                                Some(rlp) => {
+                                    let res: NodeRef = inner(storage, &rlp)?.into();
+                                    let NodeRef::Node(rlp, _) = res.clone() else {
+                                        unreachable!()
+                                    };
+                                    storage.insert(res.compute_hash(), rlp.encode_raw());
+                                    res
+                                }
                                 None => hash.into(),
                             };
                         }
                     }
+                    storage.insert(node.compute_hash(), node.encode_raw());
 
                     (*node).into()
                 }
@@ -299,18 +323,33 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, &rlp)?.into(),
+                    node.child = match storage.get(&hash).cloned() {
+                        Some(rlp) => {
+                            let res: NodeRef = inner(storage, &rlp)?.into();
+                            let NodeRef::Node(rlp, _) = res.clone() else {
+                                unreachable!()
+                            };
+                            storage.insert(res.compute_hash(), rlp.encode_raw());
+                            res
+                        }
                         None => hash.into(),
                     };
 
+                    storage.insert(node.compute_hash(), node.encode_raw());
+
                     node.into()
                 }
-                Node::Leaf(node) => node.into(),
+                Node::Leaf(node) => {
+                    let res = node.clone();
+                    storage.insert(res.compute_hash(), res.encode_raw());
+                    res.into()
+                }
             })
         }
 
-        let root = inner(&mut state_nodes, &root)?.into();
+        let node = inner(&mut state_nodes, &root)?;
+        state_nodes.insert(node.compute_hash(), node.encode_raw());
+        let root = node.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
