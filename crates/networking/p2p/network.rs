@@ -223,7 +223,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
         // Account leaves metrics
         let account_leaves_downloaded = *METRICS.downloaded_account_tries.lock().await;
         let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
-            *METRICS.account_tries_inserted.lock().await as f64 / account_leaves_downloaded as f64
+            (*METRICS.account_tries_inserted.lock().await as f64 / account_leaves_downloaded as f64)
+                * 100.0
         } else {
             0.0
         };
