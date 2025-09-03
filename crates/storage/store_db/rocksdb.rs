@@ -57,30 +57,38 @@ impl Store {
         let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
 
         db_options.set_max_open_files(-1);
-        db_options.set_use_fsync(false);
-        db_options.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
-        db_options.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
+        db_options.set_max_file_opening_threads(16);
 
-        db_options.set_level_zero_file_num_compaction_trigger(4);
-        db_options.set_level_zero_slowdown_writes_trigger(20);
-        db_options.set_level_zero_stop_writes_trigger(36);
-        db_options.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
-        db_options.set_max_bytes_for_level_base(1024 * 1024 * 1024); // 1GB
+        db_options.set_max_background_jobs(8);
+
+        db_options.set_level_zero_file_num_compaction_trigger(2);
+        db_options.set_level_zero_slowdown_writes_trigger(10);
+        db_options.set_level_zero_stop_writes_trigger(16);
+        db_options.set_target_file_size_base(512 * 1024 * 1024); // 512MB
+        db_options.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB L1
         db_options.set_max_bytes_for_level_multiplier(10.0);
         db_options.set_level_compaction_dynamic_level_bytes(true);
 
-        db_options.set_db_write_buffer_size(2 * 1024 * 1024 * 1024); // 2GB total
-        db_options.set_write_buffer_size(256 * 1024 * 1024); // 256MB 
-        db_options.set_max_write_buffer_number(6);
+        db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
+        db_options.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+        db_options.set_max_write_buffer_number(4);
         db_options.set_min_write_buffer_number_to_merge(2);
 
         db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
-        db_options.set_max_total_wal_size(1024 * 1024 * 1024); // 1GB 
-        db_options.set_wal_ttl_seconds(3600); // Cleanup
+        db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
+        db_options.set_wal_ttl_seconds(3600);
+        db_options.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
+        db_options.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
+        db_options.set_use_fsync(false); // fdatasync
 
-        db_options.set_compaction_readahead_size(2 * 1024 * 1024); // 2MB readahead
         db_options.set_enable_pipelined_write(true);
         db_options.set_allow_concurrent_memtable_write(true);
+        db_options.set_enable_write_thread_adaptive_yield(true);
+        db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
+        db_options.set_advise_random_on_open(false);
+
+        // db_options.enable_statistics();
+        // db_options.set_stats_dump_period_sec(600);
 
         let column_families = vec![
             CF_CANONICAL_BLOCK_HASHES,
@@ -103,10 +111,6 @@ impl Store {
         let mut cf_descriptors = Vec::new();
         for cf_name in column_families {
             let mut cf_opts = Options::default();
-
-            let mut base_block_opts = BlockBasedOptions::default();
-            base_block_opts.set_block_cache(&cache);
-            cf_opts.set_block_based_table_factory(&base_block_opts);
 
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
