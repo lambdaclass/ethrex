@@ -379,8 +379,12 @@ impl ExecutionWitnessResult {
                 .get(&block.header.number)
                 .map(|header| header.hash())
                 .ok_or(ExecutionWitnessError::Custom(
-                    "execution witness does not contain the block header of a block to execute"
-                        .to_string(),
+                    format!(
+                        "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
+                        block.header.number,
+                        self.block_headers.keys().min(),
+                        self.block_headers.keys().max()
+                    )
                 ))?;
             // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
