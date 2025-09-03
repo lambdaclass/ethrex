@@ -4302,6 +4302,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "tikv-jemallocator",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
