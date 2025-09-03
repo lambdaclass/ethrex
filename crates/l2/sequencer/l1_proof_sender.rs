@@ -330,8 +330,7 @@ impl L1ProofSender {
                 .get_transaction_receipt(verify_tx_hash)
                 .await?
                 .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
-            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()
-                    .map_err(|_| ProofSenderError::ConversionError("failed to convert verify gas used to i64".to_string()))?;
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
             METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
         );
 

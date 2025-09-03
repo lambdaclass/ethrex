@@ -437,9 +437,9 @@ impl L1Committer {
             }
             #[allow(clippy::as_conversions)]
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
-            let batch_gas_used = batch_gas_used.try_into().map_err(|_| CommitterError::ConversionError("failed to convert batch gas used to a i64".to_string()))?;
-            let batch_size = (last_added_block_number - first_block_of_batch).try_into().map_err(|_| CommitterError::ConversionError("failed to convert batch size to a i64".to_string()))?;
-            let tx_count = tx_count.try_into().map_err(|_| CommitterError::ConversionError("failed to convert batch tx count to a i64".to_string()))?;
+            let batch_gas_used = batch_gas_used.try_into()?;
+            let batch_size = (last_added_block_number - first_block_of_batch).try_into()?;
+            let tx_count = tx_count.try_into()?;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
             METRICS.set_batch_size(batch_number, batch_size)?;
@@ -573,14 +573,12 @@ impl L1Committer {
                 .get_transaction_receipt(commit_tx_hash)
                 .await?
                 .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
-            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()
-                    .map_err(|_| CommitterError::ConversionError("failed to convert commit gas used to i64".to_string()))?;
+            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
             METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
             if !self.validium {
                 let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
                     .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
-                    .try_into()
-                    .map_err(|_| CommitterError::ConversionError("failed to convert blob gas used to i64".to_string()))?;
+                    .try_into()?;
                 METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
             }
         );

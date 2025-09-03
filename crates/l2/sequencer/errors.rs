@@ -144,8 +144,8 @@ pub enum ProofSenderError {
     AlignedSubmitProofError(String),
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
-    #[error("Conversion Error: {0}")]
-    ConversionError(String),
+    #[error("Failed to convert integer")]
+    TryIntoError(#[from] std::num::TryFromIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -238,7 +238,7 @@ pub enum CommitterError {
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
     BlobEstimationError(#[from] BlobEstimationError),
-    #[error("length does not fit in u16")]
+    #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
