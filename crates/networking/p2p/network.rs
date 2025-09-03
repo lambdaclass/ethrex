@@ -1,8 +1,5 @@
 use crate::{
-    discv4::{
-        server::{DiscoveryServer, DiscoveryServerError},
-        side_car::{DiscoverySideCar, DiscoverySideCarError},
-    },
+    discv4::server::{DiscoveryServer, DiscoveryServerError},
     kademlia::{Kademlia, PeerData},
     metrics::METRICS,
     rlpx::{
@@ -86,8 +83,6 @@ impl P2PContext {
 pub enum NetworkError {
     #[error("Failed to start discovery server: {0}")]
     DiscoveryServerError(#[from] DiscoveryServerError),
-    #[error("Failed to start discovery side car: {0}")]
-    DiscoverySideCarError(#[from] DiscoverySideCarError),
     #[error("Failed to start RLPx Initiator: {0}")]
     RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
@@ -115,17 +110,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     .await
     .inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
-    })?;
-
-    DiscoverySideCar::spawn(
-        context.local_node.clone(),
-        context.signer,
-        udp_socket,
-        context.table.clone(),
-    )
-    .await
-    .inspect_err(|e| {
-        error!("Failed to start discovery side car: {e}");
     })?;
 
     RLPxInitiator::spawn(context.clone())
