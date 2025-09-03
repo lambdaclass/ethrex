@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756931497953,
+  "lastUpdate": 1756932369378,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11665,6 +11665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168651446876,
             "range": "± 417567127",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f7f402c2e23305e64a1cb53b4c1070ba8a63480f",
+          "message": "chore(l1): change bytecode fetching log to debug (#4293)\n\n**Motivation**\n\nThe \"Failed to get bytecode\" log is expected to happen sometimes (the\npeer might not have the bytecode), we shouldn't log it as an error.\n\n**Description**\n\nChanges the log to debug.",
+          "timestamp": "2025-09-03T19:54:20Z",
+          "tree_id": "5421051a068d44355794c5f2c0282a30a81ea4de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f7f402c2e23305e64a1cb53b4c1070ba8a63480f"
+        },
+        "date": 1756932351968,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168259417764,
+            "range": "± 621078208",
             "unit": "ns/iter"
           }
         ]
