@@ -6,8 +6,8 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-sp1-zkvm = { version = "=5.0.8", features = ["embedded"] }
-rkyv = "0.8.10"
+sp1-zkvm = { version = "=5.0.8" }
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 guest_program = { path = "../../" }
 
@@ -37,4 +37,4 @@ k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k2
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-fp-struct" }
 
 [features]
-l2 = ["zkvm_interface/l2"]
+l2 = ["zkvm_interface/l2", "sp1-zkvm/embedded"]
