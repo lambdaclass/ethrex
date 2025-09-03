@@ -6,6 +6,9 @@ use config::ProverConfig;
 use ethrex_l2_common::prover::BatchProof;
 use guest_program::input::ProgramInput;
 use tracing::warn;
+use zkvm_interface::io::ProgramInput;
+
+use crate::backends::{Backend, ProveOutput};
 
 use crate::backend::{Backend, ProveOutput};
 

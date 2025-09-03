@@ -9,7 +9,7 @@ edition = "2024"
 sp1-zkvm = { version = "=5.0.8", features = ["embedded"] }
 rkyv = "0.8.10"
 
-zkvm_interface = { path = "../../" }
+guest_program = { path = "../../" }
 
 ethrex-common = { path = "../../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../../storage", default-features = false }
