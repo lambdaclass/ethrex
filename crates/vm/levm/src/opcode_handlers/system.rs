@@ -755,8 +755,13 @@ impl<'a> VM<'a> {
 
         if precompiles::is_precompile(&code_address, self.env.config.fork) && !is_delegation_7702 {
             let mut gas_remaining = gas_limit;
-            let ctx_result =
-                Self::execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
+            let ctx_result = Self::execute_precompile(
+                code_address,
+                &calldata,
+                gas_limit,
+                &mut gas_remaining,
+                self.env.config.fork,
+            )?;
 
             let call_frame = &mut self.current_call_frame;
 

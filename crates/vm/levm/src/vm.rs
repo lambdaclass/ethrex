@@ -181,6 +181,7 @@ impl<'a> VM<'a> {
                 &call_frame.calldata,
                 call_frame.gas_limit,
                 &mut call_frame.gas_remaining,
+                self.env.config.fork,
             );
         }
 
@@ -219,11 +220,12 @@ impl<'a> VM<'a> {
         calldata: &Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
+        fork: Fork,
     ) -> Result<ContextResult, VMError> {
         let execute_precompile = precompiles::execute_precompile;
 
         Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining),
+            execute_precompile(code_address, calldata, gas_remaining, fork),
             gas_limit,
             *gas_remaining,
         )

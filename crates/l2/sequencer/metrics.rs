@@ -1,6 +1,7 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
+use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
@@ -60,19 +61,15 @@ impl MetricsGatherer {
         metrics
             .cast(InMessage::Gather)
             .await
-            .map_err(MetricsGathererError::GenServerError)
+            .map_err(MetricsGathererError::InternalError)
     }
 
     async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
-        let last_committed_batch = self
-            .l1_eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 
-        let last_verified_batch = self
-            .l1_eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_verified_batch =
+            get_last_verified_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 
         let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
         let l2_gas_price = self.l2_eth_client.get_gas_price().await?;

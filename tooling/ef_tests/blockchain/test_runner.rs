@@ -34,11 +34,13 @@ pub fn parse_and_execute(
     let tests = parse_tests(path);
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7951"];
+    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7883", "eip-7939", "eip-7951"];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
     //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
-    let hashes_of_fusaka_tests_to_run: Vec<&str> = vec![];
+    let hashes_of_fusaka_tests_to_run: Vec<&str> = vec![
+        "0xf0672af9718013a1f396a9268e91e220ff09e7fa97480844e31da500f8ef291f", //All opcodes test
+    ];
 
     let mut failures = Vec::new();
 
@@ -97,7 +99,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1);
+    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1, false);
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -212,11 +214,6 @@ fn exception_is_expected(
             ) | (
                 BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
                 ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
-            ) | (
-                BlockChainExpectedException::BlockException(
-                    BlockExpectedException::SystemContractEmpty
-                ),
-                ChainError::EvmError(EvmError::SystemContractEmpty(_))
             ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::SystemContractCallFailed

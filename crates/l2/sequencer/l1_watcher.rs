@@ -7,6 +7,9 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::{H160, types::Transaction};
+use ethrex_l2_sdk::{
+    build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
+};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
@@ -109,9 +112,7 @@ impl L1Watcher {
 
     pub async fn get_privileged_transactions(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
-            self.last_block_fetched = self
-                .eth_client
-                .get_last_fetched_l1_block(self.address)
+            self.last_block_fetched = get_last_fetched_l1_block(&self.eth_client, self.address)
                 .await?
                 .into();
         }
@@ -263,10 +264,8 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
-        let pending_privileged_transactions = self
-            .eth_client
-            .get_pending_privileged_transactions(self.address)
-            .await?;
+        let pending_privileged_transactions =
+            get_pending_privileged_transactions(&self.eth_client, self.address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 }
@@ -283,7 +282,7 @@ impl GenServer for L1Watcher {
             .clone()
             .cast(Self::CastMsg::Watch)
             .await
-            .map_err(Self::Error::GenServerError)?;
+            .map_err(Self::Error::InternalError)?;
         Ok(Success(self))
     }
 
@@ -398,29 +397,29 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let generic_tx = eth_client
-            .build_generic_tx(
-                TxType::Privileged,
-                self.to_address,
-                self.from,
-                Bytes::copy_from_slice(&self.calldata),
-                Overrides {
-                    chain_id: Some(chain_id),
-                    // Using the transaction_id as nonce.
-                    // If we make a transaction on the L2 with this address, we may break the
-                    // privileged transaction workflow.
-                    nonce: Some(self.transaction_id.as_u64()),
-                    value: Some(self.value),
-                    gas_limit: Some(self.gas_limit.as_u64()),
-                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                    // Otherwise, the transaction is not included in the mempool.
-                    // We should override the blockchain to always include the transaction.
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        let generic_tx = build_generic_tx(
+            eth_client,
+            TxType::Privileged,
+            self.to_address,
+            self.from,
+            Bytes::copy_from_slice(&self.calldata),
+            Overrides {
+                chain_id: Some(chain_id),
+                // Using the transaction_id as nonce.
+                // If we make a transaction on the L2 with this address, we may break the
+                // privileged transaction workflow.
+                nonce: Some(self.transaction_id.as_u64()),
+                value: Some(self.value),
+                gas_limit: Some(self.gas_limit.as_u64()),
+                // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                // Otherwise, the transaction is not included in the mempool.
+                // We should override the blockchain to always include the transaction.
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
         Ok(generic_tx.try_into()?)
     }
 }

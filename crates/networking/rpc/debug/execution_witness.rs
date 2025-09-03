@@ -1,14 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethrex_common::{
-    serde_utils,
+    Address, H256, serde_utils,
     types::{
         BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -41,9 +42,25 @@ pub struct RpcExecutionWitness {
 
 impl From<ExecutionWitnessResult> for RpcExecutionWitness {
     fn from(value: ExecutionWitnessResult) -> Self {
+        let mut keys = Vec::new();
+
+        let touched_account_storage_slots = value.touched_account_storage_slots;
+
+        for (address, touched_storage_slots) in touched_account_storage_slots {
+            keys.push(Bytes::copy_from_slice(address.as_bytes()));
+            for slot in touched_storage_slots.iter() {
+                keys.push(Bytes::copy_from_slice(slot.as_bytes()));
+            }
+        }
+
         Self {
-            state: value.state_trie_nodes,
-            keys: value.keys,
+            state: value
+                .state_nodes
+                .values()
+                .cloned()
+                .map(Into::into)
+                .collect(),
+            keys,
             codes: value.codes.values().cloned().collect(),
             headers: value
                 .block_headers
@@ -88,15 +105,35 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
+    let mut state_nodes = BTreeMap::new();
+    for node in rpc_witness.state.iter() {
+        state_nodes.insert(keccak(node), node.to_vec());
+    }
+
+    let mut touched_account_storage_slots = HashMap::new();
+    let mut address = Address::default();
+    for bytes in rpc_witness.keys {
+        if bytes.len() == Address::len_bytes() {
+            address = Address::from_slice(&bytes);
+        } else {
+            let slot = H256::from_slice(&bytes);
+            // Insert in the vec of the address value
+            touched_account_storage_slots
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(slot);
+        }
+    }
+
     let mut witness = ExecutionWitnessResult {
-        state_trie_nodes: rpc_witness.state,
-        keys: rpc_witness.keys,
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
         storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
+        state_nodes,
+        touched_account_storage_slots,
     };
 
     witness.rebuild_state_trie()?;

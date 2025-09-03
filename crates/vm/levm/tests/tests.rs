@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
+use ethrex_common::types::Fork;
 use ethrex_levm::precompiles::bls12_pairing_check;
 use ethrex_levm::precompiles::p_256_verify;
 
@@ -16,7 +17,7 @@ fn pairing_infinity() {
     let calldata_bytes = Bytes::from(calldata.clone());
     let mut remaining_gas = 10000000;
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun);
     assert_eq!(result.unwrap(), zero);
 
     // Now we add a pair were one point is infinity, the result must not change
@@ -31,7 +32,7 @@ fn pairing_infinity() {
 
     let calldata_bytes = Bytes::from(calldata.clone());
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun);
 
     assert_eq!(result.unwrap(), zero);
 }
@@ -61,7 +62,7 @@ fn p_256_verify_test() {
         let calldata = Bytes::from(calldata);
         let initial_remaining_gas = 10000;
         let mut remaining_gas = initial_remaining_gas;
-        let result = p_256_verify(&calldata, &mut remaining_gas).unwrap();
+        let result = p_256_verify(&calldata, &mut remaining_gas, Fork::Osaka).unwrap();
         let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
         assert_eq!(
             result, expected_result,

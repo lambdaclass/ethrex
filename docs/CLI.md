@@ -452,7 +452,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinator <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
 
 Options:
   -h, --help
@@ -464,7 +464,7 @@ Prover client options:
           [default: exec]
           [possible values: exec]
 
-      --proof-coordinator <URL>
+      --proof-coordinators <URL>
           URL of the sequencer's proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]

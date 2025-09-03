@@ -1,3 +1,4 @@
+pub mod block_runner;
 pub mod deserialize;
 pub mod error;
 pub mod parser;
