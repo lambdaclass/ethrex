@@ -28,10 +28,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
-use std::collections::BTreeMap;
 
-// Export needed types
-pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -168,92 +165,7 @@ impl LEVM {
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.current_accounts_state.iter() {
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                db.initial_accounts_state
-                    .get(address)
-                    .ok_or(EvmError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))?;
-
-            // Edge case: Account was destroyed and created again afterwards with CREATE2.
-            if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
-                // Push to account updates the removal of the account and then push the new state of the account.
-                // This is for clearing the account's storage when it was selfdestructed in the first place.
-                account_updates.push(AccountUpdate::removed(*address));
-                let new_account_update = AccountUpdate {
-                    address: *address,
-                    removed: false,
-                    info: Some(new_state_account.info.clone()),
-                    code: Some(new_state_account.code.clone()),
-                    added_storage: new_state_account.storage.clone(),
-                };
-                account_updates.push(new_account_update);
-                continue;
-            }
-
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
-            // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.info.balance != new_state_account.info.balance {
-                acc_info_updated = true;
-            }
-
-            if initial_state_account.info.nonce != new_state_account.info.nonce {
-                acc_info_updated = true;
-            }
-
-            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                acc_info_updated = true;
-                Some(new_state_account.code.clone())
-            } else {
-                None
-            };
-
-            // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = BTreeMap::new();
-
-            for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
-
-                if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
-                    storage_updated = true;
-                }
-            }
-
-            let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
-            } else {
-                None
-            };
-
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
-            let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
-
-            if !removed && !acc_info_updated && !storage_updated {
-                // Account hasn't been updated
-                continue;
-            }
-
-            let account_update = AccountUpdate {
-                address: *address,
-                removed,
-                info,
-                code,
-                added_storage,
-            };
-
-            account_updates.push(account_update);
-        }
-        db.current_accounts_state.clear();
-        db.initial_accounts_state.clear();
-        Ok(account_updates)
+        Ok(db.get_state_transitions()?)
     }
 
     pub fn process_withdrawals(
@@ -266,13 +178,11 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            let mut account = db
-                .get_account(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?
-                .clone(); // Not a big deal cloning here because it's an EOA.
+            let account = db
+                .get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
-            db.current_accounts_state.insert(address, account);
         }
         Ok(())
     }
@@ -345,16 +255,6 @@ impl LEVM {
             vm_type,
         )?;
 
-        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !account.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
-
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
@@ -383,16 +283,6 @@ impl LEVM {
             *SYSTEM_ADDRESS,
             vm_type,
         )?;
-
-        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !acc.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
 
         match report.result {
             TxResult::Success => Ok(report),

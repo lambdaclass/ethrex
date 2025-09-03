@@ -4,9 +4,10 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction};
+pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
@@ -18,6 +19,7 @@ use ethrex_rlp::{
 };
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -27,7 +29,7 @@ use crate::types::{AccessList, AuthorizationList, BlobsBundle};
 // The serialization will fail if the data does not match the structure of any variant.
 //
 // A custom Deserialization method is implemented to match the specific transaction `type`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
 #[serde(untagged)]
 pub enum Transaction {
     LegacyTransaction(LegacyTransaction),
@@ -153,7 +155,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
     pub gas_price: u64,
@@ -161,29 +163,43 @@ pub struct LegacyTransaction {
     /// The recipient of the transaction.
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub v: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub gas_price: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -191,50 +207,75 @@ pub struct EIP1559Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP4844Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct EIP7702Transaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub to: Address,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub authorization_list: AuthorizationList,
     pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -242,10 +283,16 @@ pub struct PrivilegedL2Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub from: Address,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -397,9 +444,9 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
-    Call(Address),
+    Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]
     Create,
 }
@@ -684,6 +731,7 @@ impl RLPDecode for LegacyTransaction {
         let (v, decoder) = decoder.decode_field("v")?;
         let (r, decoder) = decoder.decode_field("r")?;
         let (s, decoder) = decoder.decode_field("s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = LegacyTransaction {
             nonce,
@@ -695,6 +743,7 @@ impl RLPDecode for LegacyTransaction {
             v,
             r,
             s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -714,6 +763,7 @@ impl RLPDecode for EIP2930Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP2930Transaction {
             chain_id,
@@ -727,6 +777,7 @@ impl RLPDecode for EIP2930Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -748,6 +799,7 @@ impl RLPDecode for EIP1559Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP1559Transaction {
             chain_id,
@@ -762,6 +814,7 @@ impl RLPDecode for EIP1559Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -785,6 +838,7 @@ impl RLPDecode for EIP4844Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP4844Transaction {
             chain_id,
@@ -801,6 +855,7 @@ impl RLPDecode for EIP4844Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -823,6 +878,7 @@ impl RLPDecode for EIP7702Transaction {
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
 
         let tx = EIP7702Transaction {
             chain_id,
@@ -838,6 +894,7 @@ impl RLPDecode for EIP7702Transaction {
             signature_y_parity,
             signature_r,
             signature_s,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -857,6 +914,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (from, decoder) = decoder.decode_field("from")?;
+        let inner_hash = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -869,6 +927,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             data,
             access_list,
             from,
+            inner_hash,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -1151,11 +1210,24 @@ impl Transaction {
         }
     }
 
-    pub fn compute_hash(&self) -> H256 {
+    fn compute_hash(&self) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
         keccak_hash::keccak(self.encode_canonical_to_vec())
+    }
+
+    pub fn hash(&self) -> H256 {
+        let inner_hash = match self {
+            Transaction::LegacyTransaction(tx) => &tx.inner_hash,
+            Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP1559Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
+            Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
+        };
+
+        *inner_hash.get_or_init(|| self.compute_hash())
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
@@ -1415,12 +1487,15 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
+    use ethereum_types::H160;
     use serde::Deserialize;
     use serde::{Deserializer, de::Error};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    use crate::types::{AccessListItem, AuthorizationTuple};
+    #[cfg(feature = "c-kzg")]
+    use crate::types::BYTES_PER_BLOB;
+    use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
 
     use super::*;
 
@@ -1869,6 +1944,7 @@ mod serde_impl {
                 v: deserialize_field::<U256, D>(&mut map, "v")?,
                 r: deserialize_field::<U256, D>(&mut map, "r")?,
                 s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -1900,6 +1976,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -1936,6 +2013,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -1977,6 +2055,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -2020,6 +2099,7 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
             })
         }
     }
@@ -2049,8 +2129,17 @@ mod serde_impl {
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
                 from: deserialize_field::<Address, D>(&mut map, "sender")?,
+                ..Default::default()
             })
         }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum GenericTransactionError {
+        #[error("Invalid transaction type: {0}")]
+        InvalidTxType(TxType),
+        #[error("Blob bundle error: {0}")]
+        BlobBundleError(#[from] BlobsBundleError),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2091,7 +2180,7 @@ mod serde_impl {
             flatten,
             rename = "input_or_data",
             deserialize_with = "deserialize_input",
-            serialize_with = "crates::serde_utils::bytes::serialize"
+            serialize_with = "crate::serde_utils::bytes::serialize"
         )]
         pub input: Bytes,
     }
@@ -2153,6 +2242,33 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<GenericTransaction> for EIP1559Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP1559 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: value.to,
+                gas_limit: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                chain_id: value.chain_id.unwrap_or_default(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<EIP4844Transaction> for GenericTransaction {
         fn from(value: EIP4844Transaction) -> Self {
             Self {
@@ -2177,6 +2293,60 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
+        }
+    }
+
+    #[cfg(feature = "c-kzg")]
+    impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            let blobs = value
+                .blobs
+                .iter()
+                .map(|bytes| {
+                    let slice = bytes.as_ref();
+                    let mut blob = [0u8; BYTES_PER_BLOB];
+                    blob.copy_from_slice(slice);
+                    blob
+                })
+                .collect();
+
+            Ok(Self {
+                tx: value.try_into()?,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+            })
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for EIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP4844 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: match value.to {
+                    TxKind::Call(to) => to,
+                    _ => H160::default(),
+                },
+                gas: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                blob_versioned_hashes: value.blob_versioned_hashes,
+                chain_id: value.chain_id.unwrap_or_default(),
+                ..Default::default()
+            })
         }
     }
 
@@ -2237,6 +2407,33 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for PrivilegedL2Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::Privileged {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: value.to,
+                gas_limit: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                chain_id: value.chain_id.unwrap_or_default(),
+                from: value.from,
+                ..Default::default()
+            })
         }
     }
 
@@ -2435,6 +2632,7 @@ mod tests {
             s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
+            ..Default::default()
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
@@ -2470,6 +2668,7 @@ mod tests {
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
             )
             .unwrap(),
+            ..Default::default()
         };
         let tx = Transaction::EIP2930Transaction(tx_eip2930);
 
@@ -2520,6 +2719,7 @@ mod tests {
             )
             .unwrap(),
             v: 6303851.into(),
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2552,6 +2752,7 @@ mod tests {
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![],
+            ..Default::default()
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2747,6 +2948,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(0x01),
             signature_s: U256::from(0x02),
+            ..Default::default()
         };
 
         assert_eq!(
@@ -2773,6 +2975,7 @@ mod tests {
             signature_y_parity: true,
             signature_r: U256::one(),
             signature_s: U256::zero(),
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2810,6 +3013,7 @@ mod tests {
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],
+            ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2839,6 +3043,7 @@ mod tests {
             data: Bytes::new(),
             access_list: vec![],
             from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            ..Default::default()
         };
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
@@ -2864,6 +3069,7 @@ mod tests {
             v: U256::from(27),
             r: U256::from(1),
             s: U256::from(1),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = legacy_tx.into();
@@ -2903,6 +3109,7 @@ mod tests {
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),
+            ..Default::default()
         };
 
         let generic_tx: GenericTransaction = eip2930_tx.into();

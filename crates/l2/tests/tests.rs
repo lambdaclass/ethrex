@@ -1,25 +1,26 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
-use ethrex_common::types::BlockNumber;
+use ethrex_common::types::TxType;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::{
-    clients::{deploy, send_eip1559_transaction},
-    signer::{LocalSigner, Signer},
-};
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
+use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::utils::get_address_from_secret_key;
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, claim_withdraw,
-    compile_contract, deposit_erc20, get_address_alias, get_address_from_secret_key,
-    get_erc1967_slot, git_clone, wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,
+    claim_withdraw, compile_contract, create_deploy, deposit_erc20, get_address_alias,
+    get_erc1967_slot, git_clone, l1_to_l2_tx_data::L1ToL2TransactionData,
+    wait_for_transaction_receipt,
+};
+use ethrex_l2_sdk::{
+    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
-    clients::eth::{EthClient, L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256},
+    clients::eth::{EthClient, Overrides},
     types::{
         block_identifier::{BlockIdentifier, BlockTag},
         receipt::RpcReceipt,
@@ -191,6 +192,7 @@ async fn test_upgrade(
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
         false,
         Some(&remappings),
+        &[contracts_path],
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -224,8 +226,7 @@ async fn test_upgrade(
 
     assert!(tx_receipt.receipt.status, "Upgrade transaction failed");
 
-    let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
-        .await?;
+    let _ = wait_for_l2_deposit_receipt(&tx_receipt, l1_client, l2_client).await?;
     let final_impl = l2_client
         .get_storage_at(
             COMMON_BRIDGE_L2_ADDRESS,
@@ -414,6 +415,7 @@ async fn test_erc20_roundtrip(
         &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         Some(&remappings),
+        &[contracts_path],
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
@@ -465,7 +467,7 @@ async fn test_erc20_roundtrip(
     assert!(res.receipt.status);
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L2");
-    wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
+    wait_for_l2_deposit_receipt(&res, l1_client, l2_client)
         .await
         .unwrap();
     let remaining_l1_balance = test_balance_of(l1_client, token_l1, rich_address).await;
@@ -585,10 +587,9 @@ async fn test_aliasing(
 
     assert!(receipt_l1.receipt.status);
 
-    let receipt_l2 =
-        wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
-            .await
-            .unwrap();
+    let receipt_l2 = wait_for_l2_deposit_receipt(&receipt_l1, l1_client, l2_client)
+        .await
+        .unwrap();
     println!(
         "alising {:#x} to {:#x}",
         get_address_alias(caller_l1),
@@ -659,7 +660,7 @@ async fn test_erc20_failed_deposit(
 
     println!("test_erc20_failed_deposit: Waiting for deposit transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(res.block_info.block_number, l1_client, l2_client)
+    let res = wait_for_l2_deposit_receipt(&res, l1_client, l2_client)
         .await
         .unwrap();
 
@@ -691,8 +692,8 @@ async fn test_forced_withdrawal(
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing forced withdrawal");
-    let rich_address = ethrex_l2_sdk::get_address_from_secret_key(rich_wallet_private_key)
-        .expect("Failed to get address");
+    let rich_address =
+        get_address_from_secret_key(rich_wallet_private_key).expect("Failed to get address");
     let l1_initial_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -732,12 +733,7 @@ async fn test_forced_withdrawal(
         l1_to_l2_tx_receipt.tx_info.gas_used * l1_to_l2_tx_receipt.tx_info.effective_gas_price;
     println!("forced_withdrawal: Waiting for L1 to L2 transaction receipt on L2");
 
-    let res = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let res = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     let withdrawal_tx_hash = res.tx_info.transaction_hash;
     assert_eq!(
@@ -812,7 +808,7 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         )
         .await
         .unwrap();
-    from_hex_string_to_u256(&res).unwrap()
+    U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
 }
 
 async fn test_send(
@@ -823,19 +819,18 @@ async fn test_send(
     data: &[Value],
 ) -> RpcReceipt {
     let signer: Signer = LocalSigner::new(*private_key).into();
-    let mut tx = client
-        .build_eip1559_transaction(
-            to,
-            signer.address(),
-            encode_calldata(signature, data).unwrap().into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-    tx.gas_limit *= 2; // tx reverts in some cases otherwise
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer)
-        .await
-        .unwrap();
+    let mut tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        to,
+        signer.address(),
+        encode_calldata(signature, data).unwrap().into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .unwrap()
@@ -849,7 +844,7 @@ async fn test_deposit(
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test deposit: Fetching initial balances on L1 and L2");
 
-    let depositor = ethrex_l2_sdk::get_address_from_secret_key(depositor_private_key)?;
+    let depositor = get_address_from_secret_key(depositor_private_key)?;
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
         .unwrap_or(U256::from(1000000000000000000000u128));
@@ -922,12 +917,7 @@ async fn test_deposit(
 
     println!("test deposit: Waiting for L2 deposit tx receipt");
 
-    let _ = wait_for_l2_deposit_receipt(
-        deposit_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&deposit_tx_receipt, l1_client, l2_client).await?;
 
     let deposit_recipient_l2_balance_after_deposit = l2_client
         .get_balance(
@@ -1053,12 +1043,7 @@ async fn test_transfer_with_privileged_tx(
 
     println!("transfer_with_ptx: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("transfer_with_ptx: Checking balances after transfer");
 
@@ -1149,12 +1134,7 @@ async fn test_privileged_tx_not_enough_balance(
 
     println!("ptx_not_enough_balance: Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("ptx_not_enough_balance: Checking balances after transfer");
 
@@ -1171,7 +1151,7 @@ async fn perform_transfer(
     transfer_recipient_address: Address,
     transfer_value: U256,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
+    let transferer_address = get_address_from_secret_key(transferer_private_key)?;
 
     let transferer_initial_l2_balance = l2_client
         .get_balance(transferer_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -1266,7 +1246,7 @@ async fn test_n_withdraws(
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
-    let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(withdrawer_private_key)?;
+    let withdrawer_address = get_address_from_secret_key(withdrawer_private_key)?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
         .unwrap_or(U256::from(100000000000000000000u128));
@@ -1482,7 +1462,7 @@ async fn test_deploy(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let (deploy_tx_hash, contract_address) = deploy(
+    let (deploy_tx_hash, contract_address) = create_deploy(
         l2_client,
         &deployer,
         init_code.to_vec().into(),
@@ -1536,7 +1516,7 @@ async fn test_deploy_l1(
 
     let deployer_signer: Signer = LocalSigner::new(*private_key).into();
 
-    let (deploy_tx_hash, contract_address) = deploy(
+    let (deploy_tx_hash, contract_address) = create_deploy(
         client,
         &deployer_signer,
         init_code.to_vec().into(),
@@ -1556,8 +1536,8 @@ async fn test_call_to_contract_with_deposit(
     calldata_to_contract: Bytes,
     caller_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let caller_address = ethrex_l2_sdk::get_address_from_secret_key(caller_private_key)
-        .expect("Failed to get address");
+    let caller_address =
+        get_address_from_secret_key(caller_private_key).expect("Failed to get address");
 
     println!("Checking balances before call");
 
@@ -1602,12 +1582,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    let _ = wait_for_l2_deposit_receipt(
-        l1_to_l2_tx_receipt.block_info.block_number,
-        l1_client,
-        l2_client,
-    )
-    .await?;
+    let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
     println!("Checking balances after call");
 
@@ -1712,20 +1687,20 @@ fn l2_return_transfer_private_key() -> SecretKey {
 }
 
 async fn wait_for_l2_deposit_receipt(
-    l1_receipt_block_number: BlockNumber,
+    rpc_receipt: &RpcReceipt,
     l1_client: &EthClient,
     l2_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let topic = keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
-    let logs = l1_client
-        .get_logs(
-            U256::from(l1_receipt_block_number),
-            U256::from(l1_receipt_block_number),
-            bridge_address()?,
-            vec![topic],
-        )
-        .await?;
-    let data = PrivilegedTransactionData::from_log(logs.first().unwrap().log.clone())?;
+    let data = rpc_receipt
+        .logs
+        .iter()
+        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
+        .ok_or_else(|| {
+            format!(
+                "RpcReceipt for transaction {:?} contains no valid logs",
+                rpc_receipt.tx_info.transaction_hash
+            )
+        })?;
 
     let l2_deposit_tx_hash = data
         .into_tx(
@@ -1742,7 +1717,7 @@ async fn wait_for_l2_deposit_receipt(
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
     let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
 
     for line in reader.lines() {
@@ -1864,11 +1839,10 @@ async fn wait_for_verified_proof(
     l2_client: &EthClient,
     tx: H256,
 ) -> L1MessageProof {
-    let proof = l2_client.wait_for_message_proof(tx, 1000).await;
+    let proof = wait_for_message_proof(l2_client, tx, 1000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
-    while l1_client
-        .get_last_verified_batch(on_chain_proposer_address())
+    while get_last_verified_batch(l1_client, on_chain_proposer_address())
         .await
         .unwrap()
         < proof.batch_number

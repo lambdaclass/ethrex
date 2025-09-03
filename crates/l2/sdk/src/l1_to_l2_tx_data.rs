@@ -1,8 +1,12 @@
-use crate::calldata::{self};
+use crate::{
+    build_generic_tx,
+    calldata::{self},
+    send_generic_transaction,
+};
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::{clients::send_eip1559_transaction, signer::LocalSigner};
+use ethrex_l2_rpc::signer::LocalSigner;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
@@ -78,12 +82,19 @@ pub async fn send_l1_to_l2_tx(
         ..Overrides::default()
     };
 
-    let mut l1_to_l2_tx = eth_client
-        .build_eip1559_transaction(bridge_address, l1_from, l1_calldata.into(), l1_tx_overrides)
-        .await?;
-    l1_to_l2_tx.gas_limit *= 2; // tx reverts in some cases otherwise
+    let mut l1_to_l2_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        bridge_address,
+        l1_from,
+        l1_calldata.into(),
+        l1_tx_overrides,
+    )
+    .await?;
+
+    l1_to_l2_tx.gas = l1_to_l2_tx.gas.map(|gas| gas * 2); // tx reverts in some cases otherwise
 
     let signer = LocalSigner::new(*sender_private_key).into();
 
-    send_eip1559_transaction(eth_client, &l1_to_l2_tx, &signer).await
+    send_generic_transaction(eth_client, l1_to_l2_tx, &signer).await
 }

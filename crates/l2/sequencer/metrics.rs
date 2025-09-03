@@ -1,6 +1,7 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
+use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
@@ -23,7 +24,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct MetricsGatherer {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
@@ -61,19 +61,15 @@ impl MetricsGatherer {
         metrics
             .cast(InMessage::Gather)
             .await
-            .map_err(MetricsGathererError::GenServerError)
+            .map_err(MetricsGathererError::InternalError)
     }
 
     async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
-        let last_committed_batch = self
-            .l1_eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 
-        let last_verified_batch = self
-            .l1_eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_verified_batch =
+            get_last_verified_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 
         let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
         let l2_gas_price = self.l2_eth_client.get_gas_price().await?;
@@ -137,24 +133,24 @@ impl GenServer for MetricsGatherer {
     type Error = MetricsGathererError;
 
     async fn handle_call(
-        self,
+        &mut self,
         _message: Self::CallMsg,
         _handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
-        CallResponse::Reply(self, OutMessage::Done)
+        CallResponse::Reply(OutMessage::Done)
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Gather message, so we ignore the message
         let _ = self
             .gather_metrics()
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
         send_after(self.check_interval, handle.clone(), Self::CastMsg::Gather);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }

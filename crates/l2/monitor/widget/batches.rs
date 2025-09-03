@@ -1,4 +1,5 @@
 use ethrex_common::{Address, H256, types::batch::Batch};
+use ethrex_l2_sdk::get_last_committed_batch;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
@@ -104,8 +105,7 @@ impl BatchesTable {
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
     ) -> Result<Vec<BatchLine>, MonitorError> {
-        let last_l2_batch_number = eth_client
-            .get_last_committed_batch(on_chain_proposer_address)
+        let last_l2_batch_number = get_last_committed_batch(eth_client, on_chain_proposer_address)
             .await
             .map_err(|_| MonitorError::GetLatestBatch)?;
 

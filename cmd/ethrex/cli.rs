@@ -8,19 +8,22 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
-    DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
-    l2,
-    networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
+    l2::{
+        self,
+        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
+    },
+    utils::{self, default_datadir, get_client_version, init_datadir},
 };
+use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -32,7 +35,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Debug)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -50,7 +53,7 @@ pub struct Options {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value = DEFAULT_DATADIR,
+        default_value_t = default_datadir(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
@@ -190,6 +193,49 @@ pub struct Options {
     pub discovery_port: String,
 }
 
+impl Options {
+    pub fn default_l1() -> Self {
+        Self {
+            network: Some(Network::LocalDevnet),
+            datadir: DB_ETHREX_DEV_L1.to_string(),
+            dev: true,
+            http_addr: "0.0.0.0".to_string(),
+            http_port: "8545".to_string(),
+            authrpc_port: "8551".to_string(),
+            metrics_port: "9090".to_string(),
+            authrpc_addr: "localhost".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".to_string(),
+            p2p_port: "30303".to_string(),
+            discovery_addr: "0.0.0.0".to_string(),
+            discovery_port: "30303".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn default_l2() -> Self {
+        Self {
+            network: Some(Network::LocalDevnetL2),
+            datadir: DB_ETHREX_DEV_L2.to_string(),
+            metrics_port: "3702".into(),
+            metrics_enabled: true,
+            dev: true,
+            http_addr: "0.0.0.0".into(),
+            http_port: "1729".into(),
+            authrpc_addr: "localhost".into(),
+            authrpc_port: "8551".into(),
+            authrpc_jwtsecret: "jwt.hex".into(),
+            p2p_enabled: true,
+            p2p_addr: "0.0.0.0".into(),
+            p2p_port: "30303".into(),
+            discovery_addr: "0.0.0.0".into(),
+            discovery_port: "30303".into(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -223,7 +269,7 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
         datadir: String,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
@@ -317,12 +363,13 @@ impl Subcommand {
             }
             Subcommand::L2(command) => command.run().await?,
         }
+
         Ok(())
     }
 }
 
 pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = set_datadir(datadir);
+    let data_dir = init_datadir(datadir);
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -355,14 +402,15 @@ pub async fn import_blocks(
     evm: EvmEngine,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
-    let data_dir = set_datadir(data_dir);
+    let start_time = Instant::now();
+    let data_dir = init_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
+    let blockchain = init_blockchain(evm, store.clone(), blockchain_type, false);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
-        info!("Importing blocks from directory: {path}");
+        info!(path = %path, "Importing blocks from directory");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
@@ -375,26 +423,36 @@ pub async fn import_blocks(
             .iter()
             .map(|entry| {
                 let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!("Importing blocks from chain file: {path_str}");
+                info!(path = %path_str, "Importing blocks from file");
                 utils::read_chain_file(path_str)
             })
             .collect()
     } else {
-        info!("Importing blocks from chain file: {path}");
+        info!(path = %path, "Importing blocks from file");
         vec![utils::read_chain_file(path)]
     };
 
+    let mut total_blocks_imported = 0;
     for blocks in chains {
         let size = blocks.len();
-        let numbers_and_hashes = blocks
+        let mut numbers_and_hashes = blocks
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
         // Execute block by block
-        for block in &blocks {
+        let mut last_progress_log = Instant::now();
+        for (index, block) in blocks.iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
-            info!("Adding block {number} with hash {hash:#x}.");
+
+            // Log progress every 10 seconds
+            if last_progress_log.elapsed() >= Duration::from_secs(10) {
+                let processed = index + 1;
+                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
+                info!(processed, total = size, percent, "Import progress");
+                last_progress_log = Instant::now();
+            }
+
             // Check if the block is already in the blockchain, if it is do nothing, if not add it
             let block_number = store.get_block_number(hash).await.map_err(|_e| {
                 ChainError::Custom(String::from(
@@ -417,24 +475,28 @@ pub async fn import_blocks(
                 })?;
         }
 
-        _ = store
-            .mark_chain_as_canonical(&numbers_and_hashes)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
         // Make head canonical and label all special blocks correctly.
-        if let Some(block) = blocks.last() {
+        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
-                .update_finalized_block_number(block.header.number)
-                .await?;
-            store.update_safe_block_number(block.header.number).await?;
-            store
-                .update_latest_block_number(block.header.number)
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    head_number,
+                    head_hash,
+                    Some(head_number),
+                    Some(head_number),
+                )
                 .await?;
         }
 
-        info!("Added {size} blocks to blockchain");
+        total_blocks_imported += size;
     }
+
+    let total_duration = start_time.elapsed();
+    info!(
+        blocks = total_blocks_imported,
+        seconds = total_duration.as_secs_f64(),
+        "Import completed"
+    );
     Ok(())
 }
 
@@ -444,8 +506,8 @@ pub async fn export_blocks(
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let data_dir = init_datadir(data_dir);
+    let store = load_store(&data_dir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
@@ -473,6 +535,8 @@ pub async fn export_blocks(
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     let mut last_output = Instant::now();
+    // Denominator for percent completed; avoid division by zero
+    let denom = end.saturating_sub(start) + 1;
     for n in start..=end {
         let block = store
             .get_block_by_number(n)
@@ -483,11 +547,13 @@ pub async fn export_blocks(
         block.encode(&mut buffer);
         // Exporting the whole chain can take a while, so we need to show some output in the meantime
         if last_output.elapsed() > Duration::from_secs(5) {
-            info!("Exporting block {n}/{end}, {}% done", n * 100 / end);
+            let completed = n.saturating_sub(start) + 1;
+            let percent = (completed * 100) / denom;
+            info!(n, end, percent, "Exporting blocks");
             last_output = Instant::now();
         }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!("Exported {} blocks to file {path}", end - start);
+    info!(blocks = end.saturating_sub(start), path = %path, "Exported blocks to file");
 }

@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, types::Block};
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -35,11 +35,9 @@ pub enum StateUpdaterError {
     #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
-    InternalError(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    InternalError(#[from] GenServerError),
+    #[error("Missing data: {0}")]
+    MissingData(String),
 }
 
 #[derive(Clone)]
@@ -52,7 +50,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct StateUpdater {
     on_chain_proposer_address: Address,
     sequencer_registry_address: Address,
@@ -106,7 +103,7 @@ impl StateUpdater {
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::GenServerError)
+            .map_err(StateUpdaterError::InternalError)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
@@ -178,10 +175,8 @@ impl StateUpdater {
 
     /// Reverts state to the last committed batch if known.
     async fn revert_uncommitted_state(&mut self) -> Result<(), StateUpdaterError> {
-        let last_l2_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_l2_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         debug!("Last committed batch: {last_l2_committed_batch}");
 
@@ -201,7 +196,7 @@ impl StateUpdater {
         );
 
         let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last() else {
-            return Err(StateUpdaterError::InternalError(format!(
+            return Err(StateUpdaterError::MissingData(format!(
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
         };
@@ -212,14 +207,14 @@ impl StateUpdater {
             .store
             .get_block_body(*last_l2_committed_block_number)
             .await?
-            .ok_or(StateUpdaterError::InternalError(
+            .ok_or(StateUpdaterError::MissingData(
                 "No block body found for the last committed batch block number".to_string(),
             ))?;
 
         let last_l2_committed_block_header = self
             .store
             .get_block_header(*last_l2_committed_block_number)?
-            .ok_or(StateUpdaterError::InternalError(
+            .ok_or(StateUpdaterError::MissingData(
                 "No block header found for the last committed batch block number".to_string(),
             ))?;
 
@@ -232,16 +227,15 @@ impl StateUpdater {
             "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
         );
         self.store
-            .update_latest_block_number(*last_l2_committed_block_number)
+            .forkchoice_update(
+                None,
+                *last_l2_committed_block_number,
+                last_l2_committed_batch_block_hash,
+                None,
+                None,
+            )
             .await?;
-        let _ = apply_fork_choice(
-            &self.store,
-            last_l2_committed_batch_block_hash,
-            last_l2_committed_batch_block_hash,
-            last_l2_committed_batch_block_hash,
-        )
-        .await
-        .map_err(StateUpdaterError::InvalidForkChoice)?;
+
         Ok(())
     }
 }
@@ -253,10 +247,10 @@ impl GenServer for StateUpdater {
     type Error = StateUpdaterError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         let _ = self
             .update_state()
             .await
@@ -266,7 +260,7 @@ impl GenServer for StateUpdater {
             handle.clone(),
             Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 

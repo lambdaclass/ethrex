@@ -28,6 +28,7 @@ pub struct BlockProducerConfig {
 #[derive(Clone, Debug)]
 pub struct CommitterConfig {
     pub on_chain_proposer_address: Address,
+    pub first_wake_up_time_ms: u64,
     pub commit_time_ms: u64,
     pub arbitrary_base_blob_gas_price: u64,
     pub validium: bool,
@@ -58,10 +59,9 @@ pub struct ProofCoordinatorConfig {
     pub listen_ip: IpAddr,
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
-    pub dev_mode: bool,
     pub signer: Signer,
     pub validium: bool,
-    pub tdx_private_key: SecretKey,
+    pub tdx_private_key: Option<SecretKey>,
 }
 
 #[derive(Clone, Debug)]

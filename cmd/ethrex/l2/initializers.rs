@@ -6,7 +6,7 @@ use std::time::Duration;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
@@ -32,14 +32,14 @@ use crate::initializers::{
 };
 use crate::l2::L2Options;
 use crate::utils::{
-    NodeConfigFile, get_client_version, read_jwtsecret_file, set_datadir, store_node_config_file,
+    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -57,6 +57,7 @@ async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        init_datadir(&opts.datadir),
     )
     .await;
 
@@ -101,11 +102,8 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
-        } else if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
+        }
+        else {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
@@ -131,7 +129,7 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-fn init_tracing(opts: &L2Options) {
+pub fn init_tracing(opts: &L2Options) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -151,9 +149,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         panic!("L2 Doesn't support REVM, use LEVM instead.");
     }
 
-    init_tracing(&opts);
-
-    let data_dir = set_datadir(&opts.node_opts.datadir);
+    let data_dir = init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
     let network = get_network(&opts.node_opts);
@@ -162,7 +158,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     let store = init_store(&data_dir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
+    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2, true);
 
     let signer = get_signer(&data_dir);
 
@@ -174,7 +170,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -269,7 +265,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
     }
     info!("Server shut down started...");
     let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
+    info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
     store_node_config_file(node_config, node_config_path).await;

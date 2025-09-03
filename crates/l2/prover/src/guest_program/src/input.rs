@@ -1,4 +1,5 @@
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
@@ -7,7 +8,7 @@ use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
 pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,

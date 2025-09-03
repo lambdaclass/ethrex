@@ -1,15 +1,15 @@
 use ethrex_common::types::{BlockHash, batch::Batch};
 use ethrex_storage::Store;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     utils::RpcErr,
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RpcBatch {
     #[serde(flatten)]
     pub batch: Batch,
@@ -91,7 +91,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested batch with number: {}", self.batch_number);
+        debug!("Requested batch with number: {}", self.batch_number);
         let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
         };

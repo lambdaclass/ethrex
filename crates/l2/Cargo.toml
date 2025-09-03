@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
@@ -47,7 +48,7 @@ ethers = "2.0"
 cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
-crossterm = {version = "0.29.0", features = ["event-stream"]}
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
 tui-scrollview = "0.5.1"

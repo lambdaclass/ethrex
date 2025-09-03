@@ -32,7 +32,7 @@ impl RpcTransaction {
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
         let from = tx.sender()?;
-        let hash = tx.compute_hash();
+        let hash = tx.hash();
         let transaction_index = transaction_index.map(|n| n as u64);
         Ok(RpcTransaction {
             tx,

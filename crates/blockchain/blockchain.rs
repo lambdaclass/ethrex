@@ -30,10 +30,13 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
-use std::collections::HashMap;
+use payload::PayloadOrTask;
+use sha3::{Digest, Keccak256};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -43,6 +46,8 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+
+const MAX_PAYLOADS: usize = 10;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -63,7 +68,12 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
+    /// Mapping from a payload id to either a complete payload or a payload build task
+    /// We need to keep completed payloads around in case consensus requests them twice
+    pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,9 +82,9 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 
-fn log_batch_progress(batch_size: usize, current_block: usize) {
+fn log_batch_progress(batch_size: u32, current_block: u32) {
     let progress_needed = batch_size > 10;
-    const PERCENT_MARKS: [usize; 4] = [20, 40, 60, 80];
+    const PERCENT_MARKS: [u32; 4] = [20, 40, 60, 80];
     if progress_needed {
         PERCENT_MARKS.iter().for_each(|mark| {
             if (batch_size * mark) / 100 == current_block {
@@ -85,13 +95,20 @@ fn log_batch_progress(batch_size: usize, current_block: usize) {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
+    pub fn new(
+        evm_engine: EvmEngine,
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+    ) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            perf_logs_enabled,
         }
     }
 
@@ -102,6 +119,8 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            perf_logs_enabled: false,
         }
     }
 
@@ -124,6 +143,7 @@ impl Blockchain {
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
+
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -145,9 +165,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-
         let execution_result = vm.execute_block(block)?;
-
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -168,25 +186,24 @@ impl Blockchain {
             .header
             .clone();
 
-        let parent_block_header = self
-            .storage
-            .get_block_header_by_hash(first_block_header.parent_hash)?
-            .ok_or(ChainError::ParentNotFound)?;
-
         // Get state at previous block
         let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
+
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+
+        let mut touched_account_storage_slots = HashMap::new();
+        // This will become the state trie + storage trie
+        let mut used_trie_nodes = Vec::new();
 
         // Store the root node in case the block is empty and the witness does not record any nodes
         let root_node = trie.root_node().map_err(|_| {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
         let mut codes = HashMap::new();
 
@@ -205,7 +222,17 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            let mut used_storage_tries = HashMap::new();
+            for account_update in &account_updates {
+                touched_account_storage_slots.insert(
+                    account_update.address,
+                    account_update
+                        .added_storage
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<H256>>(),
+                );
+            }
+
             // Get the used block hashes from the logger
             let logger_block_hashes = logger
                 .block_hashes_accessed
@@ -224,9 +251,11 @@ impl Blockchain {
                 }
             }
 
+            let mut used_storage_tries = HashMap::new();
+
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, keys) in logger
+            for (account, acc_keys) in logger
                 .state_accessed
                 .lock()
                 .map_err(|_e| {
@@ -239,13 +268,13 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
                 })?;
                 // Get storage trie at before updates
-                if !keys.is_empty() {
+                if !acc_keys.is_empty() {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
                         let (storage_trie_witness, storage_trie) =
                             TrieLogger::open_trie(storage_trie);
                         // Access all the keys
-                        for storage_key in keys {
+                        for storage_key in acc_keys {
                             let hashed_key = hash_key(storage_key);
                             storage_trie.get(&hashed_key).map_err(|_e| {
                                 ChainError::WitnessGeneration(
@@ -294,14 +323,8 @@ impl Blockchain {
                 })?;
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
-                match encoded_storage_tries.entry(address) {
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        entry.get_mut().extend(witness);
-                    }
-                    std::collections::hash_map::Entry::Vacant(vacant) => {
-                        vacant.insert(witness);
-                    }
-                }
+                used_trie_nodes.extend_from_slice(&witness);
+                touched_account_storage_slots.entry(address).or_default();
             }
             trie = updated_trie;
         }
@@ -311,7 +334,7 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
         })?;
         let state_trie_witness = std::mem::take(&mut *state_trie_witness);
-        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty() {
             if let Some(root) = root_node {
@@ -345,15 +368,25 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
+        let mut state_nodes = BTreeMap::new();
+        for node in used_trie_nodes.into_iter() {
+            let hash = Keccak256::digest(&node);
+            state_nodes.insert(H256::from_slice(hash.as_slice()), node);
+        }
+
         Ok(ExecutionWitnessResult {
-            state_trie_nodes: Some(used_trie_nodes),
-            storage_trie_nodes: Some(encoded_storage_tries),
             codes,
+            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
-            storage_tries: None,
             block_headers,
-            parent_block_header,
             chain_config,
+            storage_tries: HashMap::new(),
+            parent_block_header: self
+                .storage
+                .get_block_header_by_hash(first_block_header.parent_hash)?
+                .ok_or(ChainError::ParentNotFound)?,
+            state_nodes,
+            touched_account_storage_slots,
         })
     }
 
@@ -396,7 +429,10 @@ impl Blockchain {
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
-        Self::print_add_block_logs(block, since, executed, merkleized, stored);
+
+        if self.perf_logs_enabled {
+            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        }
         result
     }
 
@@ -525,7 +561,8 @@ impl Blockchain {
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
 
-            log_batch_progress(blocks_len, i);
+            // Conversion is safe because EXECUTE_BATCH_SIZE=1024
+            log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;
         }
 
@@ -584,15 +621,17 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        info!(
-            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len,
-            last_block_number,
-            last_block_gas_limit,
-            transactions_count,
-            total_gas_used,
-            throughput
-        );
+        if self.perf_logs_enabled {
+            info!(
+                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                blocks_len,
+                last_block_number,
+                last_block_gas_limit,
+                transactions_count,
+                total_gas_used,
+                throughput
+            );
+        }
 
         Ok(())
     }
@@ -611,6 +650,10 @@ impl Blockchain {
         blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
+        let hash = transaction.hash();
+        if self.mempool.contains_tx(hash)? {
+            return Ok(hash);
+        }
         let sender = transaction.sender()?;
 
         // Validate transaction
@@ -619,7 +662,6 @@ impl Blockchain {
         }
 
         // Add transaction and blobs bundle to storage
-        let hash = transaction.compute_hash();
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
@@ -635,13 +677,15 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
+        let hash = transaction.hash();
+        if self.mempool.contains_tx(hash)? {
+            return Ok(hash);
+        }
         let sender = transaction.sender()?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
-
-        let hash = transaction.compute_hash();
 
         // Add transaction to storage
         self.mempool
@@ -653,6 +697,14 @@ impl Blockchain {
     /// Remove a transaction from the mempool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
+    }
+
+    /// Remove all transactions in the executed block from the pool (if we have them)
+    pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
+        for tx in &block.body.transactions {
+            self.mempool.remove_transaction(&tx.hash())?;
+        }
+        Ok(())
     }
 
     /*
@@ -710,12 +762,12 @@ impl Blockchain {
         // Check init code size
         if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
-            && tx.data().len() > MAX_INITCODE_SIZE
+            && tx.data().len() > MAX_INITCODE_SIZE as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE as usize {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
@@ -984,8 +1036,8 @@ pub fn validate_gas_used(
 // Perform validations over the block's blob gas usage.
 // Must be called only if the block has cancun activated
 fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
-    let mut blob_gas_used = 0_u64;
-    let mut blobs_in_block = 0_u64;
+    let mut blob_gas_used = 0_u32;
+    let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
         .get_fork_blob_schedule(block.header.timestamp)
         .map(|schedule| schedule.max)
@@ -995,7 +1047,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u64;
+            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
         }
     }
     if blob_gas_used > max_blob_gas_per_block {
@@ -1011,7 +1063,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     if block
         .header
         .blob_gas_used
-        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used)
+        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used as u64)
     {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::BlobGasUsedMismatch,
@@ -1021,8 +1073,8 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 }
 
 /// Calculates the blob gas required by a transaction
-fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
-    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
+pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
+    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
 #[cfg(test)]

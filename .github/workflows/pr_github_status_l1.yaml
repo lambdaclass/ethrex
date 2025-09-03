@@ -1,0 +1,44 @@
+name: PR Status
+
+on:
+  pull_request:
+    types:
+      [
+        opened,
+        reopened,
+        synchronize,
+        edited,
+        ready_for_review,
+        converted_to_draft,
+      ]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  update-project-status:
+    name: Update PR status for ethrex_l1 project
+    runs-on: ubuntu-latest
+    # sadly pull_request_review doesn't have direct access to labels information so we'll have to check this later.
+    if: github.event.repository.fork == false && (github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1'))
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Generate GitHub App Token
+        id: generate_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROJECT_SYNC_APP_ID }}
+          private-key: ${{ secrets.PROJECT_SYNC_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update PR status
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.generate_token.outputs.token }}
+          script: |
+            const script = require('./.github/scripts/set-pr-status.js');
+            await script({github, context});

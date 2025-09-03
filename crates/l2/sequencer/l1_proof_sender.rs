@@ -6,14 +6,17 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::{
     configs::AlignedConfig,
@@ -26,7 +29,10 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    common::{
+        errors,
+        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    },
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -44,7 +50,6 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Clone)]
 pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
@@ -71,26 +76,10 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
-            ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
+            ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
-
-        if cfg.dev_mode {
-            return Ok(Self {
-                eth_client,
-                signer: cfg.signer.clone(),
-                on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
-                needed_proof_types: vec![ProverType::Exec],
-                proof_send_interval_ms: cfg.proof_send_interval_ms,
-                sequencer_state,
-                rollup_store,
-                l1_chain_id,
-                network: aligned_cfg.network.clone(),
-                fee_estimate,
-                aligned_sp1_elf_path,
-            });
-        }
 
         Ok(Self {
             eth_client,
@@ -127,7 +116,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)
+            .map_err(ProofSenderError::InternalError)
     }
 
     async fn verify_and_send_proof(&mut self) -> Result<(), ProofSenderError> {
@@ -140,13 +129,11 @@ impl L1ProofSender {
         .await
         .map_err(|err| {
             error!("Failed to get next batch to send: {err}");
-            ProofSenderError::InternalError(err.to_string())
+            ProofSenderError::UnexpectedError(err.to_string())
         })?;
 
-        let last_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
@@ -199,7 +186,7 @@ impl L1ProofSender {
         aligned_proof: BatchProof,
     ) -> Result<(), ProofSenderError> {
         let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
-            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
+            ProofSenderError::UnexpectedError(format!("Failed to read ELF file: {e}"))
         })?;
 
         let verification_data = VerificationData {
@@ -220,27 +207,35 @@ impl L1ProofSender {
             })?;
 
         let Signer::Local(local_signer) = &self.signer else {
-            return Err(ProofSenderError::InternalError(
+            return Err(ProofSenderError::UnexpectedError(
                 "Aligned mode only supports local signer".to_string(),
             ));
         };
 
         let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
-            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+            .map_err(|_| ProofSenderError::UnexpectedError("Failed to create wallet".to_owned()))?;
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
 
         debug!("Sending proof to Aligned");
 
-        submit(
+        let algined_verification_result = submit(
             self.network.clone(),
             &verification_data,
             fee_estimation,
             wallet,
             nonce,
         )
-        .await
-        .map_err(|err| {
+        .await;
+
+        if let Err(errors::SubmitError::InvalidProof(_)) = algined_verification_result.as_ref() {
+            warn!("Deleting invalid ALIGNED proof");
+            self.rollup_store
+                .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                .await?;
+        }
+
+        algined_verification_result.map_err(|err| {
             ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
         })?;
 
@@ -295,13 +290,36 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid TDX proof") {
+                warn!("Deleting invalid TDX proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
+                    .await?;
+            } else if error.contains("Invalid RISC0 proof") {
+                warn!("Deleting invalid RISC0 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
+                    .await?;
+            } else if error.contains("Invalid SP1 proof") {
+                warn!("Deleting invalid SP1 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            }
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
@@ -325,10 +343,10 @@ impl GenServer for L1ProofSender {
     type Error = ProofSenderError;
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let _ = self
@@ -338,7 +356,7 @@ impl GenServer for L1ProofSender {
         }
         let check_interval = random_duration(self.proof_send_interval_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Send);
-        CastResponse::NoReply(self)
+        CastResponse::NoReply
     }
 }
 

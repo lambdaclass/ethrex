@@ -4,13 +4,14 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
+use std::time::Instant;
 use tracing::info;
 use zkvm_interface::input::{JSONProgramInput, ProgramInput};
-use std::time::Instant;
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -54,7 +55,8 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
@@ -71,7 +73,8 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 

@@ -197,6 +197,15 @@ impl RpcRequest {
         };
         resolve_namespace(namespace, self.method.clone())
     }
+
+    pub fn new(method: &str, params: Option<Vec<Value>>) -> Self {
+        RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params,
+        }
+    }
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
@@ -334,6 +343,7 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
+        let local_node_record = example_local_node_record();
         start_api(
             http_addr,
             authrpc_addr,
@@ -341,7 +351,7 @@ pub mod test_utils {
             blockchain,
             jwt_secret,
             local_p2p_node,
-            example_local_node_record(),
+            local_node_record,
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
@@ -352,6 +362,7 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,
             blockchain,
@@ -361,7 +372,7 @@ pub mod test_utils {
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
-                local_node_record: example_local_node_record(),
+                local_node_record,
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),

@@ -1,9 +1,12 @@
 use serde::Deserialize;
+use url::Url;
+
+use crate::backend::Backend;
 
 #[derive(Deserialize, Debug)]
 pub struct ProverConfig {
-    pub http_addr: String,
-    pub http_port: u16,
+    pub backend: Backend,
+    pub proof_coordinators: Vec<Url>,
     pub proving_time_ms: u64,
     pub aligned_mode: bool,
 }

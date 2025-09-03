@@ -1,14 +1,12 @@
 use crate::sequencer::errors::ProofCoordinatorError;
+use ethrex_common::types::TxType;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
+use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::clients::{
-    Overrides,
-    eth::{EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::{build_generic_tx, send_tx_bump_gas_exponential_backoff};
+use ethrex_rpc::clients::{Overrides, eth::EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::str::FromStr;
@@ -71,25 +69,24 @@ pub async fn register_tdx_key(
         })?;
 
     let tdx_address = get_tdx_address(eth_client, on_chain_proposer_address).await?;
-    let verify_tx = eth_client
-        .build_eip1559_transaction(
-            tdx_address,
-            get_address_from_secret_key(private_key)
-                .map_err(ProofCoordinatorError::EthClientError)?,
-            calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-    let mut tx = WrappedTransaction::EIP1559(verify_tx);
+    let verify_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        tdx_address,
+        get_address_from_secret_key(private_key).map_err(ProofCoordinatorError::InternalError)?,
+        calldata.into(),
+        Overrides {
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let signer = Signer::Local(LocalSigner::new(*private_key));
 
-    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, &signer).await?;
+    let verify_tx_hash =
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, &signer).await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
     Ok(())

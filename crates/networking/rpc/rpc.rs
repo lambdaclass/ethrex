@@ -1,6 +1,8 @@
 use crate::authentication::authenticate;
+use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
+    blobs::BlobsV1Request,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -9,7 +11,6 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
-use crate::eth::block::ExecutionWitness;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -64,7 +65,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -149,9 +150,9 @@ pub async fn start_api(
         let filters = active_filters.clone();
         loop {
             interval.tick().await;
-            tracing::info!("Running filter clean task");
+            tracing::debug!("Running filter clean task");
             filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::info!("Filter clean task complete");
+            tracing::debug!("Filter clean task complete");
         }
     });
 
@@ -190,7 +191,7 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+        .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
 
     Ok(())
 }
@@ -262,7 +263,7 @@ pub async fn handle_authrpc_request(
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
@@ -343,7 +344,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
-        "debug_executionWitness" => ExecutionWitness::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -376,14 +377,15 @@ pub async fn map_engine_requests(
         "engine_getPayloadBodiesByRangeV1" => {
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
+        "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
 
-pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
-        "admin_peers" => admin::peers(&context),
+        "admin_peers" => admin::peers(&context).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -509,10 +511,17 @@ mod tests {
                         "cancunTime": 0,
                         "pragueTime": 1718232101,
                         "verkleTime": null,
+                        "osakaTime": null,
+                        "bpo1Time": null,
+                        "bpo2Time": null,
+                        "bpo3Time": null,
+                        "bpo4Time": null,
+                        "bpo5Time": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
+                        "enableVerkleAtGenesis": false,
                     }
                 },
             }

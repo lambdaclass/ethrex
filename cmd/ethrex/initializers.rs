@@ -1,49 +1,59 @@
 use crate::{
     cli::Options,
-    networks::{self, Network, PublicNetwork},
-    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
+    utils::{
+        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
+    },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_config::networks::Network;
+
+use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, public_key_from_signing_key},
+    kademlia::Kademlia,
+    network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
+    utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info, warn};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(
-            // Filters all spawned logs
-            // TODO: revert #3467 when error logs are no longer emitted
-            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
-                .expect("this can't fail"),
-        )
+        .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy()
         .add_directive(Directive::from(opts.log_level));
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
+
+    let fmt_layer = fmt::layer().with_filter(log_filter);
+    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
+        let profiling_layer = FunctionProfilingLayer::default();
+        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+    } else {
+        Box::new(Registry::default().with(fmt_layer))
+    };
+
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
@@ -57,10 +67,13 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
+
+    initialize_block_processing_profile();
+
     tracker.spawn(metrics_api);
 }
 
-/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     store
@@ -70,7 +83,17 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     store
 }
 
-/// Opens a Pre-exsisting Store or creates a new one
+/// Initializes a pre-existing Store
+pub async fn load_store(data_dir: &str) -> Store {
+    let store = open_store(data_dir);
+    store
+        .load_initial_state()
+        .await
+        .expect("Failed to load store");
+    store
+}
+
+/// Opens a pre-existing Store or creates a new one
 pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
     if path.ends_with("memory") {
@@ -79,10 +102,8 @@ pub fn open_store(data_dir: &str) -> Store {
         cfg_if::cfg_if! {
             if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
-            } else if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
             } else {
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
         }
@@ -94,15 +115,16 @@ pub fn init_blockchain(
     evm_engine: EvmEngine,
     store: Store,
     blockchain_type: BlockchainType,
+    perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store, blockchain_type).into()
+    info!(evm = %evm_engine, "Initiating blockchain");
+    Blockchain::new(evm_engine, store, blockchain_type, perf_logs_enabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -119,6 +141,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        init_datadir(&opts.datadir),
     )
     .await;
 
@@ -147,7 +170,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -169,51 +192,50 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
-        blockchain,
+        blockchain.clone(),
         get_client_version(),
         based_context,
     );
-
-    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+        blockchain,
+        peer_table.peers.clone(),
+    ));
 }
 
 #[cfg(feature = "dev")]
 pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
-    if opts.dev {
-        info!("Running in DEV_MODE");
+    info!("Running in DEV_MODE");
 
-        let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().await.unwrap();
-            store
-                .get_canonical_block_hash(current_block_number)
-                .await
-                .unwrap()
-                .unwrap()
-        };
+    let head_block_hash = {
+        let current_block_number = store.get_latest_block_number().await.unwrap();
+        store
+            .get_canonical_block_hash(current_block_number)
+            .await
+            .unwrap()
+            .unwrap()
+    };
 
-        let max_tries = 3;
+    let max_tries = 3;
 
-        let url = format!(
-            "http://{authrpc_socket_addr}",
-            authrpc_socket_addr = get_authrpc_socket_addr(opts)
-        );
+    let url = format!(
+        "http://{authrpc_socket_addr}",
+        authrpc_socket_addr = get_authrpc_socket_addr(opts)
+    );
 
-        let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-            url,
-            read_jwtsecret_file(&opts.authrpc_jwtsecret),
-            head_block_hash,
-            max_tries,
-            1000,
-            ethrex_common::Address::default(),
-        );
-        tracker.spawn(block_producer_engine);
-    }
+    let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+        url,
+        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        head_block_hash,
+        max_tries,
+        1000,
+        ethrex_common::Address::default(),
+    );
+    tracker.spawn(block_producer_engine);
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -229,38 +251,19 @@ pub fn get_network(opts: &Options) -> Network {
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    match network {
-        Network::PublicNetwork(PublicNetwork::Holesky) => {
-            info!("Adding holesky preset bootnodes");
-            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Hoodi) => {
-            info!("Addig hoodi preset bootnodes");
-            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Mainnet) => {
-            info!("Adding mainnet preset bootnodes");
-            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
-        }
-        Network::PublicNetwork(PublicNetwork::Sepolia) => {
-            info!("Adding sepolia preset bootnodes");
-            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-        }
-        _ => {}
-    }
+    bootnodes.extend(network.get_bootnodes());
+
+    debug!("Loading known peers from config");
+
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => bootnodes.append(&mut config.known_peers),
+        Ok(None) => {} // No config file, nothing to do
+        Err(e) => warn!("Could not read from peers file: {e}"),
+    };
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
-
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    info!("Reading known peers from config file {:?}", config_file);
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
-        Err(e) => warn!("Could not read from peers file: {e}"),
-    };
 
     bootnodes
 }
@@ -312,7 +315,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = node.enode_url();
-    info!("Node: {enode}");
+    info!(enode = %enode, "Local node initialized");
 
     node
 }
@@ -322,14 +325,12 @@ pub fn get_local_node_record(
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
-
-    match read_node_config_file(config_file) {
-        Ok(ref mut config) => {
+    match read_node_config_file(data_dir) {
+        Ok(Some(ref mut config)) => {
             NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
                 .expect("Node record could not be created from local node")
         }
-        Err(_) => {
+        _ => {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -348,4 +349,95 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+#[cfg(feature = "sync-test")]
+async fn set_sync_block(store: &Store) {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
+        let block_number = block_number
+            .parse()
+            .expect("Block number provided by environment is not numeric");
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .expect("Could not get hash for block number provided by env variable")
+            .expect("Could not get hash for block number provided by env variable");
+        store
+            .forkchoice_update(None, block_number, block_hash, None, None)
+            .await
+            .expect("Could not set sync block");
+    }
+}
+
+pub async fn init_l1(
+    opts: Options,
+) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+    let data_dir = init_datadir(&opts.datadir);
+
+    let network = get_network(&opts);
+
+    let genesis = network.get_genesis()?;
+    let store = init_store(&data_dir, genesis).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
+
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1, true);
+
+    let signer = get_signer(&data_dir);
+
+    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &data_dir,
+        &local_p2p_node,
+        &signer,
+    )));
+
+    let peer_table = peer_table();
+
+    // TODO: Check every module starts properly.
+    let tracker = TaskTracker::new();
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    init_rpc_api(
+        &opts,
+        peer_table.clone(),
+        local_p2p_node.clone(),
+        local_node_record.lock().await.clone(),
+        store.clone(),
+        blockchain.clone(),
+        cancel_token.clone(),
+        tracker.clone(),
+    )
+    .await;
+
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
+
+    if opts.dev {
+        #[cfg(feature = "dev")]
+        init_dev_network(&opts, &store, tracker.clone()).await;
+    } else if opts.p2p_enabled {
+        init_network(
+            &opts,
+            &network,
+            &data_dir,
+            local_p2p_node,
+            local_node_record.clone(),
+            signer,
+            peer_table.clone(),
+            store.clone(),
+            tracker.clone(),
+            blockchain.clone(),
+            None,
+        )
+        .await;
+    } else {
+        info!("P2P is disabled");
+    }
+
+    Ok((data_dir, cancel_token, peer_table, local_node_record))
 }

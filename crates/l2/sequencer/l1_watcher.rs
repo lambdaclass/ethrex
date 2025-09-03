@@ -5,18 +5,23 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::PrivilegedL2Transaction;
+use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::{H160, types::Transaction};
+use ethrex_l2_sdk::{
+    build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
+};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{EthClient, eth_sender::Overrides},
+    clients::eth::{EthClient, Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::tasks::{
+    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -32,7 +37,6 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Clone)]
 pub struct L1Watcher {
     pub store: Store,
     pub blockchain: Arc<Blockchain>,
@@ -108,9 +112,7 @@ impl L1Watcher {
 
     pub async fn get_privileged_transactions(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
-            self.last_block_fetched = self
-                .eth_client
-                .get_last_fetched_l1_block(self.address)
+            self.last_block_fetched = get_last_fetched_l1_block(&self.eth_client, self.address)
                 .await?
                 .into();
         }
@@ -142,6 +144,11 @@ impl L1Watcher {
             self.last_block_fetched + self.max_block_step,
             latest_block_to_check,
         );
+
+        if self.last_block_fetched == latest_block_to_check {
+            debug!("{:#x} ==  {:#x}", self.last_block_fetched, new_last_block);
+            return Ok(vec![]);
+        }
 
         debug!(
             "Looking logs from block {:#x} to {:#x}",
@@ -205,7 +212,7 @@ impl L1Watcher {
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
 
             if self
-                .privileged_transaction_already_processed(tx.compute_hash())
+                .privileged_transaction_already_processed(tx.hash())
                 .await?
             {
                 warn!(
@@ -257,10 +264,8 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
-        let pending_privileged_transactions = self
-            .eth_client
-            .get_pending_privileged_transactions(self.address)
-            .await?;
+        let pending_privileged_transactions =
+            get_pending_privileged_transactions(&self.eth_client, self.address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 }
@@ -271,21 +276,21 @@ impl GenServer for L1Watcher {
     type OutMsg = OutMessage;
     type Error = L1WatcherError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Perform the check and suscribe a periodic Watch.
         handle
             .clone()
             .cast(Self::CastMsg::Watch)
             .await
-            .map_err(Self::Error::GenServerError)?;
-        Ok(self)
+            .map_err(Self::Error::InternalError)?;
+        Ok(Success(self))
     }
 
     async fn handle_cast(
-        mut self,
+        &mut self,
         message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             Self::CastMsg::Watch => {
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
@@ -293,7 +298,7 @@ impl GenServer for L1Watcher {
                 }
                 let check_interval = random_duration(self.check_interval);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
-                CastResponse::NoReply(self)
+                CastResponse::NoReply
             }
         }
     }
@@ -392,27 +397,29 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        eth_client
-            .build_privileged_transaction(
-                self.to_address,
-                self.from,
-                Bytes::copy_from_slice(&self.calldata),
-                Overrides {
-                    chain_id: Some(chain_id),
-                    // Using the transaction_id as nonce.
-                    // If we make a transaction on the L2 with this address, we may break the
-                    // privileged transaction workflow.
-                    nonce: Some(self.transaction_id.as_u64()),
-                    value: Some(self.value),
-                    gas_limit: Some(self.gas_limit.as_u64()),
-                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                    // Otherwise, the transaction is not included in the mempool.
-                    // We should override the blockchain to always include the transaction.
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await
+        let generic_tx = build_generic_tx(
+            eth_client,
+            TxType::Privileged,
+            self.to_address,
+            self.from,
+            Bytes::copy_from_slice(&self.calldata),
+            Overrides {
+                chain_id: Some(chain_id),
+                // Using the transaction_id as nonce.
+                // If we make a transaction on the L2 with this address, we may break the
+                // privileged transaction workflow.
+                nonce: Some(self.transaction_id.as_u64()),
+                value: Some(self.value),
+                gas_limit: Some(self.gas_limit.as_u64()),
+                // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                // Otherwise, the transaction is not included in the mempool.
+                // We should override the blockchain to always include the transaction.
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+        Ok(generic_tx.try_into()?)
     }
 }

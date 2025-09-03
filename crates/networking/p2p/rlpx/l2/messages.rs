@@ -5,7 +5,7 @@ use crate::rlpx::{
 };
 use bytes::BufMut;
 use ethrex_common::{
-    H256,
+    H256, Signature,
     types::{Block, batch::Batch},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
@@ -23,8 +23,7 @@ pub struct NewBlock {
     // of (almost) freely cloning the pointer instead of the block iself
     // when broadcasting this message.
     pub block: Arc<Block>,
-    pub signature: [u8; 64],
-    pub recovery_id: u8,
+    pub signature: Signature,
 }
 
 impl RLPxMessage for NewBlock {
@@ -35,7 +34,6 @@ impl RLPxMessage for NewBlock {
         Encoder::new(&mut encoded_data)
             .encode_field(&self.block.deref().clone())
             .encode_field(&self.signature)
-            .encode_field(&self.recovery_id)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -47,12 +45,10 @@ impl RLPxMessage for NewBlock {
         let decoder = Decoder::new(&decompressed_data)?;
         let (block, decoder) = decoder.decode_field("block")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
-        let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
         Ok(NewBlock {
             block: Arc::new(block),
             signature,
-            recovery_id,
         })
     }
 }
@@ -60,8 +56,7 @@ impl RLPxMessage for NewBlock {
 #[derive(Debug, Clone)]
 pub struct BatchSealed {
     pub batch: Box<Batch>,
-    pub signature: [u8; 64],
-    pub recovery_id: u8,
+    pub signature: Signature,
 }
 
 impl BatchSealed {
@@ -75,17 +70,19 @@ impl BatchSealed {
                 "Failed to convert recovery id to u8: {e}. This is a bug."
             ))
         })?;
+        let mut sig = [0u8; 65];
+        sig[..64].copy_from_slice(&signature);
+        sig[64] = recovery_id;
+        let signature = Signature::from_slice(&sig);
         Ok(Self {
             batch: Box::new(batch),
-            recovery_id,
             signature,
         })
     }
-    pub fn new(batch: Batch, signature: [u8; 64], recovery_id: u8) -> Self {
+    pub fn new(batch: Batch, signature: Signature) -> Self {
         Self {
             batch: Box::new(batch),
             signature,
-            recovery_id,
         }
     }
 }
@@ -117,7 +114,6 @@ impl RLPxMessage for BatchSealed {
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
-            .encode_field(&self.recovery_id)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -140,7 +136,6 @@ impl RLPxMessage for BatchSealed {
         let (commit_tx, decoder) = decoder.decode_optional_field();
         let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
-        let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
 
         let batch = Batch {
@@ -158,7 +153,7 @@ impl RLPxMessage for BatchSealed {
             commit_tx,
             verify_tx,
         };
-        Ok(BatchSealed::new(batch, signature, recovery_id))
+        Ok(BatchSealed::new(batch, signature))
     }
 }
 #[derive(Debug, Clone)]
