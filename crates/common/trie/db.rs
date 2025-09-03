@@ -1,6 +1,6 @@
 use crate::{NodeHash, error::TrieError};
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -18,11 +18,11 @@ pub trait TrieDbReader {
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
-    inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,
+    inner: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
-    pub const fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
 
@@ -35,7 +35,7 @@ impl InMemoryTrieDB {
 
 impl TrieDB for InMemoryTrieDB {
     fn read_tx<'a>(&'a self) -> Box<dyn 'a + TrieDbReader> {
-        struct InnerReader<'a>(MutexGuard<'a, HashMap<NodeHash, Vec<u8>>>);
+        struct InnerReader<'a>(MutexGuard<'a, BTreeMap<NodeHash, Vec<u8>>>);
 
         impl TrieDbReader for InnerReader<'_> {
             fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
