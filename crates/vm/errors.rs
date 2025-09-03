@@ -4,6 +4,7 @@ use ethereum_types::{H160, H256};
 use ethrex_common::{Address, types::BlockHash};
 use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
 use ethrex_trie::TrieError;
+#[cfg(feature = "revm")]
 use revm::primitives::{
     Address as RevmAddress, B256 as RevmB256, U256 as RevmU256, result::EVMError as RevmError,
 };
@@ -97,6 +98,7 @@ pub enum StateProofsError {
     StorageProofNotFound(RevmAddress, RevmU256),
 }
 
+#[cfg(feature = "revm")]
 impl<E: Display> From<RevmError<E>> for EvmError {
     fn from(value: RevmError<E>) -> Self {
         match value {

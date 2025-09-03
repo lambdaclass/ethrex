@@ -6,11 +6,12 @@ pub mod revm;
 use self::revm::db::{EvmState, evm_state};
 #[cfg(feature = "revm")]
 use revm::REVM;
+#[cfg(feature = "revm")]
+use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
 
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
 use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
