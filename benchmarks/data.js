@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756923783642,
+  "lastUpdate": 1756931497953,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11635,6 +11635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167455531053,
             "range": "± 364564505",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ffed957d95fad4048ee7986aeafc54500898a216",
+          "message": "fix(l2): grafana for macos (#4283)\n\n**Motivation**\n\nOur Grafana dashboards are not showing data when running the node on\nmacos because the Linux bridge address is hardcoded in the Prometheus\ncontainer.\n \n**Description**\n\n- Use the `host-gateway` feature instead.\n\nCloses None",
+          "timestamp": "2025-09-03T19:38:02Z",
+          "tree_id": "79fb4f84b222f8c252112d3410efffaa50280f97",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ffed957d95fad4048ee7986aeafc54500898a216"
+        },
+        "date": 1756931479601,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168651446876,
+            "range": "± 417567127",
             "unit": "ns/iter"
           }
         ]
