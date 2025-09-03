@@ -27,6 +27,7 @@ use crate::{
     sync::AccountStorageRoots,
     utils::current_unix_time,
 };
+use super::super::peer_score::PeerScores;
 
 /// Max size of a bach to start a storage fetch request in queues
 pub const STORAGE_BATCH_SIZE: usize = 300;
@@ -52,6 +53,7 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
+    peer_scores: &mut PeerScores,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     info!("Starting state healing");
@@ -64,6 +66,7 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
+            peer_scores,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -87,6 +90,7 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
+    peer_scores: &mut PeerScores,
 ) -> Result<bool, SyncError> {
     // TODO:
     // Spawn a bytecode fetcher for this block
@@ -128,9 +132,6 @@ async fn heal_state_trie(
             .iter()
             .map(|(peer_id, _peer_data)| (*peer_id, true)),
     );
-    let mut scores: HashMap<H256, i64> =
-        HashMap::from_iter(peers_table.iter().map(|(peer_id, _)| (*peer_id, 0)));
-
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     loop {
@@ -169,7 +170,7 @@ async fn heal_state_trie(
 
             for (peer_id, _) in peers_table {
                 downloaders.entry(peer_id).or_insert(true);
-                scores.entry(peer_id).or_insert(0);
+                peer_scores.check_or_insert(peer_id, 0);
             }
         }
 
@@ -208,11 +209,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    scores.entry(peer_id).and_modify(|score| {
-                        if *score < MAX_SCORE {
-                            *score += 1;
-                        }
-                    });
+                    peer_scores.record_success(peer_id);
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -221,7 +218,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    scores.entry(peer_id).and_modify(|score| *score -= 1);
+                    peer_scores.record_failure(peer_id);
                 }
             }
         }
@@ -242,7 +239,7 @@ async fn heal_state_trie(
                     get_peer_with_highest_score_and_mark_it_as_occupied(
                         &peers,
                         &mut downloaders,
-                        &scores,
+                        peer_scores,
                     )
                     .await
                 else {
@@ -415,7 +412,7 @@ fn commit_node(
 async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     peers: &PeerHandler,
     downloaders: &mut HashMap<H256, bool>,
-    scores: &HashMap<H256, i64>,
+    peer_scores: &mut PeerScores,
 ) -> Option<(H256, PeerChannels)> {
     // Filter the free downloaders
     let free_downloaders: Vec<H256> = downloaders
@@ -428,11 +425,11 @@ async fn get_peer_with_highest_score_and_mark_it_as_occupied(
     let mut peer_with_highest_score = free_downloaders.first()?;
     let mut highest_score = i64::MIN;
     for peer_id in &free_downloaders {
-        let Some(score) = scores.get(peer_id) else {
+        let Some(score) = peer_scores.get_score_opt(peer_id) else {
             continue;
         };
-        if *score > highest_score {
-            highest_score = *score;
+        if score > highest_score {
+            highest_score = score;
             peer_with_highest_score = peer_id;
         }
     }

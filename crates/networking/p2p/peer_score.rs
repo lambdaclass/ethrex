@@ -21,6 +21,14 @@ impl PeerScores {
         *self.scores.get(peer_id).unwrap_or(&0)
     }
 
+    pub fn get_score_opt(&self, peer_id: &H256) -> Option<i64> {
+        self.scores.get(peer_id).copied()
+    }
+
+    pub fn check_or_insert(&mut self, peer_id: H256, value: i64) {
+        self.scores.entry(peer_id).or_insert(value);
+    }
+
     pub fn record_success(&mut self, peer_id: H256) {
         let score = self.scores.entry(peer_id).or_insert(0);
         *score = score.saturating_add(1);
