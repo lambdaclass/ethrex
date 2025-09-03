@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756896512535,
+  "lastUpdate": 1756898634568,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25010,6 +25010,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.001376205882352941,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7a169cf414791b892430abf1e716442e318f8d84",
+          "message": "fix(levm): check coordinates are within field bounds in ecpairing precompile (#4082)\n\n**Motivation**\nA gas mismatch was found on a [sepolia\ntransaction](https://sepolia.etherscan.io/tx/0x4355d49be46e61a53c71f45a128ebefb52cb38df08ed55833c2c162d26396819).\nThis was due to the transaction failing at an ecpairing precompile on\nthe network but not on levm. The difference was that geth checks that\nthe coordinates received are within the bounds of the field, while we\nperform modulus on the input coordinates (see\n`BN254FieldElement::from_bytes_be`). This PR fixes this by checking that\nthe input coordinates are within the field bounds before constructing\nthe FieldElements.\nIt also adds some tests taken from geth to ensure that the\nimplementation remains correct + a test for the out of bounds case\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Check that input coordinates are within field bounds in `ecpairing`\nprecompile\n* Add tests for `ecpairing` precompile\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-02T18:11:12Z",
+          "tree_id": "06b03d360335a6293ead17faa2bda86677781f28",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7a169cf414791b892430abf1e716442e318f8d84"
+        },
+        "date": 1756898633619,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0013242735849056603,
             "unit": "Mgas/s"
           }
         ]
