@@ -56,7 +56,7 @@ impl Store {
 
         let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
 
-        db_options.set_max_open_files(1024);
+        db_options.set_max_open_files(-1);
         db_options.set_use_fsync(false);
         db_options.set_bytes_per_sync(8 * 1024 * 1024); // 8MB
         db_options.set_wal_bytes_per_sync(8 * 1024 * 1024); // 8MB
