@@ -203,6 +203,7 @@ pub fn display_chain_initialization(genesis: &Genesis) {
         info!("{line}");
     }
 
+    info!("");
     let hash = genesis.get_block().hash();
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");

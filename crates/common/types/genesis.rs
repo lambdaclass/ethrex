@@ -297,14 +297,10 @@ impl ChainConfig {
     }
 
     pub fn display_config(&self) -> String {
-        let mut output = String::new();
-
         let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-        output.push_str(&format!("Chain ID:  {} ({})\n", self.chain_id, network));
-        output.push_str("Network is post-merge\n");
-        output.push_str("Post-Merge hard forks (timestamp based):\n");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
 
-        let hard_forks = [
+        let post_merge_forks = [
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
             ("Prague", self.prague_time),
@@ -312,10 +308,17 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
         ];
 
-        for (name, maybe_time) in &hard_forks {
-            if let Some(time) = maybe_time {
-                output.push_str(&format!("- {}: @{:<10}\n", name, time));
-            }
+        let active_forks: Vec<_> = post_merge_forks
+            .iter()
+            .filter_map(|(name, t)| t.map(|time| format!("- {}: @{:<10}", name, time)))
+            .collect();
+
+        if !active_forks.is_empty() {
+            output.push_str("Network is post-merge\n\n");
+            output.push_str("Post-Merge hard forks (timestamp based):\n");
+            output.push_str(&active_forks.join("\n"));
+        } else {
+            output.push_str("Network is at Paris\n\n");
         }
 
         output
