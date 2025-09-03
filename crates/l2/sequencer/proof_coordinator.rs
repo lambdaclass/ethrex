@@ -34,6 +34,8 @@ use tracing::{debug, error, info, warn};
 use ethrex_metrics::l2::metrics::METRICS;
 #[cfg(feature = "metrics")]
 use std::{collections::HashMap, time::SystemTime};
+#[cfg(feature = "metrics")]
+use tokio::sync::Mutex;
 
 #[serde_as]
 #[derive(Serialize, Deserialize)]
@@ -180,7 +182,7 @@ pub struct ProofCoordinator {
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
     #[cfg(feature = "metrics")]
-    request_timestamps: HashMap<u64, SystemTime>,
+    request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
 }
 
 impl ProofCoordinator {
@@ -229,7 +231,7 @@ impl ProofCoordinator {
             needed_proof_types,
             commit_hash: get_commit_hash(),
             #[cfg(feature = "metrics")]
-            request_timestamps: HashMap::new(),
+            request_timestamp: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -335,16 +337,14 @@ impl ProofCoordinator {
                 let input = self.create_prover_input(batch_to_verify).await?;
                 debug!("Sending BatchResponse for block_number: {batch_to_verify}");
                 metrics!(
-                    tracing::warn!("setting request timestamp for batch {batch_to_verify}");
-                    tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
                     // First request starts a timer until a proof is received. The elapsed time will be
                     // the estimated proving time.
                     // This should be used for development only and runs on the assumption that:
                     //   1. There's a single prover
                     //   2. Communication does not fail
                     //   3. Communication adds negligible overhead in comparison with proving time
-                    self.request_timestamps.entry(batch_to_verify).or_insert(SystemTime::now());
-                    tracing::warn!("done, new request_teimstamps len: {}", self.request_timestamps.len());
+                    let mut lock = self.request_timestamp.lock().await;
+                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
                 );
                 ProofData::batch_response(batch_to_verify, input)
             };
@@ -379,21 +379,20 @@ impl ProofCoordinator {
         } else {
             metrics!(
                 tracing::warn!("getting request timestamp for batch {batch_number}");
-                tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
-                let timestamp = self.request_timestamps.get(&batch_number).ok_or(
+                let mut request_timestamps = self.request_timestamp.lock().await;
+                let request_timestamp = request_timestamps.get(&batch_number).ok_or(
                     ProofCoordinatorError::InternalError(
                         "request timestamp could not be found".to_string(),
                     ),
                 )?;
-                let proving_time = timestamp
+                let proving_time = request_timestamp
                     .elapsed()
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
                     .as_secs().try_into()
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
-                let _ = self.request_timestamps.remove(&batch_number);
                 tracing::warn!("removed request timestamp for batch {batch_number}");
-                tracing::warn!("request_teimstamps len: {}", self.request_timestamps.len());
+                let _ = request_timestamps.remove(&batch_number);
             );
             // If not, store it
             self.rollup_store
