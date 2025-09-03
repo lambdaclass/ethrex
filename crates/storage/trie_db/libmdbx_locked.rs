@@ -1,4 +1,4 @@
-use ethrex_trie::{NodeHash, error::TrieError};
+use ethrex_trie::{NodeHash, db::TrieDbReader, error::TrieError};
 use libmdbx::{
     RO,
     orm::{Database, Table, Transaction},
@@ -46,13 +46,31 @@ impl<T> TrieDB for LibmdbxLockedTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        self.txn.get::<T>(key).map_err(TrieError::DbError)
+    fn read_tx<'a>(&'a self) -> Box<dyn 'a + ethrex_trie::db::TrieDbReader> {
+        Box::new(self)
     }
 
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))
+    }
+}
+
+impl<T> TrieDbReader for LibmdbxLockedTrieDB<T>
+where
+    T: Table<Key = NodeHash, Value = Vec<u8>>,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn.get::<T>(key).map_err(TrieError::DbError)
+    }
+}
+
+impl<T> TrieDbReader for &LibmdbxLockedTrieDB<T>
+where
+    T: Table<Key = NodeHash, Value = Vec<u8>>,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn.get::<T>(key).map_err(TrieError::DbError)
     }
 }
