@@ -6,4 +6,5 @@ pub enum RunnerError {
     VMError(VMError),
     EIP7702ShouldNotBeCreateType,
     FailedToGetIndexValue(String),
+    Custom(String),
 }

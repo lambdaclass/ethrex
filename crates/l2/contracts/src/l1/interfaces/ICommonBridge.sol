@@ -145,4 +145,10 @@ interface ICommonBridge {
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
+
+    /// @notice Allows the owner to pause the contract
+    function pause() external;
+
+    /// @notice Allows the owner to unpause the contract
+    function unpause() external;
 }
