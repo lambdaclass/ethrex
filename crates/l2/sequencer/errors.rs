@@ -258,6 +258,8 @@ pub enum CommitterError {
     ConversionError(String),
     #[error("Unexpected Error: {0}")]
     UnexpectedError(String),
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1442,7 +1442,7 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::error!("Failed to get bytecode");
+                    tracing::debug!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
