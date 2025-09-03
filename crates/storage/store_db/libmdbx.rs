@@ -3,7 +3,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -15,8 +15,7 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-    Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
@@ -631,28 +630,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
-            .await
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self
-            .read::<Payloads>(payload_id)
-            .await?
-            .map(|b| b.to())
-            .transpose()
-            .map_err(StoreError::from)?)
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, payload.into()).await
-    }
-
     async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
@@ -1235,13 +1212,6 @@ table!(
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
-// Local Blocks
-
-table!(
-    /// payload id to payload table
-    ( Payloads ) u64 => PayloadBundleRLP
-);
-
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
@@ -1354,7 +1324,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StateTrieNodes),
         table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
         table_info!(PendingBlocks),
         table_info!(SnapState),
         table_info!(StorageSnapShot),

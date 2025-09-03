@@ -532,6 +532,9 @@ fn get_initial_downloads(
                     .expect("We should be able to open the store")
                     .expect("This account should exist in the trie");
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
+                if account.storage_root == *EMPTY_TRIE_HASH {
+                    return None;
+                }
                 if store
                     .contains_storage_node(*acc_path, account.storage_root)
                     .expect("We should be able to open the store")
