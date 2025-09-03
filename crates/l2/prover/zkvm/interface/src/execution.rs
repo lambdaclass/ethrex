@@ -14,7 +14,7 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::{Evm, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
+use ethrex_vm::{Evm, EvmError, ExecutionWitnessWrapper, VmDatabase};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
@@ -36,8 +36,6 @@ use ethrex_l2_common::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
-    #[error("ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Block validation error: {0}")]
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
