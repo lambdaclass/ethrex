@@ -4,7 +4,7 @@ use ethrex_common::{
     H256, U256,
     types::{
         Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        Transaction, payload::PayloadBundle,
+        Transaction,
     },
     utils::u256_to_big_endian,
 };
@@ -14,12 +14,13 @@ use rocksdb::{
     SliceTransform, WriteBatch,
 };
 use std::sync::Arc;
+use tracing::info;
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
     api::StoreEngine,
     error::StoreError,
-    rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP},
+    rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     trie_db::rocksdb::RocksDBTrieDB,
     utils::{ChainDataIndex, SnapStateIndex},
 };
@@ -38,7 +39,6 @@ const CF_CHAIN_DATA: &str = "chain_data";
 const CF_SNAP_STATE: &str = "snap_state";
 const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
-const CF_PAYLOADS: &str = "payloads";
 const CF_PENDING_BLOCKS: &str = "pending_blocks";
 const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
@@ -102,7 +102,6 @@ impl Store {
             CF_SNAP_STATE,
             CF_STATE_TRIE_NODES,
             CF_STORAGE_TRIES_NODES,
-            CF_PAYLOADS,
             CF_PENDING_BLOCKS,
             CF_STORAGE_SNAPSHOT,
             CF_INVALID_ANCESTORS,
@@ -888,6 +887,10 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
+        info!(
+            "[TRANSACTION BY HASH] Transaction hash: {:?}",
+            transaction_hash
+        );
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
@@ -1137,33 +1140,6 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        let payload_bundle = PayloadBundle::from_block(block);
-        let key = payload_id.encode_to_vec();
-        let value = PayloadBundleRLP::from(payload_bundle).bytes().clone();
-        self.write_async(CF_PAYLOADS, key, value).await
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        let key = payload_id.encode_to_vec();
-
-        self.read_async(CF_PAYLOADS, key)
-            .await?
-            .map(|bytes| PayloadBundleRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        let key = payload_id.encode_to_vec();
-        let value = PayloadBundleRLP::from(payload).bytes().clone();
-        self.write_async(CF_PAYLOADS, key, value).await
     }
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
