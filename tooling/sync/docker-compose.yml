@@ -40,7 +40,7 @@ services:
     volumes:
       - secrets:/secrets
     environment:
-      - RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,ethrex_p2p::discv4=off,spawned_concurrency::tasks::gen_server=off
+      - RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off
     command: >
       --http.addr 0.0.0.0
       --authrpc.addr 0.0.0.0

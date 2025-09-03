@@ -12,7 +12,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after, send_interval},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
@@ -141,6 +141,14 @@ impl DiscoverySideCar {
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
+
+        // Known issue #4232: currently udp_socket is only a IPv4 socket, so it will fail trying to send
+        // node to IPv6 addresses. For now we just print a trace to record the issue and return
+        if node.ip.is_ipv6() {
+            trace!("Sending FindNode message to ipv6 addresses, skipping.");
+            return Ok(());
+        }
+
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
