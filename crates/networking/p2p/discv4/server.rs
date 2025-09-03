@@ -409,6 +409,14 @@ impl DiscoveryServer {
     }
 
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
+
+        // Known issue #4232: currently udp_socket is only a IPv4 socket, so it will fail trying to send
+        // node to IPv6 addresses. For now we just print a trace to record the issue and return
+        if node.ip.is_ipv6() {
+            trace!("Sending FindNode message to ipv6 addresses, skipping.");
+            return Ok(());
+        }
+
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
 
         let random_priv_key = SecretKey::new(&mut OsRng);
