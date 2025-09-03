@@ -1184,7 +1184,7 @@ pub async fn update_pivot(
     let block_number = pivot_header.number;
     let block_timestamp = pivot_header.timestamp;
     let new_pivot_block_number =
-        block_number + (current_unix_time() - block_timestamp) / SECONDS_PER_BLOCK;
+        block_number + current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
         block_number, block_timestamp, new_pivot_block_number
