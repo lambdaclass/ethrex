@@ -1123,15 +1123,18 @@ pub async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
-        let mut peer_info = peers.peers_info.lock().await;
+        let mut peers_info = peers.peers_info.lock().await;
 
         let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut peer_info)
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut peers_info)
             .await
             .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peer_info.get(&peer_id).unwrap().score;
+        let peer_score = match peers_info.get(&peer_id) {
+            Some(peer_info) => peer_info.score,
+            None => 0,
+        };
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1141,18 +1144,18 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peer_info
-                .entry(peer_id)
-                .and_modify(|peer_info| peer_info.score -= 1);
-            let peer_score = peer_info.get(&peer_id).unwrap().score;
-            warn!(
-                "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
-            );
+            if let Some(peer_info) = peers_info.get_mut(&peer_id) {
+                peer_info.score -= 1;
+                warn!(
+                    "Received None pivot from peer {peer_id} (score after penalizing: {}). Retrying",
+                    peer_info.score
+                );
+            }
             continue;
         };
 
         // Reward peer
-        peer_info.entry(peer_id).and_modify(|peer_info| {
+        peers_info.entry(peer_id).and_modify(|peer_info| {
             if peer_info.score < 10 {
                 peer_info.score += 1;
             }

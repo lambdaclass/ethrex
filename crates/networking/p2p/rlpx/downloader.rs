@@ -58,7 +58,7 @@ impl Downloader {
     where
         T: Send + 'static,
     {
-        if let Err(_) = response_channel.send(msg).await {
+        if response_channel.send(msg).await.is_err() {
             error!("[SYNCING] Failed to send response though response channel"); // TODO: Irrecoverable?
         }
     }
@@ -154,11 +154,12 @@ impl GenServer for Downloader {
                     reverse: false,
                 });
 
-                if let Err(_) = self
+                if self
                     .peer_channels
                     .connection
                     .cast(CastMessage::BackendMessage(request.clone()))
                     .await
+                    .is_err()
                 {
                     error!("Failed sending backend message to peer");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
@@ -172,13 +173,15 @@ impl GenServer for Downloader {
                 {
                     Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
                         if id == request_id && !block_headers.is_empty() {
-                            let sync_head_number = block_headers.last().unwrap().number;
-                            debug!(
-                                "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}",
-                            );
-                            return CallResponse::Stop(DownloaderCallResponse::CurrentHead(
-                                sync_head_number,
-                            ));
+                            if let Some(header) = block_headers.last() {
+                                let sync_head_number = header.number;
+                                debug!(
+                                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}",
+                                );
+                                return CallResponse::Stop(DownloaderCallResponse::CurrentHead(
+                                    sync_head_number,
+                                ));
+                            }
                         } else {
                             debug!("Received unexpected response from peer {peer_id}");
                         }
@@ -243,7 +246,7 @@ impl GenServer for Downloader {
                     ));
                 }
 
-                return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
+                CallResponse::Stop(DownloaderCallResponse::Receipts(None))
             }
             DownloaderCallRequest::BlockBodies { block_hashes } => {
                 let request_id = rand::random();
@@ -289,7 +292,7 @@ impl GenServer for Downloader {
                     return CallResponse::Stop(DownloaderCallResponse::BlockBodies(block_bodies));
                 }
 
-                return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                CallResponse::Stop(DownloaderCallResponse::NotFound)
             }
             DownloaderCallRequest::TrieNodes { root_hash, paths } => {
                 let request_id = rand::random();
@@ -341,7 +344,7 @@ impl GenServer for Downloader {
                 }) {
                     return CallResponse::Stop(DownloaderCallResponse::TrieNodes(nodes));
                 }
-                return CallResponse::Stop(DownloaderCallResponse::NotFound);
+                CallResponse::Stop(DownloaderCallResponse::NotFound)
             }
             DownloaderCallRequest::BlockHeader { block_number } => {
                 let request_id = rand::random();
@@ -355,11 +358,12 @@ impl GenServer for Downloader {
                 debug!("get_block_header: requesting header with number {block_number}");
 
                 let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(_) = self
+                if self
                     .peer_channels
                     .connection
                     .cast(CastMessage::BackendMessage(request.clone()))
                     .await
+                    .is_err()
                 {
                     debug!("Failed sendign cast request to peer channel");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
@@ -494,7 +498,9 @@ impl GenServer for Downloader {
                 });
 
                 let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = (&mut self.peer_channels.connection)
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -580,7 +586,7 @@ impl GenServer for Downloader {
                     let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
                     self.send_through_response_channel(task_sender, msg).await;
                 }
-                return CastResponse::Stop;
+                CastResponse::Stop
             }
             DownloaderCastRequest::ByteCode {
                 task_sender,

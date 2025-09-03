@@ -221,16 +221,12 @@ impl PeerHandler {
         peer_id: H256,
         capabilities: &[Capability],
     ) -> Option<PeerChannels> {
-        match self
-            .peer_table
+        self.peer_table
             .get_peer_channels(capabilities)
             .await
             .iter()
             .find(|(id, _)| *id == peer_id)
-        {
-            Some((_, peer_channels)) => Some(peer_channels.clone()),
-            None => None,
-        }
+            .map(|(_, peer_channels)| peer_channels.clone())
     }
 
     /// Returns a random available `Downloader` with supported capabilities,
@@ -251,12 +247,9 @@ impl PeerHandler {
             return None;
         }
 
-        let Some(free_peer_id) = free_downloaders
+        let free_peer_id = free_downloaders
             .get(random::<usize>() % free_downloaders.len())
-            .map(|(peer_id, _)| *peer_id)
-        else {
-            return None;
-        };
+            .map(|(peer_id, _)| *peer_id)?;
 
         let Some(free_downloader_channels) = self
             .retrieve_peer_channels(free_peer_id, capabilities)
@@ -516,7 +509,7 @@ impl PeerHandler {
 
             self.mark_peer_as_busy(available_downloader.peer_id()).await;
 
-            if let Err(_) = available_downloader
+            if available_downloader
                 .start()
                 .cast(DownloaderCastRequest::Headers {
                     task_sender: task_sender.clone(),
@@ -524,6 +517,7 @@ impl PeerHandler {
                     chunk_limit,
                 })
                 .await
+                .is_err()
             {
                 tasks_queue_not_started.push_front((start_block, chunk_limit));
             }
@@ -615,7 +609,7 @@ impl PeerHandler {
         {
             Ok(DownloaderCallResponse::BlockBodies(block_bodies)) => {
                 self.record_peer_success(peer_id).await;
-                return Some((block_bodies, peer_id));
+                Some((block_bodies, peer_id))
             }
             _ => {
                 warn!(
@@ -688,7 +682,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        if (0..REQUEST_RETRY_ATTEMPTS).next().is_some() {
             let available_downloader = loop {
                 match self
                     .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
@@ -915,7 +909,7 @@ impl PeerHandler {
                     .expect("Should be able to update pivot")
             }
 
-            if let Err(_) = available_downloader
+            if available_downloader
                 .start()
                 .cast(DownloaderCastRequest::AccountRange {
                     task_sender: task_sender.clone(),
@@ -924,6 +918,7 @@ impl PeerHandler {
                     limit_hash: chunk_end,
                 })
                 .await
+                .is_err()
             {
                 tasks_queue_not_started.push_front((chunk_start, chunk_end));
             }
@@ -1093,7 +1088,7 @@ impl PeerHandler {
                 .copied()
                 .collect();
 
-            if let Err(_) = available_downloader
+            if available_downloader
                 .start()
                 .cast(DownloaderCastRequest::ByteCode {
                     task_sender: task_sender.clone(),
@@ -1102,6 +1097,7 @@ impl PeerHandler {
                     chunk_end,
                 })
                 .await
+                .is_err()
             {
                 tasks_queue_not_started.push_front((chunk_start, chunk_end));
             }
@@ -1413,7 +1409,7 @@ impl PeerHandler {
                 break;
             }
 
-            if let Err(_) = available_downloader
+            if available_downloader
                 .start()
                 .cast(DownloaderCastRequest::StorageRanges {
                     task_sender: tx.clone(),
@@ -1426,6 +1422,7 @@ impl PeerHandler {
                     chunk_storage_roots,
                 })
                 .await
+                .is_err()
             {
                 tasks_queue_not_started.push_front(task);
             }
@@ -1522,7 +1519,7 @@ impl PeerHandler {
 
                 Ok(nodes)
             }
-            _ => return Err(RequestStateTrieNodesError::InvalidData),
+            _ => Err(RequestStateTrieNodesError::InvalidData),
         }
     }
 
@@ -1555,12 +1552,10 @@ impl PeerHandler {
                     .collect();
                 Ok(TrieNodes { id, nodes })
             }
-            _ => {
-                return Err(RequestStorageTrieNodes::SendMessageError(
-                    id,
-                    SendMessageError::PeerBusy,
-                ));
-            } // TODO: THIS ERROR IS NOT ADECUATE
+            _ => Err(RequestStorageTrieNodes::SendMessageError(
+                id,
+                SendMessageError::PeerBusy,
+            )), // TODO: THIS ERROR IS NOT ADECUATE
         }
     }
 
