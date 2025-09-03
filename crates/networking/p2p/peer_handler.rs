@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::Node;
-use rand::{random, seq::SliceRandom};
+use rand::random;
 use spawned_concurrency::tasks::GenServer;
 use tokio::{sync::Mutex, time::Instant};
 
@@ -198,20 +198,6 @@ impl PeerHandler {
         Ok(Some((free_peer_id, free_peer_channel.clone())))
     }
 
-    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
-        &self,
-        capabilities: &[Capability],
-    ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
-
-        peer_channels.shuffle(&mut rand::rngs::OsRng);
-
-        peer_channels.first().cloned()
-    }
-
     async fn update_peers_info(&self) {
         let peer_channels = self
             .peer_table
@@ -229,10 +215,15 @@ impl PeerHandler {
         }
     }
 
-    async fn retrieve_peer_channels(&self, peer_id: H256) -> Option<PeerChannels> {
+    // Retrieves a peer channel with supported capabilities
+    async fn retrieve_peer_channels(
+        &self,
+        peer_id: H256,
+        capabilities: &[Capability],
+    ) -> Option<PeerChannels> {
         match self
             .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .get_peer_channels(capabilities)
             .await
             .iter()
             .find(|(id, _)| *id == peer_id)
@@ -242,8 +233,9 @@ impl PeerHandler {
         }
     }
 
-    /// Returns a random `Downloader`, or None if no peers are available
-    async fn get_random_downloader(&self) -> Option<Downloader> {
+    /// Returns a random available `Downloader` with supported capabilities,
+    /// or None if there areno peers are available
+    async fn get_random_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
         self.update_peers_info().await;
 
         let free_downloaders = self
@@ -266,7 +258,57 @@ impl PeerHandler {
             return None;
         };
 
-        let Some(free_downloader_channels) = self.retrieve_peer_channels(free_peer_id).await else {
+        let Some(free_downloader_channels) = self
+            .retrieve_peer_channels(free_peer_id, capabilities)
+            .await
+        else {
+            // The free downloader is not a peer of us anymore.
+            debug!(
+                "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+            );
+            self.peers_info.lock().await.remove(&free_peer_id);
+            return None;
+        };
+
+        Some(Downloader::new(free_peer_id, free_downloader_channels))
+    }
+
+    /// Returns the best available `Downloader` with supported capabilities,
+    /// or None if there are no peers are available
+    async fn get_best_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
+        self.update_peers_info().await;
+
+        let free_downloaders = self
+            .peers_info
+            .lock()
+            .await
+            .clone()
+            .into_iter()
+            .filter(|(_downloader_id, peer_info)| peer_info.available)
+            .collect::<Vec<_>>();
+
+        if free_downloaders.is_empty() {
+            return None;
+        }
+
+        let (mut free_peer_id, _) = free_downloaders[0];
+
+        let peers_info = self.peers_info.lock().await;
+        for (peer_id, _) in free_downloaders.iter() {
+            if let (Some(peer_info), Some(free_peer_info)) =
+                (peers_info.get(peer_id), peers_info.get(&free_peer_id))
+            {
+                if peer_info.score >= free_peer_info.score {
+                    free_peer_id = *peer_id;
+                }
+            }
+        }
+        drop(peers_info);
+
+        let Some(free_downloader_channels) = self
+            .retrieve_peer_channels(free_peer_id, capabilities)
+            .await
+        else {
             // The free downloader is not a peer of us anymore.
             debug!(
                 "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
@@ -449,7 +491,10 @@ impl PeerHandler {
                 self.mark_peer_as_free(peer_id).await;
             }
 
-            let Some(available_downloader) = self.get_random_downloader().await else {
+            let Some(available_downloader) = self
+                .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
+                .await
+            else {
                 debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
@@ -547,10 +592,22 @@ impl PeerHandler {
         block_hashes: Vec<H256>,
     ) -> Option<(Vec<BlockBody>, H256)> {
         self.refresh_peers_availability().await;
-        let (peer_id, peer_channel) = self
-            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-            .await?;
-        let available_downloader = Downloader::new(peer_id, peer_channel.clone());
+
+        let available_downloader = loop {
+            match self
+                .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
+                .await
+            {
+                Some(downloader) => break downloader,
+                None => {
+                    debug!("No available downloader found, retrying...");
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+            }
+        };
+
+        let peer_id = available_downloader.peer_id();
         match available_downloader
             .start()
             .call(DownloaderCallRequest::BlockBodies { block_hashes })
@@ -632,11 +689,20 @@ impl PeerHandler {
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let (peer_id, peer_channels) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
+            let available_downloader = loop {
+                match self
+                    .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                {
+                    Some(downloader) => break downloader,
+                    None => {
+                        debug!("No available downloader found, retrying...");
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        continue;
+                    }
+                }
+            };
 
-            let available_downloader = Downloader::new(peer_id, peer_channels);
             match available_downloader
                 .start()
                 .call(DownloaderCallRequest::Receipts { block_hashes })
@@ -826,60 +892,9 @@ impl PeerHandler {
                 });
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-                .await;
-
-            for (peer_id, _peer_channels) in &peer_channels {
-                let mut peers_info = self.peers_info.lock().await;
-                if peers_info.contains_key(peer_id) {
-                    continue;
-                }
-                peers_info.insert(*peer_id, Default::default());
-                debug!("{peer_id} added as downloader");
-            }
-
-            let free_downloaders = self
-                .peers_info
-                .lock()
-                .await
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, peer_info)| peer_info.available)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let (mut free_peer_id, _) = free_downloaders[0];
-
-            let peers_info = self.peers_info.lock().await;
-            for (peer_id, _) in free_downloaders.iter() {
-                if let (Some(peer_info), Some(free_peer_info)) =
-                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
-                {
-                    if peer_info.score >= free_peer_info.score {
-                        free_peer_id = *peer_id;
-                    }
-                }
-            }
-            drop(peers_info);
-
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
+            let Some(available_downloader) =
+                self.get_best_downloader(&SUPPORTED_SNAP_CAPABILITIES).await
             else {
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                self.peers_info.lock().await.remove(&free_peer_id);
                 continue;
             };
 
@@ -891,9 +906,7 @@ impl PeerHandler {
                 continue;
             };
 
-            self.mark_peer_as_busy(free_peer_id).await;
-
-            let available_downloader = Downloader::new(free_peer_id, free_downloader_channels);
+            self.mark_peer_as_busy(available_downloader.peer_id()).await;
 
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
@@ -1057,61 +1070,9 @@ impl PeerHandler {
                 }
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-                .await;
-
-            let mut peers_info = self.peers_info.lock().await;
-            for (peer_id, _peer_channels) in &peer_channels {
-                if peers_info.contains_key(peer_id) {
-                    continue;
-                }
-                peers_info.insert(*peer_id, Default::default());
-                debug!("{peer_id} added as downloader");
-            }
-            drop(peers_info);
-
-            let free_downloaders = self
-                .peers_info
-                .lock()
-                .await
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, peer_info)| peer_info.available)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_bytecode_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let (mut free_peer_id, _) = free_downloaders[0];
-
-            let peers_info = self.peers_info.lock().await;
-            for (peer_id, _) in free_downloaders.iter() {
-                if let (Some(peer_info), Some(free_peer_info)) =
-                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
-                {
-                    if peer_info.score >= free_peer_info.score {
-                        free_peer_id = *peer_id;
-                    }
-                }
-            }
-            drop(peers_info);
-
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
+            let Some(available_downloader) =
+                self.get_best_downloader(&SUPPORTED_SNAP_CAPABILITIES).await
             else {
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                self.peers_info.lock().await.remove(&free_peer_id);
                 continue;
             };
 
@@ -1123,7 +1084,7 @@ impl PeerHandler {
                 continue;
             };
 
-            self.mark_peer_as_busy(free_peer_id).await;
+            self.mark_peer_as_busy(available_downloader.peer_id()).await;
 
             let hashes_to_request: Vec<_> = all_bytecode_hashes
                 .iter()
@@ -1131,11 +1092,6 @@ impl PeerHandler {
                 .take((chunk_end - chunk_start).min(MAX_BYTECODES_REQUEST_SIZE))
                 .copied()
                 .collect();
-
-            let free_downloader_channels_clone = free_downloader_channels.clone();
-
-            let available_downloader =
-                Downloader::new(free_peer_id, free_downloader_channels_clone.clone());
 
             if let Err(_) = available_downloader
                 .start()
@@ -1274,13 +1230,6 @@ impl PeerHandler {
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
-
-            /*             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.storages_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            } */
 
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
@@ -1426,61 +1375,9 @@ impl PeerHandler {
                 }
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-                .await;
-
-            let mut peers_info = self.peers_info.lock().await;
-            for (peer_id, _peer_channels) in &peer_channels {
-                if peers_info.contains_key(peer_id) {
-                    continue;
-                }
-                peers_info.insert(*peer_id, Default::default());
-                debug!("{peer_id} added as downloader");
-            }
-            drop(peers_info);
-
-            let free_downloaders = self
-                .peers_info
-                .lock()
-                .await
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, peer_info)| peer_info.available)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_storages_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let (mut free_peer_id, _) = free_downloaders[0];
-
-            let peers_info = self.peers_info.lock().await;
-            for (peer_id, _) in free_downloaders.iter() {
-                if let (Some(peer_info), Some(free_peer_info)) =
-                    (peers_info.get(peer_id), peers_info.get(&free_peer_id))
-                {
-                    if peer_info.score >= free_peer_info.score {
-                        free_peer_id = *peer_id;
-                    }
-                }
-            }
-            drop(peers_info);
-
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
+            let Some(available_downloader) =
+                self.get_best_downloader(&SUPPORTED_SNAP_CAPABILITIES).await
             else {
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                self.peers_info.lock().await.remove(&free_peer_id);
                 continue;
             };
 
@@ -1492,9 +1389,7 @@ impl PeerHandler {
             };
 
             let tx = task_sender.clone();
-            self.mark_peer_as_busy(free_peer_id).await;
-            let available_downloader =
-                Downloader::new(free_peer_id, free_downloader_channels.clone());
+            self.mark_peer_as_busy(available_downloader.peer_id()).await;
 
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
@@ -1536,6 +1431,8 @@ impl PeerHandler {
             }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
+                *METRICS.free_storages_downloaders.lock().await =
+                    self.peers_info.lock().await.len() as u64;
                 last_metrics_update = SystemTime::now();
             }
         }
@@ -1569,11 +1466,8 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
 
-        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
+        *METRICS.free_storages_downloaders.lock().await = self.peers_info.lock().await.len() as u64;
+
         disk_joinset
             .join_all()
             .await
