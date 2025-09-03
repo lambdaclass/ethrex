@@ -56,8 +56,8 @@ PAYLOAD=$(jq -n \
       }
     ]
   }')
-curl -sS -X POST \
+curl -sS --fail -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
-  "$SLACK_WEBHOOK_URL"
+  "$SLACK_WEBHOOK_URL" || echo "Failed to send Slack notification" >&2
 
