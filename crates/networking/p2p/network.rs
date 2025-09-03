@@ -215,8 +215,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
             "0%".to_string()
         } else {
             format!(
-                "{:2}%",
-                (*headers_downloaded as f64 / *headers_to_download as f64) * 100.02
+                "{:.2}%",
+                (*headers_downloaded as f64 / *headers_to_download as f64) * 100.0
             )
         };
 

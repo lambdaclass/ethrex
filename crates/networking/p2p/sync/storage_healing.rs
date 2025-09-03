@@ -29,7 +29,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
@@ -183,8 +183,10 @@ pub async fn heal_storage_trie(
     loop {
         yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            *METRICS.global_storage_tries_leafs_healed.lock().await = *global_leafs_healed;
+            *METRICS.healing_empty_try_recv.lock().await = state.empty_count as u64;
             state.last_update = Instant::now();
-            info!(
+            debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 state
                     .peer_handler

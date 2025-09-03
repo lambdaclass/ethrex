@@ -18,7 +18,7 @@ use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     kademlia::PeerChannels,
@@ -103,6 +103,7 @@ async fn heal_state_trie(
     let mut downloads_success = 0;
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
+    let mut empty_try_recv: u64 = 0;
     let mut nodes_to_write: Vec<Node> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
@@ -139,8 +140,10 @@ async fn heal_state_trie(
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
 
+            *METRICS.global_state_trie_leafs_healed.lock().await = *global_leafs_healed;
+            *METRICS.healing_empty_try_recv.lock().await = empty_try_recv;
             if is_stale {
-                info!(
+                debug!(
                     "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
@@ -149,7 +152,7 @@ async fn heal_state_trie(
                     membatch.len()
                 );
             } else {
-                info!(
+                debug!(
                     "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     peers_table.len(),
                     peers_table_2.len(),
@@ -169,7 +172,11 @@ async fn heal_state_trie(
 
         // Attempt to receive a response from one of the peers
         // TODO: this match response should score the appropiate peers
-        if let Ok((peer_id, response, batch)) = task_receiver.try_recv() {
+        let res = task_receiver.try_recv();
+        if res.is_err() {
+            empty_try_recv += 1;
+        }
+        if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
             downloaders
