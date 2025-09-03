@@ -148,7 +148,7 @@ pub enum Command {
         )]
         datadir: String,
         #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        contract_call_options: ContractCallOptions,
         #[arg(
             default_value_t = false,
             help = "If enabled the command will also delete the blocks from the Blockchain database",
@@ -168,12 +168,12 @@ pub enum Command {
     #[command(about = "Pause L1 contracts")]
     Pause {
         #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        contract_call_options: ContractCallOptions,
     },
     #[command(about = "Unpause L1 contracts")]
     Unpause {
         #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        contract_call_options: ContractCallOptions,
     },
     #[command(about = "Deploy in L1 all contracts needed by an L2.")]
     Deploy {
@@ -463,7 +463,7 @@ impl Command {
                 batch,
                 datadir,
                 network,
-                contract_pause_options: opts,
+                contract_call_options: opts,
                 delete_blocks,
             } => {
                 let data_dir = init_datadir(&datadir);
@@ -498,7 +498,7 @@ impl Command {
                 };
             }
             Command::Pause {
-                contract_pause_options: opts,
+                contract_call_options: opts,
             } => {
                 info!("Pausing contract {}", opts.contract_address);
                 opts.call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
@@ -506,7 +506,7 @@ impl Command {
                     .inspect(|_| info!("Succesfully paused contract"))?;
             }
             Command::Unpause {
-                contract_pause_options: opts,
+                contract_call_options: opts,
             } => {
                 info!("Unpausing contract {}", opts.contract_address);
                 opts.call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
@@ -522,7 +522,7 @@ impl Command {
 }
 
 #[derive(Parser)]
-pub struct ContractPauseOptions {
+pub struct ContractCallOptions {
     #[arg(help = "The address of the target contract")]
     contract_address: Address,
     #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
@@ -555,7 +555,7 @@ pub struct ContractPauseOptions {
     remote_signer_public_key: Option<PublicKey>,
 }
 
-impl ContractPauseOptions {
+impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
         let client = EthClient::new(self.rpc_url.as_str())?;
         let signer = parse_signer(
