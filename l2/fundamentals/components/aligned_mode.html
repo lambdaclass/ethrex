@@ -254,12 +254,12 @@ SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 </code></pre>
 <p>This will generate the SP1 ELF program and verification key under:</p>
 <ul>
-<li><code>crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf</code></li>
-<li><code>crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk</code></li>
 </ul>
 <h3 id="2-deploying-l1-contracts"><a class="header" href="#2-deploying-l1-contracts">2. Deploying L1 Contracts</a></h3>
 <p>In a console with <code>ethrex/crates/l2</code> as the current directory, run the following command:</p>
-<pre><code class="language-bash">COMPILE_CONTRACTS=true \ 
+<pre><code class="language-bash">COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url &lt;L1_RPC_URL&gt; \
 	--private-key &lt;L1_PRIVATE_KEY&gt; \
@@ -317,7 +317,7 @@ Save the addresses of the deployed proxy contracts, as you will need them to run
 	--proof-coordinator.addr &lt;PROOF_COORDINATOR_ADDRESS&gt; \
 	--aligned \
     --aligned-verifier-interval-ms &lt;ETHREX_ALIGNED_VERIFIER_INTERVAL_MS&gt; \
-    --beacon_url &lt;ETHREX_ALIGNED_BEACON_CLIENT_URL&gt; \ 
+    --beacon_url &lt;ETHREX_ALIGNED_BEACON_CLIENT_URL&gt; \
     --aligned-network &lt;ETHREX_ALIGNED_NETWORK&gt; \
     --fee-estimate &lt;ETHREX_ALIGNED_FEE_ESTIMATE&gt; \
     --aligned-sp1-elf-path &lt;ETHREX_ALIGNED_SP1_ELF_PATH&gt;
@@ -356,7 +356,7 @@ git checkout tags/v0.16.1
 <pre><code>prefunded_accounts: '{
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": { "balance": "100000000000000ETH" },
     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8": { "balance": "100000000000000ETH" },
-    
+
     ...
     "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720": { "balance": "100000000000000ETH" },
 +   "0x4417092B70a3E5f10Dc504d0947DD256B965fc62": { "balance": "100000000000000ETH" },
@@ -402,7 +402,7 @@ let ws_stream_future =
 <li>In another terminal, let's deploy the L1 contracts specifying the <code>AlignedProofAggregatorService</code> contract address:</li>
 </ol>
 <pre><code class="language-bash">cd ethrex/crates/l2
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -442,7 +442,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">

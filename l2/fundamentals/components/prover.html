@@ -246,7 +246,7 @@
 <p>The shipping/deploying process and the <code>Prover</code> itself are under development.</p>
 </div>
 <h2 id="intro"><a class="header" href="#intro">Intro</a></h2>
-<p>The prover consists of two main components: handling incoming proving data from the <code>L2 proposer</code>, specifically from the <code>ProofCoordinator</code> component, and the <code>zkVM</code>. The <code>Prover</code> is responsible for this first part, while the <code>zkVM</code> serves as a RISC-V emulator executing code specified in <code>crates/l2/prover/zkvm/interface/guest/src</code>.
+<p>The prover consists of two main components: handling incoming proving data from the <code>L2 proposer</code>, specifically from the <code>ProofCoordinator</code> component, and the <code>zkVM</code>. The <code>Prover</code> is responsible for this first part, while the <code>zkVM</code> serves as a RISC-V emulator executing code specified in <code>crates/l2/prover/src/guest_program/guest/src</code>.
 Before the <code>zkVM</code> code (or guest), there is a directory called <code>interface</code>, which indicates that we access the <code>zkVM</code> through the "interface" crate.</p>
 <p>In summary, the <code>Prover</code> manages the inputs from the <code>ProofCoordinator</code> and then "calls" the <code>zkVM</code> to perform the proving process and generate the <code>groth16</code> ZK proof.</p>
 <h2 id="workflow"><a class="header" href="#workflow">Workflow</a></h2>
