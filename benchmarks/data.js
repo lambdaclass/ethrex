@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756895491932,
+  "lastUpdate": 1756896512535,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -24981,6 +24981,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0013628446601941747,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fc077fdcfff125223deea014e228a0ec1e738cd0",
+          "message": "feat(l1,levm): implement CLZ opcode (#4188)\n\n**Motivation**\n\nImplementing the Fusaka fork, specifically [EIP\n7939](https://eips.ethereum.org/EIPS/eip-7939)\n\n**Description**\n\n- Added the CLZ opcode\n- Made it so the test runner runs the tests for it\n\nDepends on #4163 for tests\n\nCloses #4159",
+          "timestamp": "2025-09-02T16:59:54Z",
+          "tree_id": "8414b36a246160f2972771fa33a31a1d7f5d98f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fc077fdcfff125223deea014e228a0ec1e738cd0"
+        },
+        "date": 1756896490740,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.001376205882352941,
             "unit": "Mgas/s"
           }
         ]
