@@ -812,6 +812,7 @@ impl Syncer {
                 .await?;
             info!("Finish downloading account ranges from peers");
 
+            *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -843,7 +844,6 @@ impl Syncer {
                 );
 
                 info!("Inserting accounts into the state trie");
-                *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -870,6 +870,7 @@ impl Syncer {
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
+            *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
@@ -922,6 +923,7 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
+            *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));

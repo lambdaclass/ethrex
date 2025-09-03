@@ -211,9 +211,12 @@ pub async fn periodically_show_peer_stats_during_syncing(
         let headers_downloaded = METRICS.downloaded_headers.lock().await;
         let headers_remaining = headers_to_download.saturating_sub(*headers_downloaded);
         let headers_download_progress = if *headers_to_download == 0 {
-            0.0
+            "0%".to_string()
         } else {
-            (*headers_downloaded as f64 / *headers_to_download as f64) * 100.0
+            format!(
+                "{:2}%",
+                (*headers_downloaded as f64 / *headers_to_download as f64) * 100.02
+            )
         };
 
         // Account leaves metrics

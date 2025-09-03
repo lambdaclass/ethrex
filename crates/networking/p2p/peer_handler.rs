@@ -1732,10 +1732,6 @@ impl PeerHandler {
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_storages_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
             if free_downloaders.is_empty() {
                 continue;
             }
