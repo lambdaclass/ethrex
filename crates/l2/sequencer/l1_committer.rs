@@ -444,7 +444,6 @@ impl L1Committer {
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
             METRICS.set_batch_size(batch_number, batch_size)?;
             METRICS.set_batch_tx_count(batch_number, tx_count)?;
-            METRICS.set_blob_usage_percentage(blob_usage_percentage);
         );
 
         let privileged_transactions_hash =
