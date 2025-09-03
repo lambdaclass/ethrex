@@ -186,12 +186,13 @@ impl PeerHandler {
 
         let mut max_peer_id_score = i64::MIN;
         for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
-            let peer_id_score = scores.entry(*peer_id).or_default();
-            if *peer_id_score >= max_peer_id_score {
-                free_peer_id = *peer_id;
-                max_peer_id_score = *peer_id_score;
-                free_peer_channel = channel.clone();
-            }
+
+            // TODO review this @@@
+            scores.get_peer_channel_with_highest_score(
+                &self.peer_table,
+                capabilities,
+            )
+            .await?;
         }
 
         Ok(Some((free_peer_id, free_peer_channel.clone())))
