@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756910924957,
+  "lastUpdate": 1756910929606,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11515,6 +11515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170422640977,
             "range": "± 599006097",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9d1fb230cb83de478c85b45244ef26013ee6701f",
+          "message": "chore(l1): only validate trie in debug mode (#4266)\n\n**Motivation**\n\nCurrently, we reconstruct the whole state and storage tries as a\nvalidation. This is very expensive, taking several hours on mainnet.\n\n**Description**\n\nThis moves the validations to a debug_assert, so they are only executed\nin debug mode.",
+          "timestamp": "2025-09-03T13:55:12Z",
+          "tree_id": "85a2e2106133e382632f129c2102384a429aca35",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d1fb230cb83de478c85b45244ef26013ee6701f"
+        },
+        "date": 1756910911501,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170097998484,
+            "range": "± 871585328",
             "unit": "ns/iter"
           }
         ]
