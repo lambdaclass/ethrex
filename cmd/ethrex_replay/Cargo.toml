@@ -15,6 +15,7 @@ ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
+ethrex-l2-rpc.workspace = true
 
 zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }
 ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
@@ -27,9 +28,11 @@ reqwest.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 eyre.workspace = true
-tokio = { version = "1.21", default-features = false, features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
+futures.workspace = true
+rkyv.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 

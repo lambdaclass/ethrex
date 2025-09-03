@@ -64,13 +64,13 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator { context, node }) => {
+        InnerState::Initiator(Initiator { context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
-                    context.table.lock().await.replace_peer(node.node_id());
+                    // context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }
             };
@@ -135,7 +135,7 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
-            inbound,
+            _inbound: inbound,
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
@@ -145,7 +145,10 @@ pub(crate) async fn perform(
 }
 
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
+    match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
+    }
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
@@ -381,9 +384,9 @@ fn encrypt_message(
     remote_static_pubkey: &PublicKey,
     mut encoded_msg: Vec<u8>,
 ) -> Result<Vec<u8>, RLPxError> {
-    const SIGNATURE_SIZE: usize = 65;
-    const IV_SIZE: usize = 16;
-    const MAC_FOOTER_SIZE: usize = 32;
+    const SIGNATURE_SIZE: u16 = 65;
+    const IV_SIZE: u16 = 16;
+    const MAC_FOOTER_SIZE: u16 = 32;
 
     let mut rng = rand::thread_rng();
 
@@ -394,9 +397,11 @@ fn encrypt_message(
 
     // Precompute the size of the message. This is needed for computing the MAC.
     let ecies_overhead = SIGNATURE_SIZE + IV_SIZE + MAC_FOOTER_SIZE;
-    let auth_size: u16 = (encoded_msg.len() + ecies_overhead)
+    let encoded_msg_len: u16 = encoded_msg
+        .len()
         .try_into()
         .map_err(|_| RLPxError::CryptographyError("Invalid message length".to_owned()))?;
+    let auth_size = ecies_overhead + encoded_msg_len;
     let auth_size_bytes = auth_size.to_be_bytes();
 
     // Generate a keypair just for this message.

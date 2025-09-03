@@ -1,9 +1,9 @@
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::{U256, U512, types::Fork};
 
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
@@ -147,22 +147,28 @@ impl<'a> VM<'a> {
         let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let new_augend: U512 = augend.into();
         let new_addend: U512 = addend.into();
 
-        let sum = new_augend
-            .checked_add(new_addend)
-            .ok_or(InternalError::Overflow)?;
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "both values come from a u256, so the product can fit in a U512"
+        )]
+        let sum = new_augend + new_addend;
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "can't trap because non-zero modulus"
+        )]
+        let sum_mod = sum % modulus;
 
-        let sum_mod = sum
-            .checked_rem(modulus.into())
-            .ok_or(InternalError::Overflow)?
+        #[allow(clippy::expect_used, reason = "can't overflow")]
+        let sum_mod: U256 = sum_mod
             .try_into()
-            .map_err(|_err| InternalError::Overflow)?;
+            .expect("can't fail because we applied % mod where mod is a U256 value");
 
         current_call_frame.stack.push1(sum_mod)?;
 
@@ -184,14 +190,18 @@ impl<'a> VM<'a> {
         let multiplicand: U512 = multiplicand.into();
         let multiplier: U512 = multiplier.into();
 
-        let product = multiplicand
-            .checked_mul(multiplier)
-            .ok_or(InternalError::Overflow)?;
-        let product_mod: U256 = product
-            .checked_rem(modulus.into())
-            .ok_or(InternalError::Overflow)?
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "both values come from a u256, so the product can fit in a U512"
+        )]
+        let product = multiplicand * multiplier;
+        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
+        let product_mod = product % modulus;
+
+        #[allow(clippy::expect_used, reason = "can't overflow")]
+        let product_mod: U256 = product_mod
             .try_into()
-            .map_err(|_err| InternalError::Overflow)?;
+            .expect("can't fail because we applied % mod where mod is a U256 value");
 
         current_call_frame.stack.push1(product_mod)?;
 
@@ -249,6 +259,23 @@ impl<'a> VM<'a> {
 
             Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
+    }
+
+    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
+        if self.env.config.fork < Fork::Osaka {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CLZ)?;
+
+        let value = self.current_call_frame.stack.pop1()?;
+
+        self.current_call_frame
+            .stack
+            .push1(U256::from(value.leading_zeros()))?;
+
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

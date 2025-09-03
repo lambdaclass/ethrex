@@ -67,49 +67,19 @@ jobs:
 
       - name: Run Blockchain EF tests
         run: |
-          make -C cmd/ef_tests/blockchain test
+          make -C tooling/ef_tests/blockchain test
 
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check for Docker Hub credentials
-        shell: bash
-        env:
-          DOCKER_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]; then
-            echo "DOCKER_CREDS_EXISTS=false" >> $GITHUB_ENV
-            echo "No credentials provided. Skipping DockerHub login..."
-          else
-            echo "DOCKER_CREDS_EXISTS=true" >> $GITHUB_ENV
-            echo "Credentials were provided!"
-          fi
-
-      - name: Login to Docker Hub
-        if: env.DOCKER_CREDS_EXISTS == 'true'
-        uses: docker/login-action@v3
+      - id: docker
+        name: Build Ethrex Docker Image
+        uses: ./.github/actions/build-docker
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          load: true
-          tags: ethrex
-          outputs: type=docker,dest=/tmp/ethrex_image.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -216,7 +186,8 @@ jobs:
             test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             # AccountRange and GetTrieNodes don't pass anymore.
             #|BlobViolations
-            # Findnode/UnsolicitedNeighbors and Findnode/BasicFindnode flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
+            # Findnode/BasicFindnode fails due to packets being processed out of order
+            # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
@@ -258,16 +229,40 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
+        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
+
+  run-replay:
+    name: Execute an L1 block
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r
+
+      - name: Run
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://45.76.185.153:8545"
+        run: |
+          cp fixtures/cache/rpc_prover/cache_hoodi_1132599.bin cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute BLOCK_NUMBER=1132599 NETWORK=hoodi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [run-assertoor, run-hive]
+    needs: [run-assertoor, run-hive, run-replay]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
+    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' && needs.run-replay.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -278,5 +273,10 @@ jobs:
 
           if [ "${{ needs.run-hive.result }}" != "success" ]; then
             echo "Job Hive failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.run-replay.result }}" != "success" ]; then
+            echo "Job Replay failed"
             exit 1
           fi
