@@ -770,8 +770,15 @@ impl StoreEngine for Store {
             let mut iter = db.prefix_iterator_cf(&cf, &tx_hash_key);
             let mut transaction_locations = Vec::new();
 
-            while let Some(Ok((_key, value))) = iter.next() {
-                transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+            while let Some(Ok((key, value))) = iter.next() {
+                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
+                // and starts with our exact tx_hash
+                if key.len() == 64 && &key[0..32] == tx_hash_key.as_slice() {
+                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+                }
+                // } else {
+                //     break; // No longer matching our transaction hash
+                // }
             }
 
             if transaction_locations.is_empty() {
