@@ -2,6 +2,7 @@ use std::{fmt::Display, time::Duration};
 
 use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
+use tracing::{error, info};
 
 use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
 
@@ -162,6 +163,14 @@ impl BlockRunReport {
                     }],
                 },
             ],
+        }
+    }
+
+    pub fn log(&self) {
+        if self.run_result.is_err() {
+            error!("{self}");
+        } else {
+            info!("{self}");
         }
     }
 }

@@ -27,7 +27,12 @@ pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixture
 pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
     include_str!("../../../fixtures/keys/private_keys_l1.txt");
 
-#[derive(Debug, Clone)]
+pub const MAINNET_CHAIN_ID: u64 = 0x1;
+pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
+pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
+pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
@@ -35,7 +40,7 @@ pub enum Network {
     GenesisPath(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicNetwork {
     Hoodi,
     Holesky,

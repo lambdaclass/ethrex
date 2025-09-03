@@ -4,7 +4,7 @@ use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::{
     block_run_report::{BlockRunReport, ReplayerMode},
-    cli::{REPLAYER_MODE, SubcommandExecute, SubcommandProve},
+    cli::{BlockOptions, EthrexReplayCommand, EthrexReplayOptions, replayer_mode},
     slack::{SlackWebHookBlock, SlackWebHookRequest},
 };
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
@@ -117,7 +117,7 @@ async fn main() {
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
                     replay_execution(
-                        REPLAYER_MODE,
+                        replayer_mode(opts.execute).unwrap(),
                         network,
                         rpc_url,
                         slack_webhook_url,
@@ -137,7 +137,7 @@ async fn main() {
 
         let handle = tokio::spawn(async move {
             replay_proving(
-                REPLAYER_MODE,
+                replayer_mode(opts.execute).unwrap(),
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (
@@ -289,7 +289,7 @@ async fn replay_latest_block(
         .unwrap_or_else(|e| {
             panic!("Failed to get latest block number from {rpc_url}: {e}");
         })
-        .as_usize();
+        .as_u64();
 
     if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
         tracing::info!("Replaying block https://etherscan.io/block/{latest_block}");
@@ -298,29 +298,39 @@ async fn replay_latest_block(
     }
 
     let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(latest_block as u64))
+        .get_raw_block(BlockIdentifier::Number(latest_block))
         .await?;
 
     let start = SystemTime::now();
 
     let run_result = match replayer_mode {
         ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0 => {
-            SubcommandExecute::Block {
+            EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
-                rpc_url: rpc_url.clone(),
-                network: network.clone(),
-                bench: false,
-            }
+                opts: EthrexReplayOptions {
+                    execute: true,
+                    prove: false,
+                    rpc_url,
+                    cached: false,
+                    bench: false,
+                    to_csv: false,
+                },
+            })
             .run()
             .await
         }
         ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0 => {
-            SubcommandProve::Block {
+            EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
-                rpc_url: rpc_url.clone(),
-                network: network.clone(),
-                bench: false,
-            }
+                opts: EthrexReplayOptions {
+                    execute: false,
+                    prove: true,
+                    rpc_url,
+                    cached: false,
+                    bench: false,
+                    to_csv: false,
+                },
+            })
             .run()
             .await
         }
@@ -349,7 +359,7 @@ async fn replay_latest_block(
         CacheLevel::Off => {
             // We don't want any cache
             tracing::info!("Deleting cache: Caching is disabled");
-            delete_cache(network, latest_block as u64);
+            delete_cache(network, latest_block);
         }
         CacheLevel::Failed => {
             // We only want caches that failed
@@ -357,7 +367,7 @@ async fn replay_latest_block(
                 tracing::info!(
                     "Deleting cache: Execution was successful and Cache Level is 'failed'"
                 );
-                delete_cache(network, latest_block as u64);
+                delete_cache(network, latest_block);
             } else {
                 // I prefer to be explicit about keeping the cache file
                 tracing::info!(

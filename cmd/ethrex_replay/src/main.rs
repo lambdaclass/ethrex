@@ -1,3 +1,5 @@
+use clap::Parser;
+use ethrex_replay::cli::EthrexReplayCLI;
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
@@ -23,7 +25,10 @@ async fn main() {
             .finish(),
     )
     .expect("setting default subscriber failed");
-    if let Err(e) = ethrex_replay::cli::start().await {
+
+    let EthrexReplayCLI { command } = EthrexReplayCLI::parse();
+
+    if let Err(e) = command.run().await {
         tracing::error!("{e:?}");
         std::process::exit(1);
     }
