@@ -59,6 +59,9 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub touched_account_storage_slots: HashMap<Address, Vec<H256>>,
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub account_hashes_by_address: BTreeMap<Address, Vec<u8>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -105,12 +108,13 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
-        let account_state_rlp = self
-            .state_trie
-            .as_ref()?
-            .get(&hash_address(address))
-            .ok()??;
+    pub fn rebuild_storage_trie(&mut self, address: &H160) -> Option<Trie> {
+        let account_hash = self
+            .account_hashes_by_address
+            .entry(*address)
+            .or_insert_with(|| hash_address(address));
+
+        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash).ok()??;
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
@@ -136,7 +140,11 @@ impl ExecutionWitnessResult {
         };
 
         for update in account_updates.iter() {
-            let hashed_address = hash_address(&update.address);
+            let hashed_address = self
+                .account_hashes_by_address
+                .entry(update.address)
+                .or_insert_with(|| hash_address(&update.address));
+
             if update.removed {
                 // Remove account from trie
                 state_trie
@@ -146,7 +154,7 @@ impl ExecutionWitnessResult {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 let mut account_state = match state_trie
-                    .get(&hashed_address)
+                    .get(hashed_address)
                     .expect("failed to get account state from trie")
                 {
                     Some(encoded_state) => AccountState::decode(&encoded_state)
@@ -186,7 +194,7 @@ impl ExecutionWitnessResult {
 
                     for (hashed_key, _) in deletes {
                         storage_trie
-                            .remove(hashed_key)
+                            .remove(&hashed_key)
                             .expect("failed to remove key");
                     }
 
@@ -194,7 +202,7 @@ impl ExecutionWitnessResult {
                 }
 
                 state_trie
-                    .insert(hashed_address, account_state.encode_to_vec())
+                    .insert(hashed_address.clone(), account_state.encode_to_vec())
                     .expect("failed to insert into storage");
             }
         }
@@ -264,7 +272,7 @@ impl ExecutionWitnessResult {
     /// Retrieves the account info based on what is stored in the state trie.
     /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
     pub fn get_account_info(
-        &self,
+        &mut self,
         address: Address,
     ) -> Result<Option<AccountInfo>, ExecutionWitnessError> {
         let state_trie = self
@@ -274,8 +282,12 @@ impl ExecutionWitnessResult {
                 "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
             ))?;
 
-        let hashed_address = hash_address(&address);
-        let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+        let hashed_address = self
+            .account_hashes_by_address
+            .entry(address)
+            .or_insert_with(|| hash_address(&address));
+
+        let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {

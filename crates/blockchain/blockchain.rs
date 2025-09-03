@@ -387,6 +387,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             touched_account_storage_slots,
+            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 
