@@ -391,7 +391,7 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 </p>
 <p>If <code>BLOCK_NUMBER</code> is not provided, the latest block will be executed.</p>
 </div>
-<pre><code>ethrex-replay execute block &lt;BLOCK_NUMBER&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<pre><code>ethrex-replay block --block &lt;BLOCK_NUMBER&gt; --execute --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="prove-a-single-block"><a class="header" href="#prove-a-single-block">Prove a single block</a></h3>
 <div class="mdbook-alerts mdbook-alerts-note">
@@ -406,10 +406,10 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 <li>If proving with SP1, add <code>SP1_PROVER=cuda</code> to the command to enable GPU support.</li>
 </ol>
 </div>
-<pre><code>ethrex-replay prove block &lt;BLOCK_NUMBER&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<pre><code>ethrex-replay block --block &lt;BLOCK_NUMBER&gt; --prove --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="execute-an-l2-batch"><a class="header" href="#execute-an-l2-batch">Execute an L2 batch</a></h3>
-<pre><code>ethrex-replay execute batch &lt;BATCH_NUMBER&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<pre><code>ethrex-replay l2 batch --batch &lt;BATCH_NUMBER&gt; --execute --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="prove-an-l2-batch"><a class="header" href="#prove-an-l2-batch">Prove an L2 batch</a></h3>
 <div class="mdbook-alerts mdbook-alerts-note">
@@ -420,15 +420,25 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 <ol>
 <li>Proving requires a prover backend to be enabled during installation (e.g., <code>sp1</code> or <code>risc0</code>). Proving with GPU requires the <code>gpu</code> feature to be enabled during installation.</li>
 <li>If proving with SP1, add <code>SP1_PROVER=cuda</code> to the command to enable GPU support.</li>
+<li>Batch replay requires the binary to be run/compiled with the <code>l2</code> feature.</li>
 </ol>
 </div>
-<pre><code>ethrex-replay prove batch &lt;BATCH_NUMBER&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<pre><code>ethrex-replay l2 batch --batch &lt;BATCH_NUMBER&gt; --prove --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="execute-a-transaction"><a class="header" href="#execute-a-transaction">Execute a transaction</a></h3>
-<pre><code>ethrex-replay execute transaction &lt;TX_HASH&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>L2 transaction replay requires the binary to be run/compiled with the <code>l2</code> feature.</p>
+</div>
+<pre><code>ethrex-replay transaction --tx-hash &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
+
+ethrex-replay l2 transaction --tx-hash &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="plot-block-composition"><a class="header" href="#plot-block-composition">Plot block composition</a></h3>
-<pre><code>ethrex-replay block-composition &lt;START_BLOCK&gt; &lt;END_BLOCK&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
+<pre><code>ethrex-replay block-composition --start-block &lt;START_BLOCK&gt; --end-block &lt;END_BLOCK&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
 </code></pre>
 <hr />
 <h2 id="benchmarking--profiling"><a class="header" href="#benchmarking--profiling">Benchmarking &amp; Profiling</a></h2>
