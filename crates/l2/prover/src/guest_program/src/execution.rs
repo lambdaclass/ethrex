@@ -1,4 +1,5 @@
-use crate::io::{ProgramInput, ProgramOutput};
+use crate::input::ProgramInput;
+use crate::output::ProgramOutput;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,

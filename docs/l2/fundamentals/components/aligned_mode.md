@@ -17,15 +17,16 @@ SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```
 
 This will generate the SP1 ELF program and verification key under:
-- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf`
-- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk`
+
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk`
 
 ### 2. Deploying L1 Contracts
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url <L1_RPC_URL> \
 	--private-key <L1_PRIVATE_KEY> \
@@ -82,7 +83,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 	--proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
 	--aligned \
     --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
-    --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \ 
+    --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
     --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
@@ -109,7 +110,6 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 > [!IMPORTANT]
 > This guide asumes you have already generated the SP1 ELF Program and Verification Key. See: [Generate the SP1 ELF Program and Verification Key](#1-generate-the-sp1-elf-program-and-verification-key)
 
-
 ### Set Up the Aligned Environment
 
 1. Clone the Aligned repository and checkout the currently supported release:
@@ -121,22 +121,26 @@ git checkout tags/v0.16.1
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
+
 ```
 prefunded_accounts: '{
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": { "balance": "100000000000000ETH" },
     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8": { "balance": "100000000000000ETH" },
-    
+
     ...
     "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720": { "balance": "100000000000000ETH" },
 +   "0x4417092B70a3E5f10Dc504d0947DD256B965fc62": { "balance": "100000000000000ETH" },
 +   "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b": { "balance": "100000000000000ETH" },
      }'
 ```
+
 You can also decrease the seconds per slot in `aligned_layer/network_params.rs`:
+
 ```
 # Number of seconds per slot on the Beacon chain
   seconds_per_slot: 4
 ```
+
 3. Make sure you have the latest version of [kurtosis](https://github.com/kurtosis-tech/kurtosis) installed and start the ethereum-package:
 
 ```
@@ -144,7 +148,7 @@ cd aligned_layer
 make ethereum_package_start
 ```
 
-To stop it run `make ethereum_package_rm` 
+To stop it run `make ethereum_package_rm`
 
 4. Start the batcher:
 
@@ -154,9 +158,12 @@ First, increase the `max_proof_size` in `aligned_layer/config-files/config-batch
 cd aligned_layer
 make batcher_start_ethereum_package
 ```
+
 This is the Aligned component that receives the proofs before sending them in a batch.
+
 > [!Warning]
 > If you see the following error in the batcher: `[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 > 16777216` modify the file `aligned_layer/batcher/aligned-batcher/src/lib.rs` at line 433 with the following code:
+
 ```Rust
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
@@ -168,10 +175,12 @@ let ws_stream_future =
 ```
 
 ### Initialize L2 node
+
 1. In another terminal, let's deploy the L1 contracts specifying the `AlignedProofAggregatorService` contract address:
+
 ```bash
 cd ethrex/crates/l2
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -189,9 +198,10 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 ```
 
 > [!NOTE]  
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.  
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
+
 ```
 2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
 ```
@@ -199,6 +209,7 @@ You will see that some deposits fail with the following error:
 This is because not all the accounts are pre-funded from the genesis.
 
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
+
 ```
 cd aligned_layer/batcher/aligned
 cargo run deposit-to-batcher \
@@ -211,7 +222,7 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
 > [!IMPORTANT]  
@@ -219,11 +230,13 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 
 Suggestion:
 When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
+
 ```
 --committer.commit-time 120000
 ```
 
 4. Start prover:
+
 ```
 cd ethrex/crates/l2
 SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
@@ -232,11 +245,13 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ### Aggregate proofs:
 
 After some time, you will see that the `l1_proof_verifier` is waiting for Aligned to aggregate the proofs:
+
 ```
 2025-06-18T22:03:53.470356Z  INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 has not yet been aggregated by Aligned. Waiting for 5 seconds
 ```
 
 You can aggregate them by running:
+
 ```
 cd aligned_layer
 make start_proof_aggregator AGGREGATOR=sp1

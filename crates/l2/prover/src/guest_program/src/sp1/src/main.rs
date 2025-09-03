@@ -1,7 +1,7 @@
 #![no_main]
 
+use guest_program::{execution::execution_program, input::ProgramInput};
 use rkyv::rancor::Error;
-use zkvm_interface::{execution::execution_program, io::ProgramInput};
 
 sp1_zkvm::entrypoint!(main);
 

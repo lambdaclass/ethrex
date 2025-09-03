@@ -5,7 +5,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;

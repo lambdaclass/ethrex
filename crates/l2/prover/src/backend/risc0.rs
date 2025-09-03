@@ -2,6 +2,10 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
+use guest_program::{
+    input::{JSONProgramInput, ProgramInput},
+    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
+};
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
@@ -9,10 +13,6 @@ use risc0_zkvm::{
 };
 use std::time::Instant;
 use tracing::info;
-use zkvm_interface::{
-    io::{JSONProgramInput, ProgramInput},
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
-};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
