@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756908410750,
+  "lastUpdate": 1756910724481,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11455,6 +11455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168166756757,
             "range": "± 374356778",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "602d8f0d007808430d2bc0850ed93b8b86707323",
+          "message": "chore(l1): correct block time and gas used % y axis labels on grafana panel (#4263)\n\n**Motivation**\n\nFix previously wrong labels on a grafana panel\n\n**Description**\n\nThis PR simply change the labels to be correct on the Blocktime/Gas Used\n% panel.",
+          "timestamp": "2025-09-03T13:51:53Z",
+          "tree_id": "27ee4bca4e010f78a32e9fecdf4d9028ec2cfe88",
+          "url": "https://github.com/lambdaclass/ethrex/commit/602d8f0d007808430d2bc0850ed93b8b86707323"
+        },
+        "date": 1756910706481,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169050348205,
+            "range": "± 461214688",
             "unit": "ns/iter"
           }
         ]
