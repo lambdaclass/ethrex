@@ -2554,6 +2554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-config"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-p2p",
+ "hex",
+ "keccak-hash",
+ "serde_json",
+]
+
+[[package]]
 name = "ethrex-crypto"
 version = "0.1.0"
 
@@ -2595,6 +2606,7 @@ dependencies = [
  "ethers",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -2646,6 +2658,7 @@ dependencies = [
  "ethrex-vm",
  "keccak-hash",
  "lambdaworks-crypto 0.11.0",
+ "secp256k1",
  "serde",
  "sha3",
  "thiserror 2.0.12",
@@ -5303,7 +5316,6 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-rpc",
- "ethrex-sdk",
  "ethrex-storage",
  "ethrex-vm",
  "hex",
