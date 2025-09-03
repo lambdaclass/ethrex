@@ -26,41 +26,36 @@ fi
 
 SHORT_SHA="${HEAD_SHA:0:8}"
 
-read -r -d '' PAYLOAD <<'JSON'
-{
-  "blocks": [
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": ":rotating_light: *Workflow failed on main*"
+# Construct the Slack payload using jq for safe JSON escaping
+PAYLOAD=$(jq -n \
+  --arg repo "$REPO" \
+  --arg workflow "$WORKFLOW_NAME" \
+  --arg conclusion "$CONCLUSION" \
+  --arg actor "$ACTOR" \
+  --arg sha "$SHORT_SHA" \
+  --arg url "$RUN_URL" \
+  '{
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: ":rotating_light: *Workflow failed on main*"
+        }
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: "*Repo*\n\($repo)" },
+          { type: "mrkdwn", text: "*Workflow*\n\($workflow)" },
+          { type: "mrkdwn", text: "*Conclusion*\n\($conclusion)" },
+          { type: "mrkdwn", text: "*Actor*\n\($actor)" },
+          { type: "mrkdwn", text: "*Commit*\n\($sha)" },
+          { type: "mrkdwn", text: "*Run*\n<\($url)|Open in GitHub>" }
+        ]
       }
-    },
-    {
-      "type": "section",
-      "fields": [
-        { "type": "mrkdwn", "text": "*Repo*\nREPO_VAL" },
-        { "type": "mrkdwn", "text": "*Workflow*\nWORKFLOW_VAL" },
-        { "type": "mrkdwn", "text": "*Conclusion*\nCONCLUSION_VAL" },
-        { "type": "mrkdwn", "text": "*Actor*\nACTOR_VAL" },
-        { "type": "mrkdwn", "text": "*Commit*\nSHA_VAL" },
-        { "type": "mrkdwn", "text": "*Run*\n<URL_VAL|Open in GitHub>" }
-      ]
-    }
-  ]
-}
-JSON
-
-PAYLOAD=${PAYLOAD/REPO_VAL/${REPO}}
-PAYLOAD=${PAYLOAD/WORKFLOW_VAL/${WORKFLOW_NAME}}
-PAYLOAD=${PAYLOAD/CONCLUSION_VAL/${CONCLUSION}}
-PAYLOAD=${PAYLOAD/ACTOR_VAL/${ACTOR}}
-PAYLOAD=${PAYLOAD/SHA_VAL/${SHORT_SHA}}
-
-# Escape URL safely for substitution
-ESCAPED_URL=$(printf '%s' "$RUN_URL" | sed 's/[&/]/\\&/g')
-PAYLOAD=$(printf '%s' "$PAYLOAD" | sed "s/URL_VAL/$ESCAPED_URL/")
-
+    ]
+  }')
 curl -sS -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
