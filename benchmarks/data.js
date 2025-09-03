@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756898634568,
+  "lastUpdate": 1756908410750,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11425,6 +11425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171125273685,
             "range": "± 665030845",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d1155fe43a5f9821392a00f03ea46802f811fbd3",
+          "message": "fix(l1): filter empty tries in storage healing (#4276)\n\n**Motivation**\n\nCurrently, we don't filter accounts that go from having storage to\nhaving an empty trie. This causes storage healing to get stuck with a\nlog like:\n\n```\n2025-09-03T12:47:36.412558Z  INFO ethrex_p2p::sync::storage_healing: this peer 0x062b…6972 request NodeRequest { acc_path: Nibbles { data: [1, 8, 11, 9, 5, 12, 15, 10, 0, 5, 15, 2, 12, 9, 14, 12, 0, 6, 2, 0, 11, 11, 8, 6, 2, 6, 15, 3, 6, 9, 4, 12, 0, 2, 9, 5, 10, 4, 6, 10, 3, 3, 15, 12, 0, 5, 9, 2, 9, 0, 10, 11, 14, 0, 15, 1, 4, 2, 6, 15, 10, 11, 12, 13, 16] }, storage_path: Nibbles { data: [] }, parent: Nibbles { data: [] }, hash: 0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421 }, had this error InvalidLength, and the raw node was b\"\"\n```\n\n(0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421 is\nthe empty trie hash)\n\n**Description**\n\nThis filters accounts with an empty trie as the storage root.",
+          "timestamp": "2025-09-03T13:13:47Z",
+          "tree_id": "0a67edd8bd9f0c118452d85c5d9d4e6784249605",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d1155fe43a5f9821392a00f03ea46802f811fbd3"
+        },
+        "date": 1756908391428,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168166756757,
+            "range": "± 374356778",
             "unit": "ns/iter"
           }
         ]
