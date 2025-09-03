@@ -1,3 +1,5 @@
+#![cfg(feature = "revm")]
+
 use ethrex_common::{
     Address, H256,
     types::{BlockHeader, GenericTransaction, INITIAL_BASE_FEE, tx_fields::AccessList},

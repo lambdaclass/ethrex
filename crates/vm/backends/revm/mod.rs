@@ -1,3 +1,5 @@
+#![cfg(feature = "revm")]
+
 pub mod db;
 pub mod helpers;
 mod tracing;
