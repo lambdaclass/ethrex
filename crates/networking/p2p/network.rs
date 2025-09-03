@@ -366,7 +366,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             r#"P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers
-current step: {current_step}
+\x1b[93mCurrent step:\x1b[0m {current_step}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}

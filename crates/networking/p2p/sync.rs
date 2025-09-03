@@ -856,7 +856,7 @@ impl Syncer {
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
                         *METRICS.current_step.blocking_lock() =
-                            "Inserting Account Ranges - Writing to DB".to_string();
+                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
                         let current_state_root = trie.hash()?;
                         Ok(current_state_root)
                     })
@@ -938,7 +938,7 @@ impl Syncer {
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             *METRICS.current_step.lock().await =
-                "Inserting Storage Ranges - Writing to DB".to_string();
+                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
