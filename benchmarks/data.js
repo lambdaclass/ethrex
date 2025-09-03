@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756915731624,
+  "lastUpdate": 1756923783642,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11605,6 +11605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168318910051,
             "range": "± 289777579",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5c77843b395cd0e440e1408385e42f520c1ca854",
+          "message": "feat(l1, l2): use SP1's bump allocator (#4275)\n\n**Motivation**\n\nWe want to use SP1's bump allocator since it's faster than the embedded\none and also enables more memory usage for the guest program in the\nzkVM.\nCurrently, we are using the embedded allocator for two reasons: 1. It\nmitigates most of our allocation memory issues when executing the guest\nprogram with SP1, and 2. The bump allocator has some troubles with\n`rkyv` serialization.\n\n**Description**\n\nAfter reading [this\ndiscussion](https://github.com/eth-act/ere/issues/121), it seems to be a\nfix to the incompatibility issues we were having when using SP1's bump\nallocator with `rkyv` serialization.\n\nAfter a few successful executions, it seems to be working.\n\n**Test it out**\n\nRun the following in `ethrex`'s root to periodically execute Mainnet\nblocks using SP1:\n```\ncargo r -r -p ethrex-replayer --features sp1 -- --execute --mainnet-rpc-url http://157.180.1.98:8545\n```",
+          "timestamp": "2025-09-03T17:28:27Z",
+          "tree_id": "8d4d3eb040cadefee2daa31d11684811bfcb1f73",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c77843b395cd0e440e1408385e42f520c1ca854"
+        },
+        "date": 1756923765692,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167455531053,
+            "range": "± 364564505",
             "unit": "ns/iter"
           }
         ]
