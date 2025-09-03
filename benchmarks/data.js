@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756911902610,
+  "lastUpdate": 1756915731624,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11575,6 +11575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169694279767,
             "range": "± 2094764566",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "358746f0db85efb31a42bdc28c809d87cf0e6242",
+          "message": "fix(l1,l2): eth client support 4 byte signatures, return decoded error in `RpcErr::Revert` (#4229)\n\n**Motivation**\n\nWhen calling contracts with `eth_call` or `eth_estimateGas` ethrex rpc\nwas returning an empty message from `get_message_from_revert_data`, we\nhad some code that decoded the error from the revert data but it was\nonly used when calling `eth_estimateGas` from our EthClient.\n\n**Description**\n\n- Move the code used to decode error from `EthClient::estimate_gas` to\n`get_message_from_revert_data`\n- Add logic to check for 4 byte function signatures, instead of trying\nto decode this as string, we just return the selector so that the user\ncan look it up in existing databases\n- Now that the `RpcErrorMetadata` has a message with content in it use\n`error_response.error.message.to_string()` in `EthClient::estimate_gas`\nwhen an error occurs\n\nCloses #4021",
+          "timestamp": "2025-09-03T15:16:00Z",
+          "tree_id": "c78d7fee96b78904df9906d78cf01fcfe91031ef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/358746f0db85efb31a42bdc28c809d87cf0e6242"
+        },
+        "date": 1756915714380,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168318910051,
+            "range": "± 289777579",
             "unit": "ns/iter"
           }
         ]
