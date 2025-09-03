@@ -572,7 +572,7 @@ impl L1Committer {
                 .eth_client
                 .get_transaction_receipt(commit_tx_hash)
                 .await?
-                .ok_or(CommitterError::UnexpectedError("no verify tx receipt".to_string()))?;
+                .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
             let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()
                     .map_err(|_| CommitterError::ConversionError("failed to convert commit gas used to i64".to_string()))?;
             METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
