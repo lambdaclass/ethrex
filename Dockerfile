@@ -22,6 +22,7 @@ COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
+COPY .cargo/ ./.cargo
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -47,6 +48,7 @@ COPY .git ./.git
 COPY Cargo.* ./
 COPY fixtures ./fixtures
 COPY .git ./.git
+COPY .cargo/ ./.cargo
 
 # Optional build flags
 # NOTE: Change this to test hive with rocksdb
