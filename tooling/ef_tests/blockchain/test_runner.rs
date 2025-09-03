@@ -17,7 +17,7 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
