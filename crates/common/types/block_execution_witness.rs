@@ -388,7 +388,7 @@ impl ExecutionWitnessResult {
                     "execution witness does not contain the block header of a block to execute"
                         .to_string(),
                 ))?;
-            // this returns err if it's already set, so we drop the Result as don't
+            // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
             let _ = block.header.hash.set(hash);
         }
