@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
+use ethrex_storage::error::StoreError;
 use rand::random;
 use spawned_concurrency::{
     messages::Unused,
@@ -11,8 +12,16 @@ use tracing::{debug, error, info};
 
 use crate::{
     kademlia::Kademlia,
-    rlpx::{Message, connection::server::CastMessage, eth::transactions::Transactions},
+    rlpx::{
+        Message,
+        connection::server::CastMessage,
+        eth::transactions::{NewPooledTransactionHashes, Transactions},
+        p2p::SUPPORTED_ETH_CAPABILITIES,
+    },
 };
+
+// Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
+const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
@@ -63,7 +72,7 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self.kademlia.get_peer_channels(&[]).await;
+        let peers = self.kademlia.get_peer_channels_with_capabilities(&[]).await;
         let peer_sqrt = (peers.len() as f64).sqrt();
         // we want to send to sqrt(peer_count) on average
         // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
@@ -76,19 +85,33 @@ impl TxBroadcaster {
         let txs_message = Message::Transactions(Transactions {
             transactions: full_txs,
         });
-        for (peer_id, mut peer_channels) in peers {
+
+        for (peer_id, mut peer_channels, capabilities) in peers {
             if random::<f64>() < accept_prob {
                 peer_channels.connection.cast(CastMessage::BackendMessage(
                     txs_message.clone(),
                 )).await.unwrap_or_else(|err| {
                     error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
                 });
-            } else {
-                peer_channels.connection.cast(CastMessage::SendNewPooledTxHashes(
-                    txs_to_broadcast.clone(),
-                )).await.unwrap_or_else(|err| {
-                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send new pooled tx hashes");
-                });
+            } else if SUPPORTED_ETH_CAPABILITIES
+                .iter()
+                .any(|cap| capabilities.contains(cap))
+            {
+                for tx_chunk in txs_to_broadcast.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+                    let tx_count = tx_chunk.len();
+                    let mut txs_to_send = Vec::with_capacity(tx_count);
+                    for tx in tx_chunk {
+                        txs_to_send.push((**tx).clone());
+                    }
+                    let hashes_message = Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::new(txs_to_send, &self.blockchain)?,
+                    );
+                    peer_channels.connection.cast(CastMessage::BackendMessage(
+                            hashes_message.clone(),
+                        )).await.unwrap_or_else(|err| {
+                            error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                        });
+                }
             }
         }
         self.blockchain.mempool.clear_broadcasted_txs();
@@ -125,4 +148,6 @@ impl GenServer for TxBroadcaster {
 pub enum TxBroadcasterError {
     #[error("Failed to broadcast transactions")]
     Broadcast,
+    #[error(transparent)]
+    StoreError(#[from] StoreError),
 }

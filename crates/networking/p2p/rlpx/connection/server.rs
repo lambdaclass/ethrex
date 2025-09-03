@@ -144,7 +144,6 @@ pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
     SendPing,
-    SendNewPooledTxHashes(Vec<MempoolTransaction>),
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
     L2(L2Cast),
@@ -267,9 +266,6 @@ impl GenServer for RLPxConnection {
                 }
                 Self::CastMsg::SendPing => {
                     send(established_state, Message::Ping(PingMessage {})).await
-                }
-                Self::CastMsg::SendNewPooledTxHashes(txs) => {
-                    send_new_pooled_tx_hashes(established_state, txs).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
@@ -442,39 +438,6 @@ where
         spawn_listener(handle.clone(), message_builder, stream);
     }
 
-    Ok(())
-}
-
-async fn send_new_pooled_tx_hashes(
-    state: &mut Established,
-    txs: Vec<MempoolTransaction>,
-) -> Result<(), RLPxError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| state.capabilities.contains(cap))
-        && !txs.is_empty()
-    {
-        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = tx_chunk.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in tx_chunk {
-                txs_to_send.push((**tx).clone());
-            }
-
-            send(
-                state,
-                Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                    txs_to_send,
-                    &state.blockchain,
-                )?),
-            )
-            .await?;
-            log_peer_debug(
-                &state.node,
-                &format!("Sent {tx_count} transaction hashes to peer"),
-            );
-        }
-    }
     Ok(())
 }
 
