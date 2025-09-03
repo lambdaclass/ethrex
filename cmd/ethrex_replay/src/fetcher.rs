@@ -1,7 +1,6 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
-use ethrex_l2_rpc::clients::get_batch_by_number;
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::execution_witness_from_rpc_chain_config,

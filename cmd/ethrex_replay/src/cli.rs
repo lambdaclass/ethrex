@@ -400,7 +400,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
 
-    let replayer_mode = replayer_mode(opts.execute);
+    let replayer_mode = replayer_mode(opts.execute)?;
 
     let block_run_report = BlockRunReport::new_for(
         block,
@@ -446,21 +446,23 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool) -> ReplayerMode {
+pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     if execute {
         #[cfg(feature = "sp1")]
-        return ReplayerMode::ExecuteSP1;
+        return Ok(ReplayerMode::ExecuteSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return ReplayerMode::ExecuteRISC0;
+        return Ok(ReplayerMode::ExecuteRISC0);
         #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return ReplayerMode::Execute;
+        return Ok(ReplayerMode::Execute);
     } else {
         #[cfg(feature = "sp1")]
-        return ReplayerMode::ProveSP1;
+        return Ok(ReplayerMode::ProveSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return ReplayerMode::ProveRISC0;
+        return Ok(ReplayerMode::ProveRISC0);
         #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return ReplayerMode::Execute;
+        return Err(eyre::Error::msg(
+            "proving mode is not supported without SP1 or RISC0 features",
+        ));
     }
 }
 
