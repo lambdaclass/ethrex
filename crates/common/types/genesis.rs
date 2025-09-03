@@ -91,7 +91,16 @@ impl TryFrom<&Path> for Genesis {
 
 #[allow(unused)]
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    RSerialize,
+    RDeserialize,
+    Archive,
+    Default,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {

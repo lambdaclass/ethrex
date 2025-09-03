@@ -1,11 +1,12 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
-    INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
+    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
     Address, H256, U256,
     constants::{
-        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
     types::{Receipt, Transaction},
 };
@@ -719,11 +720,7 @@ fn validate_excess_blob_gas(
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_header.excess_blob_gas.unwrap_or_default(),
-                parent_header.blob_gas_used.unwrap_or_default(),
-                schedule.target,
-            )
+            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
         })
         .unwrap_or_default();
     if header
@@ -735,14 +732,31 @@ fn validate_excess_blob_gas(
     Ok(())
 }
 
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u32,
-) -> u64 {
+pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fork: Fork) -> u64 {
+    let parent_blob_gas_used = parent.blob_gas_used.unwrap_or_default();
+    let parent_base_fee_per_gas = parent.base_fee_per_gas.unwrap_or_default();
+    let parent_excess_blob_gas = parent.excess_blob_gas.unwrap_or_default();
+
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    excess_blob_gas.saturating_sub(target_blob_gas_per_block.into())
+    let target_blob_gas_per_block = (schedule.target * GAS_PER_BLOB) as u64;
+    if excess_blob_gas < target_blob_gas_per_block {
+        return 0;
+    }
+
+    if fork >= Fork::Osaka
+        && BLOB_BASE_COST * parent_base_fee_per_gas
+            > (GAS_PER_BLOB as u64)
+                * calculate_base_fee_per_blob_gas(
+                    parent_excess_blob_gas,
+                    schedule.base_fee_update_fraction,
+                )
+    {
+        return parent_excess_blob_gas
+            + parent_blob_gas_used * (schedule.max as u64 - schedule.target as u64)
+                / schedule.max as u64;
+    }
+
+    excess_blob_gas - target_blob_gas_per_block
 }
 
 #[cfg(test)]
