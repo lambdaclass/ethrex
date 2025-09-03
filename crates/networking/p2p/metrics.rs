@@ -67,6 +67,7 @@ pub struct Metrics {
 
     // Account tries
     pub downloaded_account_tries: Arc<Mutex<u64>>,
+    pub account_tries_inserted: Arc<Mutex<u64>>,
     pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub account_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
@@ -562,6 +563,7 @@ impl Default for Metrics {
 
             // Account tries
             downloaded_account_tries: Arc::new(Mutex::new(0)),
+            account_tries_inserted: Arc::new(Mutex::new(0)),
             account_tries_download_start_time: Arc::new(Mutex::new(None)),
             account_tries_download_end_time: Arc::new(Mutex::new(None)),
             account_tries_insert_start_time: Arc::new(Mutex::new(None)),

@@ -850,6 +850,7 @@ impl Syncer {
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
                         let mut trie = store_clone.open_state_trie(computed_state_root)?;
+                        *METRICS.account_tries_inserted.blocking_lock() += 1;
 
                         for (account_hash, account) in account_states_snapshot {
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
