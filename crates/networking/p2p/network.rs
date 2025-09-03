@@ -222,6 +222,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
         // Account leaves metrics
         let account_leaves_downloaded = *METRICS.downloaded_account_tries.lock().await;
+        let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
+            *METRICS.account_tries_inserted.lock().await as f64 / account_leaves_downloaded as f64
+        } else {
+            0.0
+        };
         let account_leaves_time = format_duration({
             let end_time = METRICS
                 .account_tries_download_end_time
@@ -364,7 +369,7 @@ current step: {current_step}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
-account leaves insertion: {account_leaves_inserted_time}
+account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
 storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initialy accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
 storage leaves insertion: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
