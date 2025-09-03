@@ -1239,7 +1239,7 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
-        *METRICS.bytecodes_to_download.lock().await = all_bytecode_hashes.len() as u64;
+        *METRICS.bytecodes_to_download.lock().await += all_bytecode_hashes.len() as u64;
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();

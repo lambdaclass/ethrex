@@ -813,13 +813,13 @@ impl Syncer {
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
-            *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
+                *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
                     SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
@@ -855,6 +855,8 @@ impl Syncer {
                             *METRICS.account_tries_inserted.blocking_lock() += 1;
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
+                        *METRICS.current_step.blocking_lock() =
+                            "Inserting Account Ranges - Writing to DB".to_string();
                         let current_state_root = trie.hash()?;
                         Ok(current_state_root)
                     })
@@ -935,7 +937,8 @@ impl Syncer {
                 Arc::new(Mutex::new(HashMap::new()));
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
-            *METRICS.current_step.lock().await = "Inserting Storage Ranges".to_string();
+            *METRICS.current_step.lock().await =
+                "Inserting Storage Ranges - Writing to DB".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
