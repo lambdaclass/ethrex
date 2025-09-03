@@ -212,6 +212,72 @@ impl PeerHandler {
         peer_channels.first().cloned()
     }
 
+    async fn update_peers_info(&self) {
+        let peer_channels = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await;
+        for (peer_id, _peer_channels) in &peer_channels {
+            let mut peers_info = self.peers_info.lock().await;
+            if peers_info.contains_key(peer_id) {
+                // Peer is already in the downloaders list, skip it
+                continue;
+            }
+            peers_info.insert(*peer_id, PeerInformation::default());
+
+            debug!("{peer_id} added as downloader");
+        }
+    }
+
+    async fn retrieve_peer_channels(&self, peer_id: H256) -> Option<PeerChannels> {
+        match self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await
+            .iter()
+            .find(|(id, _)| *id == peer_id)
+        {
+            Some((_, peer_channels)) => Some(peer_channels.clone()),
+            None => None,
+        }
+    }
+
+    /// Returns a random `Downloader`, or None if no peers are available
+    async fn get_random_downloader(&self) -> Option<Downloader> {
+        self.update_peers_info().await;
+
+        let free_downloaders = self
+            .peers_info
+            .lock()
+            .await
+            .clone()
+            .into_iter()
+            .filter(|(_downloader_id, peer_info)| peer_info.available)
+            .collect::<Vec<_>>();
+
+        if free_downloaders.is_empty() {
+            return None;
+        }
+
+        let Some(free_peer_id) = free_downloaders
+            .get(random::<usize>() % free_downloaders.len())
+            .map(|(peer_id, _)| *peer_id)
+        else {
+            return None;
+        };
+
+        let Some(free_downloader_channels) = self.retrieve_peer_channels(free_peer_id).await else {
+            // The free downloader is not a peer of us anymore.
+            debug!(
+                "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+            );
+            self.peers_info.lock().await.remove(&free_peer_id);
+            return None;
+        };
+
+        Some(Downloader::new(free_peer_id, free_downloader_channels))
+    }
+
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
@@ -383,58 +449,8 @@ impl PeerHandler {
                 self.mark_peer_as_free(peer_id).await;
             }
 
-            let peer_channels = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-                .await;
-
-            for (peer_id, _peer_channels) in &peer_channels {
-                let mut peers_info = self.peers_info.lock().await;
-                if peers_info.contains_key(peer_id) {
-                    // Peer is already in the downloaders list, skip it
-                    continue;
-                }
-
-                peers_info.insert(*peer_id, PeerInformation::default());
-
-                debug!("{peer_id} added as downloader");
-            }
-
-            let free_downloaders = self
-                .peers_info
-                .lock()
-                .await
-                .clone()
-                .into_iter()
-                .filter(|(_downloader_id, peer_info)| peer_info.available)
-                .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
-            if free_downloaders.is_empty() {
-                continue;
-            }
-
-            let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
-                .map(|(peer_id, _)| *peer_id)
-            else {
+            let Some(available_downloader) = self.get_random_downloader().await else {
                 debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
-                continue;
-            };
-
-            let Some(free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
-                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
-            else {
-                // The free downloader is not a peer of us anymore.
-                debug!(
-                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
-                );
-                self.peers_info.lock().await.remove(&free_peer_id);
                 continue;
             };
 
@@ -453,12 +469,7 @@ impl PeerHandler {
                 continue;
             };
 
-            self.mark_peer_as_busy(free_peer_id).await;
-
-            debug!("Downloader {free_peer_id} is now busy");
-
-            let available_downloader =
-                Downloader::new(free_peer_id, free_downloader_channels.clone());
+            self.mark_peer_as_busy(available_downloader.peer_id()).await;
 
             if let Err(_) = available_downloader
                 .start()
