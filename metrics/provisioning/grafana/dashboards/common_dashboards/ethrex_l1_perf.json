@@ -688,6 +688,10 @@
                   "fixedColor": "semi-dark-blue",
                   "mode": "fixed"
                 }
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Gas Used %"
               }
             ]
           },
@@ -700,6 +704,10 @@
               {
                 "id": "unit",
                 "value": "s"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Block time"
               }
             ]
           }
@@ -882,7 +890,9 @@
             },
             "mode": "binary",
             "reduce": {
-              "include": ["Gigagas/s"],
+              "include": [
+                "Gigagas/s"
+              ],
               "reducer": "sum"
             },
             "window": {
@@ -1501,5 +1511,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 4
+  "version": 5
 }
