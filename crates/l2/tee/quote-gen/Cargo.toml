@@ -34,4 +34,4 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
 
 [features]
 default = ["l2"]
-l2 = ["zkvm_interface/l2", "ethrex-l2/l2"]
+l2 = ["guest_program/l2", "ethrex-l2/l2"]
