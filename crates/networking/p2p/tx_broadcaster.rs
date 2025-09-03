@@ -1,8 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::Transaction;
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::error::StoreError;
+use keccak_hash::H256;
 use rand::random;
 use spawned_concurrency::{
     messages::Unused,
@@ -11,12 +12,12 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    kademlia::Kademlia,
+    kademlia::{Kademlia, PeerChannels},
     rlpx::{
         Message,
         connection::server::CastMessage,
         eth::transactions::{NewPooledTransactionHashes, Transactions},
-        p2p::SUPPORTED_ETH_CAPABILITIES,
+        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
 };
 
@@ -77,44 +78,82 @@ impl TxBroadcaster {
         // we want to send to sqrt(peer_count) on average
         // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
         let accept_prob = 1.0 / f64::max(1.0, peer_sqrt);
+
         let full_txs = txs_to_broadcast
             .clone()
             .into_iter()
             .map(|tx| tx.transaction().clone())
+            .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction { .. }))
             .collect::<Vec<Transaction>>();
+
+        let blob_txs = txs_to_broadcast
+            .iter()
+            .filter(|tx| matches!(tx.transaction(), Transaction::EIP4844Transaction { .. }))
+            .cloned()
+            .collect::<Vec<MempoolTransaction>>();
+
         let txs_message = Message::Transactions(Transactions {
-            transactions: full_txs,
+            transactions: full_txs.clone(),
         });
 
         for (peer_id, mut peer_channels, capabilities) in peers {
             if random::<f64>() < accept_prob {
+                info!(
+                    "Sending full transactions to peer {:#x}, amount {}, blob txs {}",
+                    peer_id,
+                    full_txs.len(),
+                    blob_txs.len()
+                );
+                // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
                 peer_channels.connection.cast(CastMessage::BackendMessage(
                     txs_message.clone(),
                 )).await.unwrap_or_else(|err| {
                     error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
                 });
-            } else if SUPPORTED_ETH_CAPABILITIES
-                .iter()
-                .any(|cap| capabilities.contains(cap))
-            {
-                for tx_chunk in txs_to_broadcast.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                    let tx_count = tx_chunk.len();
-                    let mut txs_to_send = Vec::with_capacity(tx_count);
-                    for tx in tx_chunk {
-                        txs_to_send.push((**tx).clone());
-                    }
-                    let hashes_message = Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(txs_to_send, &self.blockchain)?,
-                    );
-                    peer_channels.connection.cast(CastMessage::BackendMessage(
-                            hashes_message.clone(),
-                        )).await.unwrap_or_else(|err| {
-                            error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-                        });
-                }
+                self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
+                    .await?;
+            } else {
+                // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
+                self.send_tx_hashes(
+                    txs_to_broadcast.clone(),
+                    capabilities,
+                    &mut peer_channels,
+                    peer_id,
+                )
+                .await?;
             }
         }
         self.blockchain.mempool.clear_broadcasted_txs();
+        Ok(())
+    }
+
+    async fn send_tx_hashes(
+        &self,
+        txs: Vec<MempoolTransaction>,
+        capabilities: Vec<Capability>,
+        peer_channels: &mut PeerChannels,
+        peer_id: H256,
+    ) -> Result<(), TxBroadcasterError> {
+        if SUPPORTED_ETH_CAPABILITIES
+            .iter()
+            .any(|cap| capabilities.contains(cap))
+        {
+            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+                let tx_count = tx_chunk.len();
+                let mut txs_to_send = Vec::with_capacity(tx_count);
+                for tx in tx_chunk {
+                    txs_to_send.push((**tx).clone());
+                }
+                let hashes_message = Message::NewPooledTransactionHashes(
+                    NewPooledTransactionHashes::new(txs_to_send, &self.blockchain)?,
+                );
+                peer_channels.connection.cast(CastMessage::BackendMessage(
+                        hashes_message.clone(),
+                    )).await.unwrap_or_else(|err| {
+                        error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                    });
+            }
+        }
         Ok(())
     }
 }
