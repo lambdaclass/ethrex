@@ -202,9 +202,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
             continue;
         }
 
-        // Peer metrics
+        // Common metrics
         let elapsed = format_duration(start.elapsed());
         let peer_number = peers.lock().await.len();
+        let current_step = METRICS.current_step.lock().await.clone();
 
         // Headers metrics
         let headers_to_download = METRICS.headers_to_download.lock().await;
@@ -359,6 +360,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
             r#"P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers
+current step: {current_step}
+---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_time}

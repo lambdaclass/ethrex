@@ -813,6 +813,7 @@ impl Syncer {
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -932,6 +933,8 @@ impl Syncer {
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
+            *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            *METRICS.current_step.lock().await = "Inserting Storage Ranges".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -981,6 +984,7 @@ impl Syncer {
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
+            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Finished storing storage tries");
         }

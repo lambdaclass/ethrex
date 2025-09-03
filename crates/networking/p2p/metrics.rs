@@ -54,6 +54,7 @@ pub struct Metrics {
     // Common
     pub sync_head_block: Arc<Mutex<u64>>,
     pub sync_head_hash: Arc<Mutex<H256>>,
+    pub current_step: Arc<Mutex<String>>,
 
     // Headers
     pub headers_to_download: Arc<Mutex<u64>>,
@@ -548,6 +549,7 @@ impl Default for Metrics {
             // Common
             sync_head_block: Arc::new(Mutex::new(0)),
             sync_head_hash: Arc::new(Mutex::new(H256::default())),
+            current_step: Arc::new(Mutex::new("".to_string())),
 
             // Headers
             headers_to_download: Arc::new(Mutex::new(0)),

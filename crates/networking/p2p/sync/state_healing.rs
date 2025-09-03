@@ -22,6 +22,7 @@ use tracing::{error, info};
 
 use crate::{
     kademlia::PeerChannels,
+    metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::AccountStorageRoots,
@@ -54,6 +55,7 @@ pub async fn heal_state_trie_wrap(
     storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
+    *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
     while !healing_done {
         healing_done = heal_state_trie(

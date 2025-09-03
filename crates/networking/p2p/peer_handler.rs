@@ -215,6 +215,7 @@ impl PeerHandler {
         sync_head: H256,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
+        *METRICS.current_step.lock().await = "Downloading Headers".to_string();
 
         let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
 
@@ -784,6 +785,7 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Account Ranges".to_string();
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -1189,6 +1191,7 @@ impl PeerHandler {
         &self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Bytecodes".to_string();
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
@@ -1469,6 +1472,7 @@ impl PeerHandler {
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
