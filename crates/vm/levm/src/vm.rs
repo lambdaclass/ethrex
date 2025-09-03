@@ -165,7 +165,6 @@ impl<'a> VM<'a> {
 
         self.backup_substate();
         let context_result = self.run_execution()?;
-        dbg!(context_result.output.clone());
 
         let report = self.finalize_execution(context_result)?;
 
