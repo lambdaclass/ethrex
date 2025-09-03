@@ -78,7 +78,7 @@ jobs:
       - name: Set custom hive flags
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
-            EEST_FIXTURES=$(cat tooling/ef_tests/blockchain/.fixtures_url)
+            EEST_FIXTURES="https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_develop.tar.gz"
             EEST_BRANCH=main
             echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
           fi
