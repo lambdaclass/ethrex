@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756935229690,
+  "lastUpdate": 1756937270519,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11725,6 +11725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166670698242,
             "range": "± 646164514",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f5ae2ff90ea49a73afc2cef52fcf60007479d42",
+          "message": "fix(l2): remove empty account diffs from payload builder's blob size estimation (#4042)\n\n**Motivation**\n\nThe payload builder estimates the state diff encoded size before adding\nanother transaction to the block to make sure that we can fit it in a\nblob, and a batch can be committed with that single block.\n\nWhen I executed load tests on the L2 the batch size metric reported 0,\nso I initially suspected that the estimation was wrong (smaller than the\nreal state diff size) and I investigated the implementation but found\nthat the batch size metric was wrong instead, and the estimation was\ncorrect*.\n\n*Nevertheless I found that sometimes `get_account_diffs_in_tx()` returns\nempty account diffs (I think because of accounts in the callframe's\noriginal state that didn't participate in that transaction) and they get\naccounted when estimating the state diff size, making the estimation\nlarger than the true value.\n\n**Description**\n\n- prevent `get_account_diffs_in_tx()` to retrieve empty account diffs\n- add an internal error in the case that the sequencer can't make a\nsingle block batch because of blob size, instead of getting stuck\nsilently.\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-03T21:14:06Z",
+          "tree_id": "bca5fd0e8daa138235d2ccb0e3eaf22fe2289af2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5f5ae2ff90ea49a73afc2cef52fcf60007479d42"
+        },
+        "date": 1756937251864,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167246757012,
+            "range": "± 609276013",
             "unit": "ns/iter"
           }
         ]
