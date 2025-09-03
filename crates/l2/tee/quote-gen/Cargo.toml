@@ -19,7 +19,6 @@ ethrex-vm = { path = "../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 ethrex-rpc = { path = "../../../networking/rpc", default-features = false }
 guest_program = { path = "../../prover/src/guest_program", default-features = false }
-ethrex-sdk = { path = "../../sdk", default-features = false }
 ethrex-l2 = { path = "../..", default-features = false }
 ethrex-l2-common = { path = "../../common", default-features = false }
 
