@@ -119,6 +119,10 @@ pub struct BlobSchedule {
     pub cancun: ForkBlobSchedule,
     #[serde(default = "default_prague_schedule")]
     pub prague: ForkBlobSchedule,
+    #[serde(default = "default_bpo2_schedule")]
+    pub bpo1: ForkBlobSchedule,
+    #[serde(default = "default_bpo1_schedule")]
+    pub bpo2: ForkBlobSchedule,
 }
 
 impl Default for BlobSchedule {
@@ -126,6 +130,8 @@ impl Default for BlobSchedule {
         BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
+            bpo1: default_bpo1_schedule(),
+            bpo2: default_bpo2_schedule(),
         }
     }
 }
@@ -142,6 +148,22 @@ fn default_prague_schedule() -> ForkBlobSchedule {
     ForkBlobSchedule {
         target: 6,
         max: 9,
+        base_fee_update_fraction: 5007716,
+    }
+}
+
+fn default_bpo1_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 12,
+        max: 16,
+        base_fee_update_fraction: 5007716,
+    }
+}
+
+fn default_bpo2_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 16,
+        max: 24,
         base_fee_update_fraction: 5007716,
     }
 }
@@ -272,6 +294,14 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
         self.osaka_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -320,6 +350,10 @@ impl ChainConfig {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun)
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo1)
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2)
         } else {
             None
         }
@@ -527,6 +561,8 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 13353908,
                 },
+                bpo1: default_bpo1_schedule(),
+                bpo2: default_bpo2_schedule(),
             },
             ..Default::default()
         };
@@ -702,6 +738,8 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                bpo1: default_bpo1_schedule(),
+                bpo2: default_bpo2_schedule(),
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -734,6 +772,8 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                bpo1: default_bpo1_schedule(),
+                bpo2: default_bpo2_schedule(),
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -773,6 +813,8 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                bpo1: default_bpo1_schedule(),
+                bpo2: default_bpo2_schedule(),
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -812,6 +854,8 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                bpo1: default_bpo1_schedule(),
+                bpo2: default_bpo2_schedule(),
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
