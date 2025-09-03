@@ -518,8 +518,18 @@ impl GenServer for DiscoveryServer {
 
         spawn_listener(
             handle.clone(),
-            |(msg, addr)| InMessage::Message(Box::new(Discv4Message::from(msg, addr))),
-            stream,
+            stream.filter_map(|result| async move {
+                match result {
+                    Ok((msg, addr)) => {
+                        Some(InMessage::Message(Box::new(Discv4Message::from(msg, addr))))
+                    }
+                    Err(e) => {
+                        tracing::error!("Error receiving Discv4 message: {e:?}");
+                        // Skipping invalid data
+                        None
+                    }
+                }
+            }),
         );
         send_interval(
             REVALIDATION_CHECK_INTERVAL,

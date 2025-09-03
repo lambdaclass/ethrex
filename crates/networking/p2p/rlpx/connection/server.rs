@@ -151,6 +151,7 @@ pub enum InnerState {
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
+    InvalidPeerMessage(String),
     BackendMessage(Message),
     SendPing,
     SendNewPooledTxHashes(Vec<MempoolTransaction>),
@@ -266,6 +267,14 @@ impl GenServer for RLPxConnection {
                         &format!("Received peer message: {message}"),
                     );
                     handle_peer_message(established_state, message).await
+                }
+                Self::CastMsg::InvalidPeerMessage(message) => {
+                    log_peer_error(
+                        &established_state.node,
+                        &format!("Received peer message: {message}"),
+                    );
+                    //Just ignore it
+                    Ok(())
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(
@@ -440,15 +449,25 @@ where
 
     spawn_listener(
         handle.clone(),
-        |msg: Message| CastMessage::PeerMessage(msg),
-        stream,
+        stream.filter_map(|result| match result {
+            Ok(msg) => Some(CastMessage::PeerMessage(msg)),
+            Err(e) => {
+                tracing::error!("Error receiving RLPx message: {e:?}");
+                // Skipping invalid data
+                None
+            }
+        }),
     );
 
     if state.negotiated_eth_capability.is_some() {
-        let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
-        let message_builder =
-            |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
-        spawn_listener(handle.clone(), message_builder, stream);
+        let stream: BroadcastStream<(Id, Arc<Message>)> =
+            BroadcastStream::new(state.connection_broadcast_send.subscribe());
+        let message_stream = stream.filter_map(|result| {
+            result
+                .ok()
+                .map(|(id, msg)| CastMessage::BroadcastMessage(id, msg))
+        });
+        spawn_listener(handle.clone(), message_stream);
     }
 
     Ok(())

@@ -2632,7 +2632,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tabwriter",
  "thiserror 2.0.12",
  "tokio",
@@ -2765,7 +2765,7 @@ dependencies = [
  "sha3",
  "snap",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
@@ -6597,11 +6597,10 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0807232f6f44b0352bcef6218f34e0be66b97486f63fe3e075bc23fbfc146b90"
+source = "git+http://gitgub.com/lambdaclass/spawned?branch=listener_fix#026493abaf081b1f044a668c073be8bdec1dc81e"
 dependencies = [
  "futures",
- "spawned-rt",
+ "spawned-rt 0.3.0 (git+http://gitgub.com/lambdaclass/spawned?branch=listener_fix)",
  "thiserror 2.0.12",
  "tracing",
 ]
@@ -6611,6 +6610,19 @@ name = "spawned-rt"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31ef7a19f49a842b84dcdde52d88eabbe28f48a2b9a4669180fe17a556c2dc1"
+dependencies = [
+ "crossbeam",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "spawned-rt"
+version = "0.3.0"
+source = "git+http://gitgub.com/lambdaclass/spawned?branch=listener_fix#026493abaf081b1f044a668c073be8bdec1dc81e"
 dependencies = [
  "crossbeam",
  "tokio",
