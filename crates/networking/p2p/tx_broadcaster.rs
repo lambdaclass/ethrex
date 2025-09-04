@@ -130,28 +130,38 @@ impl TxBroadcaster {
         peer_channels: &mut PeerChannels,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
-        if SUPPORTED_ETH_CAPABILITIES
-            .iter()
-            .any(|cap| capabilities.contains(cap))
-        {
-            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
-                for tx in tx_chunk {
-                    txs_to_send.push((**tx).clone());
-                }
-                let hashes_message = Message::NewPooledTransactionHashes(
-                    NewPooledTransactionHashes::new(txs_to_send, &self.blockchain)?,
-                );
-                peer_channels.connection.cast(CastMessage::BackendMessage(
-                        hashes_message.clone(),
-                    )).await.unwrap_or_else(|err| {
-                        error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-                    });
-            }
-        }
-        Ok(())
+        send_tx_hashes(txs, capabilities, peer_channels, peer_id, &self.blockchain).await
     }
+}
+
+pub async fn send_tx_hashes(
+    txs: Vec<MempoolTransaction>,
+    capabilities: Vec<Capability>,
+    peer_channels: &mut PeerChannels,
+    peer_id: H256,
+    blockchain: &Arc<Blockchain>,
+) -> Result<(), TxBroadcasterError> {
+    if SUPPORTED_ETH_CAPABILITIES
+        .iter()
+        .any(|cap| capabilities.contains(cap))
+    {
+        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+            let tx_count = tx_chunk.len();
+            let mut txs_to_send = Vec::with_capacity(tx_count);
+            for tx in tx_chunk {
+                txs_to_send.push((**tx).clone());
+            }
+            let hashes_message = Message::NewPooledTransactionHashes(
+                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
+            );
+            peer_channels.connection.cast(CastMessage::BackendMessage(
+                    hashes_message.clone(),
+                )).await.unwrap_or_else(|err| {
+                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                });
+        }
+    }
+    Ok(())
 }
 
 impl GenServer for TxBroadcaster {

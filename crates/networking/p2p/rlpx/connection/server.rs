@@ -58,13 +58,12 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
+    tx_broadcaster::send_tx_hashes,
     types::Node,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
-// Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
-const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -380,7 +379,7 @@ where
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
-    let (peer_channels, sender) = PeerChannels::create(handle.clone());
+    let (mut peer_channels, sender) = PeerChannels::create(handle.clone());
 
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
@@ -391,7 +390,7 @@ where
         .table
         .set_connected_peer(
             state.node.clone(),
-            peer_channels,
+            peer_channels.clone(),
             state.capabilities.clone(),
         )
         .await;
@@ -399,7 +398,7 @@ where
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_all_pooled_tx_hashes(state).await?;
+    send_all_pooled_tx_hashes(state, &mut peer_channels).await?;
 
     // Periodic Pings repeated events.
     send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
@@ -441,40 +440,27 @@ where
     Ok(())
 }
 
-async fn send_all_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| state.capabilities.contains(cap))
-    {
-        let txs: Vec<MempoolTransaction> = state
-            .blockchain
-            .mempool
-            .get_all_txs_by_sender()?
-            .into_values()
-            .flatten()
-            .collect();
-        if !txs.is_empty() {
-            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
-                for tx in tx_chunk {
-                    txs_to_send.push((**tx).clone());
-                }
-
-                send(
-                    state,
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        txs_to_send,
-                        &state.blockchain,
-                    )?),
-                )
-                .await?;
-                log_peer_debug(
-                    &state.node,
-                    &format!("Sent {tx_count} transaction hashes to peer"),
-                );
-            }
-        }
+async fn send_all_pooled_tx_hashes(
+    state: &mut Established,
+    peer_channels: &mut PeerChannels,
+) -> Result<(), RLPxError> {
+    let txs: Vec<MempoolTransaction> = state
+        .blockchain
+        .mempool
+        .get_all_txs_by_sender()?
+        .into_values()
+        .flatten()
+        .collect();
+    if !txs.is_empty() {
+        send_tx_hashes(
+            txs,
+            state.capabilities.clone(),
+            peer_channels,
+            state.node.node_id(),
+            &state.blockchain,
+        )
+        .await
+        .map_err(|e| RLPxError::SendMessage(e.to_string()))?;
     }
     Ok(())
 }
