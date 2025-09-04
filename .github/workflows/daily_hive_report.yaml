@@ -16,12 +16,13 @@ permissions:
 
 jobs:
   run-hive:
-    name: Hive - ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
+    name: Hive - ${{ matrix.test.name }} - ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
         test:
           - {
               name: "Rpc Compat tests",
