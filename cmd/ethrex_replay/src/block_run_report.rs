@@ -1,4 +1,4 @@
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, process::Command, time::Duration};
 
 use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
@@ -131,7 +131,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}\n*Time Taken:* {time_taken}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}\n*CPU:* {cpu}\n*RAM:* {ram}\n*Time Taken:* {time_taken}",
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -142,6 +142,13 @@ impl BlockRunReport {
                             } else {
                                 "Success".to_string()
                             },
+                            maybe_gpu = if let Some(gpu_model) = gpu_info() {
+                                format!("\n*GPU:* `{gpu_model}`")
+                            } else {
+                                "".to_string()
+                            },
+                            cpu = cpu_info().unwrap_or_else(|| "Unknown".to_string()),
+                            ram = ram_info().unwrap_or_else(|| "Unknown".to_string()),
                             time_taken = format_duration(self.time_taken),
                         ),
                     }),
@@ -234,4 +241,64 @@ fn format_duration(duration: Duration) -> String {
     }
 
     format!("{minutes:02}m {seconds:02}s")
+}
+
+fn gpu_info() -> Option<String> {
+    match std::env::consts::OS {
+        // nvidia-smi --query-gpu=name --format=csv | tail -n +2
+        "linux" => Command::new("nvidia-smi")
+            .args(["--query-gpu=name", "--format=csv", "|", "tail", "-n", "+2"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        // system_profiler SPDisplaysDataType | grep "Chipset Model" | awk -F': ' '{print $2}' | head -n 1
+        "macos" => Command::new("system_profiler")
+            .arg(
+                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
+            )
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        _other => None,
+    }
+}
+
+fn cpu_info() -> Option<String> {
+    match std::env::consts::OS {
+        // cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F': ' '{print $2}'
+        "linux" => Command::new("cat")
+            .arg("/proc/cpuinfo | grep \"model name\" | head -n 1 | awk -F': ' '{print $2}'")
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        // sysctl -n machdep.cpu.brand_string
+        "macos" => Command::new("system_profiler")
+            .arg(
+                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
+            )
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        _other => None,
+    }
+}
+
+fn ram_info() -> Option<String> {
+    match std::env::consts::OS {
+        // free -h | grep "Mem:" | awk '{print $2}'
+        "linux" => Command::new("free")
+            .args(["-h", "| grep \"Mem:\" | awk '{print $2}'"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        // system_profiler SPHardwareDataType | grep "Memory:" | awk -F': ' '{print $2}'
+        "macos" => Command::new("system_profiler")
+            .arg(
+                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
+            )
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .ok(),
+        _other => None,
+    }
 }
