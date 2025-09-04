@@ -1125,15 +1125,16 @@ pub async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
-        let mut scores = peers.peer_scores.lock().await;
-
         let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
+            .peer_scores
+            .lock()
+            .await
+            .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
             .await
             .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = scores.get_score(&peer_id);
+        let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1143,8 +1144,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            scores.record_failure(peer_id);
-            let peer_score = scores.get_score(&peer_id);
+            peers.peer_scores.lock().await.record_failure(peer_id);
+            let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1152,7 +1153,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        scores.record_success(peer_id);
+        peers.peer_scores.lock().await.record_success(peer_id);
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
