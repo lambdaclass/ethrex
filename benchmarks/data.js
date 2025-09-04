@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756950526147,
+  "lastUpdate": 1756953947439,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25536,6 +25536,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/9d1fb230cb83de478c85b45244ef26013ee6701f"
         },
         "date": 1756950525266,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.003592546296296296,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5dc636ae2a243a087a73379ec4f15a1c6d4a9da9",
+          "message": "chore(l1): remove old comments and code (#4269)\n\n**Motivation**\n\nDuring snapsync development we left old code and comments.\n\n**Description**\n\nRemoves old comments and a useless \"validation\" on big accounts, which\nis pointless because errors are expected (hence why healing is needed).",
+          "timestamp": "2025-09-03T13:56:02Z",
+          "tree_id": "68f5921ccced03fd177e3513c4a9de697ec72a75",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5dc636ae2a243a087a73379ec4f15a1c6d4a9da9"
+        },
+        "date": 1756953946553,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
