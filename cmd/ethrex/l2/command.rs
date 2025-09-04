@@ -96,6 +96,8 @@ impl L2Command {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
+#[clap(group = clap::ArgGroup::new("owner_signing").multiple(false).required(false))]
+#[clap(group = clap::ArgGroup::new("sequencer_signing").multiple(false).required(false))]
 pub enum Command {
     #[command(about = "Initialize an ethrex prover", visible_alias = "p")]
     Prover {
@@ -151,7 +153,7 @@ pub enum Command {
             long = "pause",
             default_value_t = false,
             help = "Pause contracts before trying to revert the batch",
-            requires("contract_call_options")
+            requires = "owner_signing"
         )]
         pause_contracts: bool,
         #[arg(
@@ -163,49 +165,63 @@ pub enum Command {
         rpc_url: Url,
         #[arg(help = "The address of the OnChainProposer contract")]
         contract_address: Address,
-        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner", help_heading  = "Contract owner account options")]
+        #[arg(
+            long, 
+            value_parser = parse_private_key, 
+            env = "OWNER_PRIVATE_KEY", 
+            help = "The private key of the owner", 
+            help_heading  = "Contract owner account options",
+            group = "owner_signing",
+        )]
         owner_private_key: Option<SecretKey>,
         #[arg(
-            long = "owner-remote-signer-url",
-            value_name = "URL",
-            env = "ETHREX_REMOTE_SIGNER_URL",
-            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
-            requires = "remote_signer_public_key",
-            conflicts_with = "private_key",
-            help_heading = "Contract owner account options"
+            long = "owner-remote-signer-url", 
+            value_name = "URL", 
+            env = "OWNER_REMOTE_SIGNER_URL", 
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.", 
+            help_heading = "Contract owner account options", 
+            conflicts_with = "owner_private_key", 
+            requires = "owner_remote_signer_public_key"
         )]
         owner_remote_signer_url: Option<Url>,
         #[arg(
             long = "owner-remote-signer-public-key",
-            value_name = "PUBLIC_KEY",
+            value_name = "OWNER_PUBLIC_KEY",
             value_parser = utils::parse_public_key,
             env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
             help = "Public key to request the remote signature from.",
-            requires = "remote_signer_url",
-            conflicts_with = "private_key",
+            group = "owner_signing",
+            requires = "owner_remote_signer_url",
             help_heading  = "Contract owner account options"
         )]
         owner_remote_signer_public_key: Option<PublicKey>,
-        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the sequencer", help_heading  = "Sequencer account options")]
+        #[arg(
+            long, 
+            value_parser = parse_private_key, 
+            env = "SEQUENCER_PRIVATE_KEY", 
+            help = "The private key of the sequencer", 
+            help_heading  = "Sequencer account options",
+            group = "sequencer_signing",
+        )]
         sequencer_private_key: Option<SecretKey>,
         #[arg(
             long = "sequencer-remote-signer-url",
             value_name = "URL",
-            env = "ETHREX_REMOTE_SIGNER_URL",
+            env = "SEQUENCER_REMOTE_SIGNER_URL",
             help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
-            requires = "remote_signer_public_key",
-            conflicts_with = "private_key",
-            help_heading = "Sequencer account options"
+            help_heading = "Sequencer account options",
+            conflicts_with = "sequencer_private_key",
+            requires = "sequencer_remote_signer_public_key"
         )]
         sequencer_remote_signer_url: Option<Url>,
         #[arg(
             long = "sequencer-remote-signer-public-key",
-            value_name = "PUBLIC_KEY",
+            value_name = "SEQUENCER_PUBLIC_KEY",
             value_parser = utils::parse_public_key,
-            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            env = "SEQUENCER_REMOTE_SIGNER_PUBLIC_KEY",
             help = "Public key to request the remote signature from.",
-            requires = "remote_signer_url",
-            conflicts_with = "private_key",
+            group = "sequencer_signing",
+            requires = "sequencer_remote_signer_url",
             help_heading  = "Sequencer account options"
         )]
         sequencer_remote_signer_public_key: Option<PublicKey>,
@@ -213,7 +229,7 @@ pub enum Command {
             default_value_t = false,
             help = "If enabled the command will also delete the blocks from the Blockchain database",
             long = "delete-blocks",
-            help_heading = "Delete blocks options"
+            requires = "network"
         )]
         delete_blocks: bool,
         #[arg(
@@ -222,8 +238,6 @@ pub enum Command {
             help = "Receives a `Genesis` struct in json format. Only required if using --delete-blocks",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
-            required_if_eq("delete_blocks", "true"),
-            help_heading  = "Delete blocks options"
         )]
         network: Option<Network>,
     },
