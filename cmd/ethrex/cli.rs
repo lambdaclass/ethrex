@@ -333,7 +333,9 @@ impl Subcommand {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
             Self::L2(_) => {}
-            _ => init_tracing(opts),
+            _ => {
+                init_tracing(opts);
+            }
         }
         match self {
             Subcommand::RemoveDB { datadir, force } => {

@@ -414,6 +414,7 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+            log_filter_handler: None,
         }
     }
 }

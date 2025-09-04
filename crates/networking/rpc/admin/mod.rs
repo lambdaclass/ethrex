@@ -3,8 +3,12 @@ use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
-use crate::{rpc::NodeData, utils::RpcErr};
+use crate::{
+    rpc::NodeData,
+    utils::{RpcErr, RpcRequest},
+};
 mod peers;
 pub use peers::peers;
 
@@ -57,4 +61,33 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         protocols,
     };
     serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
+}
+
+pub async fn set_log_level(
+    req: &RpcRequest,
+    log_filter_handler: &Option<reload::Handle<EnvFilter, Registry>>,
+) -> Result<Value, RpcErr> {
+    let params = req
+        .params
+        .clone()
+        .ok_or(RpcErr::MissingParam("log level".to_string()))?;
+    let log_level = params
+        .get(0)
+        .ok_or(RpcErr::MissingParam("log level".to_string()))?
+        .as_str()
+        .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
+
+    let filter = EnvFilter::try_new(log_level)
+        .map_err(|_| RpcErr::BadParams(format!("Cannot parse {log_level} as a log directive")))?;
+
+    if let Some(handle) = log_filter_handler {
+        handle
+            .reload(filter)
+            .map_err(|e| RpcErr::Internal(format!("Failed to reload log filter: {}", e)))?;
+        Ok(Value::Bool(true))
+    } else {
+        Err(RpcErr::Internal(
+            "Log filter handler not available".to_string(),
+        ))
+    }
 }
