@@ -214,7 +214,7 @@ pub fn execution_witness_from_rpc_chain_config(
             let w = std::mem::take(&mut *w);
             w.into_iter().collect::<Vec<_>>()
         };
-        storage_trie_nodes_by_address.insert(address, state_nodes.values().cloned().collect());
+        storage_trie_nodes_by_address.insert(address, witness);
     }
 
     let mut witness = ExecutionWitnessResult {
@@ -266,6 +266,32 @@ pub fn execution_witness_from_rpc_chain_config(
         used_storage_tries,
         &state_nodes_map,
     )?;
+    for (address, nodes) in witness.storage_trie_nodes.iter_mut() {
+        if let Some((witness_ref, _)) = trie_loggers.get(address) {
+            let mut witness_lock = witness_ref.lock().map_err(|_| {
+                ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+            })?;
+            let witness: Vec<Vec<u8>> = std::mem::take(&mut *witness_lock).into_iter().collect();
+            nodes.extend_from_slice(&witness);
+        } else {
+            return Err(ExecutionWitnessError::Custom(format!(
+                "Missing storage trie witness for address {address:#x}"
+            )));
+        }
+    }
+    // witness.storage_trie_nodes = trie_loggers
+    //     .into_iter()
+    //     .map(|(address, (witness, _trie))| {
+    //         let mut witness = witness
+    //             .lock()
+    //             .map_err(|_| {
+    //                 ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+    //             })
+    //             .unwrap();
+    //         let witness = std::mem::take(&mut *witness);
+    //         (address, witness.into_iter().collect::<Vec<_>>())
+    //     })
+    //     .collect();
     Ok(witness)
 }
 
