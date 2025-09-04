@@ -771,8 +771,6 @@ impl Syncer {
         store: Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
-        // @@@ let mut peer_scores = PeerScores::default();
-
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests

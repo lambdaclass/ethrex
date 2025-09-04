@@ -83,9 +83,6 @@ pub struct StorageHealer {
     membatch: Membatch,
     /// We use this to track which peers we can send stuff to
     peer_handler: PeerHandler,
-    /// We use this to track which peers are occupied, and we can't send stuff to
-    /// Alongside their score for this situation
-    scored_peers: HashMap<H256, PeerScore>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
