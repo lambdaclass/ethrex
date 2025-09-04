@@ -21,8 +21,8 @@ use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use std::{
     collections::BTreeMap,
-    io,
     net::SocketAddr,
+    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -99,8 +99,18 @@ pub fn peer_table() -> Kademlia {
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let udp_socket = Arc::new(
+    let udp4_socket = Arc::new(
         UdpSocket::bind(context.local_node.udp_addr())
+            .await
+            .expect("Failed to bind udp socket"),
+    );
+    let ip6_addr = SocketAddr::from_str(format!(
+        "[::ffff:{}]:{}",
+        context.local_node.ip, context.local_node.udp_port
+    ))
+    .expect("Failed to parse address");
+    let udp6_socket = Arc::new(
+        UdpSocket::bind(ip6_addr)
             .await
             .expect("Failed to bind udp socket"),
     );
@@ -108,7 +118,8 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     DiscoveryServer::spawn(
         context.local_node.clone(),
         context.signer,
-        udp_socket.clone(),
+        udp4_socket.clone(),
+        udp6_socket.clone(),
         context.table.clone(),
         bootnodes,
     )
@@ -120,6 +131,8 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     DiscoverySideCar::spawn(
         context.local_node.clone(),
         context.signer,
+        udp4_socket,
+        udp6_socket,
         context.table.clone(),
     )
     .await

@@ -178,6 +178,8 @@ impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
+        udp4_socket: Arc<UdpSocket>,
+        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), DiscoverySideCarError> {
         info!("Starting Discovery Side Car");
@@ -187,15 +189,12 @@ impl DiscoverySideCar {
                 .expect("Failed to create local node record"),
         ));
 
-        let send4_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-        let send6_socket = Arc::new(UdpSocket::bind("[::]:0").await?);
-
         let state = DiscoverySideCar::new(
             local_node,
             local_node_record,
             signer,
-            send4_socket,
-            send6_socket,
+            udp4_socket,
+            udp6_socket,
             kademlia,
         );
 

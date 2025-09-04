@@ -48,9 +48,8 @@ pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    listener_socket: Arc<UdpSocket>,
-    sender4_socket: Arc<UdpSocket>,
-    sender6_socket: Arc<UdpSocket>,
+    udp4_socket: Arc<UdpSocket>,
+    udp6_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
 
@@ -59,26 +58,28 @@ impl DiscoveryServer {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
-        listener_socket: Arc<UdpSocket>,
-        sender4_socket: Arc<UdpSocket>,
-        sender6_socket: Arc<UdpSocket>,
+        udp4_socket: Arc<UdpSocket>,
+        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
             local_node_record,
             signer,
-            listener_socket,
-            sender4_socket,
-            sender6_socket,
+            udp4_socket,
+            udp6_socket,
             kademlia,
         }
     }
 
     async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
-        let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf1 = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf2 = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
-            let (read, from) = self.listener_socket.recv_from(&mut buf).await?;
+            let ((read, from), buf) = tokio::select! {
+                v = self.udp4_socket.recv_from(&mut buf1) => (v?, &buf1),
+                v = self.udp6_socket.recv_from(&mut buf2) => (v?, &buf2),
+            };
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
@@ -125,8 +126,8 @@ impl DiscoveryServer {
 
         let dst_addr = node.udp_addr();
         let send_socket = match dst_addr.is_ipv4() {
-            true => &self.sender4_socket,
-            false => &self.sender6_socket,
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
         };
         let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
@@ -159,8 +160,8 @@ impl DiscoveryServer {
 
         let dst_addr = node.udp_addr();
         let send_socket = match dst_addr.is_ipv4() {
-            true => &self.sender4_socket,
-            false => &self.sender6_socket,
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
         };
         let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
@@ -189,8 +190,8 @@ impl DiscoveryServer {
 
         let dst_addr = node.udp_addr();
         let send_socket = match dst_addr.is_ipv4() {
-            true => &self.sender4_socket,
-            false => &self.sender6_socket,
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
         };
         let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
@@ -217,8 +218,8 @@ impl DiscoveryServer {
         msg.encode_with_header(&mut buf, &self.signer);
 
         let send_socket = match from.is_ipv4() {
-            true => &self.sender4_socket,
-            false => &self.sender6_socket,
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
         };
         let bytes_sent = send_socket.send_to(&buf, from).await?;
 
@@ -279,7 +280,8 @@ impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        udp4_socket: Arc<UdpSocket>,
+        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
@@ -290,16 +292,12 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
-        let send4_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-        let send6_socket = Arc::new(UdpSocket::bind("[::]:0").await?);
-
         let state = DiscoveryServer::new(
             local_node,
             local_node_record,
             signer,
-            udp_socket,
-            send4_socket,
-            send6_socket,
+            udp4_socket,
+            udp6_socket,
             kademlia.clone(),
         );
 
