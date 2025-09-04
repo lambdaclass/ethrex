@@ -62,10 +62,7 @@ pub fn parse_and_execute(
                     && !specific_fusaka_tests_to_run
                         .iter()
                         .any(|name| test.info.url.clone().unwrap().contains(*name))
-                    || match evm {
-                        EvmEngine::LEVM => false,
-                        EvmEngine::REVM => true,
-                    }))
+                    || matches!(evm, EvmEngine::REVM)))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);

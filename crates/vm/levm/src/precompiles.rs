@@ -51,8 +51,9 @@ use std::borrow::Cow;
 use std::ops::Mul;
 
 use crate::constants::{P256_A, P256_B, P256_N};
-use crate::gas_cost::MODEXP_STATIC_COST;
 use crate::gas_cost::P256_VERIFICATION_L1_COST;
+use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFICATION_L2_COST};
+use crate::vm::VMType;
 use crate::{
     constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
@@ -196,7 +197,7 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
-pub fn is_precompile(address: &Address, fork: Fork) -> bool {
+pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
@@ -207,7 +208,9 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
         return false;
     }
 
-    if address == &P256_VERIFICATION_ADDRESS && fork < Fork::Osaka {
+    // P256 verify Precompile only existed on L2 before Osaka
+    if address == &P256_VERIFICATION_ADDRESS && fork < Fork::Osaka && matches!(vm_type, VMType::L1)
+    {
         return false;
     }
 
@@ -1030,9 +1033,16 @@ pub fn bls12_g1add(
 pub fn p_256_verify(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
-    increase_precompile_consumed_gas(P256_VERIFICATION_L1_COST, gas_remaining)
+    // If the fork is prior to Osaka then ir means the precompile has to have been called from an L2 VM
+    // In that case we use the L2 cost. Otherwise we use the new cost
+    let gas_cost = match fork {
+        Fork::Osaka => P256_VERIFICATION_L1_COST,
+        _ => P256_VERIFICATION_L2_COST,
+    };
+
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // Validate input data length is 160 bytes

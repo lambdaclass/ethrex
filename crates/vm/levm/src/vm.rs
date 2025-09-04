@@ -173,7 +173,11 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-        if precompiles::is_precompile(&self.current_call_frame.to, self.env.config.fork) {
+        if precompiles::is_precompile(
+            &self.current_call_frame.to,
+            self.env.config.fork,
+            self.vm_type,
+        ) {
             let call_frame = &mut self.current_call_frame;
 
             return Self::execute_precompile(
