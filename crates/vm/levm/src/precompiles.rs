@@ -1093,8 +1093,8 @@ pub fn p_256_verify(
     };
 
     // Build signature
-    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::Slicing)?;
-    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::Slicing)?;
+    let r: [u8; 32] = r.try_into()?;
+    let s: [u8; 32] = s.try_into()?;
 
     let Ok(signature) = P256Signature::from_scalars(r, s) else {
         return Ok(Bytes::new());
