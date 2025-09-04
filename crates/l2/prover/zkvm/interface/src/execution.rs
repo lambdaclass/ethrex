@@ -287,19 +287,6 @@ fn execute_stateless(
         )
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
-        let is_block_empty = block.body.transactions.is_empty()
-            && block
-                .body
-                .withdrawals
-                .as_ref()
-                .is_none_or(|withdrawals| withdrawals.is_empty());
-        // In L1 there are system contract calls that need to be executed
-        // even if the block is empty, so we only skip execution of L2 blocks
-        if is_block_empty && cfg!(feature = "l2") {
-            parent_block_header = &block.header;
-            continue;
-        }
-
         // Execute block
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?;
