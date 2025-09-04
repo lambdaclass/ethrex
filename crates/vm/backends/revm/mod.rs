@@ -18,9 +18,8 @@ use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use revm::db::AccountStatus;
 use revm::db::states::bundle_state::BundleRetention;
 
-use revm::{Database, DatabaseCommit};
 use revm::{
-    Evm,
+    DatabaseCommit, Evm,
     primitives::{B256, BlobExcessGasAndPrice, BlockEnv, TxEnv},
 };
 use revm_inspectors::access_list::AccessListInspector;
@@ -157,16 +156,7 @@ impl REVM {
         )?;
         Ok(())
     }
-    fn system_contract_account_info(
-        addr: Address,
-        state: &mut EvmState,
-    ) -> Result<revm_primitives::AccountInfo, EvmError> {
-        let revm_addr = RevmAddress::from_slice(addr.as_bytes());
-        let account_info = state.inner.basic(revm_addr)?.ok_or(EvmError::DB(
-            "System contract address was not found after deployment".to_string(),
-        ))?;
-        Ok(account_info)
-    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
@@ -178,17 +168,6 @@ impl REVM {
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
         )?;
-
-        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account_info =
-            Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
-        if account_info.is_empty_code_hash() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
 
         match tx_result {
             ExecutionResult::Success {
@@ -223,17 +202,6 @@ impl REVM {
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
         )?;
-
-        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let account_info =
-            Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
-        if account_info.is_empty_code_hash() {
-            return Err(EvmError::SystemContractEmpty(
-                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
-            ));
-        }
 
         match tx_result {
             ExecutionResult::Success {
