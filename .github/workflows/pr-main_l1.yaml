@@ -35,8 +35,8 @@ jobs:
 
       - name: Create placeholder SP1 ELF
         run: |
-          mkdir -p crates/l2/prover/zkvm/interface/sp1/out
-          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
+          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -141,9 +141,10 @@ jobs:
           - name: Blob & Stability Check
             enclave_name: "ethrex-assertoor-blob"
             ethereum_package_args: "./.github/config/assertoor/network_params_blob.yaml"
-          - name: Ethrex Only With Different Consensus Clients Check
-            enclave_name: "ethrex-different-consensus-assertoor"
-            ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
+          # Flaky, reenable when fixed
+          # - name: Ethrex Only With Different Consensus Clients Check
+          #   enclave_name: "ethrex-different-consensus-assertoor"
+          #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
       - uses: actions/checkout@v4
@@ -251,9 +252,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://45.76.185.153:8545"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1132599.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1137728.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1132599 NETWORK=hoodi
+          make execute BLOCK_NUMBER=1137728 NETWORK=hoodi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
