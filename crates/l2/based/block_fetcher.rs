@@ -12,6 +12,7 @@ use ethrex_l2_common::{
     privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
+use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
@@ -103,10 +104,10 @@ impl BlockFetcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
-        let last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
-            .await?
-            .into();
+        let last_l1_block_fetched =
+            get_last_fetched_l1_block(&eth_client, cfg.l1_watcher.bridge_address)
+                .await?
+                .into();
         Ok(Self {
             eth_client,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -155,10 +156,8 @@ impl BlockFetcher {
                     "Failed to get last batch number known for block {last_l2_block_number_known}"
                 )))?;
 
-            let last_l2_committed_batch_number = self
-                .eth_client
-                .get_last_committed_batch(self.on_chain_proposer_address)
-                .await?;
+            let last_l2_committed_batch_number =
+                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
             let l2_batches_behind = last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
                 BlockFetcherError::CalculationError(
