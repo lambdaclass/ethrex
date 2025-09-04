@@ -12,7 +12,7 @@ lint: ## 🧹 Linter check
 	# Note that we are compiling without the "gpu" feature (see #4048 for why)
 	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
 	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
 CRATE ?= *
