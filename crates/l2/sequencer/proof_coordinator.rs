@@ -166,6 +166,7 @@ pub enum ProofCordOutMessage {
     Done,
 }
 
+#[derive(Clone)]
 pub struct ProofCoordinator {
     listen_ip: IpAddr,
     port: u16,
