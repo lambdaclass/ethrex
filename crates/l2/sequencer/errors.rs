@@ -9,6 +9,7 @@ use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
+use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
@@ -113,6 +114,8 @@ pub enum ProofCoordinatorError {
     MissingBlob(u64),
     #[error("Missing TDX private key")]
     MissingTDXPrivateKey,
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -137,6 +140,10 @@ pub enum ProofSenderError {
     AlignedGetNonceError(String),
     #[error("Proof Sender failed to submit proof: {0}")]
     AlignedSubmitProofError(String),
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
+    #[error("Failed to convert integer")]
+    TryIntoError(#[from] std::num::TryFromIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -227,7 +234,7 @@ pub enum CommitterError {
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
     BlobEstimationError(#[from] BlobEstimationError),
-    #[error("length does not fit in u16")]
+    #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
@@ -237,12 +244,16 @@ pub enum CommitterError {
     FailedToSignError(#[from] SignerError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
     #[error("Retrieval Error: {0}")]
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
+    #[error("Unexpected Error: {0}")]
+    UnexpectedError(String),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
 }
