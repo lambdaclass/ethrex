@@ -297,14 +297,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
 
     let p2p_node_ip = match local_ip() {
         Ok(ip) => ip,
-        Err(e) => match local_ipv6() {
-            Ok(ip) => ip,
-            Err(e) => {
-                panic!("Failed to get local ip v4: {e}, and also failed to get local ip v6: {e}")
-            }
-        },
+        Err(_) => local_ipv6().expect("Failed to get local ip v6"),
     };
-    info!("{p2p_node_ip:?}");
 
     let local_public_key = public_key_from_signing_key(signer);
 
