@@ -121,10 +121,16 @@ pub struct BlobSchedule {
     pub prague: ForkBlobSchedule,
     #[serde(default = "default_osaka_schedule")]
     pub osaka: ForkBlobSchedule,
-    #[serde(default = "default_bpo1_schedule")]
-    pub bpo1: ForkBlobSchedule,
-    #[serde(default = "default_bpo2_schedule")]
-    pub bpo2: ForkBlobSchedule,
+    #[serde(default)]
+    pub bpo1: Option<ForkBlobSchedule>,
+    #[serde(default)]
+    pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(default)]
+    pub bpo3: Option<ForkBlobSchedule>,
+    #[serde(default)]
+    pub bpo4: Option<ForkBlobSchedule>,
+    #[serde(default)]
+    pub bpo5: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -133,8 +139,11 @@ impl Default for BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
             osaka: default_osaka_schedule(),
-            bpo1: default_bpo1_schedule(),
-            bpo2: default_bpo2_schedule(),
+            bpo1: None,
+            bpo2: None,
+            bpo3: None,
+            bpo4: None,
+            bpo5: None,
         }
     }
 }
@@ -159,22 +168,6 @@ fn default_osaka_schedule() -> ForkBlobSchedule {
     ForkBlobSchedule {
         target: 6,
         max: 9,
-        base_fee_update_fraction: 5007716,
-    }
-}
-
-fn default_bpo1_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 12,
-        max: 16,
-        base_fee_update_fraction: 5007716,
-    }
-}
-
-fn default_bpo2_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 16,
-        max: 24,
         base_fee_update_fraction: 5007716,
     }
 }
@@ -326,6 +319,18 @@ impl ChainConfig {
         self.bpo2_time.is_some_and(|time| time <= block_timestamp)
     }
 
+    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
         self.osaka_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -398,10 +403,16 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
+        if self.is_bpo5_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
         } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
+            Some(self.blob_schedule.bpo1.unwrap_or_default())
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {

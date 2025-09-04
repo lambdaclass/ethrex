@@ -94,6 +94,12 @@ pub struct BlobSchedule {
     pub bpo1: Option<ForkBlobSchedule>,
     #[serde(rename = "BPO2")]
     pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(rename = "BPO3")]
+    pub bpo3: Option<ForkBlobSchedule>,
+    #[serde(rename = "BPO4")]
+    pub bpo4: Option<ForkBlobSchedule>,
+    #[serde(rename = "BPO5")]
+    pub bpo5: Option<ForkBlobSchedule>,
 }
 
 impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
@@ -109,10 +115,19 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
             blob_schedule.osaka = osaka_schedule.into()
         }
         if let Some(bpo1_schedule) = val.bpo1 {
-            blob_schedule.bpo1 = bpo1_schedule.into()
+            blob_schedule.bpo1 = Some(bpo1_schedule.into())
         }
         if let Some(bpo2_schedule) = val.bpo2 {
-            blob_schedule.bpo2 = bpo2_schedule.into()
+            blob_schedule.bpo2 = Some(bpo2_schedule.into())
+        }
+        if let Some(bpo3_schedule) = val.bpo3 {
+            blob_schedule.bpo3 = Some(bpo3_schedule.into())
+        }
+        if let Some(bpo4_schedule) = val.bpo4 {
+            blob_schedule.bpo4 = Some(bpo4_schedule.into())
+        }
+        if let Some(bpo5_schedule) = val.bpo5 {
+            blob_schedule.bpo5 = Some(bpo5_schedule.into())
         }
         blob_schedule
     }
