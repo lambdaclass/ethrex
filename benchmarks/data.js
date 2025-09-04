@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757001415510,
+  "lastUpdate": 1757001497754,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11845,6 +11845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169058679686,
             "range": "± 852721121",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c129d29fb0ec02478e9383d72b2bc86de26280a8",
+          "message": "fix(l1): prevent panic in `eth68/Receipts` message handling (#4268)\n\n**Motivation**\nI ran into the following panic while running ethrex on sepolia testnet:\n```\nthread 'tokio-runtime-worker' panicked at crates/networking/p2p/rlpx/eth/eth68/receipts.rs:30:69:\nindex out of bounds: the len is 0 but the index is 0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n```\nThis PR prevents this panic from happening\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* (eth68 message) `Receipts::new` no longer asumes we have at least one\nreceipt for a given block\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-04T15:05:33Z",
+          "tree_id": "829c6ffc8ce17c495e9e63bde0aa17bb4bddc87e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c129d29fb0ec02478e9383d72b2bc86de26280a8"
+        },
+        "date": 1757001477091,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168490787219,
+            "range": "± 500777763",
             "unit": "ns/iter"
           }
         ]
