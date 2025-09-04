@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757024720737,
+  "lastUpdate": 1757025121379,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12235,6 +12235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169136808172,
             "range": "± 701930863",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc23c398bfbfce8fa0bce020f301a439a5904316",
+          "message": "feat(l1, l2): display hardware info on `ethrex-replayer` slack message (#4319)\n\n**Motivation**\n\nIt's useful to know the hardware on which the replay was run.\n\n**Example**\n\n<img width=\"394\" height=\"313\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/afacc33a-05e5-4593-9912-0259da08ca2a\"\n/>",
+          "timestamp": "2025-09-04T21:38:14Z",
+          "tree_id": "80dbe59ecfced65880d6c7d8d79e0b17c5577389",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc23c398bfbfce8fa0bce020f301a439a5904316"
+        },
+        "date": 1757025103277,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169353493411,
+            "range": "± 715942099",
             "unit": "ns/iter"
           }
         ]
