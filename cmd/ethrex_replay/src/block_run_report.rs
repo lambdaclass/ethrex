@@ -245,60 +245,78 @@ fn format_duration(duration: Duration) -> String {
 
 fn gpu_info() -> Option<String> {
     match std::env::consts::OS {
-        // nvidia-smi --query-gpu=name --format=csv | tail -n +2
-        "linux" => Command::new("nvidia-smi")
-            .args(["--query-gpu=name", "--format=csv", "|", "tail", "-n", "+2"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        // system_profiler SPDisplaysDataType | grep "Chipset Model" | awk -F': ' '{print $2}' | head -n 1
-        "macos" => Command::new("system_profiler")
-            .arg(
-                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
-            )
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        _other => None,
+        // Linux: nvidia-smi --query-gpu=name --format=csv | tail -n +2
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("nvidia-smi --query-gpu=name --format=csv | tail -n +2")
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: system_profiler SPDisplaysDataType | grep "Chipset Model" | awk -F': ' '{print $2}' | head -n 1
+        "macos" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("system_profiler SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1")
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
     }
 }
 
 fn cpu_info() -> Option<String> {
     match std::env::consts::OS {
-        // cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F': ' '{print $2}'
-        "linux" => Command::new("cat")
-            .arg("/proc/cpuinfo | grep \"model name\" | head -n 1 | awk -F': ' '{print $2}'")
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        // sysctl -n machdep.cpu.brand_string
-        "macos" => Command::new("system_profiler")
-            .arg(
-                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
-            )
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        _other => None,
+        // Linux: cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F': ' '{print $2}'
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(
+                    "cat /proc/cpuinfo | grep \"model name\" | head -n 1 | awk -F': ' '{print $2}'",
+                )
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: sysctl -n machdep.cpu.brand_string
+        "macos" => {
+            let output = Command::new("sysctl")
+                .arg("-n")
+                .arg("machdep.cpu.brand_string")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
     }
 }
 
 fn ram_info() -> Option<String> {
     match std::env::consts::OS {
-        // free -h | grep "Mem:" | awk '{print $2}'
-        "linux" => Command::new("free")
-            .args(["-h", "| grep \"Mem:\" | awk '{print $2}'"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        // system_profiler SPHardwareDataType | grep "Memory:" | awk -F': ' '{print $2}'
-        "macos" => Command::new("system_profiler")
-            .arg(
-                "SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1",
-            )
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok(),
-        _other => None,
+        // Linux: free -h | grep "Mem:" | awk '{print $2}'
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("free -h | grep \"Mem:\" | awk '{print $2}'")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: system_profiler SPHardwareDataType | grep "Memory:" | awk -F': ' '{print $2}'
+        "macos" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("system_profiler SPHardwareDataType | grep \"Memory:\" | awk -F': ' '{print $2}'")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
     }
 }
