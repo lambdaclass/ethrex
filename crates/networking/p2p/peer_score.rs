@@ -79,7 +79,7 @@ impl PeerScores {
         &self,
         kademlia_table: &kademlia::Kademlia,
         _capabilities: &[Capability],
-    ) -> Result<Option<(H256, Option<PeerChannels>)>, PeerHandlerError> {
+    ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
         let best_peer = self
             .scores
             .iter()
@@ -87,8 +87,11 @@ impl PeerScores {
             .map(|(k, _v)| k)
             .ok_or(PeerHandlerError::NoPeers)?;
 
+        // TODO review this logic again @@@
         if let Some(channel) = kademlia_table.peers.lock().await.get(best_peer) {
-            return Ok(Some((*best_peer, channel.channels.clone())));
+            if let Some(channels) = &channel.channels {
+                return Ok(Some((*best_peer, channels.clone())));
+            }
         }
 
         Ok(None)

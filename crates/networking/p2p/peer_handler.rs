@@ -171,26 +171,9 @@ impl PeerHandler {
         capabilities: &[Capability],
         scores: &mut PeerScores,
     ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
-        let (mut free_peer_id, mut free_peer_channel) = self
-            .peer_table
-            .get_peer_channels(capabilities)
+        scores
+            .get_peer_channel_with_highest_score(&self.peer_table, capabilities)
             .await
-            .first()
-            .ok_or(PeerHandlerError::NoPeers)?
-            .clone();
-
-        let mut max_peer_id_score = i64::MIN;
-        for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
-
-            // TODO review this @@@
-            scores.get_peer_channel_with_highest_score(
-                &self.peer_table,
-                capabilities,
-            )
-            .await?;
-        }
-
-        Ok(Some((free_peer_id, free_peer_channel.clone())))
     }
 
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability

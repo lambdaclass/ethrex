@@ -223,11 +223,8 @@ async fn heal_state_trie(
                     longest_path_seen,
                 );
                 let Some((peer_id, mut peer_channel)) =
-                    get_peer_with_highest_score_and_mark_it_as_occupied(
-                        &peers,
-                        &mut downloaders,
-                    )
-                    .await
+                    get_peer_with_highest_score_and_mark_it_as_occupied(&peers, &mut downloaders)
+                        .await
                 else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
                     paths.extend(batch);
