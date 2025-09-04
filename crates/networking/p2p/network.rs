@@ -275,13 +275,13 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
             let storage_leaves_time = format_duration({
                 let end_time = METRICS
-                    .storage_tries_download_start_time
+                    .storage_tries_download_end_time
                     .lock()
                     .await
                     .unwrap_or(SystemTime::now());
 
                 METRICS
-                    .storage_tries_download_end_time
+                    .storage_tries_download_start_time
                     .lock()
                     .await
                     .map(|start_time| {
