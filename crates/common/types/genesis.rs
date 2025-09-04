@@ -121,15 +121,15 @@ pub struct BlobSchedule {
     pub prague: ForkBlobSchedule,
     #[serde(default = "default_osaka_schedule")]
     pub osaka: ForkBlobSchedule,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo1: Option<ForkBlobSchedule>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo2: Option<ForkBlobSchedule>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo3: Option<ForkBlobSchedule>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo4: Option<ForkBlobSchedule>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo5: Option<ForkBlobSchedule>,
 }
 
