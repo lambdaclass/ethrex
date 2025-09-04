@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757022483120,
+  "lastUpdate": 1757022635789,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12115,6 +12115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170584608963,
             "range": "± 484036561",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cbaa4f1ee0798f0fc4065b00ace802faa1fb9552",
+          "message": "chore(l2): optimize execution of empty batches (#4216)\n\n**Motivation**\n\nTo optimize the execution of L2 empty batches in the prover\n\n**Description**\n\n- initialize block header hashes in `get_first_invalid_block_hash()` to\navoid hashing twice\n\n**Flamegraphs**\nRunning 7500 empty blocks\n\nBefore:\n<img width=\"3024\" height=\"762\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/0588de66-c9aa-4110-8b80-4a1f02ff000c\"\n/>\n\nAfter:\n<img width=\"3024\" height=\"750\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/44ed7620-804b-4657-970e-d9a28a5feb00\"\n/>\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-04T20:57:09Z",
+          "tree_id": "9061607cde6595c49dfa9dace2b74e56d0c1db59",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbaa4f1ee0798f0fc4065b00ace802faa1fb9552"
+        },
+        "date": 1757022616843,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167278047221,
+            "range": "± 407570435",
             "unit": "ns/iter"
           }
         ]
