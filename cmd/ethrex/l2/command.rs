@@ -31,7 +31,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
@@ -147,8 +147,15 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
+        #[arg(
+            long = "pause",
+            default_value_t = false,
+            help = "Pause contracts before trying to revert the batch",
+            requires("contract_call_options")
+        )]
+        pause_contracts: bool,
         #[command(flatten)]
-        contract_call_options: ContractCallOptions,
+        contract_call_options: Option<ContractCallOptions>,
         #[arg(
             default_value_t = false,
             help = "If enabled the command will also delete the blocks from the Blockchain database",
@@ -465,19 +472,25 @@ impl Command {
                 network,
                 contract_call_options: opts,
                 delete_blocks,
+                pause_contracts,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
-                if opts
-                    .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
-                    .await
-                    .is_ok()
-                {
+                if pause_contracts {
+                    info!("Pausing OnChainProposer contract");
+                    opts.as_ref()
+                        .expect("ContractCallOptions is required with pause_contracts")
+                        .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
+                        .await?;
                     info!("Paused OnChainProposer contract");
+                }
+                if let Some(contract_opts) = opts.as_ref() {
                     info!("Doing revert on OnChainProposer...");
-                    opts.call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
-                        .await?
+                    contract_opts
+                        .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
+                        .await?;
+                    info!("Reverted to batch {batch} on OnChainProposer")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
@@ -489,13 +502,13 @@ impl Command {
                     delete_blocks_from_batch(&data_dir, network, last_kept_block).await?;
                 }
 
-                if opts
-                    .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
-                    .await
-                    .is_ok()
-                {
-                    info!("Unpaused OnChainProposer...");
-                };
+                if pause_contracts {
+                    info!("Unpausing OnChainProposer contract");
+                    opts.expect("ContractCallOptions is required with pause_contracts")
+                        .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
+                        .await?;
+                    info!("Unpaused OnChainProposer contract");
+                }
             }
             Command::Pause {
                 contract_call_options: opts,
@@ -570,7 +583,7 @@ impl ContractCallOptions {
 }
 
 async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> eyre::Result<u64> {
-    info!("Updating store...");
+    info!("Deleting batch from rollup store...");
     let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
     let last_kept_block = rollup_store
         .get_block_numbers_by_batch(batch)
@@ -578,6 +591,7 @@ async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> e
         .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
         .unwrap_or(0);
     rollup_store.revert_to_batch(batch).await?;
+    info!("Succesfully deleted batch from rollup store");
     Ok(last_kept_block)
 }
 
@@ -586,6 +600,7 @@ async fn delete_blocks_from_batch(
     network: Option<Network>,
     last_kept_block: u64,
 ) -> eyre::Result<()> {
+    info!("Deleting blocks from blockchain store...");
     let Some(network) = network else {
         return Err(eyre::eyre!("Network not provided"));
     };
@@ -599,6 +614,7 @@ async fn delete_blocks_from_batch(
         .await?
         .is_some()
     {
+        debug!("Deleting block {block_to_delete}");
         store.remove_block(block_to_delete).await?;
         block_to_delete += 1;
     }
