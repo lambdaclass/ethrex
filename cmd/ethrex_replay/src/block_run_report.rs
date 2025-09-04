@@ -131,7 +131,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}\n*CPU:* {cpu}\n*RAM:* {ram}\n*Time Taken:* {time_taken}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{hardware}\n*Time Taken:* {time_taken}",
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -142,13 +142,14 @@ impl BlockRunReport {
                             } else {
                                 "Success".to_string()
                             },
-                            maybe_gpu = if let Some(gpu_model) = gpu_info() {
-                                format!("\n*GPU:* `{gpu_model}`")
-                            } else {
-                                "".to_string()
+                            hardware = {
+                                format!(
+                                    "\n*Hardware:* {maybe_gpu}, {maybe_cpu}, {maybe_ram}",
+                                    maybe_gpu = hardware_info_slack_message("GPU"),
+                                    maybe_cpu = hardware_info_slack_message("CPU"),
+                                    maybe_ram = hardware_info_slack_message("RAM")
+                                )
                             },
-                            cpu = cpu_info().unwrap_or_else(|| "Unknown".to_string()),
-                            ram = ram_info().unwrap_or_else(|| "Unknown".to_string()),
                             time_taken = format_duration(self.time_taken),
                         ),
                     }),
@@ -241,6 +242,21 @@ fn format_duration(duration: Duration) -> String {
     }
 
     format!("{minutes:02}m {seconds:02}s")
+}
+
+fn hardware_info_slack_message(hardware: &str) -> String {
+    let hardware_info = match hardware {
+        "GPU" => gpu_info(),
+        "CPU" => cpu_info(),
+        "RAM" => ram_info(),
+        _ => None,
+    };
+
+    if let Some(info) = hardware_info {
+        format!("*{hardware}:* `{info}`")
+    } else {
+        String::new()
+    }
 }
 
 fn gpu_info() -> Option<String> {
