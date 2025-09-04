@@ -12,18 +12,19 @@ risc0-zkvm = { version = "=2.3.1", default-features = false, features = [
 risc0-zkvm-platform = { version = "=2.0.3", default-features = false, features = [
     "sys-getenv",
 ] }
-zkvm_interface = { path = "../", default-features = false, features = [
+guest_program = { path = "../../", default-features = false, features = [
     "c-kzg",
 ] }
 
-ethrex-common = { path = "../../../../../common", default-features = false }
-ethrex-storage = { path = "../../../../../storage", default-features = false }
-ethrex-rlp = { path = "../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../vm", default-features = false, features = [
+
+ethrex-common = { path = "../../../../../../common", default-features = false }
+ethrex-storage = { path = "../../../../../../storage", default-features = false }
+ethrex-rlp = { path = "../../../../../../common/rlp" }
+ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
     "c-kzg",
 ] }
-ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
-ethrex-l2-common = { path = "../../../../common", default-features = false }
+ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
+ethrex-l2-common = { path = "../../../../../common", default-features = false }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }
@@ -44,4 +45,4 @@ c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v1.0.3-riscz
 # bls12_381 = { git = "https://github.com/lambdaclass/zkcrypto-bls12_381", branch = "expose-fp-struct" }
 
 [features]
-l2 = ["zkvm_interface/l2"]
+l2 = ["guest_program/l2"]
