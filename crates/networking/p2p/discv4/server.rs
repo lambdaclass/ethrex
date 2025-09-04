@@ -63,7 +63,7 @@ pub enum DiscoveryServerError {
     #[error("Failed to decode packet")]
     InvalidPacket(#[from] PacketDecodeErr),
     #[error("Failed to send message")]
-    MessageSendFailure(std::io::Error),
+    MessageSendFailure(PacketDecodeErr),
     #[error("Only partial message was sent")]
     PartialMessageSent,
 }
@@ -143,139 +143,140 @@ impl DiscoveryServer {
         }: Discv4Message,
     ) {
         // Ignore packets sent by ourselves
-        if node_id(&sender_public_key) != self.local_node.node_id() {
-            match message {
-                Message::Ping(ping_message) => {
-                    trace!(received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
+        if node_id(&sender_public_key) == self.local_node.node_id() {
+            return;
+        }
+        match message {
+            Message::Ping(ping_message) => {
+                trace!(received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
 
-                    if is_msg_expired(ping_message.expiration) {
-                        trace!("Ping expired, skipped");
-                        return;
-                    }
+                if is_msg_expired(ping_message.expiration) {
+                    trace!("Ping expired, skipped");
+                    return;
+                }
 
-                    let sender_ip = unmap_ipv4in6_address(from.ip());
-                    let node = Node::new(
-                        sender_ip,
-                        from.port(),
-                        ping_message.from.tcp_port,
-                        sender_public_key,
-                    );
+                let sender_ip = unmap_ipv4in6_address(from.ip());
+                let node = Node::new(
+                    sender_ip,
+                    from.port(),
+                    ping_message.from.tcp_port,
+                    sender_public_key,
+                );
 
-                    let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
-                        error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
+                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                });
+            }
+            Message::Pong(pong_message) => {
+                trace!(received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
+
+                let node_id = node_id(&sender_public_key);
+
+                self.handle_pong(pong_message, node_id).await;
+            }
+            Message::FindNode(find_node_message) => {
+                trace!(received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
+
+                if is_msg_expired(find_node_message.expiration) {
+                    trace!("FindNode expired, skipped");
+                    return;
+                }
+                let node_id = node_id(&sender_public_key);
+
+                let table = self.kademlia.table.lock().await;
+
+                let Some(contact) = table.get(&node_id) else {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
+                    return;
+                };
+                if !contact.was_validated() {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return;
+                }
+                let node = contact.node.clone();
+
+                // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
+                // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
+                // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
+                // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+                if from.ip() != node.ip {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
+                    return;
+                }
+
+                let neighbors = get_closest_nodes(node_id, table.clone());
+
+                drop(table);
+
+                // we are sending the neighbors in 2 different messages to avoid exceeding the
+                // maximum packet size
+                for chunk in neighbors.chunks(8) {
+                    let _ = self.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
+                        error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
                     });
                 }
-                Message::Pong(pong_message) => {
-                    trace!(received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
+            }
+            Message::Neighbors(neighbors_message) => {
+                trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
 
-                    let node_id = node_id(&sender_public_key);
-
-                    self.handle_pong(pong_message, node_id).await;
+                if is_msg_expired(neighbors_message.expiration) {
+                    trace!("Neighbors expired, skipping");
+                    return;
                 }
-                Message::FindNode(find_node_message) => {
-                    trace!(received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
 
-                    if is_msg_expired(find_node_message.expiration) {
-                        trace!("FindNode expired, skipped");
-                        return;
-                    }
-                    let node_id = node_id(&sender_public_key);
+                // TODO(#3746): check that we requested neighbors from the node
 
-                    let table = self.kademlia.table.lock().await;
+                let mut contacts = self.kademlia.table.lock().await;
+                let discarded_contacts = self.kademlia.discarded_contacts.lock().await;
 
-                    let Some(contact) = table.get(&node_id) else {
-                        debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
-                        return;
+                for node in neighbors_message.nodes {
+                    let node_id = node.node_id();
+                    if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
+                        if !discarded_contacts.contains(&node_id)
+                            && node_id != self.local_node.node_id()
+                        {
+                            vacant_entry.insert(Contact::from(node));
+                            METRICS.record_new_discovery().await;
+                        }
                     };
-                    if !contact.was_validated() {
-                        debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                        return;
-                    }
-                    let node = contact.node.clone();
-
-                    // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-                    // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-                    // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-                    // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-                    if from.ip() != node.ip {
-                        debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
-                        return;
-                    }
-
-                    let neighbors = get_closest_nodes(node_id, table.clone());
-
-                    drop(table);
-
-                    // we are sending the neighbors in 2 different messages to avoid exceeding the
-                    // maximum packet size
-                    for chunk in neighbors.chunks(8) {
-                        let _ = self.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
-                            error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
-                        });
-                    }
                 }
-                Message::Neighbors(neighbors_message) => {
-                    trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
+            }
+            Message::ENRRequest(enrrequest_message) => {
+                trace!(received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
 
-                    if is_msg_expired(neighbors_message.expiration) {
-                        trace!("Neighbors expired, skipping");
-                        return;
-                    }
-
-                    // TODO(#3746): check that we requested neighbors from the node
-
-                    let mut contacts = self.kademlia.table.lock().await;
-                    let discarded_contacts = self.kademlia.discarded_contacts.lock().await;
-
-                    for node in neighbors_message.nodes {
-                        let node_id = node.node_id();
-                        if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                            if !discarded_contacts.contains(&node_id)
-                                && node_id != self.local_node.node_id()
-                            {
-                                vacant_entry.insert(Contact::from(node));
-                                METRICS.record_new_discovery().await;
-                            }
-                        };
-                    }
+                if is_msg_expired(enrrequest_message.expiration) {
+                    trace!("ENRRequest expired, skipping");
+                    return;
                 }
-                Message::ENRRequest(enrrequest_message) => {
-                    trace!(received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
+                let node_id = node_id(&sender_public_key);
 
-                    if is_msg_expired(enrrequest_message.expiration) {
-                        trace!("ENRRequest expired, skipping");
-                        return;
-                    }
-                    let node_id = node_id(&sender_public_key);
+                let mut table = self.kademlia.table.lock().await;
 
-                    let mut table = self.kademlia.table.lock().await;
-
-                    let Some(contact) = table.get(&node_id) else {
-                        debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
-                        return;
-                    };
-                    if !contact.was_validated() {
-                        debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                        return;
-                    }
-
-                    if let Err(err) = self.send_enr_response(hash, from).await {
-                        error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
-                        return;
-                    }
-
-                    table.entry(node_id).and_modify(|c| c.knows_us = true);
+                let Some(contact) = table.get(&node_id) else {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
+                    return;
+                };
+                if !contact.was_validated() {
+                    debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return;
                 }
-                Message::ENRResponse(enrresponse_message) => {
-                    /*
-                        - Look up in kademlia the peer associated with this message
-                        - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
-                        - Check that the seq number matches the one we have in our table (this requires setting it).
-                        - Check valid signature
-                        - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
-                    */
-                    trace!(received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
+
+                if let Err(err) = self.send_enr_response(hash, from).await {
+                    error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
+                    return;
                 }
+
+                table.entry(node_id).and_modify(|c| c.knows_us = true);
+            }
+            Message::ENRResponse(enrresponse_message) => {
+                /*
+                    - Look up in kademlia the peer associated with this message
+                    - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
+                    - Check that the seq number matches the one we have in our table (this requires setting it).
+                    - Check valid signature
+                    - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
+                */
+                trace!(received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
             }
         }
     }

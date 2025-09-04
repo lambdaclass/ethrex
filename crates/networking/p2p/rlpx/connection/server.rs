@@ -151,7 +151,6 @@ pub enum InnerState {
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
-    InvalidPeerMessage(String),
     BackendMessage(Message),
     SendPing,
     SendNewPooledTxHashes(Vec<MempoolTransaction>),
@@ -267,14 +266,6 @@ impl GenServer for RLPxConnection {
                         &format!("Received peer message: {message}"),
                     );
                     handle_peer_message(established_state, message).await
-                }
-                Self::CastMsg::InvalidPeerMessage(message) => {
-                    log_peer_error(
-                        &established_state.node,
-                        &format!("Received peer message: {message}"),
-                    );
-                    //Just ignore it
-                    Ok(())
                 }
                 Self::CastMsg::BackendMessage(message) => {
                     log_peer_debug(

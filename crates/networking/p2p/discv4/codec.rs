@@ -1,4 +1,4 @@
-use crate::discv4::messages::{Message, Packet};
+use crate::discv4::messages::{Message, Packet, PacketDecodeErr};
 
 use bytes::BytesMut;
 use secp256k1::SecretKey;
@@ -17,7 +17,7 @@ impl Discv4Codec {
 
 impl Decoder for Discv4Codec {
     type Item = Packet;
-    type Error = std::io::Error;
+    type Error = PacketDecodeErr;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if !buf.is_empty() {
@@ -29,7 +29,7 @@ impl Decoder for Discv4Codec {
 }
 
 impl Encoder<Message> for Discv4Codec {
-    type Error = std::io::Error;
+    type Error = PacketDecodeErr;
 
     fn encode(&mut self, message: Message, buf: &mut BytesMut) -> Result<(), Self::Error> {
         message.encode_with_header(buf, &self.signer);
