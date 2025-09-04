@@ -852,7 +852,9 @@ impl Syncer {
                         let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
-                            *METRICS.account_tries_inserted.blocking_lock() += 1;
+                            METRICS
+                                .account_tries_inserted
+                                .fetch_add(1, Ordering::Relaxed);
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
                         *METRICS.current_step.blocking_lock() =
@@ -875,8 +877,10 @@ impl Syncer {
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
-            *METRICS.storage_accounts_initial.lock().await =
-                storage_accounts.accounts_with_storage_root.len() as u64;
+            METRICS.storage_accounts_initial.store(
+                storage_accounts.accounts_with_storage_root.len() as u64,
+                Ordering::Relaxed,
+            );
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
@@ -929,8 +933,10 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
-            *METRICS.storage_accounts_healed.lock().await =
-                storage_accounts.healed_accounts.len() as u64;
+            METRICS.storage_accounts_healed.store(
+                storage_accounts.healed_accounts.len() as u64,
+                Ordering::Relaxed,
+            );
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =

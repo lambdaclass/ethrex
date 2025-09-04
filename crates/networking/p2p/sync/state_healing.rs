@@ -11,6 +11,7 @@
 use std::{
     cmp::min,
     collections::HashMap,
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -140,8 +141,12 @@ async fn heal_state_trie(
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
 
-            *METRICS.global_state_trie_leafs_healed.lock().await = *global_leafs_healed;
-            *METRICS.healing_empty_try_recv.lock().await = empty_try_recv;
+            METRICS
+                .global_state_trie_leafs_healed
+                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+            METRICS
+                .healing_empty_try_recv
+                .store(empty_try_recv, Ordering::Relaxed);
             if is_stale {
                 debug!(
                     "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",

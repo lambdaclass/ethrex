@@ -23,7 +23,7 @@ use std::{
     collections::BTreeMap,
     io,
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
 use tokio::{
@@ -209,22 +209,23 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_step = METRICS.current_step.lock().await.clone();
 
             // Headers metrics
-            let headers_to_download = METRICS.headers_to_download.lock().await;
-            let headers_downloaded = METRICS.downloaded_headers.lock().await;
-            let headers_remaining = headers_to_download.saturating_sub(*headers_downloaded);
-            let headers_download_progress = if *headers_to_download == 0 {
+            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
+            let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
+            let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
+            let headers_download_progress = if headers_to_download == 0 {
                 "0%".to_string()
             } else {
                 format!(
                     "{:.2}%",
-                    (*headers_downloaded as f64 / *headers_to_download as f64) * 100.0
+                    (headers_downloaded as f64 / headers_to_download as f64) * 100.0
                 )
             };
 
             // Account leaves metrics
-            let account_leaves_downloaded = *METRICS.downloaded_account_tries.lock().await;
+            let account_leaves_downloaded =
+                METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
-                (*METRICS.account_tries_inserted.lock().await as f64
+                (METRICS.account_tries_inserted.load(Ordering::Relaxed) as f64
                     / account_leaves_downloaded as f64)
                     * 100.0
             } else {
@@ -268,9 +269,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
             });
 
             // Storage leaves metrics
-            let storage_leaves_downloaded = *METRICS.downloaded_storage_slots.lock().await;
-            let storage_accounts = *METRICS.storage_accounts_initial.lock().await;
-            let storage_accounts_healed = *METRICS.storage_accounts_healed.lock().await;
+            let storage_leaves_downloaded =
+                METRICS.downloaded_storage_slots.load(Ordering::Relaxed);
+            let storage_accounts = METRICS.storage_accounts_initial.load(Ordering::Relaxed);
+            let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
             let storage_leaves_time = format_duration({
                 let end_time = METRICS
                     .storage_tries_download_start_time
@@ -327,13 +329,18 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     })
                     .unwrap_or(Duration::from_secs(0))
             });
-            let healed_accounts = *METRICS.global_state_trie_leafs_healed.lock().await;
-            let healed_storages = *METRICS.global_storage_tries_leafs_healed.lock().await;
-            let heal_current_throttle = if *METRICS.healing_empty_try_recv.lock().await == 0 {
-                "\x1b[31mDatabase\x1b[0m"
-            } else {
-                "\x1b[32mPeers\x1b[0m"
-            };
+            let healed_accounts = METRICS
+                .global_state_trie_leafs_healed
+                .load(Ordering::Relaxed);
+            let healed_storages = METRICS
+                .global_storage_tries_leafs_healed
+                .load(Ordering::Relaxed);
+            let heal_current_throttle =
+                if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
+                    "\x1b[31mDatabase\x1b[0m"
+                } else {
+                    "\x1b[32mPeers\x1b[0m"
+                };
 
             // Bytecode metrics
             let bytecodes_download_time = format_duration({
@@ -355,13 +362,13 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     .unwrap_or(Duration::from_secs(0))
             });
 
-            let bytecodes_to_download = METRICS.bytecodes_to_download.lock().await;
-            let bytecodes_downloaded = METRICS.downloaded_bytecodes.lock().await;
-            let bytecodes_remaining = bytecodes_to_download.saturating_sub(*bytecodes_downloaded);
-            let bytecodes_download_progress = if *bytecodes_to_download == 0 {
+            let bytecodes_to_download = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
+            let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+            let bytecodes_remaining = bytecodes_to_download.saturating_sub(bytecodes_downloaded);
+            let bytecodes_download_progress = if bytecodes_to_download == 0 {
                 0.0
             } else {
-                (*bytecodes_downloaded as f64 / *bytecodes_to_download as f64) * 100.0
+                (bytecodes_downloaded as f64 / bytecodes_to_download as f64) * 100.0
             };
 
             info!(

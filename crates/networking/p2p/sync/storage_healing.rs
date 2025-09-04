@@ -22,6 +22,7 @@ use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, VecDeque},
+    sync::atomic::Ordering,
     time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
@@ -183,8 +184,12 @@ pub async fn heal_storage_trie(
     loop {
         yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-            *METRICS.global_storage_tries_leafs_healed.lock().await = *global_leafs_healed;
-            *METRICS.healing_empty_try_recv.lock().await = state.empty_count as u64;
+            METRICS
+                .global_storage_tries_leafs_healed
+                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+            METRICS
+                .healing_empty_try_recv
+                .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
             debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
 
@@ -217,7 +217,7 @@ impl PeerHandler {
         let start_time = SystemTime::now();
         *METRICS.current_step.lock().await = "Downloading Headers".to_string();
 
-        let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
+        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
         let mut ret = Vec::<BlockHeader>::new();
 
@@ -271,8 +271,12 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        *METRICS.sync_head_block.lock().await = sync_head_number;
-        *METRICS.headers_to_download.lock().await = sync_head_number + 1;
+        METRICS
+            .sync_head_block
+            .store(sync_head_number, Ordering::Relaxed);
+        METRICS
+            .headers_to_download
+            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -343,7 +347,9 @@ impl PeerHandler {
                 metrics_downloaded_count += headers.len() as u64;
 
                 if new_last_metrics_update >= Duration::from_secs(1) {
-                    *METRICS.downloaded_headers.lock().await += metrics_downloaded_count;
+                    METRICS
+                        .downloaded_headers
+                        .fetch_add(metrics_downloaded_count, Ordering::Relaxed);
                     metrics_downloaded_count = 0;
                 }
 
@@ -497,7 +503,10 @@ impl PeerHandler {
             }
         }
 
-        *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
+        METRICS.downloaded_headers.store(
+            initial_downloaded_headers + downloaded_count,
+            Ordering::Relaxed,
+        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
@@ -873,7 +882,9 @@ impl PeerHandler {
                 .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.downloaded_account_tries.lock().await = downloaded_count;
+                METRICS
+                    .downloaded_account_tries
+                    .store(downloaded_count, Ordering::Relaxed);
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
@@ -1045,7 +1056,9 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
-        *METRICS.downloaded_account_tries.lock().await = downloaded_count;
+        METRICS
+            .downloaded_account_tries
+            .store(downloaded_count, Ordering::Relaxed);
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
@@ -1225,7 +1238,9 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
-        *METRICS.bytecodes_to_download.lock().await += all_bytecode_hashes.len() as u64;
+        METRICS
+            .bytecodes_to_download
+            .fetch_add(all_bytecode_hashes.len() as u64, Ordering::Relaxed);
 
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
@@ -1409,7 +1424,9 @@ impl PeerHandler {
             });
         }
 
-        *METRICS.downloaded_bytecodes.lock().await += downloaded_count;
+        METRICS
+            .downloaded_bytecodes
+            .fetch_add(downloaded_count, Ordering::Relaxed);
         info!(
             "Finished downloading bytecodes, total bytecodes: {}",
             all_bytecode_hashes.len()
@@ -1660,7 +1677,9 @@ impl PeerHandler {
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
-                *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
+                METRICS
+                    .downloaded_storage_slots
+                    .fetch_add(n_slots as u64, Ordering::Relaxed);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
