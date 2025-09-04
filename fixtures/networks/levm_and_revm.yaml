@@ -2,7 +2,7 @@ participants:
   - el_type: ethrex
     el_image: ethrex:local
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
+    cl_image: sigp/lighthouse:v7.1.0
     el_extra_labels: { "evm": "levm" }
     validator_count: 32
     count: 1
@@ -10,13 +10,13 @@ participants:
     el_image: ethrex:local
     el_extra_params: ["--evm=revm"]
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
+    cl_image: sigp/lighthouse:v7.1.0
     el_extra_labels: { "evm": "revm" }
     validator_count: 32
     count: 1
   - el_type: reth
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
+    cl_image: sigp/lighthouse:v7.1.0
     validator_count: 64
     count: 1
 

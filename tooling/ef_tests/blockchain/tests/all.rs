@@ -23,9 +23,9 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
 #[cfg(any(feature = "sp1", feature = "stateless"))]
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     #[cfg(feature = "stateless")]
-    let backend = Some(ethrex_prover_lib::backends::Backend::Exec);
+    let backend = Some(ethrex_prover_lib::backend::Backend::Exec);
     #[cfg(feature = "sp1")]
-    let backend = Some(ethrex_prover_lib::backends::Backend::SP1);
+    let backend = Some(ethrex_prover_lib::backend::Backend::SP1);
 
     parse_and_execute(path, EvmEngine::LEVM, Some(SKIPPED_TESTS), backend)
 }
