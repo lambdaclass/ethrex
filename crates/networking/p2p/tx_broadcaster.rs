@@ -4,7 +4,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::error::StoreError;
 use keccak_hash::H256;
-use rand::random;
+use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_interval},
@@ -75,9 +75,6 @@ impl TxBroadcaster {
         }
         let peers = self.kademlia.get_peer_channels_with_capabilities(&[]).await;
         let peer_sqrt = (peers.len() as f64).sqrt();
-        // we want to send to sqrt(peer_count) on average
-        // sqrt(peer_count)/peer_count == 1/sqrt(peer_count)
-        let accept_prob = 1.0 / f64::max(1.0, peer_sqrt);
 
         let full_txs = txs_to_broadcast
             .clone()
@@ -96,26 +93,31 @@ impl TxBroadcaster {
             transactions: full_txs.clone(),
         });
 
-        for (peer_id, mut peer_channels, capabilities) in peers {
-            if random::<f64>() < accept_prob {
-                // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
-                peer_channels.connection.cast(CastMessage::BackendMessage(
-                    txs_message.clone(),
-                )).await.unwrap_or_else(|err| {
-                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
-                });
-                self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
-                    .await?;
-            } else {
-                // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
-                self.send_tx_hashes(
-                    txs_to_broadcast.clone(),
-                    capabilities,
-                    &mut peer_channels,
-                    peer_id,
-                )
+        let mut shuffled_peers = peers.clone();
+        shuffled_peers.shuffle(&mut thread_rng());
+
+        let (peers_to_send_full_txs, peers_to_send_hashes) =
+            shuffled_peers.split_at(peer_sqrt.ceil() as usize);
+
+        for (peer_id, mut peer_channels, capabilities) in peers_to_send_full_txs.iter().cloned() {
+            // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
+            peer_channels.connection.cast(CastMessage::BackendMessage(
+                txs_message.clone(),
+            )).await.unwrap_or_else(|err| {
+                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+            });
+            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
                 .await?;
-            }
+        }
+        for (peer_id, mut peer_channels, capabilities) in peers_to_send_hashes.iter().cloned() {
+            // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
+            self.send_tx_hashes(
+                txs_to_broadcast.clone(),
+                capabilities,
+                &mut peer_channels,
+                peer_id,
+            )
+            .await?;
         }
         self.blockchain.mempool.clear_broadcasted_txs();
         Ok(())

@@ -171,7 +171,7 @@ impl Mempool {
     }
 
     /// Gets all the transactions in the mempool
-    pub fn get_all_txs(&self) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+    pub fn get_all_txs_by_sender(&self) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
         let tx_pool = self

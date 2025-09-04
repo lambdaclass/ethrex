@@ -449,7 +449,7 @@ async fn send_all_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
         let txs: Vec<MempoolTransaction> = state
             .blockchain
             .mempool
-            .get_all_txs()?
+            .get_all_txs_by_sender()?
             .into_values()
             .flatten()
             .collect();
