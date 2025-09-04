@@ -13,7 +13,7 @@ use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options,
     SliceTransform, WriteBatch,
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tracing::info;
 
 use crate::{
@@ -90,7 +90,8 @@ impl Store {
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
 
-        let column_families = vec![
+        // Current column families that the code expects
+        let expected_column_families = vec![
             CF_CANONICAL_BLOCK_HASHES,
             CF_BLOCK_NUMBERS,
             CF_HEADERS,
@@ -107,15 +108,30 @@ impl Store {
             CF_INVALID_ANCESTORS,
         ];
 
+        // Get existing column families to know which ones to drop later
+        // FIXME: RocksDB tries to open all column families, so we need to clean up obsolete ones
+        let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
+            Ok(cfs) => {
+                info!("Found existing column families: {:?}", cfs);
+                cfs
+            }
+            Err(_) => {
+                // Database doesn't exist yet
+                info!("Database doesn't exist, will create with expected column families");
+                vec!["default".to_string()]
+            }
+        };
+
+        // Only create descriptors for expected column families
         let mut cf_descriptors = Vec::new();
-        for cf_name in column_families {
+        for cf_name in &expected_column_families {
             let mut cf_opts = Options::default();
 
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
 
-            match cf_name {
+            match *cf_name {
                 CF_HEADERS | CF_BODIES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
@@ -186,7 +202,7 @@ impl Store {
                 }
             }
 
-            cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
+            cf_descriptors.push(ColumnFamilyDescriptor::new(*cf_name, cf_opts));
         }
 
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
@@ -195,6 +211,20 @@ impl Store {
             cf_descriptors,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+
+        // Clean up obsolete column families
+        for cf_name in &existing_cfs {
+            if cf_name != "default" && !expected_column_families.contains(&cf_name.as_str()) {
+                info!("Dropping obsolete column family: {}", cf_name);
+                match db.drop_cf(cf_name) {
+                    Ok(_) => info!("Successfully dropped column family: {}", cf_name),
+                    Err(e) => {
+                        // Log error but don't fail initialization - the database is still usable
+                        tracing::warn!("Failed to drop obsolete column family '{}': {}", cf_name, e);
+                    }
+                }
+            }
+        }
 
         Ok(Self { db: Arc::new(db) })
     }
