@@ -209,7 +209,7 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     }
 
     // P256 verify Precompile only existed on L2 before Osaka
-    if address == &P256_VERIFICATION_ADDRESS && fork < Fork::Osaka && matches!(vm_type, VMType::L1)
+    if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
     {
         return false;
     }
