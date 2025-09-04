@@ -8,7 +8,7 @@ participants:
     count: 1
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--evm=revm"]
+    el_extra_params: [] #TODO: This had --evm=revm but this doesn't exist anymore... Should we compile with feat revm?
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.1
     el_extra_labels: { "evm": "revm" }

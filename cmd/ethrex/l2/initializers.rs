@@ -144,6 +144,9 @@ pub fn init_tracing(opts: &L2Options) {
 }
 
 pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
+    #[cfg(feature = "revm")]
+    panic!("L2 doesn't support REVM");
+
     let data_dir = init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = data_dir.clone() + "/rollup_store";
 

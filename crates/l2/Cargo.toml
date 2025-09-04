@@ -77,3 +77,4 @@ panic = "deny"
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
 l2 = ["zkvm_interface/l2"]
+revm = ["ethrex-vm/revm"]

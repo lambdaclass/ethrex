@@ -98,7 +98,6 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--datadir ${NETWORK}_data/ethrex/$(EVM) \
 		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
 		$(BOOTNODES_FLAG) \
-		--evm $(EVM) \
 
 flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
 	$(MAKE) flamegraph-inner NETWORK=$*
@@ -185,7 +184,6 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
-    		--evm $(EVM)
 
 SERVER_SYNC_BRANCH ?= snap_sync
 SERVER_SYNC_NETWORK ?= hoodi

@@ -76,6 +76,7 @@ sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
+revm = ["ethrex-vm/revm", "ethrex-l2/revm"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [
