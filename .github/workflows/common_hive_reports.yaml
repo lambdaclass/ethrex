@@ -15,9 +15,9 @@ on:
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
     strategy:
       matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
         test:
           - {
               name: "Rpc Compat tests",
@@ -41,6 +41,7 @@ jobs:
               file_name: consume-rlp,
               simulation: ethereum/eest/consume-rlp,
             }
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Verify input parameters
