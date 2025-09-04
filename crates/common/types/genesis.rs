@@ -404,11 +404,11 @@ impl ChainConfig {
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         if self.is_bpo5_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2.unwrap_or_default())
+            Some(self.blob_schedule.bpo5.unwrap_or_default())
         } else if self.is_bpo4_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2.unwrap_or_default())
+            Some(self.blob_schedule.bpo4.unwrap_or_default())
         } else if self.is_bpo3_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2.unwrap_or_default())
+            Some(self.blob_schedule.bpo3.unwrap_or_default())
         } else if self.is_bpo2_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2.unwrap_or_default())
         } else if self.is_bpo1_activated(block_timestamp) {
