@@ -3,6 +3,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
 };
+use ethrex_l2_common::prover::ProofFormat;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
@@ -31,7 +32,8 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     let input = get_l1_input(cache)?;
 
     catch_unwind(AssertUnwindSafe(|| {
-        ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))
+        ethrex_prover_lib::prove(backend, input, ProofFormat::Groth16)
+            .map_err(|e| eyre::Error::msg(e.to_string()))
     }))
     .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
 
