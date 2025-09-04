@@ -7,6 +7,9 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::EstimateGasError},
@@ -343,6 +346,16 @@ impl L1ProofSender {
         }
 
         let verify_tx_hash = send_verify_tx_result?;
+
+        metrics!(
+            let verify_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(verify_tx_hash)
+                .await?
+                .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
+            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
+        );
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)

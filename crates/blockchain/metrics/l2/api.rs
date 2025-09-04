@@ -24,8 +24,8 @@ async fn get_metrics() -> String {
     ret_string.push('\n');
     match METRICS.gather_metrics() {
         Ok(string) => ret_string.push_str(&string),
-        Err(_) => {
-            tracing::error!("Failed to register METRICS_L2");
+        Err(e) => {
+            tracing::error!("Failed to register METRICS_L2: {e}");
             return String::new();
         }
     }
