@@ -166,21 +166,21 @@ pub enum Command {
         #[arg(help = "The address of the OnChainProposer contract")]
         contract_address: Address,
         #[arg(
-            long, 
-            value_parser = parse_private_key, 
-            env = "OWNER_PRIVATE_KEY", 
-            help = "The private key of the owner", 
+            long,
+            value_parser = parse_private_key,
+            env = "OWNER_PRIVATE_KEY",
+            help = "The private key of the owner",
             help_heading  = "Contract owner account options",
             group = "owner_signing",
         )]
         owner_private_key: Option<SecretKey>,
         #[arg(
-            long = "owner-remote-signer-url", 
-            value_name = "URL", 
-            env = "OWNER_REMOTE_SIGNER_URL", 
-            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.", 
-            help_heading = "Contract owner account options", 
-            conflicts_with = "owner_private_key", 
+            long = "owner-remote-signer-url",
+            value_name = "URL",
+            env = "OWNER_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            help_heading = "Contract owner account options",
+            conflicts_with = "owner_private_key",
             requires = "owner_remote_signer_public_key"
         )]
         owner_remote_signer_url: Option<Url>,
@@ -196,8 +196,8 @@ pub enum Command {
         )]
         owner_remote_signer_public_key: Option<PublicKey>,
         #[arg(
-            long, 
-            value_parser = parse_private_key, 
+            long,
+            value_parser = parse_private_key,
             env = "SEQUENCER_PRIVATE_KEY", 
             help = "The private key of the sequencer", 
             help_heading  = "Sequencer account options",
