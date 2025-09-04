@@ -165,7 +165,7 @@ pub fn stateless_validation_l2(
         chain_config: db.chain_config,
         codes: db.codes.clone(),
         state_trie: None,
-        storage_tries: BTree Map::new(),
+        storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
