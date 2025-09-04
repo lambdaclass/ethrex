@@ -393,6 +393,7 @@ pub mod test_utils {
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
+            None,
         )
         .await
         .unwrap();

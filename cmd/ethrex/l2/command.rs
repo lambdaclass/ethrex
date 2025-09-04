@@ -72,7 +72,11 @@ impl L2Command {
             remove_db(DB_ETHREX_DEV_L1, true);
             remove_db(DB_ETHREX_DEV_L2, true);
             println!("Initializing L1");
-            init_l1(crate::cli::Options::default_l1()).await?;
+            init_l1(
+                crate::cli::Options::default_l1(),
+                log_filter_handler.clone(),
+            )
+            .await?;
             println!("Deploying contracts...");
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;

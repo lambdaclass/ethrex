@@ -127,6 +127,7 @@ pub async fn start_api(
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -144,8 +145,7 @@ pub async fn start_api(
             client_version,
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-        // TODO: CHANGE
-        log_filter_handler: None,
+        log_filter_handler,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

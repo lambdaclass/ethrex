@@ -135,6 +135,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -160,6 +161,7 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
+        log_filter_handler,
     );
 
     tracker.spawn(rpc_api);
@@ -375,6 +377,7 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
@@ -415,6 +418,7 @@ pub async fn init_l1(
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        log_filter_handler,
     )
     .await;
 
