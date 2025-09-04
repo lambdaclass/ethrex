@@ -1,5 +1,5 @@
+use guest_program::{execution::execution_program, input::JSONProgramInput};
 use risc0_zkvm::guest::env;
-use zkvm_interface::{io::JSONProgramInput, execution::execution_program};
 
 fn main() {
     let input: JSONProgramInput = env::read();
