@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757006687530,
+  "lastUpdate": 1757007188655,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11965,6 +11965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 173157305858,
             "range": "± 584569093",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "97d4827922b402b7ac544b8db6aae21a3e33decd",
+          "message": "perf(levm): add an implementation of BLAKE2B that uses NEON (#3850)\n\n**Motivation**\n\nIn ARM machines, the implementation used always falls back to the\ndefault because AVX2 is x86-specific.\n\n**Description**\n\nImplement a NEON-specific version of blake2 (equivalent to the one for\nAVX2, but for NEON).\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\ncloses #4315",
+          "timestamp": "2025-09-04T16:40:42Z",
+          "tree_id": "ff3da4d6d24c0d0e570157b066a1ce600fb90be5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/97d4827922b402b7ac544b8db6aae21a3e33decd"
+        },
+        "date": 1757007170242,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170128848425,
+            "range": "± 361405282",
             "unit": "ns/iter"
           }
         ]
