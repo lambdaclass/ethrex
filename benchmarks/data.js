@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757001497754,
+  "lastUpdate": 1757001531000,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11875,6 +11875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168490787219,
             "range": "± 500777763",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fe6f115b07a8138583b7586993df5fd9abd7252b",
+          "message": "chore(l1): adjust bytecode chunk size (#4311)\n\n**Motivation**\n\nBytecode download is currently slow, in part due to the small chunk\nsize.\n\n**Description**\n\nConsidering that the maximum size of a contract is 0x6000, the new limit\nwould mean a max usage of ~1.2GB. In practice it's even lower because\nnot all contracts are that big, and many accounts point to the same\ncontracts.",
+          "timestamp": "2025-09-04T15:06:03Z",
+          "tree_id": "1e1afb775a01376dfb19650c3131dd098b2e7dbd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fe6f115b07a8138583b7586993df5fd9abd7252b"
+        },
+        "date": 1757001512487,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168797492537,
+            "range": "± 401149662",
             "unit": "ns/iter"
           }
         ]
