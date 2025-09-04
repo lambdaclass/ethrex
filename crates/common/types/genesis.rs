@@ -119,9 +119,9 @@ pub struct BlobSchedule {
     pub cancun: ForkBlobSchedule,
     #[serde(default = "default_prague_schedule")]
     pub prague: ForkBlobSchedule,
-    #[serde(default = "default_bpo2_schedule")]
-    pub bpo1: ForkBlobSchedule,
     #[serde(default = "default_bpo1_schedule")]
+    pub bpo1: ForkBlobSchedule,
+    #[serde(default = "default_bpo2_schedule")]
     pub bpo2: ForkBlobSchedule,
 }
 
@@ -561,8 +561,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 13353908,
                 },
-                bpo1: default_bpo1_schedule(),
-                bpo2: default_bpo2_schedule(),
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -738,8 +737,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
-                bpo1: default_bpo1_schedule(),
-                bpo2: default_bpo2_schedule(),
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -772,8 +770,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
-                bpo1: default_bpo1_schedule(),
-                bpo2: default_bpo2_schedule(),
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -813,8 +810,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
-                bpo1: default_bpo1_schedule(),
-                bpo2: default_bpo2_schedule(),
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -854,8 +850,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
-                bpo1: default_bpo1_schedule(),
-                bpo2: default_bpo2_schedule(),
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
