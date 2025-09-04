@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757022635789,
+  "lastUpdate": 1757023956057,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12145,6 +12145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167278047221,
             "range": "± 407570435",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7f7025c44bd7daf65a47f56a02a859dbeda8e288",
+          "message": "chore(l1): fix snap sync logs (#4295)\n\n**Motivation**\n\nThe logs of snap sync were left broken after doing some optimizations to\nthe leaves download step. This PR aims to fix and improve the broken\nlogs.\n\n**Description**\n\n- Added a log that looks like this\n<img width=\"943\" height=\"233\" alt=\"Screenshot 2025-09-03 at 5 01 56 PM\"\nsrc=\"https://github.com/user-attachments/assets/2473ff57-b41b-424d-af88-526f6853c33c\"\n/>\n\n---------\n\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-09-04T21:17:02Z",
+          "tree_id": "df77a316df462ede05dffaf154e88c6ab8867278",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f7025c44bd7daf65a47f56a02a859dbeda8e288"
+        },
+        "date": 1757023769279,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170012960967,
+            "range": "± 838396223",
             "unit": "ns/iter"
           }
         ]
