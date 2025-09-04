@@ -20,7 +20,7 @@ use ethrex_rlp::{
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize, with::Skip};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
@@ -36,7 +36,11 @@ use once_cell::sync::OnceCell;
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
+    #[serde(skip)]
+    #[rkyv(with = Skip)]
     pub cached_body_rlp_encode: Vec<u8>,
+    #[serde(skip)]
+    #[rkyv(with = Skip)]
     pub cached_header_rlp_encode: Vec<u8>,
 }
 
