@@ -2,7 +2,6 @@ mod constants;
 mod db;
 mod errors;
 mod execution_result;
-mod helpers;
 pub mod tracing;
 mod witness_db;
 

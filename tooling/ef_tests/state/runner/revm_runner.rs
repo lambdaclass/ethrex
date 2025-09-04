@@ -15,11 +15,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_vm::{
-    self, DynVmDatabase, EvmError,
-    backends::{self, revm::db::EvmState},
-    fork_to_spec_id,
-};
+use ethrex_vm::{backends::{self, revm::{db::EvmState, helpers::fork_to_spec_id}}, DynVmDatabase, EvmError};
 use keccak_hash::keccak;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
