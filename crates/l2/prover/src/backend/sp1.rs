@@ -1,20 +1,20 @@
-use rkyv::rancor::Error;
-use sp1_sdk::{
-    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
-};
 use std::{fmt::Debug, sync::LazyLock};
-use tracing::info;
-use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
+use guest_program::input::ProgramInput;
+use rkyv::rancor::Error;
+use sp1_sdk::{
+    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    SP1VerifyingKey,
+};
 use std::time::Instant;
+use tracing::info;
 
 static PROGRAM_ELF: &[u8] =
-    include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
+    include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
     client: EnvProver,

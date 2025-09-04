@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use clap::ValueEnum;
+use guest_program::output::ProgramOutput;
 use serde::{Deserialize, Serialize};
-use zkvm_interface::io::ProgramOutput;
 
 pub mod exec;
 
