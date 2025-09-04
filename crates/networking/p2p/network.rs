@@ -192,178 +192,180 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ) {
     let start = std::time::Instant::now();
     loop {
-        if blockchain.is_synced() {
-            return;
-        }
-        let metrics_enabled = *METRICS.enabled.lock().await;
-        // Show the metrics only when these are enabled
-        if !metrics_enabled {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
-        }
+        {
+            if blockchain.is_synced() {
+                return;
+            }
+            let metrics_enabled = *METRICS.enabled.lock().await;
+            // Show the metrics only when these are enabled
+            if !metrics_enabled {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
 
-        // Common metrics
-        let elapsed = format_duration(start.elapsed());
-        let peer_number = peers.lock().await.len();
-        let current_step = METRICS.current_step.lock().await.clone();
+            // Common metrics
+            let elapsed = format_duration(start.elapsed());
+            let peer_number = peers.lock().await.len();
+            let current_step = METRICS.current_step.lock().await.clone();
 
-        // Headers metrics
-        let headers_to_download = METRICS.headers_to_download.lock().await;
-        let headers_downloaded = METRICS.downloaded_headers.lock().await;
-        let headers_remaining = headers_to_download.saturating_sub(*headers_downloaded);
-        let headers_download_progress = if *headers_to_download == 0 {
-            "0%".to_string()
-        } else {
-            format!(
-                "{:.2}%",
-                (*headers_downloaded as f64 / *headers_to_download as f64) * 100.0
-            )
-        };
+            // Headers metrics
+            let headers_to_download = METRICS.headers_to_download.lock().await;
+            let headers_downloaded = METRICS.downloaded_headers.lock().await;
+            let headers_remaining = headers_to_download.saturating_sub(*headers_downloaded);
+            let headers_download_progress = if *headers_to_download == 0 {
+                "0%".to_string()
+            } else {
+                format!(
+                    "{:.2}%",
+                    (*headers_downloaded as f64 / *headers_to_download as f64) * 100.0
+                )
+            };
 
-        // Account leaves metrics
-        let account_leaves_downloaded = *METRICS.downloaded_account_tries.lock().await;
-        let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
-            (*METRICS.account_tries_inserted.lock().await as f64 / account_leaves_downloaded as f64)
-                * 100.0
-        } else {
-            0.0
-        };
-        let account_leaves_time = format_duration({
-            let end_time = METRICS
-                .account_tries_download_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+            // Account leaves metrics
+            let account_leaves_downloaded = *METRICS.downloaded_account_tries.lock().await;
+            let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
+                (*METRICS.account_tries_inserted.lock().await as f64
+                    / account_leaves_downloaded as f64)
+                    * 100.0
+            } else {
+                0.0
+            };
+            let account_leaves_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .account_tries_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
-        let account_leaves_inserted_time = format_duration({
-            let end_time = METRICS
-                .account_tries_insert_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+                METRICS
+                    .account_tries_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let account_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .account_tries_insert_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
+                METRICS
+                    .account_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
 
-        // Storage leaves metrics
-        let storage_leaves_downloaded = *METRICS.downloaded_storage_slots.lock().await;
-        let storage_accounts = *METRICS.storage_accounts_initial.lock().await;
-        let storage_accounts_healed = *METRICS.storage_accounts_healed.lock().await;
-        let storage_leaves_time = format_duration({
-            let end_time = METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+            // Storage leaves metrics
+            let storage_leaves_downloaded = *METRICS.downloaded_storage_slots.lock().await;
+            let storage_accounts = *METRICS.storage_accounts_initial.lock().await;
+            let storage_accounts_healed = *METRICS.storage_accounts_healed.lock().await;
+            let storage_leaves_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_download_start_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .storage_tries_download_end_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
-        let storage_leaves_inserted_time = format_duration({
-            let end_time = METRICS
-                .storage_tries_insert_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+                METRICS
+                    .storage_tries_download_end_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let storage_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .storage_tries_insert_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
+                METRICS
+                    .storage_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
 
-        // Healing stuff
-        let heal_time = format_duration({
-            let end_time = METRICS
-                .heal_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+            // Healing stuff
+            let heal_time = format_duration({
+                let end_time = METRICS
+                    .heal_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .heal_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
-        let healed_accounts = *METRICS.global_state_trie_leafs_healed.lock().await;
-        let healed_storages = *METRICS.global_storage_tries_leafs_healed.lock().await;
-        let heal_current_throttle = if *METRICS.healing_empty_try_recv.lock().await == 0 {
-            "\x1b[31mDatabase\x1b[0m"
-        } else {
-            "\x1b[32mPeers\x1b[0m"
-        };
+                METRICS
+                    .heal_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let healed_accounts = *METRICS.global_state_trie_leafs_healed.lock().await;
+            let healed_storages = *METRICS.global_storage_tries_leafs_healed.lock().await;
+            let heal_current_throttle = if *METRICS.healing_empty_try_recv.lock().await == 0 {
+                "\x1b[31mDatabase\x1b[0m"
+            } else {
+                "\x1b[32mPeers\x1b[0m"
+            };
 
-        // Bytecode metrics
-        let bytecodes_download_time = format_duration({
-            let end_time = METRICS
-                .bytecode_download_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+            // Bytecode metrics
+            let bytecodes_download_time = format_duration({
+                let end_time = METRICS
+                    .bytecode_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .bytecode_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
-                })
-                .unwrap_or(Duration::from_secs(0))
-        });
+                METRICS
+                    .bytecode_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
 
-        let bytecodes_to_download = METRICS.bytecodes_to_download.lock().await;
-        let bytecodes_downloaded = METRICS.downloaded_bytecodes.lock().await;
-        let bytecodes_remaining = bytecodes_to_download.saturating_sub(*bytecodes_downloaded);
-        let bytecodes_download_progress = if *bytecodes_to_download == 0 {
-            0.0
-        } else {
-            (*bytecodes_downloaded as f64 / *bytecodes_to_download as f64) * 100.0
-        };
+            let bytecodes_to_download = METRICS.bytecodes_to_download.lock().await;
+            let bytecodes_downloaded = METRICS.downloaded_bytecodes.lock().await;
+            let bytecodes_remaining = bytecodes_to_download.saturating_sub(*bytecodes_downloaded);
+            let bytecodes_download_progress = if *bytecodes_to_download == 0 {
+                0.0
+            } else {
+                (*bytecodes_downloaded as f64 / *bytecodes_to_download as f64) * 100.0
+            };
 
-        info!(
-            "P2P Snap Sync:
+            info!(
+                "P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers
 \x1b[93mCurrent step:\x1b[0m {current_step}
@@ -375,8 +377,8 @@ storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_t
 storage leaves insertion: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {bytecodes_downloaded}, remaining: {bytecodes_remaining}, elapsed: {bytecodes_download_time})"
-        );
-
+            );
+        }
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 }
