@@ -245,18 +245,25 @@ impl RLPDecode for IpAddr {
 
         match ip_bytes.len() {
             4 => {
+                eprintln!("Received IPv4 address");
                 let octets: [u8; 4] = ip_bytes
                     .try_into()
                     .map_err(|_| RLPDecodeError::InvalidLength)?;
+                eprintln!("Converted IPv4 address");
                 Ok((IpAddr::V4(Ipv4Addr::from(octets)), rest))
             }
             16 => {
+                eprintln!("Received IPv6 address");
                 let octets: [u8; 16] = ip_bytes
                     .try_into()
                     .map_err(|_| RLPDecodeError::InvalidLength)?;
+                eprintln!("Converted IPv6 address");
                 Ok((IpAddr::V6(Ipv6Addr::from(octets)), rest))
             }
-            _ => Err(RLPDecodeError::InvalidLength),
+            _ => {
+                eprintln!("INVALID ADDRESS ({:x?})", ip_bytes);
+                Err(RLPDecodeError::InvalidLength)
+            }
         }
     }
 }

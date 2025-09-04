@@ -48,7 +48,8 @@ pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    udp_socket: Arc<UdpSocket>,
+    udp4_socket: Arc<UdpSocket>,
+    udp6_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
 
@@ -57,22 +58,28 @@ impl DiscoveryServer {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        udp4_socket: Arc<UdpSocket>,
+        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
             local_node_record,
             signer,
-            udp_socket,
+            udp4_socket,
+            udp6_socket,
             kademlia,
         }
     }
 
     async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
-        let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf1 = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf2 = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
-            let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
+            let ((read, from), buf) = tokio::select! {
+                v = self.udp4_socket.recv_from(&mut buf1) => (v?, &buf1),
+                v = self.udp6_socket.recv_from(&mut buf2) => (v?, &buf2),
+            };
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
@@ -117,11 +124,12 @@ impl DiscoveryServer {
             .try_into()
             .expect("first 32 bytes are the message hash");
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -150,7 +158,12 @@ impl DiscoveryServer {
 
         pong.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -175,7 +188,12 @@ impl DiscoveryServer {
 
         msg.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let dst_addr = node.udp_addr();
+        let send_socket = match dst_addr.is_ipv4() {
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, dst_addr).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -199,11 +217,11 @@ impl DiscoveryServer {
 
         msg.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, from)
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
+        let send_socket = match from.is_ipv4() {
+            true => &self.udp4_socket,
+            false => &self.udp6_socket,
+        };
+        let bytes_sent = send_socket.send_to(&buf, from).await?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
@@ -262,7 +280,8 @@ impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        udp4_socket: Arc<UdpSocket>,
+        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
@@ -277,7 +296,8 @@ impl DiscoveryServer {
             local_node,
             local_node_record,
             signer,
-            udp_socket,
+            udp4_socket,
+            udp6_socket,
             kademlia.clone(),
         );
 
