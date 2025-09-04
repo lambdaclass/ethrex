@@ -13,7 +13,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::Field;
+use k256::elliptic_curve::{Field, Group};
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -976,6 +976,9 @@ pub fn bls12_g1add(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
+    use blstrs::{G1Affine};
+    use derive_more::Add;
+
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
@@ -985,8 +988,8 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
-    let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
+    let first_g1_point = parse_g1_point_new(&calldata[0..128], true)?;
+    let second_g1_point = parse_g1_point_new(&calldata[128..256], true)?;
 
     let result_of_addition = first_g1_point.add(&second_g1_point);
 
@@ -1323,6 +1326,57 @@ fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
 /// point_bytes must have atleast 128 bytes.
 #[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
 fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
+    if point_bytes.len() != 128 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    let x = parse_coordinate(&point_bytes[0..64])?;
+    let y = parse_coordinate(&point_bytes[64..128])?;
+
+    const ALL_ZERO: [u8; 48] = [0; 48];
+
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let g1_point: G1Projective = if x == ALL_ZERO && y == ALL_ZERO {
+        G1Projective::identity()
+    } else {
+        let g1_bytes: [u8; 96] = [x, y]
+            .concat()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+
+        if unchecked {
+            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+            // note that there is no subgroup check for the G1 addition precompile
+            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
+                .into_option()
+                .ok_or(ExceptionalHalt::Precompile(
+                    PrecompileError::ParsingInputError,
+                ))?;
+
+            // We still need to check if the point is on the curve
+            if !bool::from(g1_affine.is_on_curve()) {
+                return Err(ExceptionalHalt::Precompile(
+                    PrecompileError::BLS12381G1PointNotInCurve,
+                )
+                .into());
+            }
+
+            G1Projective::from(g1_affine)
+        } else {
+            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
+                .into_option()
+                .ok_or(PrecompileError::ParsingInputError)?;
+
+            G1Projective::from(g1_affine)
+        }
+    };
+    Ok(g1_point)
+}
+
+/// point_bytes must have atleast 128 bytes.
+#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
+fn parse_g1_point_new(point_bytes: &[u8], unchecked: bool) -> Result<blstrs::G1Projective, VMError> {
+    use blstrs::{G1Affine, G1Projective};
     if point_bytes.len() != 128 {
         return Err(PrecompileError::ParsingInputError.into());
     }
