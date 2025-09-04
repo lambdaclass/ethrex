@@ -2,7 +2,7 @@ participants:
   - el_type: ethrex
     el_image: ethrex:local
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
+    cl_image: sigp/lighthouse:v7.1.0
     count: 1
 
 ethereum_metrics_exporter_enabled: true
