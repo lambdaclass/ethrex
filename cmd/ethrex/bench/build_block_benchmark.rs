@@ -20,7 +20,6 @@ use ethrex_common::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
 
 pub struct GasMeasurement;
@@ -236,7 +235,6 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
-                        EvmEngine::LEVM,
                         store_with_genesis.clone(),
                         BlockchainType::L1, // TODO: Should we support L2?
                         false,

@@ -115,7 +115,7 @@ pub fn init_blockchain(
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!(evm = %evm_engine, "Initiating blockchain");
+    info!("Initiating blockchain");
     Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
 }
 

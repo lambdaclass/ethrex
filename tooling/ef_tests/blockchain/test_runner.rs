@@ -20,13 +20,12 @@ use ethrex_common::{
 use ethrex_prover_lib::backends::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{EvmEngine, EvmError};
+use ethrex_vm::EvmError;
 use regex::Regex;
 use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,
-    evm: EvmEngine,
     skipped_tests: Option<&[&str]>,
     stateless_backend: Option<Backend>,
 ) -> datatest_stable::Result<()> {
