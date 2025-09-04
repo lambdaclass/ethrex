@@ -575,7 +575,7 @@ dependencies = [
 name = "archive_sync"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
  "clap_complete",
  "ethrex",
  "ethrex-common",
@@ -1812,7 +1812,7 @@ version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fce8dd7fcfcbf3a0a87d8f515194b49d6135acab73e18bd380d1d93bb1a15eb"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
  "heck 0.4.1",
  "indexmap 2.11.0",
  "log",
@@ -1992,9 +1992,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.46"
+version = "4.5.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5e4fcf9c21d2e544ca1ee9d8552de13019a42aa7dbf32747fa7aaf1df76e57"
+checksum = "7eac00902d9d136acd712710d71823fb8ac8004ca445a89e73a41d45aa712931"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2002,9 +2002,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.46"
+version = "4.5.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fecb53a0e6fcfb055f686001bc2e2592fa527efaf38dbe81a6a9563562e57d41"
+checksum = "2ad9bbf750e73b5884fb8a211a9424a1906c1e156724260fdae972f31d70e1d6"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2018,14 +2018,14 @@ version = "4.5.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d9501bd3f5f09f7bbee01da9a511073ed30a80cd7a509f1214bb74eadea71ad"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
 ]
 
 [[package]]
 name = "clap_derive"
-version = "4.5.45"
+version = "4.5.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14cb31bb0a7d536caef2639baa7fad459e15c3144efefa6dbd1c84562c4739f6"
+checksum = "bbfd7eae0b0f1a6e63d4b13c9c478de77c2eb546fba158ad50b4203dc24b9f9c"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2363,7 +2363,7 @@ dependencies = [
  "anes",
  "cast",
  "ciborium",
- "clap 4.5.46",
+ "clap 4.5.47",
  "criterion-plot",
  "futures",
  "is-terminal",
@@ -3268,13 +3268,13 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "lazy_static",
  "regex",
  "serde",
  "serde_json",
  "tokio",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -3283,7 +3283,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-rlp",
  "bytes",
- "clap 4.5.46",
+ "clap 4.5.47",
  "clap_complete",
  "colored",
  "ethrex-blockchain",
@@ -3311,7 +3311,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-rlp",
  "bytes",
- "clap 4.5.46",
+ "clap 4.5.47",
  "clap_complete",
  "colored",
  "ethrex-blockchain",
@@ -3909,7 +3909,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cfg-if 1.0.3",
- "clap 4.5.46",
+ "clap 4.5.47",
  "clap_complete",
  "criterion",
  "directories 5.0.1",
@@ -4046,7 +4046,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.3",
  "chrono",
- "clap 4.5.46",
+ "clap 4.5.47",
  "color-eyre",
  "crossterm 0.29.0",
  "directories 5.0.1",
@@ -4069,6 +4069,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
@@ -4091,7 +4092,6 @@ dependencies = [
  "tui-logger",
  "tui-scrollview",
  "vergen-git2",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -4238,7 +4238,7 @@ dependencies = [
  "bincode",
  "bytes",
  "cfg-if 1.0.3",
- "clap 4.5.46",
+ "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
@@ -4248,6 +4248,7 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "kzg-rs",
  "risc0-zkp",
@@ -4263,7 +4264,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.20",
  "url",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -4271,7 +4271,7 @@ name = "ethrex-replay"
 version = "0.1.0"
 dependencies = [
  "charming",
- "clap 4.5.46",
+ "clap 4.5.47",
  "ethrex-common",
  "ethrex-config",
  "ethrex-l2-rpc",
@@ -4281,6 +4281,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "futures",
+ "guest_program",
  "hex",
  "jemallocator",
  "reqwest 0.12.23",
@@ -4291,14 +4292,13 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.20",
- "zkvm_interface",
 ]
 
 [[package]]
 name = "ethrex-replayer"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
  "ethrex-common",
  "ethrex-config",
  "ethrex-replay",
@@ -5173,6 +5173,29 @@ dependencies = [
  "ff 0.13.1",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "guest_program"
+version = "0.1.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "risc0-build",
+ "risc0-zkvm",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sp1-build",
+ "sp1-sdk",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -6702,7 +6725,7 @@ checksum = "5297962ef19edda4ce33aaa484386e0a5b3d7f2f4e037cbeee00503ef6b29d33"
 dependencies = [
  "anstream",
  "anstyle",
- "clap 4.5.46",
+ "clap 4.5.47",
  "escape8259",
 ]
 
@@ -6746,7 +6769,7 @@ checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 name = "load_test"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
@@ -6766,7 +6789,7 @@ dependencies = [
 name = "loc"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.46",
+ "clap 4.5.47",
  "clap_complete",
  "colored",
  "prettytable",
@@ -6800,9 +6823,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.27"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "lru"
@@ -9794,9 +9817,9 @@ dependencies = [
 
 [[package]]
 name = "risc0-zkvm-platform"
-version = "2.2.0"
+version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c826f09626ab2ae76671673e5a232548ddd95a34eece2ea4ced5f010383f95b"
+checksum = "cfaa10feba15828c788837ddde84b994393936d8f5715228627cfe8625122a40"
 dependencies = [
  "bytemuck",
  "cfg-if 1.0.3",
@@ -9974,7 +9997,7 @@ name = "runner"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "clap 4.5.46",
+ "clap 4.5.47",
  "env_logger 0.11.8",
  "ethrex-blockchain",
  "ethrex-common",
@@ -10995,7 +11018,7 @@ dependencies = [
  "anyhow",
  "cargo_metadata 0.18.1",
  "chrono",
- "clap 4.5.46",
+ "clap 4.5.47",
  "dirs 5.0.1",
  "sp1-prover",
 ]
@@ -11008,7 +11031,7 @@ checksum = "7bc79ba7a23ee664870ac6dd9ca8125d9fd0bb1c6acb13cb34cb1c0b81458e89"
 dependencies = [
  "bincode",
  "bytemuck",
- "clap 4.5.46",
+ "clap 4.5.47",
  "elf",
  "enum-map",
  "eyre",
@@ -11188,7 +11211,7 @@ checksum = "d5fa3bb2b42cd36c1045472900dcc348a61475774734a5d8cdd4acaf929396ff"
 dependencies = [
  "anyhow",
  "bincode",
- "clap 4.5.46",
+ "clap 4.5.47",
  "dirs 5.0.1",
  "downloader",
  "enum-map",
@@ -11996,9 +12019,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.42"
+version = "0.3.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ca967379f9d8eb8058d86ed467d81d03e81acd45757e4ca341c24affbe8e8e3"
+checksum = "83bde6f1ec10e72d583d91623c939f623002284ef622b87de38cfd546cbf2031"
 dependencies = [
  "deranged",
  "libc",
@@ -12012,15 +12035,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9108bb380861b07264b950ded55a44a14a4adc68b9f5efd85aafc3aa4d40a68"
+checksum = "40868e7c1d2f0b8d73e4a8c7f0ff63af4f6d19be117e90bd73eb1d62cf831c6b"
 
 [[package]]
 name = "time-macros"
-version = "0.2.23"
+version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7182799245a7264ce590b349d90338f1c1affad93d2639aed5f8f69c090b334c"
+checksum = "30cfb0125f12d9c277f35663a0a33f8c30190f4e4574868a330595412d34ebf3"
 dependencies = [
  "num-conv",
  "time-core",
@@ -14046,29 +14069,6 @@ dependencies = [
  "sha2",
  "sha3",
  "subtle",
-]
-
-[[package]]
-name = "zkvm_interface"
-version = "0.1.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "risc0-build",
- "risc0-zkvm",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "sp1-build",
- "sp1-sdk",
- "thiserror 2.0.16",
 ]
 
 [[package]]
