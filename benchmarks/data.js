@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757022406356,
+  "lastUpdate": 1757022483120,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12085,6 +12085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169850943921,
             "range": "± 424934945",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "900eb4079928c6b219582cd9cfc7f08be00d7e89",
+          "message": "chore(l1): fix IPv6 listener (#4250)\n\n**Motivation**\n\nWe had issues when handling discovery with IPv6 connections, because we\nused a TCPv4 stream. With a TCPv6 stream, it should handle both IPv4 and\nIPv6 connections\n\n**Description**\n\n- Removed superflous parameter for p2p address\n- Fixed the listener to support ipv6 port\n- Made the default port ipv6\n- Changed documentation and makefile to new format\n\nCloses #4232\n\n---------\n\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>",
+          "timestamp": "2025-09-04T20:53:21Z",
+          "tree_id": "f535f2d644b9432056cdc893e4e49e15fba688d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/900eb4079928c6b219582cd9cfc7f08be00d7e89"
+        },
+        "date": 1757022463739,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170584608963,
+            "range": "± 484036561",
             "unit": "ns/iter"
           }
         ]
