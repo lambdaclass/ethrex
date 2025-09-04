@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
