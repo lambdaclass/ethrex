@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::{str::FromStr};
+use std::str::FromStr;
 
 use crate::{
     H160,
