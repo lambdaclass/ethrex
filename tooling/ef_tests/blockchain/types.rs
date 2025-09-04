@@ -96,34 +96,34 @@ pub struct BlobSchedule {
     pub bpo2: Option<ForkBlobSchedule>,
 }
 
-impl Into<ethrex_common::types::BlobSchedule> for BlobSchedule {
-    fn into(self) -> ethrex_common::types::BlobSchedule {
+impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
+    fn from(val: BlobSchedule) -> Self {
         let mut blob_schedule = ethrex_common::types::BlobSchedule::default();
-        if let Some(cancun_schedule) = self.cancun {
+        if let Some(cancun_schedule) = val.cancun {
             blob_schedule.cancun = cancun_schedule.into()
         }
-        if let Some(prague_schedule) = self.prague {
+        if let Some(prague_schedule) = val.prague {
             blob_schedule.prague = prague_schedule.into()
         }
-        if let Some(osaka_schedule) = self.osaka {
+        if let Some(osaka_schedule) = val.osaka {
             blob_schedule.osaka = osaka_schedule.into()
         }
-        if let Some(bpo1_schedule) = self.bpo1 {
+        if let Some(bpo1_schedule) = val.bpo1 {
             blob_schedule.bpo1 = bpo1_schedule.into()
         }
-        if let Some(bpo2_schedule) = self.bpo2 {
+        if let Some(bpo2_schedule) = val.bpo2 {
             blob_schedule.bpo2 = bpo2_schedule.into()
         }
         blob_schedule
     }
 }
 
-impl Into<ethrex_common::types::ForkBlobSchedule> for ForkBlobSchedule {
-    fn into(self) -> ethrex_common::types::ForkBlobSchedule {
+impl From<ForkBlobSchedule> for ethrex_common::types::ForkBlobSchedule {
+    fn from(val: ForkBlobSchedule) -> Self {
         ethrex_common::types::ForkBlobSchedule {
-            target: self.target,
-            max: self.max,
-            base_fee_update_fraction: self.base_fee_update_fraction,
+            target: val.target,
+            max: val.max,
+            base_fee_update_fraction: val.base_fee_update_fraction,
         }
     }
 }
