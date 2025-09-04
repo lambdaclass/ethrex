@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::{collections::HashMap, str::FromStr};
 
@@ -51,7 +52,7 @@ pub struct ExecutionWitnessResult {
     /// This is precomputed during ExecutionWitness construction to avoid
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
-    pub state_nodes: HashMap<H256, NodeRLP>,
+    pub state_nodes: BTreeMap<H256, NodeRLP>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -91,11 +92,7 @@ impl ExecutionWitnessResult {
         let state_trie = Trie::from_nodes(
             Some(NodeHash::Hashed(self.parent_block_header.state_root)),
             None,
-            self.state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
-                .collect(),
+            &self.state_nodes,
         )
         .map_err(|e| {
             ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
@@ -121,10 +118,7 @@ impl ExecutionWitnessResult {
         Trie::from_nodes(
             Some(NodeHash::Hashed(account_state.storage_root)),
             None,
-            self.state_nodes
-                .iter()
-                .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
-                .collect(),
+            &self.state_nodes,
         )
         .ok()
     }

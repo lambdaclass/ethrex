@@ -247,6 +247,8 @@ pub enum CommitterError {
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, thiserror::Error)]

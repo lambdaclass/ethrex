@@ -25,9 +25,11 @@ use ethrex_l2_common::{
     },
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{
+    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
+    send_tx_bump_gas_exponential_backoff,
+};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
@@ -105,9 +107,9 @@ impl L1Committer {
             Some(eth_config.maximum_allowed_max_fee_per_gas),
             Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
         )?;
-        let last_committed_batch = eth_client
-            .get_last_committed_batch(committer_config.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
+                .await?;
         Ok(Self {
             eth_client,
             blockchain,
@@ -157,10 +159,8 @@ impl L1Committer {
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
         // Get the batch to commit
-        let last_committed_batch_number = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch_number =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
         let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
@@ -384,6 +384,11 @@ impl L1Committer {
             };
 
             let Ok((bundle, latest_blob_size)) = result else {
+                if block_to_commit_number == first_block_of_batch {
+                    return Err(CommitterError::Unreachable(
+                        "Not enough blob space for a single block batch. This means a block was incorrectly produced.".to_string(),
+                    ));
+                }
                 warn!(
                     "Batch size limit reached. Any remaining blocks will be processed in the next batch."
                 );
@@ -512,40 +517,40 @@ impl L1Committer {
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
-            self.eth_client
-                .build_generic_tx(
-                    TxType::EIP4844,
-                    self.on_chain_proposer_address,
-                    self.signer.address(),
-                    calldata.into(),
-                    Overrides {
-                        from: Some(self.signer.address()),
-                        gas_price_per_blob: Some(gas_price_per_blob),
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        blobs_bundle: Some(batch.blobs_bundle.clone()),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(CommitterError::from)?
+            build_generic_tx(
+                &self.eth_client,
+                TxType::EIP4844,
+                self.on_chain_proposer_address,
+                self.signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(self.signer.address()),
+                    gas_price_per_blob: Some(gas_price_per_blob),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    blobs_bundle: Some(batch.blobs_bundle.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(CommitterError::from)?
         } else {
             info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
-            self.eth_client
-                .build_generic_tx(
-                    TxType::EIP1559,
-                    self.on_chain_proposer_address,
-                    self.signer.address(),
-                    calldata.into(),
-                    Overrides {
-                        from: Some(self.signer.address()),
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(CommitterError::from)?
+            build_generic_tx(
+                &self.eth_client,
+                TxType::EIP1559,
+                self.on_chain_proposer_address,
+                self.signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(self.signer.address()),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(CommitterError::from)?
         };
 
         let commit_tx_hash =
@@ -571,11 +576,10 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let current_last_committed_batch = self
-                .eth_client
-                .get_last_committed_batch(self.on_chain_proposer_address)
-                .await
-                .unwrap_or(self.last_committed_batch);
+            let current_last_committed_batch =
+                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                    .await
+                    .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {
                 let check_interval = random_duration(self.committer_wake_up_ms);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Commit);

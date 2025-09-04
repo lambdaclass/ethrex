@@ -1,8 +1,9 @@
+#![allow(clippy::all)]
+
 use clap::Parser;
 use ef_tests_statev2::modules::{
     error::RunnerError,
     parser::{RunnerOptions, parse_tests},
-    runner::run_tests,
 };
 
 #[tokio::main]
@@ -14,7 +15,12 @@ pub async fn main() -> Result<(), RunnerError> {
     let tests = parse_tests(&mut runner_options)?;
 
     println!("\nFinished parsing. Executing tests...");
-    run_tests(tests).await?;
+
+    if cfg!(feature = "block") {
+        ef_tests_statev2::modules::block_runner::run_tests(tests.clone()).await?;
+    } else {
+        ef_tests_statev2::modules::runner::run_tests(tests).await?;
+    }
     println!(
         "\nTests finished running.
     Find successful tests (if any) report at: './success_report.txt'.
