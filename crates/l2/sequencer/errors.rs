@@ -118,8 +118,6 @@ pub enum ProofCoordinatorError {
     MissingTDXPrivateKey,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
-    #[error("Unreachable code reached: {0}")]
-    Unreachable(String),
 }
 
 #[derive(Debug, thiserror::Error)]
