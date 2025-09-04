@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -113,14 +113,14 @@ pub fn execution_witness_from_rpc_chain_config(
     for node in rpc_witness.state.iter() {
         state_nodes.insert(keccak(node), node.to_vec());
     }
+    let state_nodes_map: HashMap<NodeHash, NodeRLP> = state_nodes
+        .iter()
+        .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
+        .collect();
 
     let state_trie = Trie::from_nodes(
         NodeHash::Hashed(parent_header.state_root),
-        state_nodes
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (NodeHash::Hashed(k), v))
-            .collect(),
+        state_nodes_map.clone(),
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
@@ -139,12 +139,12 @@ pub fn execution_witness_from_rpc_chain_config(
         }
     }
 
-    let mut storage_trie_nodes_by_address: HashMap<H160, Vec<Vec<u8>>> = HashMap::new();
+    let mut storage_trie_nodes_by_address: HashMap<H160, HashSet<Vec<u8>>> = HashMap::new();
     let mut used_storage_tries = HashMap::new();
 
-    for (address, slots) in touched_account_storage_slots.clone().into_iter() {
+    for (address, slots) in &touched_account_storage_slots {
         let Some(account_rlp) = state_trie
-            .get(&hash_address(&address))
+            .get(&hash_address(address))
             .map_err(|e| ExecutionWitnessError::Custom(e.to_string()))?
         else {
             continue;
@@ -158,19 +158,15 @@ pub fn execution_witness_from_rpc_chain_config(
             })?;
 
         // TODO: why the storage trie fails
-        let Ok(mut storage_trie) = Trie::from_nodes(
-            NodeHash::Hashed(storage_root),
-            state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
-                .collect(),
-        )
-        .map_err(|e| {
-            ExecutionWitnessError::RebuildTrie(format!(
-                "Storage trie for address {address:#x}: {e}"
-            ))
-        }) else {
+        let Ok(mut storage_trie) =
+            Trie::from_nodes(NodeHash::Hashed(storage_root), state_nodes_map.clone()).map_err(
+                |e| {
+                    ExecutionWitnessError::RebuildTrie(format!(
+                        "Storage trie for address {address:#x}: {e}"
+                    ))
+                },
+            )
+        else {
             continue;
         };
         let hash = storage_trie.hash().map_err(|e| {
@@ -181,26 +177,33 @@ pub fn execution_witness_from_rpc_chain_config(
 
         let (storage_trie_witness, storage_trie_wrapped) =
             TrieLogger::open_trie(storage_trie, NodeHash::from(hash).into());
-        for key in slots.iter() {
+        for key in slots {
             storage_trie_wrapped.get(&hash_key(key)).map_err(|e| {
                 ExecutionWitnessError::Custom(format!("Failed to get storage trie node: {e}"))
             })?;
         }
 
         used_storage_tries.insert(
-            address,
+            *address,
             (storage_trie_witness.clone(), storage_trie_wrapped),
         );
 
-        let witness = {
+        let witness_nodes = {
             let mut w = storage_trie_witness.lock().map_err(|_| {
                 ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
             })?;
-            let w = std::mem::take(&mut *w);
-            w.into_iter().collect::<Vec<_>>()
+            std::mem::take(&mut *w)
         };
-        storage_trie_nodes_by_address.insert(address, witness);
+        storage_trie_nodes_by_address
+            .entry(*address)
+            .or_default()
+            .extend(witness_nodes);
     }
+    let storage_trie_nodes: HashMap<H160, Vec<Vec<u8>>> = storage_trie_nodes_by_address
+        .clone()
+        .into_iter()
+        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().collect()))
+        .collect();
 
     let mut witness = ExecutionWitnessResult {
         codes,
@@ -210,8 +213,8 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: parent_header,
         state_nodes: state_nodes.clone(),
-        storage_trie_nodes: storage_trie_nodes_by_address.clone(),
-        touched_account_storage_slots: touched_account_storage_slots.clone(),
+        storage_trie_nodes,
+        touched_account_storage_slots,
     };
 
     // block execution - this is for getting the account updates
@@ -236,30 +239,24 @@ pub fn execution_witness_from_rpc_chain_config(
     let account_updates: Vec<AccountUpdate> = vm.get_state_transitions().map_err(|e| {
         ExecutionWitnessError::Custom(format!("Failed to get state transitions: {e}"))
     })?;
-    let state_nodes_map: HashMap<NodeHash, NodeRLP> = state_nodes
-        .clone()
-        .into_iter()
-        .map(|(k, v)| (NodeHash::Hashed(k), v))
-        .collect();
     let (_, trie_loggers) = apply_account_updates_from_trie_with_witness(
         state_trie,
         &account_updates,
         used_storage_tries,
         &state_nodes_map,
     )?;
-    for (address, nodes) in witness.storage_trie_nodes.iter_mut() {
-        if let Some((witness_ref, _)) = trie_loggers.get(address) {
-            let mut witness_lock = witness_ref.lock().map_err(|_| {
-                ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
-            })?;
-            let witness: Vec<Vec<u8>> = std::mem::take(&mut *witness_lock).into_iter().collect();
-            nodes.extend_from_slice(&witness);
-        } else {
-            return Err(ExecutionWitnessError::Custom(format!(
-                "Missing storage trie witness for address {address:#x}"
-            )));
-        }
+    for (address, (witness_ref, _)) in &trie_loggers {
+        let mut witness_lock = witness_ref.lock().map_err(|_| {
+            ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+        })?;
+        let nodes_set = storage_trie_nodes_by_address.entry(*address).or_default();
+        nodes_set.extend(std::mem::take(&mut *witness_lock));
     }
+
+    witness.storage_trie_nodes = storage_trie_nodes_by_address
+        .into_iter()
+        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().collect()))
+        .collect();
     Ok(witness)
 }
 
