@@ -613,7 +613,7 @@ impl FullBlockSyncState {
             .current_headers
             .drain(..bodies.len())
             .zip(bodies)
-            .map(|(header, body)| Block { header, body });
+            .map(|(header, body)| Block::new(header, body));
         self.current_blocks.extend(blocks);
         // }
         // Execute full blocks
