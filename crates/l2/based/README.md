@@ -110,7 +110,7 @@ TODO
 
 ### Milestone 3: Testnet
 
-- Web page simil [https://beaconcha.in](https://beaconcha.in/) to visualize
+- Web page similar to [https://beaconcha.in](https://beaconcha.in/) to visualize
   - Sequencers.
   - Sequencing rounds and their progress.
   -
