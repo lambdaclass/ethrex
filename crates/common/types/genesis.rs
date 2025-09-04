@@ -119,6 +119,8 @@ pub struct BlobSchedule {
     pub cancun: ForkBlobSchedule,
     #[serde(default = "default_prague_schedule")]
     pub prague: ForkBlobSchedule,
+    #[serde(default = "default_osaka_schedule")]
+    pub osaka: ForkBlobSchedule,
     #[serde(default = "default_bpo1_schedule")]
     pub bpo1: ForkBlobSchedule,
     #[serde(default = "default_bpo2_schedule")]
@@ -130,6 +132,7 @@ impl Default for BlobSchedule {
         BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
+            osaka: default_osaka_schedule(),
             bpo1: default_bpo1_schedule(),
             bpo2: default_bpo2_schedule(),
         }
@@ -145,6 +148,14 @@ fn default_cancun_schedule() -> ForkBlobSchedule {
 }
 
 fn default_prague_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 6,
+        max: 9,
+        base_fee_update_fraction: 5007716,
+    }
+}
+
+fn default_osaka_schedule() -> ForkBlobSchedule {
     ForkBlobSchedule {
         target: 6,
         max: 9,

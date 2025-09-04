@@ -473,7 +473,10 @@ mod tests {
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
+            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "bpo1": { "target": 12, "max": 16, "baseFeeUpdateFraction": 5007716 },
+            "bpo2": { "target": 16, "max": 24, "baseFeeUpdateFraction": 5007716 }
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
