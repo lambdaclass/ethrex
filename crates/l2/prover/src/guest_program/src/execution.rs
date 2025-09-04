@@ -1,4 +1,5 @@
-use crate::io::{ProgramInput, ProgramOutput};
+use crate::input::ProgramInput;
+use crate::output::ProgramOutput;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
@@ -164,10 +165,10 @@ pub fn stateless_validation_l2(
         chain_config: db.chain_config,
         codes: db.codes.clone(),
         state_trie: None,
-        storage_tries: HashMap::new(),
+        storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
-        touched_account_storage_slots: HashMap::new(),
+        touched_account_storage_slots: BTreeMap::new(),
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 

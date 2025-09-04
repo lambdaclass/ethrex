@@ -76,9 +76,7 @@ pub async fn build_payload(
 
     metrics!(
         #[allow(clippy::as_conversions)]
-        METRICS_BLOCKS.set_latest_block_gas_limit(
-            ((gas_limit - context.remaining_gas) as f64 / gas_limit as f64) * 100_f64
-        );
+        METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
         // L2 does not allow for blob transactions so the blob pool can be ignored
         let (tx_pool_size, _blob_pool_size) = blockchain
             .mempool
@@ -323,7 +321,10 @@ fn get_account_diffs_in_tx(
                     bytecode_hash: None,
                 };
 
-                modified_accounts.insert(*address, account_state_diff);
+                // If account state diff is NOT empty
+                if account_state_diff != AccountStateDiff::default() {
+                    modified_accounts.insert(*address, account_state_diff);
+                }
             }
 
             // Then if there is any storage change, we add it to the account state diff
