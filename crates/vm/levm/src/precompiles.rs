@@ -1106,9 +1106,11 @@ pub fn p_256_verify(
     // If the verification succeeds, returns 1 in a 32-bit big-endian format.
     // If the verification fails, returns an empty `Bytes` object.
     if success {
-        let mut result = [0; 32];
-        result[31] = 1;
-        Ok(Bytes::from(result.to_vec()))
+        const RESULT: [u8; 32] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1,
+        ];
+        Ok(Bytes::from_static(&RESULT))
     } else {
         Ok(Bytes::new())
     }
