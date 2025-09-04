@@ -46,6 +46,8 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+pub const MAX_HEADER_CHUNK: u64 = 500_000;
+
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -261,6 +263,7 @@ impl PeerHandler {
 
             retries += 1;
         }
+        sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
             .elapsed()

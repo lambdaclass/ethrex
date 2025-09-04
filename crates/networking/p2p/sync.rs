@@ -170,7 +170,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store
+        let mut current_head_number = store
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
@@ -248,6 +248,7 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
+            current_head_number = last_block_number;
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
@@ -313,7 +314,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store
+        let mut current_head_number = store
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
@@ -399,6 +400,7 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
+            current_head_number = last_block_number;
 
             // Discard the first header as we already have it
             block_headers.remove(0);
