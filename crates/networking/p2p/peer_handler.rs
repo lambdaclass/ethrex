@@ -46,6 +46,8 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+pub const MAX_HEADER_CHUNK: u64 = 500_000;
+
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -128,11 +130,6 @@ async fn ask_peer_head_number(
                 Ok(sync_head_number)
             } else {
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
-                // TODO merge:
-                //Err(format!(
-                //    "Received unexpected response from peer {peer_id}. We expected id {request_id}, and we got {id} and we received {} block headers",
-                //    block_headers.len()
-                //))
             }
         }
         Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
@@ -266,6 +263,7 @@ impl PeerHandler {
 
             retries += 1;
         }
+        sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
             .elapsed()
@@ -1132,8 +1130,6 @@ impl PeerHandler {
                 tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
-                // Too spammy
-                // tracing::error!("Received empty account range");
                 return Ok(());
             }
             // Unzip & validate response
@@ -1348,17 +1344,6 @@ impl PeerHandler {
                 }
             }
 
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
-
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
@@ -1460,7 +1445,7 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::error!("Failed to get bytecode");
+                    tracing::debug!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
@@ -1602,13 +1587,6 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            /*             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.storages_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            } */
-
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
                     start_index,
@@ -1725,12 +1703,6 @@ impl PeerHandler {
                 if *peer_score < 10 {
                     *peer_score += 1;
                 }
-
-                /*                 *downloaded_count += account_storages.len() as u64;
-                // If we didn't finish downloading the account, don't count it
-                if !hash_start.is_zero() {
-                    *downloaded_count -= 1;
-                } */
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1886,12 +1858,6 @@ impl PeerHandler {
             std::fs::write(path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
-
-        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
         disk_joinset
             .join_all()
             .await

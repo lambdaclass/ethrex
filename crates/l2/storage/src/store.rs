@@ -343,6 +343,15 @@ impl Store {
         self.engine.revert_to_batch(batch_number).await
     }
 
+    pub async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
+    }
     /// Returns privileged transactions about to be included in the next batch
     pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
         self.engine.precommit_privileged().await

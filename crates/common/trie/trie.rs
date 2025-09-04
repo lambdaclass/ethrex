@@ -12,7 +12,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -251,7 +251,7 @@ impl Trie {
 
     pub fn empty_in_memory() -> Self {
         Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            HashMap::new(),
+            BTreeMap::new(),
         )))))
     }
 
@@ -264,20 +264,20 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: NodeHash,
-        mut state_nodes: HashMap<NodeHash, NodeRLP>,
+        state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
         let root_rlp = state_nodes
-            .remove(&root_hash)
+            .get(&root_hash.finalize())
             .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
-            all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
+            all_nodes: &BTreeMap<H256, Vec<u8>>,
             cur_node_hash: &NodeHash,
-            cur_node_rlp: NodeRLP,
-            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>,
+            cur_node_rlp: &NodeRLP,
+            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
-            let node = Node::decode_raw(&cur_node_rlp)?;
-            traversed_nodes.insert(*cur_node_hash, cur_node_rlp);
+            let node = Node::decode_raw(cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
 
             Ok(match node {
                 Node::Branch(mut node) => {
@@ -287,7 +287,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.remove(&hash) {
+                            *choice = match all_nodes.get(&hash.finalize()) {
                                 Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                                 None => hash.into(),
                             };
@@ -301,7 +301,7 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match all_nodes.remove(&hash) {
+                    node.child = match all_nodes.get(&hash.finalize()) {
                         Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                         None => hash.into(),
                     };
@@ -312,8 +312,8 @@ impl Trie {
             })
         }
 
-        let mut necessary_nodes = HashMap::new();
-        let root = inner(&mut state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        let mut necessary_nodes = BTreeMap::new();
+        let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
@@ -430,11 +430,11 @@ impl Trie {
 
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let hmap: BTreeMap<NodeHash, Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
