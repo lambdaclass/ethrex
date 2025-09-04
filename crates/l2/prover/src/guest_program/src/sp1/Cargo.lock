@@ -1499,6 +1499,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "keccak-hash",
  "secp256k1",
  "sha3",
  "thiserror",
