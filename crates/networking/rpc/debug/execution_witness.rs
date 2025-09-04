@@ -1,8 +1,4 @@
-use core::hash;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
-};
+use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -12,10 +8,9 @@ use ethrex_common::{
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
-use ethrex_p2p::types::Node;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{InMemoryTrieDB, NodeHash, NodeRLP, NodeRef, Trie, TrieLogger, TrieWitness};
+use ethrex_trie::{NodeHash, NodeRLP, Trie, TrieLogger, TrieWitness};
 use ethrex_vm::{Evm, EvmEngine, ExecutionWitnessWrapper};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
@@ -92,7 +87,6 @@ pub fn execution_witness_from_rpc_chain_config(
         .iter()
         .map(|code| (keccak_hash::keccak(code), code.clone()))
         .collect::<HashMap<_, _>>();
-    dbg!("a");
 
     let block_headers = rpc_witness
         .headers
@@ -104,7 +98,6 @@ pub fn execution_witness_from_rpc_chain_config(
         .iter()
         .map(|header| (header.number, header.clone()))
         .collect::<HashMap<_, _>>();
-    dbg!("b");
 
     let parent_number = first_block_number
         .checked_sub(1)
@@ -121,7 +114,7 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes.insert(keccak(node), node.to_vec());
     }
 
-    let mut state_trie = Trie::from_nodes(
+    let state_trie = Trie::from_nodes(
         NodeHash::Hashed(parent_header.state_root),
         state_nodes
             .clone()
@@ -130,8 +123,6 @@ pub fn execution_witness_from_rpc_chain_config(
             .collect(),
     )
     .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
-
-    dbg!("c");
 
     let mut touched_account_storage_slots = HashMap::new();
     let mut address = Address::default();
@@ -147,11 +138,9 @@ pub fn execution_witness_from_rpc_chain_config(
                 .push(slot);
         }
     }
-    dbg!("d");
 
     let mut storage_trie_nodes_by_address: HashMap<H160, Vec<Vec<u8>>> = HashMap::new();
     let mut used_storage_tries = HashMap::new();
-    // let mut touched_account_storage_slots = HashMap::new();
 
     for (address, slots) in touched_account_storage_slots.clone().into_iter() {
         let Some(account_rlp) = state_trie
@@ -192,11 +181,7 @@ pub fn execution_witness_from_rpc_chain_config(
 
         let (storage_trie_witness, storage_trie_wrapped) =
             TrieLogger::open_trie(storage_trie, NodeHash::from(hash).into());
-        // storage_trie_wrapped.root = root;
         for key in slots.iter() {
-            // TODO: check if hashed
-            // and what we return
-
             storage_trie_wrapped.get(&hash_key(key)).map_err(|e| {
                 ExecutionWitnessError::Custom(format!("Failed to get storage trie node: {e}"))
             })?;
@@ -229,11 +214,7 @@ pub fn execution_witness_from_rpc_chain_config(
         touched_account_storage_slots: touched_account_storage_slots.clone(),
     };
 
-    dbg!("enter here");
-    // witness.rebuild_state_trie()?;
-
     // block execution - this is for getting the account updates
-
     let mut witness_clone = ExecutionWitnessResult {
         codes: witness.codes.clone(),
         state_trie: None,
@@ -279,24 +260,12 @@ pub fn execution_witness_from_rpc_chain_config(
             )));
         }
     }
-    // witness.storage_trie_nodes = trie_loggers
-    //     .into_iter()
-    //     .map(|(address, (witness, _trie))| {
-    //         let mut witness = witness
-    //             .lock()
-    //             .map_err(|_| {
-    //                 ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
-    //             })
-    //             .unwrap();
-    //         let witness = std::mem::take(&mut *witness);
-    //         (address, witness.into_iter().collect::<Vec<_>>())
-    //     })
-    //     .collect();
     Ok(witness)
 }
 
 /// Performs the same actions as apply_account_updates_from_trie
 ///  but also returns the used storage tries with witness recorded
+#[allow(clippy::type_complexity)]
 fn apply_account_updates_from_trie_with_witness(
     mut state_trie: Trie,
     account_updates: &[AccountUpdate],
@@ -306,6 +275,7 @@ fn apply_account_updates_from_trie_with_witness(
     for update in account_updates.iter() {
         let hashed_address = hash_address(&update.address);
         if update.removed {
+            // TODO: review this commented code
             // Remove account from trie
             // state_trie.remove(hashed_address).map_err(|_| {
             //     ExecutionWitnessError::Custom("Failed to get account state".to_owned())

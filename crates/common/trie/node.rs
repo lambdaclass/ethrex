@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles, node::branch::EMPTY_REF};
+use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -33,22 +33,14 @@ pub enum NodeRef {
 impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
-            NodeRef::Node(ref node, _) => {
-                dbg!("Node - Node");
-                dbg!(node.compute_hash());
-                Ok(Some(node.as_ref().clone()))
-            }
+            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                dbg!("Inline - Node");
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
-                dbg!("Hashed - Node");
-                dbg!(hash);
-                db.get(hash)?
-                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-                    .transpose()
-            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
+                .get(hash)?
+                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .transpose(),
         }
     }
 
@@ -199,19 +191,9 @@ impl Node {
         path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
-            Node::Branch(n) => {
-                dbg!("branch");
-                dbg!(n.choices.iter().filter(|c| **c == EMPTY_REF).count());
-                n.remove(db, path)
-            }
-            Node::Extension(n) => {
-                dbg!("extension");
-                n.remove(db, path)
-            }
-            Node::Leaf(n) => {
-                dbg!("leaf");
-                dbg!(n.remove(path))
-            }
+            Node::Branch(n) => n.remove(db, path),
+            Node::Extension(n) => n.remove(db, path),
+            Node::Leaf(n) => n.remove(path),
         }
     }
 

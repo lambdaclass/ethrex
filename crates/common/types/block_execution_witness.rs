@@ -171,10 +171,9 @@ impl ExecutionWitnessResult {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
-                        dbg!("SALIO VACIO 🥩!");
-                        Trie::empty_in_memory()
-                    });
+                    let storage_trie = storage_tries
+                        .entry(update.address)
+                        .or_insert_with(Trie::empty_in_memory);
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -185,7 +184,6 @@ impl ExecutionWitnessResult {
                         .iter()
                         .map(|(k, v)| (hash_key(k), v))
                         .partition(|(_k, v)| v.is_zero());
-                    storage_trie.hash();
 
                     for (hashed_key, storage_value) in inserts {
                         storage_trie
@@ -193,15 +191,10 @@ impl ExecutionWitnessResult {
                             .expect("failed to insert in trie");
                     }
 
-                    dbg!("--------------------");
                     for (hashed_key, _) in deletes {
-                        dbg!(hex::encode(hashed_key.clone()), update.address);
-                        storage_trie
-                            .get(&hashed_key)
-                            .expect("failed to get key from trie"); // anda
                         storage_trie
                             .remove(hashed_key)
-                            .expect("failed to remove key"); // falla
+                            .expect("failed to remove key");
                     }
 
                     account_state.storage_root = storage_trie.hash_no_commit();

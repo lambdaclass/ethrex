@@ -71,16 +71,13 @@ pub async fn get_blockdata(
     let execution_witness_retrieval_start_time = SystemTime::now();
 
     let witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => {
-            dbg!("asdasd");
-            execution_witness_from_rpc_chain_config(
-                witness,
-                chain_config,
-                requested_block_number,
-                &block,
-            )
-            .expect("Failed to convert witness")
-        }
+        Ok(witness) => execution_witness_from_rpc_chain_config(
+            witness,
+            chain_config,
+            requested_block_number,
+            &block,
+        )
+        .expect("Failed to convert witness"),
         Err(e) => {
             warn!("{e}");
             return Err(eyre::eyre!("Unimplemented: Retry with eth_getProofs"));

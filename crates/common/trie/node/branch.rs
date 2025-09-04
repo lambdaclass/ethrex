@@ -4,7 +4,6 @@ use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::Nod
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
-pub const EMPTY_REF: NodeRef = NodeRef::Hash(NodeHash::Inline(([0; 31], 0)));
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
 #[derive(Debug, Clone, PartialEq)]
@@ -164,8 +163,6 @@ impl BranchNode {
             }
         };
 
-        dbg!("step 1 completed");
-
         // Step 2: Restructure self
         let children = self
             .choices
@@ -175,43 +172,31 @@ impl BranchNode {
             .collect::<Vec<_>>();
         let new_node = match (children.len(), !self.value.is_empty()) {
             // If this node still has a value but no longer has children, convert it into a leaf node
-            (0, true) => {
-                dbg!("CASE: 0 children with value");
-                LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into()
-            }
+            (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into(),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
-                dbg!("CASE: 1 child without value");
                 let (choice_index, child_ref) = children[0];
                 let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
-                    Node::Branch(_) => {
-                        dbg!("CASE: 1 child is BRANCH");
-                        ExtensionNode::new(
-                            Nibbles::from_hex(vec![choice_index as u8]),
-                            child_ref.clone(),
-                        )
-                        .into()
-                    }
+                    Node::Branch(_) => ExtensionNode::new(
+                        Nibbles::from_hex(vec![choice_index as u8]),
+                        child_ref.clone(),
+                    )
+                    .into(),
                     // Replace self with the child extension node, updating its path in the process
                     Node::Extension(mut extension_node) => {
-                        dbg!("CASE: 1 child is EXTENSION");
                         extension_node.prefix.prepend(choice_index as u8);
                         extension_node.into()
                     }
                     Node::Leaf(mut leaf) => {
-                        dbg!("CASE: 1 child is LEAF");
                         leaf.partial.prepend(choice_index as u8);
                         leaf.into()
                     }
                 }
             }
             // Return the updated node
-            _ => {
-                dbg!("CASE: 2? multiple");
-                self.into()
-            }
+            _ => self.into(),
         };
         Ok((Some(new_node), value))
     }
