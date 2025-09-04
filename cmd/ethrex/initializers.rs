@@ -295,9 +295,15 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     let tcp_socket_addr =
         parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
 
-    // TODO: for now we just use the local ip
-    // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = local_ipv6().expect("Failed to get local ip");
+    let p2p_node_ip = match local_ip() {
+        Ok(ip) => ip,
+        Err(e) => match local_ipv6() {
+            Ok(ip) => ip,
+            Err(e) => {
+                panic!("Failed to get local ip v4: {e}, and also failed to get local ip v6: {e}")
+            }
+        },
+    };
     info!("{p2p_node_ip:?}");
 
     let local_public_key = public_key_from_signing_key(signer);
