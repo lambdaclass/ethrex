@@ -1123,6 +1123,12 @@ pub async fn update_pivot(
     // latest one, or a slot was missed
     let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
     loop {
+        peers
+            .peer_scores
+            .lock()
+            .await
+            .insert_new_peers(&peers.peer_table)
+            .await;
         let (peer_id, mut peer_channel) = peers
             .peer_scores
             .lock()
