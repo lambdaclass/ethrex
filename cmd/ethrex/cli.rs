@@ -162,27 +162,13 @@ pub struct Options {
     #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(
-        long = "p2p.addr",
-        default_value = "0.0.0.0",
-        value_name = "ADDRESS",
-        help_heading = "P2P options"
-    )]
-    pub p2p_addr: String,
-    #[arg(
         long = "p2p.port",
         default_value = "30303",
         value_name = "PORT",
+        help = "TCP port for P2P protocol.",
         help_heading = "P2P options"
     )]
     pub p2p_port: String,
-    #[arg(
-        long = "discovery.addr",
-        default_value = "0.0.0.0",
-        value_name = "ADDRESS",
-        help = "UDP address for P2P discovery.",
-        help_heading = "P2P options"
-    )]
-    pub discovery_addr: String,
     #[arg(
         long = "discovery.port",
         default_value = "30303",
@@ -206,10 +192,8 @@ impl Options {
             authrpc_addr: "localhost".to_string(),
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_enabled: true,
-            p2p_addr: "0.0.0.0".to_string(),
-            p2p_port: "30303".to_string(),
-            discovery_addr: "0.0.0.0".to_string(),
-            discovery_port: "30303".to_string(),
+            p2p_port: "30303".into(),
+            discovery_port: "30303".into(),
             ..Default::default()
         }
     }
@@ -227,9 +211,7 @@ impl Options {
             authrpc_port: "8551".into(),
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_enabled: true,
-            p2p_addr: "0.0.0.0".into(),
             p2p_port: "30303".into(),
-            discovery_addr: "0.0.0.0".into(),
             discovery_port: "30303".into(),
             ..Default::default()
         }
@@ -246,9 +228,7 @@ impl Default for Options {
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
             p2p_enabled: Default::default(),
-            p2p_addr: Default::default(),
             p2p_port: Default::default(),
-            discovery_addr: Default::default(),
             discovery_port: Default::default(),
             network: Default::default(),
             bootnodes: Default::default(),
