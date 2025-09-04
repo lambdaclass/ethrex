@@ -73,18 +73,18 @@ pub struct FixtureConfig {
     pub blob_schedule: Option<BlobSchedule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub target: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max: u64,
+    #[serde(default, with = "ethrex_common::serde_utils::u32::hex_str")]
+    pub target: u32,
+    #[serde(default, with = "ethrex_common::serde_utils::u32::hex_str")]
+    pub max: u32,
     #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub base_fee_update_fraction: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct BlobSchedule {
     pub cancun: Option<ForkBlobSchedule>,
@@ -94,6 +94,38 @@ pub struct BlobSchedule {
     pub bpo1: Option<ForkBlobSchedule>,
     #[serde(rename = "BPO2")]
     pub bpo2: Option<ForkBlobSchedule>,
+}
+
+impl Into<ethrex_common::types::BlobSchedule> for BlobSchedule {
+    fn into(self) -> ethrex_common::types::BlobSchedule {
+        let mut blob_schedule = ethrex_common::types::BlobSchedule::default();
+        if let Some(cancun_schedule) = self.cancun {
+            blob_schedule.cancun = cancun_schedule.into()
+        }
+        if let Some(prague_schedule) = self.prague {
+            blob_schedule.prague = prague_schedule.into()
+        }
+        if let Some(osaka_schedule) = self.osaka {
+            blob_schedule.osaka = osaka_schedule.into()
+        }
+        if let Some(bpo1_schedule) = self.bpo1 {
+            blob_schedule.bpo1 = bpo1_schedule.into()
+        }
+        if let Some(bpo2_schedule) = self.bpo2 {
+            blob_schedule.bpo2 = bpo2_schedule.into()
+        }
+        blob_schedule
+    }
+}
+
+impl Into<ethrex_common::types::ForkBlobSchedule> for ForkBlobSchedule {
+    fn into(self) -> ethrex_common::types::ForkBlobSchedule {
+        ethrex_common::types::ForkBlobSchedule {
+            target: self.target,
+            max: self.max,
+            base_fee_update_fraction: self.base_fee_update_fraction,
+        }
+    }
 }
 
 impl TestUnit {
@@ -108,8 +140,13 @@ impl TestUnit {
     }
 
     pub fn get_genesis(&self) -> Genesis {
+        let mut config = *self.network.chain_config();
+        // Overwrite default blob schedule with test's blob schedule
+        if let Some(ref schedule) = self.config.blob_schedule {
+            config.blob_schedule = schedule.clone().into();
+        }
         Genesis {
-            config: *self.network.chain_config(),
+            config,
             alloc: self
                 .pre
                 .clone()
