@@ -72,23 +72,13 @@ impl Trie {
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
     pub fn open(db: Box<dyn TrieDB>, root: NodeRef) -> Self {
-        if let NodeRef::Hash(NodeHash::Hashed(a)) = root {
-            if a == *EMPTY_TRIE_HASH {
-                return Self {
-                    db,
-                    root: Default::default(),
-                };
-            }
+        if matches!(root, NodeRef::Hash(NodeHash::Hashed(hash)) if hash == *EMPTY_TRIE_HASH) {
+            return Self {
+                db,
+                root: Default::default(),
+            };
         }
-        Self {
-            db,
-            root,
-            // root: if root != *EMPTY_TRIE_HASH {
-            //     NodeHash::from(root).into()
-            // } else {
-            //     Default::default()
-            // },
-        }
+        Self { db, root }
     }
 
     /// Return a reference to the internal database.

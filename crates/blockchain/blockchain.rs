@@ -383,16 +383,13 @@ impl Blockchain {
             state_nodes.insert(H256::from_slice(hash.as_slice()), node);
         }
 
-        // TODO: review this
-        let mut node_hashes_by_address = BTreeMap::new();
-        for (address, nodes) in encoded_storage_tries {
-            let mut hashes = Vec::with_capacity(nodes.len());
-            for node in nodes {
-                let hash = keccak(&node);
-                hashes.push(hash);
-            }
-            node_hashes_by_address.insert(address, hashes);
-        }
+        let storage_trie_nodes = encoded_storage_tries
+            .into_iter()
+            .map(|(address, nodes)| {
+                let hashes = nodes.iter().map(keccak).collect();
+                (address, hashes)
+            })
+            .collect::<BTreeMap<_, _>>();
 
         Ok(ExecutionWitnessResult {
             codes,
@@ -406,7 +403,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
-            storage_trie_nodes: node_hashes_by_address,
+            storage_trie_nodes,
             touched_account_storage_slots,
         })
     }
