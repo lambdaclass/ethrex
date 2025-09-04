@@ -134,6 +134,7 @@ pub fn execution_witness_from_rpc_chain_config(
         parent_block_header: parent_header,
         state_nodes,
         touched_account_storage_slots,
+        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 
     witness.rebuild_state_trie()?;
