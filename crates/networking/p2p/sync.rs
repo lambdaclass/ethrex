@@ -1183,8 +1183,9 @@ pub async fn update_pivot(
 ) -> Result<BlockHeader, SyncError> {
     let block_number = pivot_header.number;
     let block_timestamp = pivot_header.timestamp;
-    let new_pivot_block_number =
-        block_number + current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK;
+    // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
+    let new_pivot_block_number = block_number
+        + (current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) * 9 / 10;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
         block_number, block_timestamp, new_pivot_block_number
