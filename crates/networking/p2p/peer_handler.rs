@@ -170,7 +170,7 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
         scores: &mut PeerScores,
-    ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
+    ) -> Option<(H256, PeerChannels)> {
         scores
             .get_peer_channel_with_highest_score(&self.peer_table, capabilities)
             .await

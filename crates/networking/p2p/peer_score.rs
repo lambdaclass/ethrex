@@ -1,4 +1,3 @@
-use super::peer_handler::PeerHandlerError;
 use crate::kademlia;
 use crate::kademlia::PeerChannels;
 use crate::rlpx::p2p::Capability;
@@ -72,58 +71,39 @@ impl PeerScores {
         peer_score.active = false;
     }
 
-    /// Returns the peer with the highest score.
-    /// If `update_peers_from_kademlia` is true, it updates the peer list
-    /// from the Kademlia table before selecting the best peer.
-    pub async fn get_best_peer<'a>(
-        &'a mut self,
-        kademlia_table: &kademlia::Kademlia,
-        update_peers_from_kademlia: bool,
-    ) -> Option<&'a H256> {
-        if update_peers_from_kademlia {
-            // update peers from Kademlia
-            for peer_id in kademlia_table.peers.lock().await.keys() {
-                self.scores.entry(*peer_id).or_insert(PeerScore::default());
-            }
+    pub async fn insert_new_peers(&mut self, kademlia_table: &kademlia::Kademlia) {
+        let peer_table = kademlia_table.peers.lock().await;
+        for (peer_id, _) in peer_table.iter() {
+            self.scores.entry(*peer_id).or_insert(PeerScore::default());
         }
-
-        self.scores
-            .iter()
-            .filter(|(_, peer_score)| !peer_score.active)
-            .max_by(|(_k1, v1), (_k2, v2)| v1.score.cmp(&v2.score))
-            .map(|(k, _v)| k)
     }
 
+    /// Returns the peer and it's peer channel with the highest score.
     pub async fn get_peer_channel_with_highest_score(
         &self,
         kademlia_table: &kademlia::Kademlia,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
-        {
-            // scope to release the lock of the peer table
-            let peer_table = kademlia_table.peers.lock().await;
-            let best_peer = self
-                .scores
-                .iter()
-                .filter(|(id, _)| {
-                    let supported_caps = match &peer_table.get(id) {
-                        Some(peer_data) => &peer_data.supported_capabilities,
-                        None => &Vec::new(),
-                    };
-
-                    capabilities.iter().all(|cap| supported_caps.contains(cap))
-                })
-                .max_by(|(_k1, v1), (_k2, v2)| v1.score.cmp(&v2.score))
-                .map(|(k, _v)| k)
-                .ok_or(PeerHandlerError::NoPeers)?;
-
-            if let Some(channel) = peer_table.get(best_peer) {
-                if let Some(channels) = &channel.channels {
-                    return Ok(Some((*best_peer, channels.clone())));
+    ) -> Option<(H256, PeerChannels)> {
+        let peer_table = kademlia_table.peers.lock().await;
+        self.scores
+            .iter()
+            .filter_map(|(id, peer_score)| {
+                let Some(peer_data) = &peer_table.get(id) else {
+                    return None;
+                };
+                if !capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
                 }
-            }
-        }
+                let Some(peer_channel) = peer_data.channels.clone() else {
+                    return None;
+                };
 
-        Ok(None)
+                Some((*id, peer_score.score, peer_channel))
+            })
+            .max_by(|v1, v2| v1.1.cmp(&v2.1))
+            .map(|(k, _, v)| (k, v))
     }
 }

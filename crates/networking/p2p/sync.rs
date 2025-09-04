@@ -1129,7 +1129,6 @@ pub async fn update_pivot(
             .await
             .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
             .await
-            .map_err(SyncError::PeerHandler)?
             .ok_or(SyncError::NoPeers)?;
 
         let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
