@@ -54,7 +54,7 @@ pub struct ExecutionWitnessResult {
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: BTreeMap<H256, NodeRLP>,
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256VecWrapper>)]
-    pub storage_trie_nodes: HashMap<Address, Vec<H256>>,
+    pub storage_trie_nodes: BTreeMap<Address, Vec<H256>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.

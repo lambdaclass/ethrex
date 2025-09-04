@@ -384,14 +384,14 @@ impl Blockchain {
         }
 
         // TODO: review this
-        let mut a = HashMap::new();
+        let mut node_hashes_by_address = BTreeMap::new();
         for (address, nodes) in encoded_storage_tries {
             let mut hashes = Vec::with_capacity(nodes.len());
             for node in nodes {
                 let hash = keccak(&node);
                 hashes.push(hash);
             }
-            a.insert(address, hashes);
+            node_hashes_by_address.insert(address, hashes);
         }
 
         Ok(ExecutionWitnessResult {
@@ -406,7 +406,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
-            storage_trie_nodes: a,
+            storage_trie_nodes: node_hashes_by_address,
             touched_account_storage_slots,
         })
     }

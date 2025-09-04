@@ -29,7 +29,7 @@ impl From<BytesVecWrapper> for Vec<Bytes> {
     }
 }
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Archive, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[rkyv(remote = Vec<H256>)]
 pub struct H256VecWrapper {
     #[rkyv(getter = h256_vec_to_array)]
@@ -43,6 +43,44 @@ fn h256_vec_to_array(h256_vec: &[H256]) -> Vec<[u8; 32]> {
 impl From<H256VecWrapper> for Vec<H256> {
     fn from(value: H256VecWrapper) -> Self {
         value.h256_vec.into_iter().map(H256).collect()
+    }
+}
+
+impl PartialEq for ArchivedH256VecWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.h256_vec == other.h256_vec
+    }
+}
+
+impl Eq for ArchivedH256VecWrapper {}
+
+impl PartialOrd for ArchivedH256VecWrapper {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ArchivedH256VecWrapper {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.h256_vec.cmp(&other.h256_vec)
+    }
+}
+
+impl Hash for ArchivedH256VecWrapper {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.h256_vec.hash(state);
+    }
+}
+
+impl PartialOrd for ArchivedH160Wrapper {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ArchivedH160Wrapper {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
     }
 }
 
