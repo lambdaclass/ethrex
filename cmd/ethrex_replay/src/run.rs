@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
 };
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_vm::{
     DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM,
     prover_db::PreExecutionState,

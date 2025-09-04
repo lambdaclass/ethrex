@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::rpc::{get_account, get_block, retry};
 
@@ -15,7 +15,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{Node, NodeHash, PathRLP, Trie};
+use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
@@ -548,12 +548,12 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones?.
     // TODO: https://github.com/lambdaclass/ethrex/issues/2938
 
-    let mut state_nodes = HashMap::new();
+    let mut state_nodes = BTreeMap::new();
     for node in proof.iter().skip(1) {
         let hash = Keccak256::digest(node);
-        state_nodes.insert(NodeHash::Hashed(H256::from_slice(&hash)), node.clone());
+        state_nodes.insert(H256::from_slice(&hash), node.clone());
     }
-    let trie = Trie::from_nodes(None, proof.first(), state_nodes).ok()?;
+    let trie = Trie::from_nodes(None, proof.first(), &state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {

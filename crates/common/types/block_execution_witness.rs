@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::{collections::HashMap, str::FromStr};
+use std::str::FromStr;
 
 use crate::{
     H160,
@@ -32,7 +32,7 @@ pub struct ExecutionWitnessResult {
         deserialize_with = "deserialize_code"
     )]
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
-    pub codes: HashMap<H256, Bytes>,
+    pub codes: BTreeMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -40,9 +40,9 @@ pub struct ExecutionWitnessResult {
     // Storage tries accessed by account address
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
-    pub storage_tries: HashMap<Address, Trie>,
+    pub storage_tries: BTreeMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
-    pub block_headers: HashMap<u64, BlockHeader>,
+    pub block_headers: BTreeMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
     pub parent_block_header: BlockHeader,
     // Chain config
@@ -58,7 +58,7 @@ pub struct ExecutionWitnessResult {
     /// This is needed for building `RpcExecutionWitness`.
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
-    pub touched_account_storage_slots: HashMap<Address, Vec<H256>>,
+    pub touched_account_storage_slots: BTreeMap<Address, Vec<H256>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -369,7 +369,7 @@ impl ExecutionWitnessResult {
     }
 }
 
-pub fn serialize_code<S>(map: &HashMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_code<S>(map: &BTreeMap<H256, Bytes>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -386,14 +386,14 @@ where
     seq_serializer.end()
 }
 
-pub fn deserialize_code<'de, D>(deserializer: D) -> Result<HashMap<H256, Bytes>, D::Error>
+pub fn deserialize_code<'de, D>(deserializer: D) -> Result<BTreeMap<H256, Bytes>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct BytesVecVisitor;
 
     impl<'de> Visitor<'de> for BytesVecVisitor {
-        type Value = HashMap<H256, Bytes>;
+        type Value = BTreeMap<H256, Bytes>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a list of hex-encoded strings")
@@ -403,10 +403,10 @@ where
         where
             A: SeqAccess<'de>,
         {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
 
             #[derive(Deserialize)]
-            struct CodeEntry(HashMap<String, String>);
+            struct CodeEntry(BTreeMap<String, String>);
 
             while let Some(CodeEntry(entry)) = seq.next_element::<CodeEntry>()? {
                 if entry.len() != 1 {

@@ -174,6 +174,8 @@ pub fn stateless_validation_l2(
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    use std::collections::BTreeMap;
+
     let initial_db = match pre_execution_state {
         PreExecutionState::Witness(ref db) => {
             PreExecutionState::Witness(Box::new(ExecutionWitnessResult {
@@ -181,10 +183,10 @@ pub fn stateless_validation_l2(
                 chain_config: db.chain_config,
                 codes: db.codes.clone(),
                 state_trie: None,
-                storage_tries: HashMap::new(),
+                storage_tries: BTreeMap::new(),
                 parent_block_header: db.parent_block_header.clone(),
                 state_nodes: db.state_nodes.clone(),
-                touched_account_storage_slots: HashMap::new(),
+                touched_account_storage_slots: BTreeMap::new(),
             }))
         }
         PreExecutionState::DB(ref db) => PreExecutionState::DB(Box::new(*db.clone())),

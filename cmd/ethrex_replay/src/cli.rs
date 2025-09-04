@@ -395,13 +395,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         ));
     }
 
-    let cache = get_blockdata(
-        eth_client,
-        network.clone(),
-        or_latest(block)?,
-        block_opts.opts.l2,
-    )
-    .await?;
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, opts.l2).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {

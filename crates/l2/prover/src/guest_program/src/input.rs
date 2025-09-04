@@ -1,5 +1,4 @@
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
-use ethrex_common::{H256, U256, types::Block};
+use ethrex_common::types::Block;
 use ethrex_vm::prover_db::PreExecutionState;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};

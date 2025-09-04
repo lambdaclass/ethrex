@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -148,16 +148,13 @@ pub async fn get_account(
         .first()
         .ok_or(eyre::Error::msg("account proof is empty".to_string()))?;
 
-    let mut state_nodes = HashMap::new();
+    let mut state_nodes = BTreeMap::new();
     for node in &account_proof {
         let hash = sha3::Keccak256::digest(node);
-        state_nodes.insert(
-            ethrex_trie::NodeHash::Hashed(H256::from_slice(&hash)),
-            node.clone(),
-        );
+        state_nodes.insert(H256::from_slice(&hash), node.clone());
     }
 
-    let trie = Trie::from_nodes(None, Some(root), state_nodes)?;
+    let trie = Trie::from_nodes(None, Some(root), &state_nodes)?;
     if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,

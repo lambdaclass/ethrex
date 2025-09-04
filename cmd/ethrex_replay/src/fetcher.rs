@@ -13,8 +13,10 @@ use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::{Cache, load_cache, rpc::db::RpcDB, write_cache};
-use ethrex_config::networks::Network;
+use crate::{
+    cache::{Cache, load_cache, write_cache},
+    rpc::db::RpcDB,
+};
 
 #[cfg(feature = "l2")]
 use crate::cache::L2Fields;

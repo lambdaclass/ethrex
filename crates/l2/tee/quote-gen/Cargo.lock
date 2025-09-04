@@ -2620,6 +2620,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
@@ -2642,7 +2643,6 @@ dependencies = [
  "tui-logger",
  "tui-scrollview",
  "vergen-git2",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -3307,6 +3307,25 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "guest_program"
+version = "0.1.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -5319,6 +5338,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "keccak-hash",
  "secp256k1",
@@ -5326,7 +5346,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "zerocopy",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -8260,25 +8279,6 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
-]
-
-[[package]]
-name = "zkvm_interface"
-version = "0.1.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 2.0.12",
 ]
 
 [[package]]
