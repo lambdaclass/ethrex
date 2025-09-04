@@ -42,6 +42,9 @@ const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
+/// Bytecodes to downloader per batch
+const BYTECODE_CHUNK_SIZE: usize = 50_000;
+
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -1307,5 +1310,6 @@ fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
 where
     T: Iterator<Item = H256>,
 {
-    Some(bytecode_iter.by_ref().take(10_000).collect()).filter(|chunk: &Vec<_>| !chunk.is_empty())
+    Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
+        .filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
