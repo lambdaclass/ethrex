@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757023956057,
+  "lastUpdate": 1757024481196,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12175,6 +12175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170012960967,
             "range": "± 838396223",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4bd4259af5e0ca97de3f2dbf54739cf98ee7a877",
+          "message": "fix(l1, l2): hash every address once (#4289)\n\n**Motivation**\n\nHashing is very expensive for zkVMs. We were hashing the same address\nmultiple times.\n\n**Description**\n\nThis PR:\n\n- Modifies the `Trie` API by requiring `&PathRLP` instead of `PathRLP`\nas `Trie::remove` parameter since in the function implementation, only\nits reference was needed. This removes the need for cloning this\nparameter in some cases.\n- Creates a hashed address by address mapping to store the already\nhashed accounts.",
+          "timestamp": "2025-09-04T21:29:05Z",
+          "tree_id": "1177ef493010c933ed126c6d57dd627535c27348",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4bd4259af5e0ca97de3f2dbf54739cf98ee7a877"
+        },
+        "date": 1757024462470,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170303867857,
+            "range": "± 229324559",
             "unit": "ns/iter"
           }
         ]
