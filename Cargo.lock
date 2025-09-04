@@ -4208,6 +4208,7 @@ dependencies = [
  "hmac",
  "keccak-hash",
  "lazy_static",
+ "local-ip-address",
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",

@@ -28,6 +28,7 @@ spawned-concurrency.workspace = true
 sha2.workspace = true
 keccak-hash.workspace = true
 prometheus = "0.14.0"
+local-ip-address = "0.6"
 
 tokio-stream = "0.1.17"
 futures = "0.3.31"
