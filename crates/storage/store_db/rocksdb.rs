@@ -109,7 +109,6 @@ impl Store {
         ];
 
         // Get existing column families to know which ones to drop later
-        // FIXME: RocksDB tries to open all column families, so we need to clean up obsolete ones
         let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
             Ok(cfs) => {
                 info!("Found existing column families: {:?}", cfs);
@@ -122,16 +121,30 @@ impl Store {
             }
         };
 
-        // Only create descriptors for expected column families
+        // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
+        let mut all_cfs_to_open = HashSet::new();
+        
+        // Add all expected CFs
+        for cf in &expected_column_families {
+            all_cfs_to_open.insert(cf.to_string());
+        }
+        
+        // Add all existing CFs (we must open them to be able to drop obsolete ones later)
+        for cf in &existing_cfs {
+            if cf != "default" { // default is handled automatically
+                all_cfs_to_open.insert(cf.clone());
+            }
+        }
+
         let mut cf_descriptors = Vec::new();
-        for cf_name in &expected_column_families {
+        for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
 
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
 
-            match *cf_name {
+            match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
@@ -202,7 +215,7 @@ impl Store {
                 }
             }
 
-            cf_descriptors.push(ColumnFamilyDescriptor::new(*cf_name, cf_opts));
+            cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
