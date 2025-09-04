@@ -122,12 +122,12 @@ def block_production_loop(
             )
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
-            break
+            return True
         try:
             response = requests.post(RPC_URL, json=block_production_payload).json()
             result = response.get("result")
-            if int(result,0) > current_block_number:
-                current_block_number = int(result,0)
+            if int(result, 0) > current_block_number:
+                current_block_number = int(result, 0)
             else:
                 print(f"⚠️ Node did not generated a new block. Stopping.")
                 send_slack_message_failed(
@@ -135,7 +135,7 @@ def block_production_loop(
                 )
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
-                break
+                return False
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
             print("Error:", e)
@@ -144,7 +144,7 @@ def block_production_loop(
             )
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
-            break
+            return False
         time.sleep(args.block_wait_time)
 
 
@@ -161,11 +161,11 @@ def verification_loop(
                 )
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
-                break
+                return False
             response = requests.post(RPC_URL, json=payload).json()
             result = response.get("result")
             if result is False:
-                block_production_loop(
+                success = block_production_loop(
                     hostname,
                     args,
                     logs_file,
@@ -173,7 +173,7 @@ def verification_loop(
                     start_time,
                     block_production_payload,
                 )
-                break
+                return success
             time.sleep(CHECK_INTERVAL)
         except Exception as e:
             pass
@@ -190,9 +190,11 @@ def execution_loop(
         if args.no_monitor:
             print("No monitor flag set, exiting.")
             break
-        verification_loop(
+        success = verification_loop(
             logs_file, args, hostname, payload, block_production_payload, start_time
         )
+        if not success:
+            break
 
 
 def main():
