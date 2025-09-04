@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757014834619,
+  "lastUpdate": 1757016783926,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12025,6 +12025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170049304723,
             "range": "± 251937295",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13c21542facb0292c44b40b5d2c3b8ac4cd89a36",
+          "message": "refactor(l1, l2): use `BTreeMap` for execution witness (#4313)\n\n**Motivation**\n\nHashing is expensive for zkVMs; using `BTreeMap`s instead of `HashMap`s\nduring stateless execution would avoid some hashing.",
+          "timestamp": "2025-09-04T19:21:06Z",
+          "tree_id": "d465d86c64fb74fc54df6b9305fd8d512fad0640",
+          "url": "https://github.com/lambdaclass/ethrex/commit/13c21542facb0292c44b40b5d2c3b8ac4cd89a36"
+        },
+        "date": 1757016765429,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167517713980,
+            "range": "± 334920354",
             "unit": "ns/iter"
           }
         ]
