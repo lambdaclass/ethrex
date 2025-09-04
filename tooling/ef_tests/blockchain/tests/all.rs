@@ -30,6 +30,7 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::LEVM, Some(SKIPPED_TESTS), backend)
 }
 
+#[cfg(feature = "revm")]
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
 
 #[cfg(any(

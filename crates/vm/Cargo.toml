@@ -43,10 +43,15 @@ path = "./lib.rs"
 
 [features]
 default = []
-c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-blst = ["revm/blst"]
+c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 debug = ["ethrex-levm/debug"]
-revm = ["dep:revm", "dep:revm-inspectors", "dep:revm-primitives"]
+revm = [
+    "dep:revm",
+    "dep:revm-inspectors",
+    "dep:revm-primitives",
+    "revm/blst",
+    "revm/c-kzg",
+]
 
 [lints.clippy]
 unwrap_used = "deny"
