@@ -308,11 +308,11 @@ fn cpu_info() -> Option<String> {
 
 fn ram_info() -> Option<String> {
     match std::env::consts::OS {
-        // Linux: free -h | grep "Mem:" | awk '{print $2}'
+        // Linux: free --giga -h | grep "Mem:" | awk '{print $2}'
         "linux" => {
             let output = Command::new("sh")
                 .arg("-c")
-                .arg("free -h | grep \"Mem:\" | awk '{print $2}'")
+                .arg("free --giga -h | grep \"Mem:\" | awk '{print $2}'")
                 .output()
                 .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
                 .ok()?;
