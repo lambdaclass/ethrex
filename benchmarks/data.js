@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756987429427,
+  "lastUpdate": 1756998110942,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11815,6 +11815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169303204136,
             "range": "± 480297441",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b95f845c7d11ab29198618487efd70ffaf08a2f6",
+          "message": "chore(l1): various improvements on kurtosis networks. (#4285)\n\n**Description**\n- Changed `make localnet` so that when you exit via Ctrl+C it will\nshutdown the network\n- Removed `make hoodi` in favor of having a single localnet and\nconfiguring it through the `KURTOSIS_CONFIG_FILE`\n- Renamed the network configuration files\n- Changed all lighthouse image versions to be the same",
+          "timestamp": "2025-09-04T14:00:31Z",
+          "tree_id": "4714cd26b159acaeeb5119d5473188779679d494",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b95f845c7d11ab29198618487efd70ffaf08a2f6"
+        },
+        "date": 1756998093132,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169058679686,
+            "range": "± 852721121",
             "unit": "ns/iter"
           }
         ]
