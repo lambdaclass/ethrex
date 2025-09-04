@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756985040486,
+  "lastUpdate": 1756987429427,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25628,6 +25628,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.002789059040590406,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f7f402c2e23305e64a1cb53b4c1070ba8a63480f",
+          "message": "chore(l1): change bytecode fetching log to debug (#4293)\n\n**Motivation**\n\nThe \"Failed to get bytecode\" log is expected to happen sometimes (the\npeer might not have the bytecode), we shouldn't log it as an error.\n\n**Description**\n\nChanges the log to debug.",
+          "timestamp": "2025-09-03T19:54:20Z",
+          "tree_id": "5421051a068d44355794c5f2c0282a30a81ea4de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f7f402c2e23305e64a1cb53b4c1070ba8a63480f"
+        },
+        "date": 1756987428059,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0027286462093862817,
             "unit": "Mgas/s"
           }
         ]
