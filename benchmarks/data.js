@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757001587408,
+  "lastUpdate": 1757002155703,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11935,6 +11935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169558037847,
             "range": "± 690447517",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e5a44ecc361808d9ece99e56d788351ee9bb3cea",
+          "message": "style(l1): clarify variable name in apply_updates (#4291)\n\n**Motivation**\n\nWe call the variable hashed_address but it contains code hashes instead\nof address hashes.\n\n**Description**\n\nChanges the variable name to a more descriptive one. No changes in\nfunctionality.",
+          "timestamp": "2025-09-04T15:14:34Z",
+          "tree_id": "1e14f0ccd56af86f7fda359d508bcc2efa72a726",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e5a44ecc361808d9ece99e56d788351ee9bb3cea"
+        },
+        "date": 1757002133956,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 173157305858,
+            "range": "± 584569093",
             "unit": "ns/iter"
           }
         ]
