@@ -7,9 +7,10 @@ use ethrex_common::{
         bloom_from_logs,
     },
 };
-use ethrex_vm::create_contract_address;
 
+use ethrex_rlp::encode::RLPEncode;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 
 use crate::utils::RpcErr;
 
@@ -192,7 +193,7 @@ impl RpcReceiptTxInfo {
             _ => (None, None),
         };
         let (contract_address, to) = match transaction.to() {
-            TxKind::Create => (Some(create_contract_address(from, nonce)), None),
+            TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
             TxKind::Call(addr) => (None, Some(addr)),
         };
         Ok(Self {
@@ -207,6 +208,19 @@ impl RpcReceiptTxInfo {
             blob_gas_used,
         })
     }
+}
+
+/// Calculates the address of a new conctract using the CREATE
+/// opcode as follows:
+///
+/// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
+/// TODO: This was copy-pasted from LEVM but without the internal error. Integrate them.
+pub fn calculate_create_address(sender_address: Address, sender_nonce: u64) -> Address {
+    let mut encoded = Vec::new();
+    (sender_address, sender_nonce).encode(&mut encoded);
+    let mut hasher = Keccak256::new();
+    hasher.update(encoded);
+    Address::from_slice(&hasher.finalize()[12..])
 }
 
 #[cfg(test)]

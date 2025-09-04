@@ -2,6 +2,8 @@ use ethrex_common::types::{ChainConfig, Fork};
 #[cfg(feature = "revm")]
 pub use revm::primitives::SpecId;
 
+use ethrex_common::Address;
+
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
 #[cfg(feature = "revm")]
@@ -34,8 +36,6 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Osaka => SpecId::OSAKA,
     }
 }
-
-use ethrex_common::Address;
 
 #[cfg(feature = "revm")]
 pub fn create_contract_address(from: Address, nonce: u64) -> Address {
