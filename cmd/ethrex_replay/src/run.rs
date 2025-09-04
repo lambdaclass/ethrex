@@ -5,28 +5,38 @@ use ethrex_common::{
 };
 use ethrex_l2_common::prover::ProofFormat;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
+use guest_program::input::ProgramInput;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
 };
-use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    let input = get_input(cache)?;
+    #[cfg(feature = "l2")]
+    let input = get_l2_input(cache)?;
+    #[cfg(not(feature = "l2"))]
+    let input = get_l1_input(cache)?;
+
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+
     Ok(())
 }
 
 pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
-    let input = get_input(cache)?;
+    #[cfg(feature = "l2")]
+    let input = get_l2_input(cache)?;
+    #[cfg(not(feature = "l2"))]
+    let input = get_l1_input(cache)?;
+
     catch_unwind(AssertUnwindSafe(|| {
         ethrex_prover_lib::prove(backend, input, ProofFormat::Groth16)
             .map_err(|e| eyre::Error::msg(e.to_string()))
     }))
     .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
+
     Ok(())
 }
 
@@ -70,47 +80,48 @@ pub async fn run_tx(
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
-/// Returns the input based on whether the feature "l2" is enabled or not.
-/// If the feature is enabled, it includes L2 fields (blob commitment and proof).
-fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
+fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
         witness: db,
         l2_fields,
     } = cache;
 
-    #[cfg(not(feature = "l2"))]
-    {
-        if l2_fields.is_some() {
-            return Err(eyre::eyre!("Unexpected L2 fields in cache"));
-        }
-
-        Ok(ProgramInput {
-            blocks,
-            db,
-            elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            // The L2 specific fields (blob_commitment, blob_proof)
-            // will be filled by Default::default() if the 'l2' feature of
-            // 'zkvm_interface' is active (due to workspace compilation).
-            // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
-            // these fields won't exist in ProgramInput, and ..Default::default()
-            // will correctly not try to fill them.
-            // A better solution would involve rethinking the `l2` feature or the
-            // inclusion of this crate in the workspace.
-            ..Default::default()
-        })
+    if l2_fields.is_some() {
+        return Err(eyre::eyre!("Unexpected L2 fields in cache"));
     }
 
-    #[cfg(feature = "l2")]
-    {
-        let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
+    Ok(ProgramInput {
+        blocks,
+        db,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        // The L2 specific fields (blob_commitment, blob_proof)
+        // will be filled by Default::default() if the 'l2' feature of
+        // 'zkvm_interface' is active (due to workspace compilation).
+        // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
+        // these fields won't exist in ProgramInput, and ..Default::default()
+        // will correctly not try to fill them.
+        // A better solution would involve rethinking the `l2` feature or the
+        // inclusion of this crate in the workspace.
+        ..Default::default()
+    })
+}
 
-        Ok(ProgramInput {
-            blocks,
-            db,
-            elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            blob_commitment: l2_fields.blob_commitment,
-            blob_proof: l2_fields.blob_proof,
-        })
-    }
+#[cfg(feature = "l2")]
+fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
+    let Cache {
+        blocks,
+        witness: db,
+        l2_fields,
+    } = cache;
+
+    let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
+
+    Ok(ProgramInput {
+        blocks,
+        db,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        blob_commitment: l2_fields.blob_commitment,
+        blob_proof: l2_fields.blob_proof,
+    })
 }

@@ -20,8 +20,9 @@ make build-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 This will generate the SP1 ELF program and verification key under:
-- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf`
-- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk`
+
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk`
 
 ### 2. Deploying L1 Contracts
 
@@ -108,7 +109,6 @@ make init-prover-<sp1/risc0> # optional: GPU=true
 > [!IMPORTANT]
 > This guide assumes you have already generated the prover ELF/VK. See: [Generate the prover ELF/VK](#1-generate-the-prover-elfvk)
 
-
 ### Set Up the Aligned Environment
 
 1. Clone the Aligned repository and checkout the currently supported release:
@@ -120,6 +120,7 @@ git checkout tags/v0.17.0
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
+
 ```
 prefunded_accounts: '{
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": { "balance": "100000000000000ETH" },
@@ -131,11 +132,14 @@ prefunded_accounts: '{
 +   "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b": { "balance": "100000000000000ETH" },
      }'
 ```
+
 You can also decrease the seconds per slot in `aligned_layer/network_params.rs`:
+
 ```
 # Number of seconds per slot on the Beacon chain
   seconds_per_slot: 4
 ```
+
 3. Make sure you have the latest version of [kurtosis](https://github.com/kurtosis-tech/kurtosis) installed and start the ethereum-package:
 
 ```
@@ -153,9 +157,12 @@ First, increase the `max_proof_size` in `aligned_layer/config-files/config-batch
 cd aligned_layer
 make batcher_start_ethereum_package
 ```
+
 This is the Aligned component that receives the proofs before sending them in a batch.
+
 > [!Warning]
-> > If you see the following error in the batcher: `[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 > 16777216` modify the file `aligned_layer/crates/batcher/src/lib.rs` at line 435 with the following code:
+> If you see the following error in the batcher: `[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 > 16777216` modify the file `aligned_layer/batcher/aligned-batcher/src/lib.rs` at line 433 with the following code:
+
 ```Rust
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
@@ -182,6 +189,7 @@ make deploy-l1
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
+
 ```
 2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
 ```
@@ -189,6 +197,7 @@ You will see that some deposits fail with the following error:
 This is because not all the accounts are pre-funded from the genesis.
 
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
+
 ```
 cd aligned_layer/crates/cli
 cargo run deposit-to-batcher \
@@ -210,6 +219,7 @@ make init-l2-no-metrics
 
 Suggestion:
 When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
+
 ```
 --committer.commit-time 120000
 ```

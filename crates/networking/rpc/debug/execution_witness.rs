@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -105,7 +105,7 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
-    let mut state_nodes = HashMap::new();
+    let mut state_nodes = BTreeMap::new();
     for node in rpc_witness.state.iter() {
         state_nodes.insert(keccak(node), node.to_vec());
     }

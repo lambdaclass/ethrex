@@ -759,6 +759,22 @@ impl StoreEngineRollup for SQLStore {
             .transpose()
     }
 
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let prover_type: u32 = proof_type.into();
+        self.execute_in_tx(
+            vec![(
+                "DELETE FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
+                (batch_number, prover_type).into_params()?,
+            )],
+            None,
+        )
+        .await
+    }
+
     async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
         let mut rows = self.query("SELECT * from precommit_privileged", ()).await?;
         if let Some(row) = rows.next().await? {

@@ -13,7 +13,7 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -735,13 +735,15 @@ pub struct ProverClientOptions {
     )]
     pub backend: Backend,
     #[arg(
-        long = "proof-coordinator",
+        long = "proof-coordinators",
         value_name = "URL",
+        num_args = 1..,
+        required = true,
         env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
         help_heading = "Prover client options",
-        help = "URL of the sequencer's proof coordinator"
+        help = "URLs of all the sequencers' proof coordinator"
     )]
-    pub proof_coordinator_endpoint: Url,
+    pub proof_coordinator_endpoints: Vec<Url>,
     #[arg(
         long = "proving-time",
         value_name = "PROVING_TIME",
@@ -766,7 +768,7 @@ impl From<ProverClientOptions> for ProverConfig {
     fn from(config: ProverClientOptions) -> Self {
         Self {
             backend: config.backend,
-            proof_coordinator: config.proof_coordinator_endpoint,
+            proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
         }
     }
@@ -775,7 +777,9 @@ impl From<ProverClientOptions> for ProverConfig {
 impl Default for ProverClientOptions {
     fn default() -> Self {
         Self {
-            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            proof_coordinator_endpoints: vec![
+                Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
             backend: Backend::Exec,

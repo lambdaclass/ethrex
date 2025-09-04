@@ -13,11 +13,14 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_risc0_vk, get_sp1_vk};
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
@@ -76,12 +79,8 @@ impl L1ProofVerifier {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
-        let sp1_vk = eth_client
-            .get_sp1_vk(committer_cfg.on_chain_proposer_address)
-            .await?;
-        let risc0_vk = eth_client
-            .get_risc0_vk(committer_cfg.on_chain_proposer_address)
-            .await?;
+        let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
+        let risc0_vk = get_risc0_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
 
         Ok(Self {
             eth_client,
@@ -109,10 +108,8 @@ impl L1ProofVerifier {
     }
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
-        let first_batch_to_verify = 1 + self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let first_batch_to_verify =
+            1 + get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
@@ -215,19 +212,13 @@ impl L1ProofVerifier {
 
             batch_number += 1;
         }
+        let last_batch_number = batch_number - 1;
 
         if public_inputs_list.is_empty() {
             return Ok(None);
         }
 
-        let num_batches: u64 = public_inputs_list.len().try_into().map_err(|_| {
-            ProofVerifierError::InternalError("Failed to convert num_batches into u64".to_string())
-        })?;
-        info!(
-            "Sending verify tx for batches {} to {}",
-            first_batch_number,
-            first_batch_number + num_batches - 1
-        );
+        info!("Sending verify tx for batches {first_batch_number} to {last_batch_number}",);
 
         let calldata_values = [
             Value::Uint(U256::from(first_batch_number)),
@@ -238,17 +229,32 @@ impl L1ProofVerifier {
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.l1_signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid ALIGNED proof") {
+                warn!("Deleting invalid Aligned proofs");
+                for batch_number in first_batch_number..=last_batch_number {
+                    for proof_type in &self.needed_proof_types {
+                        self.rollup_store
+                            .delete_proof_by_batch_and_type(batch_number, *proof_type)
+                            .await?;
+                    }
+                }
+            }
+        }
+        let verify_tx_hash = send_verify_tx_result?;
 
         // store the verify transaction hash for each batch that was aggregated.
-        for i in 0..num_batches {
-            let batch_number = first_batch_number + i;
+        for batch_number in first_batch_number..=last_batch_number {
             self.rollup_store
                 .store_verify_tx_by_batch(batch_number, verify_tx_hash)
                 .await?;

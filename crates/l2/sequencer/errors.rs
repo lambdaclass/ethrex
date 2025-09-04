@@ -269,6 +269,8 @@ pub enum CommitterError {
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -365,4 +367,8 @@ pub enum MonitorError {
     RPCListEmpty,
     #[error("Error converting batch window")]
     BatchWindow,
+    #[error("Error while parsing private key")]
+    DecodingError(String),
+    #[error("Error parsing secret key")]
+    FromHexError(#[from] hex::FromHexError),
 }

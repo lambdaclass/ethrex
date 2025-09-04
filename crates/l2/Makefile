@@ -149,7 +149,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
-	pkill -x ethrex || exit 0
+	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
@@ -177,15 +177,18 @@ build-prover-exec:
 
 init-prover-sp1:
 	cargo run --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
-	--proof-coordinator tcp://127.0.0.1:3900
+	--proof-coordinator tcp://127.0.0.1:3900 \
+	--backend sp1
 
 init-prover-risc0:
 	cargo run --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
-	--proof-coordinator tcp://127.0.0.1:3900
+	--proof-coordinator tcp://127.0.0.1:3900 \
+	--backend risc0
 
 init-prover-exec:
 	cargo run --release --features "$(GPU?)" --manifest-path ../../Cargo.toml -- \
-	--proof-coordinator tcp://127.0.0.1:3900
+	--proof-coordinator tcp://127.0.0.1:3900 \
+	--backend exec
 
 # ==============================================================================
 # TEE

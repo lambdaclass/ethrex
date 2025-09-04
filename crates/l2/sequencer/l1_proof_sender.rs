@@ -6,14 +6,17 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::{
     configs::AlignedConfig,
@@ -26,7 +29,10 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    common::{
+        errors,
+        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    },
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -113,10 +119,8 @@ impl L1ProofSender {
     }
 
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
-        let last_verified_batch = self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_verified_batch =
+            get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_send = if self.aligned_mode {
             let last_sent_batch = self.rollup_store.get_latest_sent_batch_proof().await?;
             std::cmp::max(last_sent_batch, last_verified_batch) + 1
@@ -124,10 +128,8 @@ impl L1ProofSender {
             last_verified_batch + 1
         };
 
-        let last_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
@@ -208,8 +210,6 @@ impl L1ProofSender {
                 _ => continue,
             };
 
-            info!(?prover_type, ?batch_number, "Submitting proof to Aligned");
-
             let Some(proof) = batch_proof.compressed() else {
                 return Err(ProofSenderError::AlignedWrongProofFormat);
             };
@@ -235,14 +235,25 @@ impl L1ProofSender {
                 pub_input,
             };
 
-            submit(
+            info!(?prover_type, ?batch_number, "Submitting proof to Aligned");
+            let aligned_verification_result = submit(
                 self.network.clone(),
                 &verification_data,
                 fee_estimation,
                 wallet.clone(),
                 nonce,
             )
-            .await?;
+            .await;
+
+            if let Err(errors::SubmitError::InvalidProof(_)) = aligned_verification_result.as_ref()
+            {
+                warn!("Proof is invalid, will be deleted");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, prover_type)
+                    .await?;
+            }
+
+            aligned_verification_result?;
 
             nonce = nonce
                 .checked_add(1.into())
@@ -302,13 +313,36 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid TDX proof") {
+                warn!("Deleting invalid TDX proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
+                    .await?;
+            } else if error.contains("Invalid RISC0 proof") {
+                warn!("Deleting invalid RISC0 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
+                    .await?;
+            } else if error.contains("Invalid SP1 proof") {
+                warn!("Deleting invalid SP1 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            }
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)

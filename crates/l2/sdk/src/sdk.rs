@@ -1,23 +1,29 @@
-use std::ops::Add;
-use std::{fs::read_to_string, path::Path};
-
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::TxType;
-use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::send_generic_transaction;
-use ethrex_l2_rpc::{
-    clients::send_tx_bump_gas_exponential_backoff,
-    signer::{LocalSigner, Signer},
+use ethereum_types::{H160, H256, U256};
+use ethrex_common::{
+    Address,
+    types::{
+        AccessListEntry, BlobsBundle, EIP1559Transaction, GenericTransaction, TxKind, TxType,
+        WrappedEIP4844Transaction,
+    },
 };
-use ethrex_rpc::clients::eth::L1MessageProof;
+use ethrex_l2_common::{calldata::Value, l1_messages::L1MessageProof};
+use ethrex_l2_rpc::{
+    clients::get_message_proof,
+    signer::{LocalSigner, Signable, Signer},
+};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
-
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ops::{Add, Div};
+use std::str::FromStr;
+use std::{fs::read_to_string, path::Path};
+use tracing::{error, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -27,6 +33,8 @@ pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 // Reexport the contracts module
 #[doc(inline)]
 pub use ethrex_sdk_contract_utils::*;
+
+use calldata::from_hex_string_to_h256_array;
 
 // 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -117,20 +125,20 @@ pub async fn transfer(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let tx = client
-        .build_generic_tx(
-            TxType::EIP1559,
-            to,
-            from,
-            Default::default(),
-            Overrides {
-                value: Some(amount),
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        to,
+        from,
+        Default::default(),
+        Overrides {
+            value: Some(amount),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let signer = LocalSigner::new(*private_key).into();
     send_generic_transaction(client, tx, &signer).await
@@ -159,21 +167,21 @@ pub async fn withdraw(
     from_pk: SecretKey,
     proposer_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    let withdraw_transaction = proposer_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            COMMON_BRIDGE_L2_ADDRESS,
-            from,
-            Bytes::from(encode_calldata(
-                L2_WITHDRAW_SIGNATURE,
-                &[Value::Address(from)],
-            )?),
-            Overrides {
-                value: Some(amount),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let withdraw_transaction = build_generic_tx(
+        proposer_client,
+        TxType::EIP1559,
+        COMMON_BRIDGE_L2_ADDRESS,
+        from,
+        Bytes::from(encode_calldata(
+            L2_WITHDRAW_SIGNATURE,
+            &[Value::Address(from)],
+        )?),
+        Overrides {
+            value: Some(amount),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let signer = LocalSigner::new(from_pk).into();
 
@@ -211,18 +219,18 @@ pub async fn claim_withdraw(
         hex::encode(&claim_withdrawal_data)
     );
 
-    let claim_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
-            from,
-            claim_withdrawal_data.into(),
-            Overrides {
-                from: Some(from),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let claim_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+        from,
+        claim_withdrawal_data.into(),
+        Overrides {
+            from: Some(from),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let signer = LocalSigner::new(from_pk).into();
 
@@ -264,18 +272,18 @@ pub async fn claim_erc20withdraw(
         hex::encode(&claim_withdrawal_data)
     );
 
-    let claim_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
-            from,
-            claim_withdrawal_data.into(),
-            Overrides {
-                from: Some(from),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let claim_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+        from,
+        claim_withdrawal_data.into(),
+        Overrides {
+            from: Some(from),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     send_generic_transaction(eth_client, claim_tx, from_signer).await
 }
@@ -301,18 +309,18 @@ pub async fn deposit_erc20(
 
     let deposit_data = encode_calldata(DEPOSIT_ERC20_SIGNATURE, &calldata_values)?;
 
-    let mut deposit_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
-            from,
-            deposit_data.into(),
-            Overrides {
-                from: Some(from),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let mut deposit_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+        from,
+        deposit_data.into(),
+        Overrides {
+            from: Some(from),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     deposit_tx.gas = deposit_tx.gas.map(|gas| gas * 2); // tx reverts in some cases otherwise
 
@@ -333,27 +341,6 @@ where
 {
     let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
-}
-
-pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, EthClientError> {
-    let public_key = secret_key
-        .public_key(secp256k1::SECP256K1)
-        .serialize_uncompressed();
-    let hash = keccak(&public_key[1..]);
-
-    // Get the last 20 bytes of the hash
-    let address_bytes: [u8; 20] = hash
-        .as_ref()
-        .get(12..32)
-        .ok_or(EthClientError::Custom(
-            "Failed to get_address_from_secret_key: error slicing address_bytes".to_owned(),
-        ))?
-        .try_into()
-        .map_err(|err| {
-            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {err}"))
-        })?;
-
-    Ok(Address::from(address_bytes))
 }
 
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
@@ -382,7 +369,43 @@ pub enum DeployError {
     ProxyBytecodeNotFound,
 }
 
-pub async fn deploy_contract(
+pub async fn create_deploy(
+    client: &EthClient,
+    deployer: &Signer,
+    init_code: Bytes,
+    overrides: Overrides,
+) -> Result<(H256, Address), EthClientError> {
+    let mut deploy_overrides = overrides;
+    deploy_overrides.to = Some(TxKind::Create);
+
+    let deploy_tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        Address::zero(),
+        deployer.address(),
+        init_code,
+        deploy_overrides,
+    )
+    .await?;
+    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
+
+    let nonce = client
+        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let mut encode = vec![];
+    (deployer.address(), nonce).encode(&mut encode);
+
+    //Taking the last 20bytes so it matches an H160 == Address length
+    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
+        EthClientError::Custom("Failed to get deployed_address".to_owned()),
+    )?);
+
+    wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
+
+    Ok((deploy_tx_hash, deployed_address))
+}
+
+pub async fn create2_deploy_from_path(
     constructor_args: &[u8],
     contract_path: &Path,
     deployer: &Signer,
@@ -390,11 +413,10 @@ pub async fn deploy_contract(
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
-    deploy_contract_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
+    create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
-/// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
-pub async fn deploy_contract_from_bytecode(
+pub async fn create2_deploy_from_bytecode(
     constructor_args: &[u8],
     bytecode: &[u8],
     deployer: &Signer,
@@ -444,7 +466,7 @@ pub async fn deploy_with_proxy(
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
-        deploy_contract(&[], contract_path, deployer, salt, eth_client).await?;
+        create2_deploy_from_path(&[], contract_path, deployer, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) =
         deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
@@ -465,7 +487,7 @@ pub async fn deploy_with_proxy_from_bytecode(
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
-        deploy_contract_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
+        create2_deploy_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) =
         deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
@@ -493,19 +515,19 @@ async fn create2_deploy(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let deploy_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            DETERMINISTIC_CREATE2_ADDRESS,
-            deployer.address(),
-            calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let deploy_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        DETERMINISTIC_CREATE2_ADDRESS,
+        deployer.address(),
+        calldata.into(),
+        Overrides {
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let deploy_tx_hash =
         send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
@@ -547,19 +569,19 @@ pub async fn initialize_contract(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let initialize_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            contract_address,
-            initializer.address(),
-            initialize_calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let initialize_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        contract_address,
+        initializer.address(),
+        initialize_calldata.into(),
+        Overrides {
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let initialize_tx_hash =
         send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer).await?;
@@ -569,19 +591,24 @@ pub async fn initialize_contract(
 
 pub async fn call_contract(
     client: &EthClient,
-    private_key: &SecretKey,
+    signer: &Signer,
     to: Address,
     signature: &str,
     parameters: Vec<Value>,
 ) -> Result<H256, EthClientError> {
     let calldata = encode_calldata(signature, &parameters)?.into();
-    let signer: Signer = Signer::Local(LocalSigner::new(*private_key));
     let from = signer.address();
-    let tx = client
-        .build_generic_tx(TxType::EIP1559, to, from, calldata, Default::default())
-        .await?;
+    let tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        to,
+        from,
+        calldata,
+        Default::default(),
+    )
+    .await?;
 
-    let tx_hash = send_generic_transaction(client, tx, &signer).await?;
+    let tx_hash = send_generic_transaction(client, tx, signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)
@@ -603,4 +630,424 @@ pub fn get_address_alias(address: Address) -> Address {
     let address = U256::from_big_endian(&address.to_fixed_bytes());
     let alias = address.add(U256::from_big_endian(&ADDRESS_ALIASING.to_fixed_bytes()));
     H160::from_slice(&alias.to_big_endian()[12..32])
+}
+
+const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
+
+pub async fn send_generic_transaction(
+    client: &EthClient,
+    generic_tx: GenericTransaction,
+    signer: &Signer,
+) -> Result<H256, EthClientError> {
+    let mut encoded_tx = vec![generic_tx.r#type.into()];
+    match generic_tx.r#type {
+        TxType::EIP1559 => {
+            let tx: EIP1559Transaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            signed_tx.encode(&mut encoded_tx);
+        }
+        TxType::EIP4844 => {
+            let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
+            tx.tx
+                .sign_inplace(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            tx.encode(&mut encoded_tx);
+        }
+        _ => {
+            return Err(EthClientError::Custom(
+                "Unsupported transaction type".to_string(),
+            ));
+        }
+    };
+    client.send_raw_transaction(encoded_tx.as_slice()).await
+}
+
+pub async fn send_tx_bump_gas_exponential_backoff(
+    client: &EthClient,
+    mut tx: GenericTransaction,
+    signer: &Signer,
+) -> Result<H256, EthClientError> {
+    let mut number_of_retries = 0;
+
+    'outer: while number_of_retries < client.max_number_of_retries {
+        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+            let (Some(tx_max_fee), Some(tx_max_priority_fee)) =
+                (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+            else {
+                return Err(EthClientError::Custom(
+                    "Invalid transaction: max_fee_per_gas or max_priority_fee_per_gas is missing"
+                        .to_string(),
+                ));
+            };
+
+            if *tx_max_fee > max_fee_per_gas {
+                *tx_max_fee = max_fee_per_gas;
+
+                // Ensure that max_priority_fee_per_gas does not exceed max_fee_per_gas
+                if *tx_max_priority_fee > *tx_max_fee {
+                    *tx_max_priority_fee = *tx_max_fee;
+                }
+
+                warn!(
+                    "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                );
+            }
+        }
+
+        // Check blob gas fees only for EIP4844 transactions
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
+            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
+                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+                    warn!(
+                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+                    );
+                }
+            }
+        }
+        let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
+                    client.max_number_of_retries
+                );
+            })
+        else {
+            bump_gas_generic_tx(&mut tx, 30);
+            number_of_retries += 1;
+            continue;
+        };
+
+        if number_of_retries > 0 {
+            warn!(
+                "Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}",
+                client.max_number_of_retries
+            );
+        }
+
+        let mut receipt = client.get_transaction_receipt(tx_hash).await?;
+
+        let mut attempt = 1;
+
+        #[allow(clippy::as_conversions)]
+        let attempts_to_wait_in_seconds = client
+            .backoff_factor
+            .pow(number_of_retries as u32)
+            .clamp(client.min_retry_delay, client.max_retry_delay);
+        while receipt.is_none() {
+            if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
+                // We waited long enough for the receipt but did not find it, bump gas
+                // and go to the next one.
+                bump_gas_generic_tx(&mut tx, 30);
+
+                number_of_retries += 1;
+                continue 'outer;
+            }
+
+            attempt += 1;
+
+            tokio::time::sleep(std::time::Duration::from_secs(
+                WAIT_TIME_FOR_RECEIPT_SECONDS,
+            ))
+            .await;
+
+            receipt = client.get_transaction_receipt(tx_hash).await?;
+        }
+
+        return Ok(tx_hash);
+    }
+
+    Err(EthClientError::TimeoutError)
+}
+
+fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
+    if let (Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) =
+        (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+    {
+        *max_fee_per_gas = (*max_fee_per_gas * (100 + bump_percentage)) / 100;
+        *max_priority_fee_per_gas = (*max_priority_fee_per_gas * (100 + bump_percentage)) / 100;
+    }
+    if let Some(max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
+        let factor = 1 + (bump_percentage / 100) * 10;
+        *max_fee_per_blob_gas = max_fee_per_blob_gas
+            .saturating_mul(U256::from(factor))
+            .div(10);
+    }
+}
+
+/// Build a GenericTransaction with the given parameters.
+/// Either `overrides.nonce` or `overrides.from` must be provided.
+/// If `overrides.gas_price`, `overrides.chain_id` or `overrides.gas_price`
+/// are not provided, the client will fetch them from the network.
+/// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
+pub async fn build_generic_tx(
+    client: &EthClient,
+    r#type: TxType,
+    to: Address,
+    from: Address,
+    calldata: Bytes,
+    overrides: Overrides,
+) -> Result<GenericTransaction, EthClientError> {
+    match r#type {
+        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged => {}
+        TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
+            return Err(EthClientError::Custom(
+                "Unsupported tx type in build_generic_tx".to_owned(),
+            ));
+        }
+    }
+    let mut tx = GenericTransaction {
+        r#type,
+        to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
+        chain_id: Some(if let Some(chain_id) = overrides.chain_id {
+            chain_id
+        } else {
+            client.get_chain_id().await?.try_into().map_err(|_| {
+                EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+            })?
+        }),
+        nonce: Some(get_nonce_from_overrides_or_rpc(client, &overrides, from).await?),
+        max_fee_per_gas: Some(
+            get_fee_from_override_or_get_gas_price(client, overrides.max_fee_per_gas).await?,
+        ),
+        max_priority_fee_per_gas: Some(
+            priority_fee_from_override_or_rpc(client, overrides.max_priority_fee_per_gas).await?,
+        ),
+        max_fee_per_blob_gas: overrides.gas_price_per_blob,
+        value: overrides.value.unwrap_or_default(),
+        input: calldata,
+        access_list: overrides
+            .access_list
+            .iter()
+            .map(AccessListEntry::from)
+            .collect(),
+        from,
+        ..Default::default()
+    };
+    tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
+    if let Some(blobs_bundle) = &overrides.blobs_bundle {
+        tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        add_blobs_to_generic_tx(&mut tx, blobs_bundle);
+    }
+    tx.gas = Some(match overrides.gas_limit {
+        Some(gas) => gas,
+        None => client.estimate_gas(tx.clone()).await?,
+    });
+
+    Ok(tx)
+}
+
+pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {
+    tx.blobs = bundle
+        .blobs
+        .iter()
+        .map(|blob| Bytes::copy_from_slice(blob))
+        .collect()
+}
+
+async fn get_nonce_from_overrides_or_rpc(
+    client: &EthClient,
+    overrides: &Overrides,
+    address: Address,
+) -> Result<u64, EthClientError> {
+    if let Some(nonce) = overrides.nonce {
+        return Ok(nonce);
+    }
+    client
+        .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+}
+
+async fn get_fee_from_override_or_get_gas_price(
+    client: &EthClient,
+    maybe_gas_fee: Option<u64>,
+) -> Result<u64, EthClientError> {
+    if let Some(gas_fee) = maybe_gas_fee {
+        return Ok(gas_fee);
+    }
+    client
+        .get_gas_price()
+        .await?
+        .try_into()
+        .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
+}
+
+async fn priority_fee_from_override_or_rpc(
+    client: &EthClient,
+    maybe_priority_fee: Option<u64>,
+) -> Result<u64, EthClientError> {
+    if let Some(priority_fee) = maybe_priority_fee {
+        return Ok(priority_fee);
+    }
+
+    if let Ok(priority_fee) = client.get_max_priority_fee().await {
+        if let Ok(priority_fee_u64) = priority_fee.try_into() {
+            return Ok(priority_fee_u64);
+        }
+    }
+
+    get_fee_from_override_or_get_gas_price(client, None).await
+}
+
+pub async fn wait_for_message_proof(
+    client: &EthClient,
+    transaction_hash: H256,
+    max_retries: u64,
+) -> Result<Vec<L1MessageProof>, EthClientError> {
+    let mut message_proof = get_message_proof(client, transaction_hash).await?;
+    let mut r#try = 1;
+    while message_proof.is_none() {
+        println!(
+            "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
+        );
+
+        if max_retries == r#try {
+            return Err(EthClientError::Custom(format!(
+                "L1Message proof for tx {transaction_hash:#x} not found after {max_retries} retries"
+            )));
+        }
+        r#try += 1;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        message_proof = get_message_proof(client, transaction_hash).await?;
+    }
+    message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
+}
+
+pub async fn get_last_committed_batch(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
+}
+
+pub async fn get_last_verified_batch(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
+}
+
+pub async fn get_sp1_vk(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
+}
+
+pub async fn get_risc0_vk(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    _call_bytes32_variable(
+        client,
+        b"RISC0_VERIFICATION_KEY()",
+        on_chain_proposer_address,
+    )
+    .await
+}
+
+pub async fn get_last_fetched_l1_block(
+    client: &EthClient,
+    common_bridge_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
+}
+
+pub async fn get_pending_privileged_transactions(
+    client: &EthClient,
+    common_bridge_address: Address,
+) -> Result<Vec<H256>, EthClientError> {
+    let response = _generic_call(
+        client,
+        b"getPendingTransactionHashes()",
+        common_bridge_address,
+    )
+    .await?;
+    from_hex_string_to_h256_array(&response)
+}
+
+async fn _generic_call(
+    client: &EthClient,
+    selector: &[u8],
+    contract_address: Address,
+) -> Result<String, EthClientError> {
+    let selector = keccak(selector)
+        .as_bytes()
+        .get(..4)
+        .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
+        .to_vec();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&selector);
+
+    let leading_zeros = 32 - ((calldata.len() - 4) % 32);
+    calldata.extend(vec![0; leading_zeros]);
+
+    let hex_string = client
+        .call(contract_address, calldata.into(), Overrides::default())
+        .await?;
+
+    Ok(hex_string)
+}
+
+async fn _call_u64_variable(
+    client: &EthClient,
+    selector: &[u8],
+    contract_address: Address,
+) -> Result<u64, EthClientError> {
+    let hex_string = _generic_call(client, selector, contract_address).await?;
+
+    let value = U256::from_str_radix(hex_string.trim_start_matches("0x"), 16)?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
+        })?;
+
+    Ok(value)
+}
+
+async fn _call_address_variable(
+    eth_client: &EthClient,
+    selector: &[u8],
+    on_chain_proposer_address: Address,
+) -> Result<Address, EthClientError> {
+    let hex_string = _generic_call(eth_client, selector, on_chain_proposer_address).await?;
+
+    let hex_str = &hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip prefix from request.".to_owned(),
+    ))?[24..]; // Get the needed bytes
+
+    let value = Address::from_str(hex_str)
+        .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
+    Ok(value)
+}
+
+async fn _call_bytes32_variable(
+    client: &EthClient,
+    selector: &[u8],
+    contract_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    let hex_string = _generic_call(client, selector, contract_address).await?;
+
+    let hex = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip '0x' prefix from hex string".to_owned(),
+    ))?;
+
+    let bytes = hex::decode(hex)
+        .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
+
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
+
+    Ok(arr)
 }

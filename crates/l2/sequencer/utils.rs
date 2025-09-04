@@ -1,8 +1,10 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
-use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
+use ethrex_l2_sdk::{
+    build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
+};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides},
@@ -47,19 +49,19 @@ pub async fn send_verify_tx(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let verify_tx = eth_client
-        .build_generic_tx(
-            TxType::EIP1559,
-            on_chain_proposer_address,
-            l1_signer.address(),
-            encoded_calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let verify_tx = build_generic_tx(
+        eth_client,
+        TxType::EIP1559,
+        on_chain_proposer_address,
+        l1_signer.address(),
+        encoded_calldata.into(),
+        Overrides {
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let verify_tx_hash =
         send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer).await?;
@@ -124,9 +126,8 @@ pub async fn node_is_up_to_date<E>(
 where
     E: From<EthClientError> + From<RollupStoreError>,
 {
-    let last_committed_batch_number = eth_client
-        .get_last_committed_batch(on_chain_proposer_address)
-        .await?;
+    let last_committed_batch_number =
+        get_last_committed_batch(eth_client, on_chain_proposer_address).await?;
 
     let is_up_to_date = rollup_storage
         .contains_batch(&last_committed_batch_number)
