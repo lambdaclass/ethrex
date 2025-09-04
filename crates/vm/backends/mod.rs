@@ -5,9 +5,9 @@ pub mod revm;
 #[cfg(feature = "revm")]
 use self::revm::db::{EvmState, evm_state};
 #[cfg(feature = "revm")]
-use revm::REVM;
-#[cfg(feature = "revm")]
 use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
+#[cfg(feature = "revm")]
+use revm::REVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
@@ -34,9 +34,7 @@ pub struct Evm {
     pub state: EvmState,
 
     // LEVM build
-    #[cfg(not(feature = "revm"))]
     pub db: GeneralizedDatabase,
-    #[cfg(not(feature = "revm"))]
     pub vm_type: VMType,
 }
 
@@ -63,7 +61,9 @@ impl Evm {
         #[cfg(feature = "revm")]
         {
             Evm {
-                state: evm_state(wrapped_db),
+                state: evm_state(wrapped_db.clone()),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+                vm_type: VMType::L1,
             }
         }
 

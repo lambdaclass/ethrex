@@ -3263,7 +3263,6 @@ dependencies = [
  "datatest-stable",
  "ethrex-blockchain",
  "ethrex-common",
- "ethrex-l2",
  "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",

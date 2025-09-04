@@ -24,7 +24,6 @@ use ethrex_metrics::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmError};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
@@ -274,11 +273,7 @@ fn get_account_diffs_in_tx(
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
-    
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
 
-    #[cfg(not(feature = "revm"))]
     {
         let db = &context.vm.db;
         let transaction_backup = db.get_tx_backup().map_err(|e| {
