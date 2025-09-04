@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757017409210,
+  "lastUpdate": 1757019738381,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25980,6 +25980,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00105,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "34144fb33998122c8a8d5c5222fcf488a515d431",
+          "message": "feat(l1): chunk the download of headers (#4310)\n\n**Motivation**\n\nFor large networks such as mainnet, downloading all the headers at once\ncauses high RAM usage since the headers are kept in memory until they're\nall downloaded.\n\n**Description**\n\nWe download them in batches (of 500k, should use ~300MB). Since the sync\nhead number is not known in the main sync loop, the cut is made in the\nheader fetching function.",
+          "timestamp": "2025-09-04T15:06:23Z",
+          "tree_id": "1bd18e69810ec824d9ee7006c6d384e676664d1a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/34144fb33998122c8a8d5c5222fcf488a515d431"
+        },
+        "date": 1757019737677,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0027585218978102193,
             "unit": "Mgas/s"
           }
         ]
