@@ -154,12 +154,66 @@ pub enum Command {
             requires("contract_call_options")
         )]
         pause_contracts: bool,
-        #[command(flatten)]
-        contract_call_options: Option<ContractCallOptions>,
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            help = "URL of the L1 RPC"
+        )]
+        rpc_url: Url,
+        #[arg(help = "The address of the OnChainProposer contract")]
+        contract_address: Address,
+        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner", help_heading  = "Contract owner account options")]
+        owner_private_key: Option<SecretKey>,
+        #[arg(
+            long = "owner-remote-signer-url",
+            value_name = "URL",
+            env = "ETHREX_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            requires = "remote_signer_public_key",
+            conflicts_with = "private_key",
+            help_heading = "Contract owner account options"
+        )]
+        owner_remote_signer_url: Option<Url>,
+        #[arg(
+            long = "owner-remote-signer-public-key",
+            value_name = "PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            requires = "remote_signer_url",
+            conflicts_with = "private_key",
+            help_heading  = "Contract owner account options"
+        )]
+        owner_remote_signer_public_key: Option<PublicKey>,
+        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the sequencer", help_heading  = "Sequencer account options")]
+        sequencer_private_key: Option<SecretKey>,
+        #[arg(
+            long = "sequencer-remote-signer-url",
+            value_name = "URL",
+            env = "ETHREX_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            requires = "remote_signer_public_key",
+            conflicts_with = "private_key",
+            help_heading = "Sequencer account options"
+        )]
+        sequencer_remote_signer_url: Option<Url>,
+        #[arg(
+            long = "sequencer-remote-signer-public-key",
+            value_name = "PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            requires = "remote_signer_url",
+            conflicts_with = "private_key",
+            help_heading  = "Sequencer account options"
+        )]
+        sequencer_remote_signer_public_key: Option<PublicKey>,
         #[arg(
             default_value_t = false,
             help = "If enabled the command will also delete the blocks from the Blockchain database",
-            long = "delete-blocks"
+            long = "delete-blocks",
+            help_heading = "Delete blocks options"
         )]
         delete_blocks: bool,
         #[arg(
@@ -169,6 +223,7 @@ pub enum Command {
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
             required_if_eq("delete_blocks", "true"),
+            help_heading  = "Delete blocks options"
         )]
         network: Option<Network>,
     },
@@ -470,22 +525,47 @@ impl Command {
                 batch,
                 datadir,
                 network,
-                contract_call_options: opts,
+                contract_address,
+                owner_private_key,
+                owner_remote_signer_public_key,
+                owner_remote_signer_url,
+                sequencer_private_key,
+                sequencer_remote_signer_public_key,
+                sequencer_remote_signer_url,
+                rpc_url,
                 delete_blocks,
                 pause_contracts,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
-
+                let owner_contract_options = ContractCallOptions {
+                    contract_address,
+                    private_key: owner_private_key,
+                    remote_signer_public_key: owner_remote_signer_public_key,
+                    remote_signer_url: owner_remote_signer_url,
+                    rpc_url: rpc_url.clone(),
+                };
+                let sequencer_contract_options = if sequencer_private_key.is_some()
+                    || sequencer_remote_signer_public_key.is_some()
+                {
+                    Some(ContractCallOptions {
+                        contract_address,
+                        private_key: sequencer_private_key,
+                        remote_signer_public_key: sequencer_remote_signer_public_key,
+                        remote_signer_url: sequencer_remote_signer_url,
+                        rpc_url,
+                    })
+                } else {
+                    None
+                };
                 if pause_contracts {
                     info!("Pausing OnChainProposer contract");
-                    opts.as_ref()
-                        .expect("ContractCallOptions is required with pause_contracts")
+                    owner_contract_options
                         .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
                         .await?;
                     info!("Paused OnChainProposer contract");
                 }
-                if let Some(contract_opts) = opts.as_ref() {
+                if let Some(contract_opts) = sequencer_contract_options.as_ref() {
                     info!("Doing revert on OnChainProposer...");
                     contract_opts
                         .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
@@ -504,7 +584,7 @@ impl Command {
 
                 if pause_contracts {
                     info!("Unpausing OnChainProposer contract");
-                    opts.expect("ContractCallOptions is required with pause_contracts")
+                    owner_contract_options
                         .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
                         .await?;
                     info!("Unpaused OnChainProposer contract");
