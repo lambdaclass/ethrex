@@ -18,7 +18,6 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use local_ip_address::{local_ip, local_ipv6};
 use secp256k1::SecretKey;
 use std::{
     collections::BTreeMap,
@@ -100,38 +99,16 @@ pub fn peer_table() -> Kademlia {
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let local_ipv4 = local_ip().ok();
-    let local_ipv6 = local_ipv6().ok();
-
-    let udp_socket_v4 = match local_ipv4 {
-        Some(ip) => Some(Arc::new(
-            UdpSocket::bind(SocketAddr::new(ip, context.local_node.udp_port))
-                .await
-                .expect("Failed to bind udp socket"),
-        )),
-        None => None,
-    };
-
-    let udp_socket_v6 = match local_ipv6 {
-        Some(ip) => Some(Arc::new(
-            UdpSocket::bind(SocketAddr::new(ip, context.local_node.udp_port))
-                .await
-                .expect("Failed to bind udp socket"),
-        )),
-        None => None,
-    };
-
-    let udp_socket = match (udp_socket_v4.clone(), udp_socket_v6.clone()) {
-        (Some(v4), Some(_)) => v4,
-        (Some(v4), None) => v4,
-        (None, Some(v6)) => v6,
-        (None, None) => panic!("No valid local IP address found for UDP socket"),
-    };
+    let udp_socket = Arc::new(
+        UdpSocket::bind(context.local_node.udp_addr())
+            .await
+            .expect("Failed to bind udp socket"),
+    );
 
     DiscoveryServer::spawn(
         context.local_node.clone(),
         context.signer,
-        udp_socket,
+        udp_socket.clone(),
         context.table.clone(),
         bootnodes,
     )
@@ -143,8 +120,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     DiscoverySideCar::spawn(
         context.local_node.clone(),
         context.signer,
-        udp_socket_v4,
-        udp_socket_v6,
+        udp_socket,
         context.table.clone(),
     )
     .await

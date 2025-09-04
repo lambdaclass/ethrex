@@ -37,8 +37,7 @@ pub struct DiscoverySideCar {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    udp_socket_v4: Option<Arc<UdpSocket>>,
-    udp_socket_v6: Option<Arc<UdpSocket>>,
+    udp_socket: Arc<UdpSocket>,
 
     /// Interval between revalidation checks.
     revalidation_check_interval: Duration,
@@ -66,16 +65,14 @@ impl DiscoverySideCar {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SecretKey,
-        udp_socket_v4: Option<Arc<UdpSocket>>,
-        udp_socket_v6: Option<Arc<UdpSocket>>,
+        udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
             local_node_record,
             signer,
-            udp_socket_v4,
-            udp_socket_v6,
+            udp_socket,
             kademlia,
 
             revalidation_check_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
@@ -89,43 +86,6 @@ impl DiscoverySideCar {
             target_peers: 100,
             target_contacts: 100_000,
         }
-    }
-
-    async fn send_message(&self, node: &Node, buf: &[u8]) -> Result<(), DiscoverySideCarError> {
-        if let Some(udp_socket) = &self.udp_socket_v4 {
-            if node.udp_addr().is_ipv4() {
-                let bytes_sent = udp_socket
-                    .send_to(buf, node.udp_addr())
-                    .await
-                    .map_err(DiscoverySideCarError::MessageSendFailure)?;
-
-                if bytes_sent != buf.len() {
-                    return Err(DiscoverySideCarError::PartialMessageSent);
-                }
-
-                return Ok(());
-            }
-        }
-
-        if let Some(udp_socket) = &self.udp_socket_v6 {
-            if node.udp_addr().is_ipv6() {
-                let bytes_sent = udp_socket
-                    .send_to(buf, node.udp_addr())
-                    .await
-                    .map_err(DiscoverySideCarError::MessageSendFailure)?;
-
-                if bytes_sent != buf.len() {
-                    return Err(DiscoverySideCarError::PartialMessageSent);
-                }
-
-                return Ok(());
-            }
-        }
-
-        Err(DiscoverySideCarError::IoError(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "No suitable UDP socket found for the node's IP version",
-        )))
     }
 
     async fn ping(&self, node: &Node) -> Result<H256, DiscoverySideCarError> {
@@ -156,7 +116,15 @@ impl DiscoverySideCar {
             .try_into()
             .expect("first 32 bytes are the message hash");
 
-        self.send_message(node, &buf).await?;
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoverySideCarError::PartialMessageSent);
+        }
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
@@ -173,8 +141,15 @@ impl DiscoverySideCar {
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
-        self.send_message(node, &buf).await?;
+        if bytes_sent != buf.len() {
+            return Err(DiscoverySideCarError::PartialMessageSent);
+        }
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
@@ -198,32 +173,18 @@ impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
         signer: SecretKey,
-        udp_socket_v4: Option<Arc<UdpSocket>>,
-        udp_socket_v6: Option<Arc<UdpSocket>>,
+        udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), DiscoverySideCarError> {
         info!("Starting Discovery Side Car");
-
-        if udp_socket_v4.is_none() && udp_socket_v6.is_none() {
-            return Err(DiscoverySideCarError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "At least one UDP socket (v4 or v6) must be provided",
-            )));
-        }
 
         let local_node_record = Arc::new(Mutex::new(
             NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Failed to create local node record"),
         ));
 
-        let state = DiscoverySideCar::new(
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket_v4,
-            udp_socket_v6,
-            kademlia,
-        );
+        let state =
+            DiscoverySideCar::new(local_node, local_node_record, signer, udp_socket, kademlia);
 
         let mut server = state.clone().start();
 
