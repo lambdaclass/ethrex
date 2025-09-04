@@ -362,14 +362,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     .unwrap_or(Duration::from_secs(0))
             });
 
-            let bytecodes_to_download = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
-            let bytecodes_remaining = bytecodes_to_download.saturating_sub(bytecodes_downloaded);
-            let bytecodes_download_progress = if bytecodes_to_download == 0 {
-                0.0
-            } else {
-                (bytecodes_downloaded as f64 / bytecodes_to_download as f64) * 100.0
-            };
 
             info!(
                 "P2P Snap Sync:
@@ -383,7 +376,7 @@ account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {ac
 storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
 storage leaves insertion: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
-bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {bytecodes_downloaded}, remaining: {bytecodes_remaining}, elapsed: {bytecodes_download_time})"
+bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
             );
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
