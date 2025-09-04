@@ -30,6 +30,7 @@ use ethrex_storage::{
 use ethrex_trie::NodeHash;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
+use keccak_hash::keccak;
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
@@ -382,6 +383,17 @@ impl Blockchain {
             state_nodes.insert(H256::from_slice(hash.as_slice()), node);
         }
 
+        // TODO: review this
+        let mut a = HashMap::new();
+        for (address, nodes) in encoded_storage_tries {
+            let mut hashes = Vec::with_capacity(nodes.len());
+            for node in nodes {
+                let hash = keccak(&node);
+                hashes.push(hash);
+            }
+            a.insert(address, hashes);
+        }
+
         Ok(ExecutionWitnessResult {
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
@@ -394,7 +406,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
-            storage_trie_nodes: encoded_storage_tries,
+            storage_trie_nodes: a,
             touched_account_storage_slots,
         })
     }

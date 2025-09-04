@@ -30,6 +30,23 @@ impl From<BytesVecWrapper> for Vec<Bytes> {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Vec<H256>)]
+pub struct H256VecWrapper {
+    #[rkyv(getter = h256_vec_to_array)]
+    h256_vec: Vec<[u8; 32]>,
+}
+
+fn h256_vec_to_array(h256_vec: &[H256]) -> Vec<[u8; 32]> {
+    h256_vec.iter().map(|h| h.0).collect()
+}
+
+impl From<H256VecWrapper> for Vec<H256> {
+    fn from(value: H256VecWrapper) -> Self {
+        value.h256_vec.into_iter().map(H256).collect()
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = U256)]
 pub struct U256Wrapper([u64; 4]);
 

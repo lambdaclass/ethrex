@@ -3964,6 +3964,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-hash",
  "secp256k1",
  "serde_json",
  "sha3",

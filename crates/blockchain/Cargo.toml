@@ -20,6 +20,8 @@ bytes.workspace = true
 cfg-if = "1.0.0"
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
+keccak-hash.workspace = true
+
 
 ethrex-metrics = { path = "./metrics", default-features = false }
 

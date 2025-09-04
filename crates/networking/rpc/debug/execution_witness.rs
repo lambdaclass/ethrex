@@ -190,10 +190,10 @@ pub fn execution_witness_from_rpc_chain_config(
             .or_default()
             .extend(witness_nodes);
     }
-    let storage_trie_nodes: HashMap<H160, Vec<Vec<u8>>> = storage_trie_nodes_by_address
+    let storage_trie_nodes: HashMap<H160, Vec<H256>> = storage_trie_nodes_by_address
         .clone()
         .into_iter()
-        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().collect()))
+        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().map(keccak).collect()))
         .collect();
 
     let mut witness = ExecutionWitnessResult {
@@ -246,7 +246,7 @@ pub fn execution_witness_from_rpc_chain_config(
 
     witness.storage_trie_nodes = storage_trie_nodes_by_address
         .into_iter()
-        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().collect()))
+        .map(|(addr, nodes_set)| (addr, nodes_set.into_iter().map(keccak).collect()))
         .collect();
     Ok(witness)
 }

@@ -591,7 +591,7 @@ impl StoreEngine for Store {
             LibmdbxLockedTrieDB::<StateTrieNodes>::new(self.db.clone())
                 .map_err(StoreError::Trie)?,
         );
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, NodeHash::from(state_root).into()))
     }
 
     fn open_locked_storage_trie(
@@ -606,7 +606,7 @@ impl StoreEngine for Store {
             )
             .map_err(StoreError::Trie)?,
         );
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, NodeHash::from(storage_root).into()))
     }
 
     async fn get_canonical_block_hash(
