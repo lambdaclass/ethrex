@@ -323,7 +323,10 @@ fn get_account_diffs_in_tx(
                     bytecode_hash: None,
                 };
 
-                modified_accounts.insert(*address, account_state_diff);
+                // If account state diff is NOT empty
+                if account_state_diff != AccountStateDiff::default() {
+                    modified_accounts.insert(*address, account_state_diff);
+                }
             }
 
             // Then if there is any storage change, we add it to the account state diff
