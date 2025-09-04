@@ -32,8 +32,6 @@ struct HiveResult {
 
 impl HiveResult {
     fn new(suite: String, fork: String, passed_tests: usize, total_tests: usize) -> Self {
-        let success_percentage = (passed_tests as f64 / total_tests as f64) * 100.0;
-
         let (category, display_name) = match suite.as_str() {
             "engine-api" => ("Engine", "Paris"),
             "engine-auth" => ("Engine", "Auth"),
@@ -51,6 +49,12 @@ impl HiveResult {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
             }
+        };
+
+        let success_percentage = if total_tests == 0 {
+            0.0
+        } else {
+            (passed_tests as f64 / total_tests as f64) * 100.0
         };
 
         HiveResult {
