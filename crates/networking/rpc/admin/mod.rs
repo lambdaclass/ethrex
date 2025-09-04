@@ -72,7 +72,7 @@ pub async fn set_log_level(
         .clone()
         .ok_or(RpcErr::MissingParam("log level".to_string()))?;
     let log_level = params
-        .get(0)
+        .first()
         .ok_or(RpcErr::MissingParam("log level".to_string()))?
         .as_str()
         .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
