@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757002155703,
+  "lastUpdate": 1757006687530,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25836,6 +25836,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0027788051470588235,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c0681db9dc344138192c793b88fadf7db1fcb46",
+          "message": "refactor(l2): prover crate (#3800)\n\n**Description**\n\nRefactors the prover crate\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-03T22:13:33Z",
+          "tree_id": "380745ee7fafc41c3fff02fd68ce87929d31bed8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c0681db9dc344138192c793b88fadf7db1fcb46"
+        },
+        "date": 1757006665207,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0028097955390334575,
             "unit": "Mgas/s"
           }
         ]
