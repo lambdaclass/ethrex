@@ -927,4 +927,60 @@ mod test {
         );
         assert_eq!(calc_base_fee, expected_base_fee)
     }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(5149252),
+            blob_gas_used: Some(1310720),
+            base_fee_per_gas: Some(30),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 8832827,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 5617366)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo3() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(19251039),
+            blob_gas_used: Some(2490368),
+            base_fee_per_gas: Some(50),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 20609697,
+        };
+        let fork = Fork::Osaka;
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 20107103)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1_ef() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0x360000),
+            blob_gas_used: Some(0),
+            base_fee_per_gas: Some(0x11),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 0x86c73b,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 3538944)
+    }
 }
