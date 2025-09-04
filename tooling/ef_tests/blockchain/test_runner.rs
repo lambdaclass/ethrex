@@ -17,12 +17,12 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
+use guest_program::input::ProgramInput;
 use regex::Regex;
-use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,

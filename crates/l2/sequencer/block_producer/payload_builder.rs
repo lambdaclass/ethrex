@@ -344,7 +344,11 @@ fn get_account_diffs_in_tx(
                     bytecode: None,
                     bytecode_hash: None,
                 };
-                modified_accounts.insert(*address, account_state_diff);
+
+                // If account state diff is NOT empty
+                if account_state_diff != AccountStateDiff::default() {
+                    modified_accounts.insert(*address, account_state_diff);
+                }
             }
         }
     }

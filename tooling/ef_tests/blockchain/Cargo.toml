@@ -10,7 +10,7 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
-zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
+guest_program = { path = "../../../crates/l2/prover/src/guest_program", default-features = false }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -28,7 +28,7 @@ path = "./lib.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
 revm = ["ethrex-vm/revm"]
-sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
+sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
 stateless = []
 
 [[test]]

@@ -12,7 +12,7 @@ lint: ## 🧹 Linter check
 	# Note that we are compiling without the "gpu" feature (see #4048 for why)
 	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
 	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
 CRATE ?= *
@@ -61,27 +61,20 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
-LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
+KURTOSIS_CONFIG_FILE ?= ./fixtures/networks/default.yaml
 
 # If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
-localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
-
-hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
-	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
+localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
+	@set -e; \
+	trap 'printf "\nStopping localnet...\n"; $(MAKE) stop-localnet || true; exit 0' INT TERM HUP QUIT; \
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(KURTOSIS_CONFIG_FILE); \
+	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
-
-stop-localnet-silent:
-	@echo "Double checking local net is not already started..."
-	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
-	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
 HIVE_BRANCH ?= master
 
