@@ -131,7 +131,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{hardware}\n*Time Taken:* {time_taken}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}{maybe_cpu}{maybe_ram}\n*Time Taken:* {time_taken}",
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -142,14 +142,9 @@ impl BlockRunReport {
                             } else {
                                 "Success".to_string()
                             },
-                            hardware = {
-                                format!(
-                                    "\n*Hardware:* {maybe_gpu}, {maybe_cpu}, {maybe_ram}",
-                                    maybe_gpu = hardware_info_slack_message("GPU"),
-                                    maybe_cpu = hardware_info_slack_message("CPU"),
-                                    maybe_ram = hardware_info_slack_message("RAM")
-                                )
-                            },
+                            maybe_gpu = hardware_info_slack_message("GPU"),
+                            maybe_cpu = hardware_info_slack_message("CPU"),
+                            maybe_ram = hardware_info_slack_message("RAM"),
                             time_taken = format_duration(self.time_taken),
                         ),
                     }),
@@ -253,7 +248,7 @@ fn hardware_info_slack_message(hardware: &str) -> String {
     };
 
     if let Some(info) = hardware_info {
-        format!("*{hardware}:* `{info}`")
+        format!("\n*{hardware}:* `{info}`")
     } else {
         String::new()
     }
