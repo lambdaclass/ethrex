@@ -89,6 +89,11 @@ pub struct ForkBlobSchedule {
 pub struct BlobSchedule {
     pub cancun: Option<ForkBlobSchedule>,
     pub prague: Option<ForkBlobSchedule>,
+    pub osaka: Option<ForkBlobSchedule>,
+    #[serde(rename = "BPO1")]
+    pub bpo1: Option<ForkBlobSchedule>,
+    #[serde(rename = "BPO2")]
+    pub bpo2: Option<ForkBlobSchedule>,
 }
 
 impl TestUnit {
