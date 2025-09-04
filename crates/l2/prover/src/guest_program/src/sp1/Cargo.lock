@@ -1669,6 +1669,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "revm-primitives",
+ "rkyv",
  "serde",
  "sha3",
  "thiserror",
