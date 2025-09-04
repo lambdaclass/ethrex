@@ -6,7 +6,7 @@ participants:
     count: 1
 
 network_params:
-  network: hoodi
+  network: ephemery
 
 additional_services:
   - assertoor
@@ -15,4 +15,4 @@ assertoor_params:
   run_stability_check: false
   run_block_proposal_check: false
   tests:
-    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/hoodi-gh-action/.github/config/assertoor/hoodi-check.yaml
+    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/hoodi-gh-action/.github/config/assertoor/syncing-check.yaml
