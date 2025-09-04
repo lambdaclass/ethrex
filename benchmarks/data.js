@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756947075721,
+  "lastUpdate": 1756949567334,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -25487,6 +25487,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0038415346534653463,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "17af944f30194d322364c127733f525042f37716",
+          "message": "feat(l1, l2): use SP1's bump allocator",
+          "timestamp": "2025-09-03T15:33:03Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4275/commits/17af944f30194d322364c127733f525042f37716"
+        },
+        "date": 1756949566719,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0027188309352517985,
             "unit": "Mgas/s"
           }
         ]
