@@ -11,7 +11,6 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
     opcodes::Opcode,
-    precompiles::{SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN},
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
@@ -30,10 +29,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    iter::Enumerate,
-};
+use std::{collections::HashMap, iter::Enumerate};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================

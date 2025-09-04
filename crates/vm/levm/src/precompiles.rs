@@ -51,8 +51,7 @@ use std::borrow::Cow;
 use std::ops::Mul;
 
 use crate::constants::{P256_A, P256_B, P256_N};
-use crate::gas_cost::P256_VERIFICATION_L1_COST;
-use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFICATION_L2_COST};
+use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
@@ -1030,19 +1029,13 @@ pub fn bls12_g1add(
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
+#[allow(clippy::indexing_slicing)] // The length of the calldata is checked before slicing, so it should never fail
 pub fn p_256_verify(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    fork: Fork,
+    _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    // If the fork is prior to Osaka then ir means the precompile has to have been called from an L2 VM
-    // In that case we use the L2 cost. Otherwise we use the new cost
-    let gas_cost = match fork {
-        Fork::Osaka => P256_VERIFICATION_L1_COST,
-        _ => P256_VERIFICATION_L2_COST,
-    };
-
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)
+    increase_precompile_consumed_gas(P256_VERIFY_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // Validate input data length is 160 bytes
