@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757007188655,
+  "lastUpdate": 1757014834619,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11995,6 +11995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170128848425,
             "range": "± 361405282",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "390cc0aa08fcf5ece451105859cb8d099b38984c",
+          "message": "fix(l1): revert \"perf(levm): add an implementation of BLAKE2B that uses NEON...\" (#4322)\n\nThis reverts commit 97d4827922b402b7ac544b8db6aae21a3e33decd.\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- This commit broke blockchain tests on ARM\n\n```bash\nfailures:\n    blockchain_runner::istanbul/eip152_blake2/blake2/blake2b.json\n    blockchain_runner::istanbul/eip152_blake2/blake2/blake2b_large_gas_limit.json\n    blockchain_runner::istanbul/eip152_blake2/blake2/blake2b_gas_limit.json\n```\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-04T18:47:06Z",
+          "tree_id": "1e14f0ccd56af86f7fda359d508bcc2efa72a726",
+          "url": "https://github.com/lambdaclass/ethrex/commit/390cc0aa08fcf5ece451105859cb8d099b38984c"
+        },
+        "date": 1757014815070,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170049304723,
+            "range": "± 251937295",
             "unit": "ns/iter"
           }
         ]
