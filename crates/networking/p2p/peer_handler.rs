@@ -321,13 +321,6 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.header_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-
-                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-            }
-
             if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -409,10 +402,6 @@ impl PeerHandler {
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
-            }
 
             if free_downloaders.is_empty() {
                 continue;
@@ -508,9 +497,6 @@ impl PeerHandler {
             }
         }
 
-        *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
-        *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
 
         let elapsed = start_time.elapsed().unwrap_or_default();

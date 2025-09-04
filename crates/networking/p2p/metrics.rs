@@ -59,9 +59,6 @@ pub struct Metrics {
     // Headers
     pub headers_to_download: Arc<Mutex<u64>>,
     pub downloaded_headers: Arc<Mutex<u64>>,
-    pub total_header_downloaders: Arc<Mutex<u64>>,
-    pub free_header_downloaders: Arc<Mutex<u64>>,
-    pub header_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -552,9 +549,6 @@ impl Default for Metrics {
             // Headers
             headers_to_download: Arc::new(Mutex::new(0)),
             downloaded_headers: Arc::new(Mutex::new(0)),
-            total_header_downloaders: Arc::new(Mutex::new(0)),
-            free_header_downloaders: Arc::new(Mutex::new(0)),
-            header_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
 
