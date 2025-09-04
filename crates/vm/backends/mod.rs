@@ -3,9 +3,10 @@ pub mod levm;
 #[cfg(feature = "revm")]
 pub mod revm;
 #[cfg(feature = "revm")]
-use self::revm::db::{EvmState, evm_state};
-#[cfg(feature = "revm")]
-use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
+use self::revm::{
+    db::{EvmState, evm_state},
+    helpers::{fork_to_spec_id, spec_id},
+};
 #[cfg(feature = "revm")]
 use revm::REVM;
 
@@ -203,6 +204,8 @@ impl Evm {
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         #[cfg(feature = "revm")]
         {
+            use revm_primitives::SpecId;
+
             let chain_config = self.state.chain_config()?;
             let spec_id = spec_id(&chain_config, block_header.timestamp);
             if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
