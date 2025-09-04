@@ -1,3 +1,4 @@
+use core::hash;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -130,41 +131,41 @@ pub fn execution_witness_from_rpc_chain_config(
 
     dbg!("c");
 
-    // let mut touched_account_storage_slots = HashMap::new();
-    // let mut address = Address::default();
-    // for bytes in rpc_witness.keys {
+    let mut touched_account_storage_slots = HashMap::new();
+    let mut address = Address::default();
+    for bytes in rpc_witness.keys {
+        if bytes.len() == Address::len_bytes() {
+            address = Address::from_slice(&bytes);
+        } else {
+            let slot = H256::from_slice(&bytes);
+            // Insert in the vec of the address value
+            touched_account_storage_slots
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(slot);
+        }
+    }
+    // let mut addresses = HashSet::new();
+    // for bytes in rpc_witness.keys.iter() {
     //     if bytes.len() == Address::len_bytes() {
-    //         address = Address::from_slice(&bytes);
-    //     } else {
-    //         let slot = H256::from_slice(&bytes);
-    //         // Insert in the vec of the address value
-    //         touched_account_storage_slots
-    //             .entry(address)
-    //             .or_insert_with(Vec::new)
-    //             .push(slot);
+    //         let address = Address::from_slice(bytes);
+    //         addresses.insert(address);
     //     }
     // }
-    let mut addresses = HashSet::new();
-    for bytes in rpc_witness.keys.iter() {
-        if bytes.len() == Address::len_bytes() {
-            let address = Address::from_slice(bytes);
-            addresses.insert(address);
-        }
-    }
-    let mut keys = HashSet::new();
-    for bytes in rpc_witness.keys.iter() {
-        if bytes.len() == H256::len_bytes() {
-            let slot = H256::from_slice(bytes);
-            keys.insert(slot);
-        }
-    }
+    // let mut keys = HashSet::new();
+    // for bytes in rpc_witness.keys.iter() {
+    //     if bytes.len() == H256::len_bytes() {
+    //         let slot = H256::from_slice(bytes);
+    //         keys.insert(slot);
+    //     }
+    // }
     dbg!("d");
-    dbg!(addresses.clone());
 
     let mut storage_trie_nodes_by_address = HashMap::new();
-    let mut touched_account_storage_slots = HashMap::new();
+    // let mut touched_account_storage_slots = HashMap::new();
 
-    for address in addresses {
+    for (address, slots) in touched_account_storage_slots.clone().into_iter() {
+        dbg!(address);
         let Some(account_rlp) = state_trie
             .get(&hash_address(&address))
             .map_err(|e| ExecutionWitnessError::Custom(e.to_string()))?
@@ -193,13 +194,10 @@ pub fn execution_witness_from_rpc_chain_config(
                 "Storage trie for address {address:#x}: {e}"
             ))
         }) else {
-            dbg!(address);
             continue;
         };
         storage_trie.hash();
         // let storage_trie = Trie::open(storage_trie.db, storage_root);
-        // dbg!(std::any::type_name_of_val(&storage_trie.root));
-        // dbg!(std::any::type_name_of_val(&storage_trie.db));
         // for key in keys.iter() {
         //     // TODO: check if hashed
         //     // and what we return
@@ -235,21 +233,26 @@ pub fn execution_witness_from_rpc_chain_config(
         // state_map_clone.insert(node_hash, rlp);
         // storage_trie.db = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_map_clone))));
 
-        dbg!("=====================================");
-
-        let (storage_trie_witness, storage_trie_wrapped) =
+        let (storage_trie_witness, mut storage_trie_wrapped) =
             TrieLogger::open_trie(storage_trie, NodeHash::from(storage_root).into());
         // storage_trie_wrapped.root = root;
-        for key in keys.iter() {
+        for key in slots.iter() {
             // TODO: check if hashed
             // and what we return
+
             match storage_trie_wrapped.get(&hash_key(key)) {
-                Ok(Some(_)) => {}
+                Ok(Some(_)) => {
+                    println!("found {:?}", hex::encode(&hash_key(key)));
+                }
                 Ok(None) => {
                     // dbg!("Not found");
+                    println!("not found {:?}", hex::encode(&hash_key(key)));
                     continue;
                 }
-                _ => continue,
+                _ => {
+                    println!("error {:?}", hex::encode(&hash_key(key)));
+                    continue;
+                }
             };
 
             // panic!();
@@ -258,6 +261,8 @@ pub fn execution_witness_from_rpc_chain_config(
                 .or_insert_with(Vec::new)
                 .push(*key);
         }
+
+        storage_trie_wrapped.hash();
 
         let witness = {
             let mut w = storage_trie_witness.lock().map_err(|_| {
@@ -412,17 +417,39 @@ pub fn execution_witness_from_rpc_chain_config(
         };
         if let Some(keys) = touched_account_storage_slots.get(&address) {
             for key in keys {
-                let a = storage_trie_reduced.get(&hash_key(key));
-                let b = storage_trie_full.get(&hash_key(key));
-                dbg!(&a);
-                dbg!(&b);
-                if a.is_err() && b.is_ok() || a.is_ok() && b.is_err() {
-                    dbg!(key);
+                let Ok(a) = storage_trie_reduced.get(&hash_key(key)) else {
+                    continue;
+                };
+                let Ok(b) = storage_trie_full.get(&hash_key(key)) else {
+                    continue;
+                };
+                if a != b {
                     dbg!("ABCDEFG");
+                    dbg!(address);
+                    dbg!(hex::encode(hash_key(key)));
+                    dbg!(key);
+                    panic!();
                 }
             }
         }
     }
+
+    dbg!("+++++++++++++++++++++++++++++++++++");
+    // let addr =
+    //     Address::from_slice(&hex::decode("0e58adde284e95fa591cd3904452b12356570251").unwrap());
+    // let hashed_key =
+    //     &hex::decode("8530ea69266494445583daeeada84015497dbb3fb4bd61457db2980092f5e341").unwrap();
+    // let nodes_specific = storage_trie_nodes_by_address
+    //     .get(&addr)
+    //     .unwrap()
+    //     .clone()
+    //     .into_iter()
+    //     .map(|n| (NodeHash::Hashed(keccak(&n)), n))
+    //     .collect::<HashMap<_, _>>();
+    // let rlp = state_trie.get(&hash_address(&addr)).unwrap().unwrap();
+    // let AccountState { storage_root, .. } = AccountState::decode(&rlp).unwrap();
+    // let t = Trie::from_nodes(NodeHash::Hashed(storage_root), nodes_specific).unwrap();
+    // dbg!(t.get(&hashed_key)).unwrap();
 
     let mut witness = ExecutionWitnessResult {
         codes,
@@ -432,12 +459,18 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: parent_header,
         state_nodes,
-        storage_trie_nodes: storage_trie_nodes_by_address,
-        touched_account_storage_slots,
+        storage_trie_nodes: storage_trie_nodes_by_address.clone(),
+        touched_account_storage_slots: touched_account_storage_slots.clone(),
     };
 
     dbg!("enter here");
     witness.rebuild_state_trie()?;
+    // for address in storage_trie_nodes_by_address.keys() {
+    //     let Some(trie) = witness.rebuild_storage_trie(&address) else {
+    //         continue;
+    //     };
+    //     witness.storage_tries.insert(*address, trie);
+    // }
 
     Ok(witness)
 }

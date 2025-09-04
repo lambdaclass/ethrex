@@ -103,19 +103,16 @@ impl Trie {
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => {
-                // dbg!("Node");
+                dbg!("Node - Trie");
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             NodeRef::Hash(hash) if hash.is_valid() => {
-                dbg!("Hash");
+                dbg!("Hash - Trie");
                 Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
-            _ => {
-                dbg!("None");
-                None
-            }
+            _ => None,
         })
     }
 
@@ -139,18 +136,17 @@ impl Trie {
     }
 
     /// Remove a value from the trie given its RLP-encoded path.
-    /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
+    /// Returns the value if it was successfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if !self.root.is_valid() {
             return Ok(None);
         }
-
-        // If the trie is not empty, call the root node's removal logic.
-        let (node, value) = self
+        let a = self
             .root
             .get_node(self.db.as_ref())?
-            .ok_or(TrieError::InconsistentTree)?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+            .ok_or(TrieError::InconsistentTree)?; // anda hasta aca 
+        dbg!("???????????????");
+        let (node, value) = a.remove(self.db.as_ref(), Nibbles::from_bytes(&path))?; // falla aca;
         self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
@@ -285,7 +281,6 @@ impl Trie {
         // TODO: Try to remove this clone.
         let Some(root) = state_nodes.get(&root_hash).cloned() else {
             let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
-            dbg!("ACA");
             return Ok(Trie::new(in_memory_trie));
         };
 
