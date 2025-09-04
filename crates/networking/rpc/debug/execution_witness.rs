@@ -6,16 +6,17 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    Address, H160, H256, serde_utils,
     types::{
-        AccountState, BlockHeader, ChainConfig,
+        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
 use ethrex_p2p::types::Node;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{InMemoryTrieDB, NodeHash, NodeRef, Trie, TrieLogger};
+use ethrex_trie::{InMemoryTrieDB, NodeHash, NodeRLP, NodeRef, Trie, TrieLogger, TrieWitness};
+use ethrex_vm::{Evm, EvmEngine, ExecutionWitnessWrapper};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -84,6 +85,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
+    block: &Block,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
     let codes = rpc_witness
         .codes
@@ -119,7 +121,7 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes.insert(keccak(node), node.to_vec());
     }
 
-    let state_trie = Trie::from_nodes(
+    let mut state_trie = Trie::from_nodes(
         NodeHash::Hashed(parent_header.state_root),
         state_nodes
             .clone()
@@ -145,27 +147,13 @@ pub fn execution_witness_from_rpc_chain_config(
                 .push(slot);
         }
     }
-    // let mut addresses = HashSet::new();
-    // for bytes in rpc_witness.keys.iter() {
-    //     if bytes.len() == Address::len_bytes() {
-    //         let address = Address::from_slice(bytes);
-    //         addresses.insert(address);
-    //     }
-    // }
-    // let mut keys = HashSet::new();
-    // for bytes in rpc_witness.keys.iter() {
-    //     if bytes.len() == H256::len_bytes() {
-    //         let slot = H256::from_slice(bytes);
-    //         keys.insert(slot);
-    //     }
-    // }
     dbg!("d");
 
-    let mut storage_trie_nodes_by_address = HashMap::new();
+    let mut storage_trie_nodes_by_address: HashMap<H160, Vec<Vec<u8>>> = HashMap::new();
+    let mut used_storage_tries = HashMap::new();
     // let mut touched_account_storage_slots = HashMap::new();
 
     for (address, slots) in touched_account_storage_slots.clone().into_iter() {
-        dbg!(address);
         let Some(account_rlp) = state_trie
             .get(&hash_address(&address))
             .map_err(|e| ExecutionWitnessError::Custom(e.to_string()))?
@@ -196,73 +184,28 @@ pub fn execution_witness_from_rpc_chain_config(
         }) else {
             continue;
         };
-        storage_trie.hash();
-        // let storage_trie = Trie::open(storage_trie.db, storage_root);
-        // for key in keys.iter() {
-        //     // TODO: check if hashed
-        //     // and what we return
-        //     let Ok(Some(_)) = storage_trie.get(&hash_key(key)) else {
-        //         continue;
-        //     };
-        //     if let Ok(Some(a)) = storage_trie
-        //         .db
-        //         .get(NodeHash::Hashed(H256::from_slice(&hash_key(key))))
-        //     {
-        //         dbg!("ACSEA");
-        //     }
+        let hash = storage_trie.hash().map_err(|e| {
+            ExecutionWitnessError::RebuildTrie(format!(
+                "Storage trie for address {address:#x}: {e}"
+            ))
+        })?;
 
-        //     touched_account_storage_slots
-        //         .entry(address)
-        //         .or_insert_with(Vec::new)
-        //         .push(*key);
-        // }
-        // let ethrex_trie::NodeRef::Node(node, a) = storage_trie.root.clone() else {
-        //     panic!();
-        // };
-        // let (node_hash, rlp) = {
-        //     let root = NodeRef::Node(node.clone(), a);
-        //     let hash = root.compute_hash();
-        //     let rlp = node.encode_raw();
-        //     (hash, rlp)
-        // };
-        // let mut state_map_clone: HashMap<NodeHash, Vec<u8>> = state_nodes
-        //     .clone()
-        //     .into_iter()
-        //     .map(|(k, v)| (NodeHash::Hashed(k), v))
-        //     .collect();
-        // state_map_clone.insert(node_hash, rlp);
-        // storage_trie.db = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_map_clone))));
-
-        let (storage_trie_witness, mut storage_trie_wrapped) =
-            TrieLogger::open_trie(storage_trie, NodeHash::from(storage_root).into());
+        let (storage_trie_witness, storage_trie_wrapped) =
+            TrieLogger::open_trie(storage_trie, NodeHash::from(hash).into());
         // storage_trie_wrapped.root = root;
         for key in slots.iter() {
             // TODO: check if hashed
             // and what we return
 
-            match storage_trie_wrapped.get(&hash_key(key)) {
-                Ok(Some(_)) => {
-                    println!("found {:?}", hex::encode(&hash_key(key)));
-                }
-                Ok(None) => {
-                    // dbg!("Not found");
-                    println!("not found {:?}", hex::encode(&hash_key(key)));
-                    continue;
-                }
-                _ => {
-                    println!("error {:?}", hex::encode(&hash_key(key)));
-                    continue;
-                }
-            };
-
-            // panic!();
-            touched_account_storage_slots
-                .entry(address)
-                .or_insert_with(Vec::new)
-                .push(*key);
+            storage_trie_wrapped.get(&hash_key(key)).map_err(|e| {
+                ExecutionWitnessError::Custom(format!("Failed to get storage trie node: {e}"))
+            })?;
         }
 
-        storage_trie_wrapped.hash();
+        used_storage_tries.insert(
+            address,
+            (storage_trie_witness.clone(), storage_trie_wrapped),
+        );
 
         let witness = {
             let mut w = storage_trie_witness.lock().map_err(|_| {
@@ -271,185 +214,8 @@ pub fn execution_witness_from_rpc_chain_config(
             let w = std::mem::take(&mut *w);
             w.into_iter().collect::<Vec<_>>()
         };
-        storage_trie_nodes_by_address.insert(address, witness);
+        storage_trie_nodes_by_address.insert(address, state_nodes.values().cloned().collect());
     }
-    // let mut storage_trie_nodes_by_address = HashMap::new();
-    // let mut touched_account_storage_slots = HashMap::new();
-    // for address in addresses {
-    //     // if storage_slots.is_empty() {
-    //     //     continue;
-    //     // }
-    //     dbg!("1");
-
-    //     if let Some(account_state_rlp) = state_trie
-    //         .get(&hash_address(&address))
-    //         .map_err(|e| ExecutionWitnessError::Custom(e.to_string()))?
-    //     {
-    //         dbg!("2");
-    //         let AccountState { storage_root, .. } = AccountState::decode(&account_state_rlp)
-    //             .map_err(|e| {
-    //                 ExecutionWitnessError::Custom(format!(
-    //                     "Failed to decode account state RLP for address {address:#x}: {e}"
-    //                 ))
-    //             })?;
-    //         dbg!(storage_root);
-    //         dbg!("3");
-
-    //         // let storage_trie = Trie::open(&state_trie.db.clone, storage_root);
-    //         let states_nodes_clone: HashMap<NodeHash, Vec<u8>> = state_nodes
-    //             .clone()
-    //             .into_iter()
-    //             .map(|(k, v)| (NodeHash::Hashed(k), v))
-    //             .collect();
-
-    //         let Ok(storage_trie) =
-    //             Trie::from_nodes(NodeHash::Hashed(storage_root), states_nodes_clone.clone())
-    //                 .map_err(|e| {
-    //                     ExecutionWitnessError::RebuildTrie(format!(
-    //                         "Storage trie for address {address:#x}: {e}"
-    //                     ))
-    //                 })
-    //         else {
-    //             continue;
-    //         };
-
-    //         let mut found_hashed_keys = Vec::new();
-    //         for key in keys.iter() {
-    //             let hash = hash_key(key);
-    //             if let Ok(Some(abcd)) = storage_trie.get(&hash) {
-    //                 found_hashed_keys.push(hash);
-    //                 dbg!(abcd);
-    //                 dbg!(states_nodes_clone.get(&NodeHash::Hashed(*key)));
-    //                 dbg!("found key");
-    //             }
-    //         }
-
-    //         // dbg!("4");
-    //         // dbg!(&state_nodes.len());
-    //         dbg!(storage_root);
-
-    //         let (storage_trie_witness, storage_trie_wrapped) =
-    //             TrieLogger::open_trie(storage_trie, storage_root);
-
-    //         dbg!(&storage_trie_wrapped.hash_no_commit());
-    //         dbg!(&storage_trie_wrapped.root);
-
-    //         for a in found_hashed_keys {
-    //             if storage_trie_wrapped.get(&a).is_err() {
-    //                 dbg!("INCONSISTENT");
-    //                 panic!();
-    //             }
-    //         }
-
-    //         // are the storage slots correct?
-    //         for slot in keys.iter() {
-    //             // dbg!("4.1");
-    //             // dbg!(slot);
-    //             // println!("{:?}", hex::encode(hash_key(slot)));
-    //             if let Ok(storage_slot) = storage_trie_wrapped.get(&hash_key(slot)).map_err(|e| {
-    //                 ExecutionWitnessError::Custom(format!(
-    //                     "Failed to get storage slot {slot:#x} for address {address:#x}: {e}"
-    //                 ))
-    //             }) {
-    //                 touched_account_storage_slots
-    //                     .entry(address)
-    //                     .or_insert_with(Vec::new)
-    //                     .push(*slot);
-    //                 // dbg!("4.2");
-    //                 if storage_slot.is_some() {
-    //                     dbg!("found slot");
-    //                 }
-    //                 // dbg!(storage_slot);
-    //             }
-    //         }
-    //         dbg!("5");
-
-    //         let witness = {
-    //             let mut w = storage_trie_witness.lock().map_err(|_| {
-    //                 ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
-    //             })?;
-    //             let w = std::mem::take(&mut *w);
-    //             w.into_iter().collect::<Vec<_>>()
-    //         };
-    //         dbg!("6");
-
-    //         storage_trie_nodes_by_address.insert(address, witness);
-    //     }
-    // }
-    // dbg!("e");
-
-    for (address, nodes) in storage_trie_nodes_by_address.iter() {
-        dbg!(address);
-        dbg!(nodes.len());
-    }
-    for (address, keys) in touched_account_storage_slots.iter() {
-        dbg!(address);
-        dbg!(keys.len());
-    }
-
-    for (address, nodes) in storage_trie_nodes_by_address.clone() {
-        let Ok(Some(acc_rlp)) = state_trie.get(&hash_address(&address)) else {
-            continue;
-        };
-        let AccountState { storage_root, .. } = AccountState::decode(&acc_rlp).map_err(|e| {
-            ExecutionWitnessError::Custom(format!(
-                "Failed to decode account state RLP for address {address:#x}: {e}"
-            ))
-        })?;
-        let storage_map = nodes
-            .iter()
-            .map(|node| (NodeHash::Hashed(keccak(node)), node.clone()))
-            .collect::<HashMap<_, _>>();
-        let states_nodes_clone: HashMap<NodeHash, Vec<u8>> = state_nodes
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (NodeHash::Hashed(k), v))
-            .collect();
-        let Ok(storage_trie_full) =
-            Trie::from_nodes(NodeHash::Hashed(storage_root), states_nodes_clone)
-        else {
-            continue;
-        };
-        let Ok(storage_trie_reduced) =
-            Trie::from_nodes(NodeHash::Hashed(storage_root), storage_map)
-        else {
-            continue;
-        };
-        if let Some(keys) = touched_account_storage_slots.get(&address) {
-            for key in keys {
-                let Ok(a) = storage_trie_reduced.get(&hash_key(key)) else {
-                    continue;
-                };
-                let Ok(b) = storage_trie_full.get(&hash_key(key)) else {
-                    continue;
-                };
-                if a != b {
-                    dbg!("ABCDEFG");
-                    dbg!(address);
-                    dbg!(hex::encode(hash_key(key)));
-                    dbg!(key);
-                    panic!();
-                }
-            }
-        }
-    }
-
-    dbg!("+++++++++++++++++++++++++++++++++++");
-    // let addr =
-    //     Address::from_slice(&hex::decode("0e58adde284e95fa591cd3904452b12356570251").unwrap());
-    // let hashed_key =
-    //     &hex::decode("8530ea69266494445583daeeada84015497dbb3fb4bd61457db2980092f5e341").unwrap();
-    // let nodes_specific = storage_trie_nodes_by_address
-    //     .get(&addr)
-    //     .unwrap()
-    //     .clone()
-    //     .into_iter()
-    //     .map(|n| (NodeHash::Hashed(keccak(&n)), n))
-    //     .collect::<HashMap<_, _>>();
-    // let rlp = state_trie.get(&hash_address(&addr)).unwrap().unwrap();
-    // let AccountState { storage_root, .. } = AccountState::decode(&rlp).unwrap();
-    // let t = Trie::from_nodes(NodeHash::Hashed(storage_root), nodes_specific).unwrap();
-    // dbg!(t.get(&hashed_key)).unwrap();
 
     let mut witness = ExecutionWitnessResult {
         codes,
@@ -458,21 +224,130 @@ pub fn execution_witness_from_rpc_chain_config(
         block_headers,
         chain_config,
         parent_block_header: parent_header,
-        state_nodes,
+        state_nodes: state_nodes.clone(),
         storage_trie_nodes: storage_trie_nodes_by_address.clone(),
         touched_account_storage_slots: touched_account_storage_slots.clone(),
     };
 
     dbg!("enter here");
-    witness.rebuild_state_trie()?;
-    // for address in storage_trie_nodes_by_address.keys() {
-    //     let Some(trie) = witness.rebuild_storage_trie(&address) else {
-    //         continue;
-    //     };
-    //     witness.storage_tries.insert(*address, trie);
-    // }
+    // witness.rebuild_state_trie()?;
 
+    // block execution - this is for getting the account updates
+
+    let mut witness_clone = ExecutionWitnessResult {
+        codes: witness.codes.clone(),
+        state_trie: None,
+        storage_tries: HashMap::new(),
+        block_headers: witness.block_headers.clone(),
+        parent_block_header: witness.parent_block_header.clone(),
+        chain_config: witness.chain_config,
+        state_nodes: witness.state_nodes.clone(),
+        storage_trie_nodes: witness.storage_trie_nodes.clone(),
+        touched_account_storage_slots: witness.touched_account_storage_slots.clone(),
+    };
+    witness_clone.rebuild_state_trie()?;
+
+    let wrapped_db = ExecutionWitnessWrapper::new(witness_clone);
+    let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
+    let _ = vm
+        .execute_block(block)
+        .map_err(|e| ExecutionWitnessError::Custom(format!("Failed to execute block: {e}")))?;
+    let account_updates: Vec<AccountUpdate> = vm.get_state_transitions().map_err(|e| {
+        ExecutionWitnessError::Custom(format!("Failed to get state transitions: {e}"))
+    })?;
+    let state_nodes_map: HashMap<NodeHash, NodeRLP> = state_nodes
+        .clone()
+        .into_iter()
+        .map(|(k, v)| (NodeHash::Hashed(k), v))
+        .collect();
+    let (_, trie_loggers) = apply_account_updates_from_trie_with_witness(
+        state_trie,
+        &account_updates,
+        used_storage_tries,
+        &state_nodes_map,
+    )?;
     Ok(witness)
+}
+
+/// Performs the same actions as apply_account_updates_from_trie
+///  but also returns the used storage tries with witness recorded
+fn apply_account_updates_from_trie_with_witness(
+    mut state_trie: Trie,
+    account_updates: &[AccountUpdate],
+    mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
+    state_nodes: &HashMap<NodeHash, NodeRLP>,
+) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), ExecutionWitnessError> {
+    for update in account_updates.iter() {
+        let hashed_address = hash_address(&update.address);
+        if update.removed {
+            // Remove account from trie
+            // state_trie.remove(hashed_address).map_err(|_| {
+            //     ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+            // })?;
+            continue;
+        } else {
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            // TODO: check this error
+            let mut account_state = match state_trie.get(&hashed_address).unwrap_or_default() {
+                Some(encoded_state) => AccountState::decode(&encoded_state).map_err(|_| {
+                    ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                })?,
+                None => AccountState::default(),
+            };
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                // Store updated code in DB
+                // if let Some(code) = &update.code {
+                //     self.add_account_code(info.code_hash, code.clone()).await?;
+                // }
+            }
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                    std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        let trie = Trie::from_nodes(
+                            account_state.storage_root.into(),
+                            state_nodes.clone(),
+                        )
+                        .map_err(|_| {
+                            ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                        })?;
+                        let root = trie.hash_no_commit();
+                        vacant.insert(TrieLogger::open_trie(trie, NodeHash::from(root).into()))
+                    }
+                };
+
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(hashed_key).map_err(|_| {
+                            ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                        })?;
+                    } else {
+                        storage_trie
+                            .insert(hashed_key, storage_value.encode_to_vec())
+                            .map_err(|_| {
+                                ExecutionWitnessError::Custom(
+                                    "Failed to get account state".to_owned(),
+                                )
+                            })?;
+                    }
+                }
+                account_state.storage_root = storage_trie.hash_no_commit();
+            }
+            state_trie
+                .insert(hashed_address, account_state.encode_to_vec())
+                .map_err(|_| {
+                    ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                })?;
+        }
+    }
+
+    Ok((state_trie, storage_tries))
 }
 
 pub struct ExecutionWitnessRequest {

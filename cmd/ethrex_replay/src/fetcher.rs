@@ -49,6 +49,23 @@ pub async fn get_blockdata(
         ));
     }
 
+    debug!("Getting block data from RPC for block {requested_block_number}");
+
+    let block_retrieval_start_time = SystemTime::now();
+
+    let block = eth_client
+        .get_raw_block(BlockIdentifier::Number(requested_block_number))
+        .await?;
+
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    debug!(
+        "Got block {requested_block_number} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
     debug!("Getting execution witness from RPC for block {requested_block_number}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
@@ -56,8 +73,13 @@ pub async fn get_blockdata(
     let witness = match eth_client.get_witness(block_number.clone(), None).await {
         Ok(witness) => {
             dbg!("asdasd");
-            execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
-                .expect("Failed to convert witness")
+            execution_witness_from_rpc_chain_config(
+                witness,
+                chain_config,
+                requested_block_number,
+                &block,
+            )
+            .expect("Failed to convert witness")
         }
         Err(e) => {
             warn!("{e}");
@@ -74,23 +96,6 @@ pub async fn get_blockdata(
     debug!(
         "Got execution witness for block {requested_block_number} in {}",
         format_duration(execution_witness_retrieval_duration)
-    );
-
-    debug!("Getting block data from RPC for block {requested_block_number}");
-
-    let block_retrieval_start_time = SystemTime::now();
-
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
-
-    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Got block {requested_block_number} in {}",
-        format_duration(block_retrieval_duration)
     );
 
     debug!("Caching block {requested_block_number}");
@@ -168,8 +173,13 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from as u64)
-        .expect("Failed to convert witness");
+    let witness = execution_witness_from_rpc_chain_config(
+        witness,
+        chain_config,
+        from as u64,
+        &Default::default(),
+    )
+    .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
