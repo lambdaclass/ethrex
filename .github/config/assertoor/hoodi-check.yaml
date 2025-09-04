@@ -1,0 +1,13 @@
+id: synced-check
+name: "Check Client synced"
+timeout: 121m
+tasks:
+  - name: run_tasks_concurrent
+    title: "Check if EL & CL clients are synced"
+    timeout: 120m
+    config:
+      tasks:
+        - name: check_consensus_sync_status
+          title: "Check if CL client is synced"
+        - name: check_execution_sync_status
+          title: "Check if EL client is synced"
