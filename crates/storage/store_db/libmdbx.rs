@@ -140,8 +140,8 @@ impl StoreEngine for Store {
             }
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+            for (code_hash, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(code_hash.into(), code.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
