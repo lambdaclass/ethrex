@@ -91,16 +91,19 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.test.file_name }}_${{ inputs.job_type }}_logs
+          name: ${{ matrix.test.file_name }}_${{ inputs.job_type }}-${{ matrix.runner }}_logs
           path: hive/workspace/logs/*-*.json
           if-no-files-found: error
 
   hive-report:
     name: Generate and Save report
     needs: run-hive
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     outputs:
-      artifact_name: results_${{ inputs.job_type }}.md
+      artifact_name: results_${{ inputs.job_type }}-${{ matrix.runner }}.md
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -120,7 +123,7 @@ jobs:
       - name: Upload ${{ inputs.job_type }} result
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{ inputs.job_type }}.md
+          name: results_${{ inputs.job_type }}-${{ matrix.runner }}.md
           path: results.md
           if-no-files-found: error
 

@@ -74,7 +74,10 @@ jobs:
 
   docker_build:
     name: Build Docker
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - id: docker
@@ -86,12 +89,15 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_image
+          name: ethrex_image-${{ matrix.runner }}
           path: /tmp/ethrex_image.tar
 
   setup-hive-fork:
     name: "Setup Hive"
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     env:
       HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
     steps:
@@ -105,12 +111,15 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-fork
+          name: hive-fork-${{ matrix.runner }}
           path: hive
 
   setup-hive-upstream:
     name: "Setup Hive"
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     env:
       HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
     steps:
@@ -126,7 +135,7 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-upstream
+          name: hive-upstream-${{ matrix.runner }}
           path: hive
 
   run-assertoor:
@@ -156,7 +165,7 @@ jobs:
       - name: Download etherex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image
+          name: ethrex_image-${{ matrix.runner }}
           path: /tmp
 
       - name: Load image
@@ -222,13 +231,13 @@ jobs:
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image
+          name: ethrex_image-${{ matrix.runner }}
           path: /tmp
 
       - name: Download hive artifacts
         uses: actions/download-artifact@v4
         with:
-          name: hive-${{ matrix.hive_version || 'upstream' }}
+          name: hive-${{ matrix.hive_version || 'upstream' }}-${{ matrix.runner }}
 
       - name: Load image
         run: |
