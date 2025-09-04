@@ -1,8 +1,8 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
-use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
+use ethrex_trie::{TrieDB, db::TrieDbReader};
 use libmdbx::RO;
 use libmdbx::orm::{Database, DupSort, Encodable, Transaction};
 
@@ -57,15 +57,37 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        self.txn
-            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::DbError)
+    fn read_tx<'a>(&'a self) -> Box<dyn 'a + ethrex_trie::db::TrieDbReader> {
+        Box::new(self)
     }
 
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))
+    }
+}
+
+impl<T, SK> TrieDbReader for LibmdbxLockedDupsortTrieDB<T, SK>
+where
+    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    SK: Clone + Encodable,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn
+            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .map_err(TrieError::DbError)
+    }
+}
+
+impl<T, SK> TrieDbReader for &LibmdbxLockedDupsortTrieDB<T, SK>
+where
+    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    SK: Clone + Encodable,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn
+            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .map_err(TrieError::DbError)
     }
 }

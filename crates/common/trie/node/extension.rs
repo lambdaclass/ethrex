@@ -1,11 +1,12 @@
 use ethrex_rlp::structs::Encoder;
 
 use crate::ValueRLP;
+use crate::error::TrieError;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
-use crate::{TrieDB, error::TrieError};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
+use crate::db::TrieDbReader;
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -22,7 +23,11 @@ impl ExtensionNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDbReader,
+        mut path: Nibbles,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
@@ -40,7 +45,7 @@ impl ExtensionNode {
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         mut self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         path: Nibbles,
         value: ValueOrHash,
     ) -> Result<Node, TrieError> {
@@ -92,7 +97,7 @@ impl ExtensionNode {
 
     pub fn remove(
         mut self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         mut path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
@@ -161,7 +166,7 @@ impl ExtensionNode {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        db: &dyn TrieDB,
+        db: &dyn TrieDbReader,
         mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {

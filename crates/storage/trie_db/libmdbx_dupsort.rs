@@ -1,9 +1,12 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
-use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
-use libmdbx::orm::{Database, DupSort, Encodable};
+use ethrex_trie::{TrieDB, db::TrieDbReader};
+use libmdbx::{
+    RO,
+    orm::{Database, DupSort, Encodable, Transaction},
+};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
@@ -37,10 +40,34 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::DbError)
+    fn read_tx<'a>(&'a self) -> Box<dyn 'a + ethrex_trie::db::TrieDbReader> {
+        struct InnerReader<'a, T, SK>
+        where
+            T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+            SK: Clone + Encodable,
+        {
+            tx: Transaction<'a, RO>,
+            fixed_key: &'a SK,
+            phantom: PhantomData<(T, SK)>,
+        }
+
+        impl<T, SK> TrieDbReader for InnerReader<'_, T, SK>
+        where
+            T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+            SK: Clone + Encodable,
+        {
+            fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+                self.tx
+                    .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+                    .map_err(TrieError::DbError)
+            }
+        }
+
+        Box::new(InnerReader::<T, SK> {
+            tx: self.db.begin_read().unwrap(),
+            fixed_key: &self.fixed_key,
+            phantom: PhantomData,
+        })
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
@@ -53,6 +80,17 @@ where
             .map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
+    }
+}
+
+impl<T, SK> TrieDbReader for LibmdbxDupsortTrieDB<T, SK>
+where
+    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    SK: Clone + Encodable,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.read_tx();
+        tx.get(key)
     }
 }
 
@@ -74,7 +112,7 @@ mod test {
         let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
         assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
+        db.put_batch(vec![(key, "value".into())]).unwrap();
         assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
@@ -84,8 +122,8 @@ mod test {
         let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
         let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "hello!".into()).unwrap();
-        db_b.put(key, "go away!".into()).unwrap();
+        db_a.put_batch(vec![(key, "hello!".into())]).unwrap();
+        db_b.put_batch(vec![(key, "go away!".into())]).unwrap();
         assert_eq!(db_a.get(key).unwrap(), Some("hello!".into()));
         assert_eq!(db_b.get(key).unwrap(), Some("go away!".into()));
     }

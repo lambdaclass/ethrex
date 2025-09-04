@@ -1,5 +1,8 @@
-use ethrex_trie::{NodeHash, error::TrieError};
-use libmdbx::orm::{Database, Table};
+use ethrex_trie::{NodeHash, db::TrieDbReader, error::TrieError};
+use libmdbx::{
+    RO,
+    orm::{Database, Table, Transaction},
+};
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
@@ -25,9 +28,21 @@ impl<T> TrieDB for LibmdbxTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+    fn read_tx<'a>(&'a self) -> Box<dyn 'a + ethrex_trie::db::TrieDbReader> {
+        struct InnerReader<'a, T>(Transaction<'a, RO>, PhantomData<T>)
+        where
+            T: Table<Key = NodeHash, Value = Vec<u8>>;
+
+        impl<T> TrieDbReader for InnerReader<'_, T>
+        where
+            T: Table<Key = NodeHash, Value = Vec<u8>>,
+        {
+            fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+                self.0.get::<T>(key).map_err(TrieError::DbError)
+            }
+        }
+
+        Box::new(InnerReader::<T>(self.db.begin_read().unwrap(), PhantomData))
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
@@ -39,13 +54,22 @@ where
     }
 }
 
+impl<T> TrieDbReader for LibmdbxTrieDB<T>
+where
+    T: Table<Key = NodeHash, Value = Vec<u8>>,
+{
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.read_tx();
+        tx.get(key)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::LibmdbxTrieDB;
     use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
-    use ethrex_trie::NodeHash;
-    use ethrex_trie::Trie;
-    use ethrex_trie::TrieDB;
+    use ethrex_trie::{NodeHash, db::TrieDbReader};
+    use ethrex_trie::{Trie, TrieDB};
     use libmdbx::{
         orm::{Database, table},
         table_info,
@@ -63,7 +87,7 @@ mod test {
         let key = NodeHash::from_encoded_raw(b"hello");
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
         assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
+        db.put_batch(vec![(key, "value".into())]).unwrap();
         assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
@@ -85,7 +109,7 @@ mod test {
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
         let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "value".into()).unwrap();
+        db_a.put_batch(vec![(key, "value".into())]).unwrap();
         assert_eq!(db_b.get(key).unwrap(), None);
     }
 
