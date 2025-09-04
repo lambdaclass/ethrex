@@ -25,10 +25,10 @@ impl Receipts68 {
                 receipts: vec![],
             };
         }
-        let mut transformed_receipts = vec![];
-        for r in &receipts {
-            transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
-        }
+        let transformed_receipts = receipts
+            .iter()
+            .map(|receipts| receipts.iter().map(ReceiptWithBloom::from).collect())
+            .collect();
         Self {
             id,
             receipts: transformed_receipts,
@@ -39,11 +39,10 @@ impl Receipts68 {
         if self.receipts.is_empty() {
             return vec![];
         }
-        let mut receipts = vec![];
-        for r in &self.receipts {
-            receipts.push(vec![Receipt::from(&r[0])]);
-        }
-        receipts
+        self.receipts
+            .iter()
+            .map(|receipts| receipts.iter().map(Receipt::from).collect())
+            .collect()
     }
 }
 
