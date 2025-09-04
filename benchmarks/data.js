@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757019738381,
+  "lastUpdate": 1757020611895,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -26009,6 +26009,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0027585218978102193,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "7fda0f1f01da6a5df0370694b6caa3a14788f875",
+          "message": "refactor(l1, l2): use `BTreeMap` for execution witness",
+          "timestamp": "2025-09-04T16:56:49Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4313/commits/7fda0f1f01da6a5df0370694b6caa3a14788f875"
+        },
+        "date": 1757020611279,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0010606060606060605,
             "unit": "Mgas/s"
           }
         ]
