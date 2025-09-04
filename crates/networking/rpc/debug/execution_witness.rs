@@ -80,7 +80,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-    block: &Block,
+    blocks: &[Block],
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
     let codes = rpc_witness
         .codes
@@ -114,7 +114,7 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes.insert(keccak(node), node.to_vec());
     }
 
-    let state_trie = Trie::from_nodes(NodeHash::Hashed(parent_header.state_root), &state_nodes)
+    let mut state_trie = Trie::from_nodes(NodeHash::Hashed(parent_header.state_root), &state_nodes)
         .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
     let mut touched_account_storage_slots = BTreeMap::new();
@@ -208,39 +208,41 @@ pub fn execution_witness_from_rpc_chain_config(
     };
 
     // block execution - this is for getting the account updates
-    let mut witness_clone = ExecutionWitnessResult {
-        codes: witness.codes.clone(),
-        state_trie: None,
-        storage_tries: BTreeMap::new(),
-        block_headers: witness.block_headers.clone(),
-        parent_block_header: witness.parent_block_header.clone(),
-        chain_config: witness.chain_config,
-        state_nodes: witness.state_nodes.clone(),
-        storage_trie_nodes: witness.storage_trie_nodes.clone(),
-        touched_account_storage_slots: witness.touched_account_storage_slots.clone(),
-    };
-    witness_clone.rebuild_state_trie()?;
 
-    let wrapped_db = ExecutionWitnessWrapper::new(witness_clone);
-    let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
-    let _ = vm
-        .execute_block(block)
-        .map_err(|e| ExecutionWitnessError::Custom(format!("Failed to execute block: {e}")))?;
-    let account_updates: Vec<AccountUpdate> = vm.get_state_transitions().map_err(|e| {
-        ExecutionWitnessError::Custom(format!("Failed to get state transitions: {e}"))
-    })?;
-    let (_, trie_loggers) = apply_account_updates_from_trie_with_witness(
-        state_trie,
-        &account_updates,
-        used_storage_tries,
-        &state_nodes,
-    )?;
-    for (address, (witness_ref, _)) in &trie_loggers {
-        let mut witness_lock = witness_ref.lock().map_err(|_| {
-            ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+    for block in blocks {
+        let mut witness_clone = ExecutionWitnessResult {
+            codes: witness.codes.clone(),
+            state_trie: None,
+            storage_tries: BTreeMap::new(),
+            block_headers: witness.block_headers.clone(),
+            parent_block_header: witness.parent_block_header.clone(),
+            chain_config: witness.chain_config,
+            state_nodes: witness.state_nodes.clone(),
+            storage_trie_nodes: witness.storage_trie_nodes.clone(),
+            touched_account_storage_slots: witness.touched_account_storage_slots.clone(),
+        };
+        witness_clone.rebuild_state_trie()?;
+        let wrapped_db = ExecutionWitnessWrapper::new(witness_clone);
+        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone());
+        let _ = vm
+            .execute_block(block)
+            .map_err(|e| ExecutionWitnessError::Custom(format!("Failed to execute block: {e}")))?;
+        let account_updates: Vec<AccountUpdate> = vm.get_state_transitions().map_err(|e| {
+            ExecutionWitnessError::Custom(format!("Failed to get state transitions: {e}"))
         })?;
-        let nodes_set = storage_trie_nodes_by_address.entry(*address).or_default();
-        nodes_set.extend(std::mem::take(&mut *witness_lock));
+        let (_, trie_loggers) = apply_account_updates_from_trie_with_witness(
+            &mut state_trie,
+            &account_updates,
+            &mut used_storage_tries,
+            &state_nodes,
+        )?;
+        for (address, (witness_ref, _)) in trie_loggers {
+            let mut witness_lock = witness_ref.lock().map_err(|_| {
+                ExecutionWitnessError::Custom("Failed to lock storage trie witness".to_string())
+            })?;
+            let nodes_set = storage_trie_nodes_by_address.entry(*address).or_default();
+            nodes_set.extend(std::mem::take(&mut *witness_lock));
+        }
     }
 
     witness.storage_trie_nodes = storage_trie_nodes_by_address
@@ -253,12 +255,12 @@ pub fn execution_witness_from_rpc_chain_config(
 /// Performs the same actions as apply_account_updates_from_trie
 ///  but also returns the used storage tries with witness recorded
 #[allow(clippy::type_complexity)]
-fn apply_account_updates_from_trie_with_witness(
-    mut state_trie: Trie,
-    account_updates: &[AccountUpdate],
-    mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    state_nodes: &BTreeMap<H256, NodeRLP>,
-) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), ExecutionWitnessError> {
+fn apply_account_updates_from_trie_with_witness<'a>(
+    state_trie: &'a mut Trie,
+    account_updates: &'a [AccountUpdate],
+    storage_tries: &'a mut HashMap<Address, (TrieWitness, Trie)>,
+    state_nodes: &'a BTreeMap<H256, NodeRLP>,
+) -> Result<(&'a mut Trie, &'a mut HashMap<Address, (TrieWitness, Trie)>), ExecutionWitnessError> {
     for update in account_updates.iter() {
         let hashed_address = hash_address(&update.address);
         if update.removed {
