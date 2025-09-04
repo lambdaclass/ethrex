@@ -1,11 +1,11 @@
 use std::time::Instant;
 use tracing::{info, warn};
-use zkvm_interface::io::{ProgramInput, ProgramOutput};
 
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
+use guest_program::{input::ProgramInput, output::ProgramOutput};
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let now = Instant::now();
@@ -46,5 +46,5 @@ pub fn to_batch_proof(
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-    zkvm_interface::execution::execution_program(input).map_err(|e| e.into())
+    guest_program::execution::execution_program(input).map_err(|e| e.into())
 }
