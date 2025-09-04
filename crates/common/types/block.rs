@@ -63,7 +63,7 @@ impl Block {
     // We need the RLP encode in two places: in the block validation to check its size doesn't exceed the maximum, and in the store to save it
     // However, the store uses the encode of the body and the header, whereas for the max size we need the size of the encode of the block as a whole
     // So we cache the body and header, and calculate the size of the block encode based off of them
-    pub fn get_rlp_encode_size(&self) -> u64 {
+    pub fn get_rlp_encode_size(&self) -> usize {
         let body_fields_rlp_size = if self.cached_body_rlp_encode[0] <= 0xf7 {
             self.cached_body_rlp_encode.len() - 1
         } else {
@@ -73,10 +73,10 @@ impl Block {
 
         let block_rlp_payload_length = header_rlp_size + body_fields_rlp_size;
         if block_rlp_payload_length > 55 {
-            1 + (block_rlp_payload_length as f64).log(256.0).ceil() as u64
-                + block_rlp_payload_length as u64
+            1 + (block_rlp_payload_length as f64).log(256.0).ceil() as usize
+                + block_rlp_payload_length
         } else {
-            1 + block_rlp_payload_length as u64
+            1 + block_rlp_payload_length
         }
     }
 }

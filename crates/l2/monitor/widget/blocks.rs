@@ -112,7 +112,7 @@ impl BlocksTable {
                     block.header.coinbase,
                     block.header.gas_used,
                     block.header.blob_gas_used,
-                    block.get_rlp_encode_size() as usize,
+                    block.get_rlp_encode_size(),
                 )
             })
             .collect::<Vec<_>>();

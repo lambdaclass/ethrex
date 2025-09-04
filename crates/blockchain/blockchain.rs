@@ -953,9 +953,9 @@ pub fn validate_block(
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
         let block_rlp_size = block.get_rlp_encode_size();
-        if block_rlp_size as u64 > MAX_RLP_BLOCK_SIZE {
+        if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
-                InvalidBlockError::MaximumSizeExceeded(MAX_RLP_BLOCK_SIZE, block_rlp_size),
+                InvalidBlockError::MaximumSizeExceeded(MAX_RLP_BLOCK_SIZE, block_rlp_size as u64),
             ));
         }
     } else if chain_config.is_prague_activated(block.header.timestamp) {
