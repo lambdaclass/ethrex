@@ -94,8 +94,8 @@ impl StoreEngine for Store {
         }
 
         // store code updates
-        for (hashed_address, code) in update_batch.code_updates {
-            store.account_codes.insert(hashed_address, code);
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
         }
 
         for (hashed_address, nodes) in update_batch.storage_updates {

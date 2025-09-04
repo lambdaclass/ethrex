@@ -86,7 +86,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .codes
         .iter()
         .map(|code| (keccak_hash::keccak(code), code.clone()))
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     let block_headers = rpc_witness
         .headers
@@ -97,7 +97,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .expect("Failed to decode block headers from RpcExecutionWitness")
         .iter()
         .map(|header| (header.number, header.clone()))
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     let parent_number = first_block_number
         .checked_sub(1)
@@ -117,7 +117,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let state_trie = Trie::from_nodes(NodeHash::Hashed(parent_header.state_root), &state_nodes)
         .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
-    let mut touched_account_storage_slots = HashMap::new();
+    let mut touched_account_storage_slots = BTreeMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
         if bytes.len() == Address::len_bytes() {
@@ -198,7 +198,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut witness = ExecutionWitnessResult {
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
-        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
+        storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
@@ -211,7 +211,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut witness_clone = ExecutionWitnessResult {
         codes: witness.codes.clone(),
         state_trie: None,
-        storage_tries: HashMap::new(),
+        storage_tries: BTreeMap::new(),
         block_headers: witness.block_headers.clone(),
         parent_block_header: witness.parent_block_header.clone(),
         chain_config: witness.chain_config,

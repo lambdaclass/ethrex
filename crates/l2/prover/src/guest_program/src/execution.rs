@@ -158,16 +158,18 @@ pub fn stateless_validation_l2(
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    use std::collections::BTreeMap;
+
     let mut initial_db = ExecutionWitnessResult {
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
         codes: db.codes.clone(),
         state_trie: None,
-        storage_tries: HashMap::new(),
+        storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
         storage_trie_nodes: db.storage_trie_nodes.clone(),
-        touched_account_storage_slots: HashMap::new(),
+        touched_account_storage_slots: BTreeMap::new(),
     };
 
     let StatelessResult {
