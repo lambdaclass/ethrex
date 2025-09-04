@@ -19,5 +19,5 @@ docs/
 # Local development
 hive/
 ethereum-package/
-cmd/ef_tests/blockchain/vectors
-cmd/ef_tests/state/vectors
+tooling/ef_tests/blockchain/vectors
+tooling/ef_tests/state/vectors

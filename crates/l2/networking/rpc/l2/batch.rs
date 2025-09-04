@@ -1,6 +1,6 @@
 use ethrex_common::types::{BlockHash, batch::Batch};
 use ethrex_storage::Store;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
 
@@ -9,7 +9,7 @@ use crate::{
     utils::RpcErr,
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RpcBatch {
     #[serde(flatten)]
     pub batch: Batch,

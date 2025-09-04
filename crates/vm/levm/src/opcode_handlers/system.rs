@@ -760,6 +760,7 @@ impl<'a> VM<'a> {
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,
+                self.env.config.fork,
             )?;
 
             let call_frame = &mut self.current_call_frame;

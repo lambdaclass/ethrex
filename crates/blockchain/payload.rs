@@ -2,7 +2,8 @@ use std::{
     cmp::{Ordering, max},
     collections::HashMap,
     ops::Div,
-    time::Instant,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use ethrex_common::{
@@ -28,9 +29,10 @@ use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainType, MAX_PAYLOADS,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -39,6 +41,39 @@ use crate::{
 
 use thiserror::Error;
 use tracing::{debug, error};
+
+#[derive(Debug)]
+pub struct PayloadBuildTask {
+    task: tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
+    cancel: CancellationToken,
+}
+
+#[derive(Debug)]
+pub enum PayloadOrTask {
+    Payload(Box<PayloadBuildResult>),
+    Task(PayloadBuildTask),
+}
+
+impl PayloadBuildTask {
+    /// Finishes the current payload build process and returns its result
+    pub async fn finish(self) -> Result<PayloadBuildResult, ChainError> {
+        self.cancel.cancel();
+        self.task
+            .await
+            .map_err(|_| ChainError::Custom("Failed to join task".to_string()))?
+    }
+}
+
+impl PayloadOrTask {
+    /// Converts self into a `PayloadOrTask::Payload` by finishing the current build task
+    /// If self is already a `PayloadOrTask::Payload` this is a NoOp
+    pub async fn to_payload(self) -> Result<Self, ChainError> {
+        Ok(match self {
+            PayloadOrTask::Payload(_) => self,
+            PayloadOrTask::Task(task) => PayloadOrTask::Payload(Box::new(task.finish().await?)),
+        })
+    }
+}
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -244,6 +279,7 @@ impl PayloadBuildContext {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct PayloadBuildResult {
     pub blobs_bundle: BlobsBundle,
     pub block_value: U256,
@@ -277,6 +313,74 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 }
 
 impl Blockchain {
+    /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
+    /// Fails if there is no payload or active payload build task for the given id.
+    pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
+        let mut payloads = self.payloads.lock().await;
+        // Find the given payload and finish the active build process if needed
+        let idx = payloads
+            .iter()
+            .position(|(id, _)| id == &payload_id)
+            .ok_or(ChainError::UnknownPayload)?;
+        let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
+        payloads.insert(idx, finished_payload);
+        // Return the held payload
+        match &payloads[idx].1 {
+            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
+            _ => unreachable!("we already converted the payload into a finished version"),
+        }
+    }
+
+    /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
+    /// The build process will run for the full block building timeslot or until `get_payload` is called
+    pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+        let self_clone = self.clone();
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
+        let payload_build_task = tokio::task::spawn(async move {
+            self_clone
+                .build_payload_loop(payload, cancel_token_clone)
+                .await
+        });
+        let mut payloads = self.payloads.lock().await;
+        if payloads.len() >= MAX_PAYLOADS {
+            // Remove oldest unclaimed payload
+            payloads.remove(0);
+        }
+        payloads.push((
+            payload_id,
+            PayloadOrTask::Task(PayloadBuildTask {
+                task: payload_build_task,
+                cancel: cancel_token,
+            }),
+        ));
+    }
+
+    /// Build the given payload and keep on rebuilding it until either the time slot
+    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled
+    pub async fn build_payload_loop(
+        self: Arc<Blockchain>,
+        payload: Block,
+        cancel_token: CancellationToken,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        let start = Instant::now();
+        let self_clone = self.clone();
+        const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
+        // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
+        let mut res = self_clone.build_payload(payload.clone()).await?;
+        while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
+            let payload = payload.clone();
+            // Cancel the current build process and return the previous payload if it is requested earlier
+            if let Some(current_res) = cancel_token
+                .run_until_cancelled(self_clone.build_payload(payload))
+                .await
+            {
+                res = current_res?;
+            }
+        }
+        Ok(res)
+    }
+
     /// Completes the payload building process, return the block value
     pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
@@ -433,9 +537,6 @@ impl Blockchain {
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
                     txs.shift()?;
-                    // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&tx_hash)?;
-
                     metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
                 }

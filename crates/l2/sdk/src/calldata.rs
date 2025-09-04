@@ -1,8 +1,9 @@
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
 use ethrex_l2_common::calldata::Value;
+use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
-use keccak_hash::keccak;
+use keccak_hash::{H256, keccak};
 
 use crate::address_to_word;
 
@@ -508,6 +509,40 @@ fn copy_into(
         .copy_from_slice(to_copy_slice);
 
     Ok(())
+}
+
+#[allow(clippy::indexing_slicing)]
+pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
+    let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
+        .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
+
+    // The ABI encoding for dynamic arrays is:
+    // 1. Offset to data (32 bytes)
+    // 2. Length of array (32 bytes)
+    // 3. Array elements (each 32 bytes)
+    if bytes.len() < 64 {
+        return Err(EthClientError::Custom("Response too short".to_owned()));
+    }
+
+    // Get the offset (should be 0x20 for simple arrays)
+    let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+
+    // Get the length of the array
+    let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+
+    // Calculate the start of the array data
+    let data_start = offset + 32;
+    let data_end = data_start + (length * 32);
+
+    if data_end > bytes.len() {
+        return Err(EthClientError::Custom("Invalid array length".to_owned()));
+    }
+
+    // Convert the slice directly to H256 array
+    bytes[data_start..data_end]
+        .chunks_exact(32)
+        .map(|chunk| Ok(H256::from_slice(chunk)))
+        .collect()
 }
 
 #[test]

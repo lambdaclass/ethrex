@@ -34,7 +34,7 @@ This will start an ethrex l2 sequencer with the RPC server listening at `http://
 ## Starting a prover server
 
 ```sh
-ethrex l2 prover --proof-coordinator http://localhost:3900
+ethrex l2 prover --proof-coordinators http://localhost:3900
 ```
 
 For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2-prover)

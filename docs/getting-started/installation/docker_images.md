@@ -15,7 +15,7 @@ docker pull ghcr.io/lambdaclass/ethrex:latest
 To pull the latest development docker image, run:
 
 ```
-docker pull ghcr.io/lambdaclass/ethrex:unstable
+docker pull ghcr.io/lambdaclass/ethrex:main
 ```
 
 To pull the image for a specific version, run:
@@ -63,7 +63,7 @@ The command also mounts the docker volume `ethrex` to persist data.
 
 If you want to follow the logs run
 ```
-docker logs -f ethrex 
+docker logs -f ethrex
 ```
 
 To stop the container run

@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, types::Block};
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -35,11 +35,9 @@ pub enum StateUpdaterError {
     #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
-    InternalError(String),
-    // TODO: Avoid propagating GenServerErrors outside GenServer modules
-    // See https://github.com/lambdaclass/ethrex/issues/3376
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
+    InternalError(#[from] GenServerError),
+    #[error("Missing data: {0}")]
+    MissingData(String),
 }
 
 #[derive(Clone)]
@@ -105,7 +103,7 @@ impl StateUpdater {
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::GenServerError)
+            .map_err(StateUpdaterError::InternalError)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
@@ -177,10 +175,8 @@ impl StateUpdater {
 
     /// Reverts state to the last committed batch if known.
     async fn revert_uncommitted_state(&mut self) -> Result<(), StateUpdaterError> {
-        let last_l2_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_l2_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         debug!("Last committed batch: {last_l2_committed_batch}");
 
@@ -200,7 +196,7 @@ impl StateUpdater {
         );
 
         let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last() else {
-            return Err(StateUpdaterError::InternalError(format!(
+            return Err(StateUpdaterError::MissingData(format!(
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
         };
@@ -211,14 +207,14 @@ impl StateUpdater {
             .store
             .get_block_body(*last_l2_committed_block_number)
             .await?
-            .ok_or(StateUpdaterError::InternalError(
+            .ok_or(StateUpdaterError::MissingData(
                 "No block body found for the last committed batch block number".to_string(),
             ))?;
 
         let last_l2_committed_block_header = self
             .store
             .get_block_header(*last_l2_committed_block_number)?
-            .ok_or(StateUpdaterError::InternalError(
+            .ok_or(StateUpdaterError::MissingData(
                 "No block header found for the last committed batch block number".to_string(),
             ))?;
 

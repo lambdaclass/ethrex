@@ -1,0 +1,45 @@
+participants:
+  # NOTE: Both erigon and geth work on this example, but they provide wrong nodes information on discovery protocol
+  # - el_type: erigon
+  #   el_image: ethpandaops/erigon:main-764a2c50
+  #   cl_type: lighthouse
+  #   cl_image: sigp/lighthouse:v7.1.0
+  #   validator_count: 32
+  # - el_type: reth
+  #   el_image: ghcr.io/paradigmxyz/reth:v1.2.2
+  #   cl_type: lighthouse
+  #   cl_image: sigp/lighthouse:v7.1.0
+  #   validator_count: 32
+  - el_type: besu
+    el_image: ethpandaops/besu:main-142a5e6
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.1.0
+    validator_count: 32
+  - el_type: geth
+    el_image: ethereum/client-go:v1.15.2
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.1.0
+    validator_count: 32
+    count: 1
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.1.0
+    validator_count: 32
+    # snooper_enabled: true
+
+ethereum_metrics_exporter_enabled: true
+
+additional_services:
+  - dora
+  - spamoor
+  - prometheus_grafana
+
+spamoor_params:
+  spammers:
+    - scenario: erctx
+      config:
+        throughput: 750
+
+grafana_params:
+  additional_dashboards: ["./ethrex_l1_perf.json"]

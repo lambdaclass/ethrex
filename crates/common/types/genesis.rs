@@ -188,6 +188,12 @@ pub struct ChainConfig {
     pub verkle_time: Option<u64>,
     pub osaka_time: Option<u64>,
 
+    pub bpo1_time: Option<u64>,
+    pub bpo2_time: Option<u64>,
+    pub bpo3_time: Option<u64>,
+    pub bpo4_time: Option<u64>,
+    pub bpo5_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
     /// Network has already passed the terminal total difficult
@@ -198,6 +204,22 @@ pub struct ChainConfig {
     #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
+
+    #[serde(default)]
+    pub enable_verkle_at_genesis: bool,
+}
+
+lazy_static::lazy_static! {
+    pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
+        HashMap::from([
+            (1, "mainnet"),
+            (11155111, "sepolia"),
+            (17000, "holesky"),
+            (560048, "hoodi"),
+            (9, "L1 local devnet"),
+            (65536999, "L2 local devnet"),
+        ])
+    };
 }
 
 #[repr(u8)]
@@ -281,6 +303,34 @@ impl ChainConfig {
 
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn display_config(&self) -> String {
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
+
+        let post_merge_forks = [
+            ("Shanghai", self.shanghai_time),
+            ("Cancun", self.cancun_time),
+            ("Prague", self.prague_time),
+            ("Verkle", self.verkle_time),
+            ("Osaka", self.osaka_time),
+        ];
+
+        let active_forks: Vec<_> = post_merge_forks
+            .iter()
+            .filter_map(|(name, t)| t.map(|time| format!("- {}: @{:<10}", name, time)))
+            .collect();
+
+        if !active_forks.is_empty() {
+            output.push_str("Network is post-merge\n\n");
+            output.push_str("Post-Merge hard forks (timestamp based):\n");
+            output.push_str(&active_forks.join("\n"));
+        } else {
+            output.push_str("Network is at Paris\n\n");
+        }
+
+        output
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
