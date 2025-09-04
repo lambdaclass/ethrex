@@ -96,8 +96,8 @@ impl L2Command {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
-#[clap(group = clap::ArgGroup::new("owner_signing").multiple(false).required(false))]
-#[clap(group = clap::ArgGroup::new("sequencer_signing").multiple(false).required(false))]
+#[clap(group = clap::ArgGroup::new("owner_signing").required(false))]
+#[clap(group = clap::ArgGroup::new("sequencer_signing").required(false))]
 pub enum Command {
     #[command(about = "Initialize an ethrex prover", visible_alias = "p")]
     Prover {
