@@ -1,0 +1,18 @@
+participants:
+  - el_type: ethrex
+    el_image: ghcr.io/lambdaclass/ethrex:main
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.1.0
+    count: 1
+
+network_params:
+  network: hoodi
+
+additional_services:
+  - assertoor
+
+assertoor_params:
+  run_stability_check: false
+  run_block_proposal_check: false
+  tests:
+    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
