@@ -51,11 +51,7 @@ pub fn parse_and_execute(
                 && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
                     && !hashes_of_fusaka_tests_to_run
                         .iter()
-                        .any(|hash| *hash == test.info.hash.clone().unwrap())
-                    || match evm {
-                        EvmEngine::LEVM => false,
-                        EvmEngine::REVM => true,
-                    }))
+                        .any(|hash| *hash == test.info.hash.clone().unwrap())))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
@@ -64,7 +60,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm, stateless_backend));
+        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -83,7 +79,6 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    evm: EvmEngine,
     stateless_backend: Option<Backend>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
@@ -98,7 +93,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
