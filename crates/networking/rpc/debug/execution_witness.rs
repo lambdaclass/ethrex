@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -109,20 +109,13 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
-    let mut state_nodes = HashMap::new();
+    let mut state_nodes = BTreeMap::new();
     for node in rpc_witness.state.iter() {
         state_nodes.insert(keccak(node), node.to_vec());
     }
-    let state_nodes_map: HashMap<NodeHash, NodeRLP> = state_nodes
-        .iter()
-        .map(|(k, v)| (NodeHash::Hashed(*k), v.clone()))
-        .collect();
 
-    let state_trie = Trie::from_nodes(
-        NodeHash::Hashed(parent_header.state_root),
-        state_nodes_map.clone(),
-    )
-    .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
+    let state_trie = Trie::from_nodes(NodeHash::Hashed(parent_header.state_root), &state_nodes)
+        .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("State trie: {e}")))?;
 
     let mut touched_account_storage_slots = HashMap::new();
     let mut address = Address::default();
@@ -158,14 +151,12 @@ pub fn execution_witness_from_rpc_chain_config(
             })?;
 
         // TODO: why the storage trie fails
-        let Ok(mut storage_trie) =
-            Trie::from_nodes(NodeHash::Hashed(storage_root), state_nodes_map.clone()).map_err(
-                |e| {
-                    ExecutionWitnessError::RebuildTrie(format!(
-                        "Storage trie for address {address:#x}: {e}"
-                    ))
-                },
-            )
+        let Ok(mut storage_trie) = Trie::from_nodes(NodeHash::Hashed(storage_root), &state_nodes)
+            .map_err(|e| {
+                ExecutionWitnessError::RebuildTrie(format!(
+                    "Storage trie for address {address:#x}: {e}"
+                ))
+            })
         else {
             continue;
         };
@@ -243,7 +234,7 @@ pub fn execution_witness_from_rpc_chain_config(
         state_trie,
         &account_updates,
         used_storage_tries,
-        &state_nodes_map,
+        &state_nodes,
     )?;
     for (address, (witness_ref, _)) in &trie_loggers {
         let mut witness_lock = witness_ref.lock().map_err(|_| {
@@ -267,7 +258,7 @@ fn apply_account_updates_from_trie_with_witness(
     mut state_trie: Trie,
     account_updates: &[AccountUpdate],
     mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    state_nodes: &HashMap<NodeHash, NodeRLP>,
+    state_nodes: &BTreeMap<H256, NodeRLP>,
 ) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), ExecutionWitnessError> {
     for update in account_updates.iter() {
         let hashed_address = hash_address(&update.address);
@@ -302,13 +293,12 @@ fn apply_account_updates_from_trie_with_witness(
                 let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                     std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
                     std::collections::hash_map::Entry::Vacant(vacant) => {
-                        let trie = Trie::from_nodes(
-                            account_state.storage_root.into(),
-                            state_nodes.clone(),
-                        )
-                        .map_err(|_| {
-                            ExecutionWitnessError::Custom("Failed to get account state".to_owned())
-                        })?;
+                        let trie = Trie::from_nodes(account_state.storage_root.into(), state_nodes)
+                            .map_err(|_| {
+                                ExecutionWitnessError::Custom(
+                                    "Failed to get account state".to_owned(),
+                                )
+                            })?;
                         let root = trie.hash_no_commit();
                         vacant.insert(TrieLogger::open_trie(trie, NodeHash::from(root).into()))
                     }

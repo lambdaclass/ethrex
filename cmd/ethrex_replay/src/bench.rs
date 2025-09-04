@@ -41,6 +41,5 @@ pub async fn run_and_measure(
     if write_to_file {
         write_benchmark_file(gas_used, elapsed as f64);
     }
-    info!("Total gas from block/s: {gas_used}");
     Ok(())
 }

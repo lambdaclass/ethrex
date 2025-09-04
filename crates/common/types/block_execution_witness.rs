@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::{collections::HashMap, str::FromStr};
 
@@ -52,7 +53,7 @@ pub struct ExecutionWitnessResult {
     /// This is precomputed during ExecutionWitness construction to avoid
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
-    pub state_nodes: HashMap<H256, NodeRLP>,
+    pub state_nodes: BTreeMap<H256, NodeRLP>,
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, rkyv::with::AsBox>)]
     pub storage_trie_nodes: HashMap<Address, Vec<NodeRLP>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
@@ -93,11 +94,7 @@ impl ExecutionWitnessResult {
 
         let state_trie = Trie::from_nodes(
             NodeHash::Hashed(self.parent_block_header.state_root),
-            self.state_nodes
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (NodeHash::Hashed(k), v))
-                .collect(),
+            &self.state_nodes,
         )
         .map_err(|e| {
             ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
@@ -120,12 +117,13 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
+        // TODO: review this - hashing inside zkvm
         let storage_nodes = self.storage_trie_nodes.get(address)?;
-        let mut nodes = HashMap::new();
+        let mut nodes = BTreeMap::new();
         for node in storage_nodes.iter() {
-            nodes.insert(NodeHash::Hashed(keccak(node)), node.clone());
+            nodes.insert(keccak(node), node.clone());
         }
-        Trie::from_nodes(NodeHash::Hashed(account_state.storage_root), nodes).ok()
+        Trie::from_nodes(NodeHash::Hashed(account_state.storage_root), &nodes).ok()
     }
 
     /// Helper function to apply account updates to the execution witness

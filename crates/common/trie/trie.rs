@@ -12,7 +12,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -258,7 +258,7 @@ impl Trie {
 
     pub fn empty_in_memory() -> Self {
         Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            HashMap::new(),
+            BTreeMap::new(),
         )))))
     }
 
@@ -271,19 +271,22 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: NodeHash,
-        mut state_nodes: HashMap<NodeHash, NodeRLP>,
+        state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        // TODO: Try to remove this clone.
-        let Some(root) = state_nodes.get(&root_hash).cloned() else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
-            return Ok(Trie::new(in_memory_trie));
-        };
+        let root_rlp = state_nodes
+            .get(&root_hash.finalize())
+            .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
-            storage: &mut HashMap<NodeHash, Vec<u8>>,
-            node: &NodeRLP,
+            all_nodes: &BTreeMap<H256, Vec<u8>>,
+            cur_node_hash: &NodeHash,
+            cur_node_rlp: &NodeRLP,
+            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
-            Ok(match Node::decode_raw(node)? {
+            let node = Node::decode_raw(cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
+
+            Ok(match node {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
@@ -291,20 +294,12 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match storage.get(&hash).cloned() {
-                                Some(rlp) => {
-                                    let res: NodeRef = inner(storage, &rlp)?.into();
-                                    let NodeRef::Node(rlp, _) = res.clone() else {
-                                        unreachable!()
-                                    };
-                                    storage.insert(res.compute_hash(), rlp.encode_raw());
-                                    res
-                                }
+                            *choice = match all_nodes.get(&hash.finalize()) {
+                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                                 None => hash.into(),
                             };
                         }
                     }
-                    storage.insert(node.compute_hash(), node.encode_raw());
 
                     (*node).into()
                 }
@@ -313,34 +308,23 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match storage.get(&hash).cloned() {
-                        Some(rlp) => {
-                            let res: NodeRef = inner(storage, &rlp)?.into();
-                            let NodeRef::Node(rlp, _) = res.clone() else {
-                                unreachable!()
-                            };
-                            storage.insert(res.compute_hash(), rlp.encode_raw());
-                            res
-                        }
+                    node.child = match all_nodes.get(&hash.finalize()) {
+                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                         None => hash.into(),
                     };
-
-                    storage.insert(node.compute_hash(), node.encode_raw());
 
                     node.into()
                 }
                 Node::Leaf(node) => {
                     let res = node.clone();
-                    storage.insert(res.compute_hash(), res.encode_raw());
                     res.into()
                 }
             })
         }
 
-        let node = inner(&mut state_nodes, &root)?;
-        state_nodes.insert(node.compute_hash(), node.encode_raw());
-        let root = node.into();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(state_nodes))));
+        let mut necessary_nodes = BTreeMap::new();
+        let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
 
@@ -457,11 +441,11 @@ impl Trie {
 
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let hmap: BTreeMap<NodeHash, Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
