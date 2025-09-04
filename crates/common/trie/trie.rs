@@ -127,6 +127,7 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
+        // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
             .get_node(self.db.as_ref())?
@@ -305,17 +306,13 @@ impl Trie {
 
                     node.into()
                 }
-                Node::Leaf(node) => {
-                    let res = node.clone();
-                    res.into()
-                }
+                Node::Leaf(node) => node.into(),
             })
         }
 
         let mut necessary_nodes = BTreeMap::new();
         let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
-
         let mut trie = Trie::new(in_memory_trie);
 
         trie.root = root;

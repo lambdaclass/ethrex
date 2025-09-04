@@ -107,7 +107,7 @@ impl ExecutionWitnessResult {
     /// Helper function to rebuild the storage trie for a given account address
     /// Returns if root is not empty, an Option with the rebuilt trie
     // This function is an option because we expect it to fail sometimes, and we just want to filter it
-    pub fn rebuild_storage_trie(&mut self, address: &H160) -> Option<Trie> {
+    pub fn rebuild_storage_trie(&self, address: &H160) -> Option<Trie> {
         let account_state_rlp = self
             .state_trie
             .as_ref()?

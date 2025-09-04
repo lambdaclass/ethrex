@@ -150,7 +150,6 @@ pub fn execution_witness_from_rpc_chain_config(
                 ))
             })?;
 
-        // TODO: why the storage trie fails
         let Ok(mut storage_trie) = Trie::from_nodes(NodeHash::Hashed(storage_root), &state_nodes)
             .map_err(|e| {
                 ExecutionWitnessError::RebuildTrie(format!(
@@ -263,19 +262,16 @@ fn apply_account_updates_from_trie_with_witness(
     for update in account_updates.iter() {
         let hashed_address = hash_address(&update.address);
         if update.removed {
-            // TODO: review this commented code
-            // Remove account from trie
-            // state_trie.remove(hashed_address).map_err(|_| {
-            //     ExecutionWitnessError::Custom("Failed to get account state".to_owned())
-            // })?;
             continue;
         } else {
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            // TODO: check this error
             let mut account_state = match state_trie.get(&hashed_address).unwrap_or_default() {
-                Some(encoded_state) => AccountState::decode(&encoded_state).map_err(|_| {
-                    ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                Some(encoded_state) => AccountState::decode(&encoded_state).map_err(|e| {
+                    ExecutionWitnessError::Custom(format!(
+                        "Failed to decode account state RLP for address {}: {e}",
+                        update.address
+                    ))
                 })?,
                 None => AccountState::default(),
             };
@@ -283,10 +279,6 @@ fn apply_account_updates_from_trie_with_witness(
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
                 account_state.code_hash = info.code_hash;
-                // Store updated code in DB
-                // if let Some(code) = &update.code {
-                //     self.add_account_code(info.code_hash, code.clone()).await?;
-                // }
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
@@ -294,10 +286,11 @@ fn apply_account_updates_from_trie_with_witness(
                     std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
                     std::collections::hash_map::Entry::Vacant(vacant) => {
                         let trie = Trie::from_nodes(account_state.storage_root.into(), state_nodes)
-                            .map_err(|_| {
-                                ExecutionWitnessError::Custom(
-                                    "Failed to get account state".to_owned(),
-                                )
+                            .map_err(|e| {
+                                ExecutionWitnessError::Custom(format!(
+                                    "Failed to build storage trie for account {}: {e}",
+                                    update.address
+                                ))
                             })?;
                         let root = trie.hash_no_commit();
                         vacant.insert(TrieLogger::open_trie(trie, NodeHash::from(root).into()))
@@ -307,16 +300,18 @@ fn apply_account_updates_from_trie_with_witness(
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
-                        storage_trie.remove(hashed_key).map_err(|_| {
-                            ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                        storage_trie.remove(hashed_key).map_err(|e| {
+                            ExecutionWitnessError::Custom(format!(
+                                "Failed to remove storage key: {e}",
+                            ))
                         })?;
                     } else {
                         storage_trie
                             .insert(hashed_key, storage_value.encode_to_vec())
-                            .map_err(|_| {
-                                ExecutionWitnessError::Custom(
-                                    "Failed to get account state".to_owned(),
-                                )
+                            .map_err(|e| {
+                                ExecutionWitnessError::Custom(format!(
+                                    "Failed to insert storage key: {e}",
+                                ))
                             })?;
                     }
                 }
@@ -324,8 +319,10 @@ fn apply_account_updates_from_trie_with_witness(
             }
             state_trie
                 .insert(hashed_address, account_state.encode_to_vec())
-                .map_err(|_| {
-                    ExecutionWitnessError::Custom("Failed to get account state".to_owned())
+                .map_err(|e| {
+                    ExecutionWitnessError::Custom(format!(
+                        "Failed to insert account state for address: {e}",
+                    ))
                 })?;
         }
     }
