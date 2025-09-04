@@ -21,6 +21,7 @@ use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use std::{
     collections::BTreeMap,
+    io,
     net::SocketAddr,
     str::FromStr,
     sync::Arc,
@@ -104,7 +105,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
             .await
             .expect("Failed to bind udp socket"),
     );
-    let ip6_addr = SocketAddr::from_str(format!(
+    let ip6_addr = SocketAddr::from_str(&format!(
         "[::ffff:{}]:{}",
         context.local_node.ip, context.local_node.udp_port
     ))
