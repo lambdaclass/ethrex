@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757020611895,
+  "lastUpdate": 1757022406356,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12055,6 +12055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167517713980,
             "range": "± 334920354",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "24d6a6920d543e3fbc0abc5696cc24c6468f9a39",
+          "message": "feat(l1): make server runner stop if failed (#4320)\n\n**Motivation**\nThe server script runner doesn't stop if a run failed, restarting and\nnot letting debug.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nNow the script stops if a run failed\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-04T20:53:49Z",
+          "tree_id": "c1d7d289fe3948f6dd17b5380b3f300e033db106",
+          "url": "https://github.com/lambdaclass/ethrex/commit/24d6a6920d543e3fbc0abc5696cc24c6468f9a39"
+        },
+        "date": 1757022387259,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169850943921,
+            "range": "± 424934945",
             "unit": "ns/iter"
           }
         ]
