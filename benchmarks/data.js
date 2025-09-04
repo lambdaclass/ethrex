@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757024481196,
+  "lastUpdate": 1757024720737,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12205,6 +12205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170303867857,
             "range": "± 229324559",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e19613907f6c7b4838422eb066a31367bfb9bb3c",
+          "message": "feat(l1, l2): print zkVM cycles of guest programs (#4273)\n\n**Description**\n\nPrints zkVM cycles of guest program execution\n\n*SP1 Example*\n\n```\n2025-09-02T22:50:28.896156Z  INFO ethrex_replay::fetcher: Retrieving execution data for block 23278512 (0 block behind latest)\n2025-09-02T22:50:28.899384Z  WARN ethrex_replay::fetcher: Failed to load cache: No such file or directory (os error 2)\n2025-09-02T22:50:32.833793Z  INFO ethrex_replay::bench: Starting prover program\n2025-09-02T22:50:32.835513Z  WARN sp1_sdk::env: SP1_PROVER environment variable not set, defaulting to 'cpu'\n2025-09-02T22:50:35.038134Z  INFO execute: sp1_core_executor::syscalls::write: ┌╴read_input\nstderr: WARNING: Using insecure random number generator.\n2025-09-02T22:50:35.665546Z  INFO execute: sp1_core_executor::syscalls::write: └╴34,125,436 cycles\n2025-09-02T22:50:35.665570Z  INFO execute: sp1_core_executor::syscalls::write: ┌╴execution\n2025-09-02T22:51:13.041072Z  INFO execute: sp1_core_executor::syscalls::write: └╴1,458,794,351 cycles\n2025-09-02T22:51:13.041100Z  INFO execute: sp1_core_executor::syscalls::write: ┌╴commit_public_inputs\n2025-09-02T22:51:13.042884Z  INFO execute: sp1_core_executor::syscalls::write: └╴26,791 cycles\n2025-09-02T22:51:13.104707Z  INFO execute: sp1_prover: gas: 1687294509\n2025-09-02T22:51:13.107200Z  INFO ethrex_prover_lib::backends::sp1: Successfully executed SP1 program in 38.11s\n2025-09-02T22:51:13.109821Z  INFO ethrex_replay::bench: Total gas from block/s: 23830149\n```",
+          "timestamp": "2025-09-04T21:29:40Z",
+          "tree_id": "1fd65e85ef0acebb85bf24c3559ced278fb542e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e19613907f6c7b4838422eb066a31367bfb9bb3c"
+        },
+        "date": 1757024541569,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169136808172,
+            "range": "± 701930863",
             "unit": "ns/iter"
           }
         ]
