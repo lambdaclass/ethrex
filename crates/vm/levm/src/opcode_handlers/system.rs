@@ -234,7 +234,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -508,7 +508,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Err(VMError::RevertOpcode)
     }
@@ -608,11 +608,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
-        let code = Bytes::from(
-            self.current_call_frame
-                .memory
-                .load_range(code_offset_in_memory, code_size_in_memory)?,
-        );
+        let code = self
+            .current_call_frame
+            .memory
+            .load_range(code_offset_in_memory, code_size_in_memory)?;
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -761,6 +760,7 @@ impl<'a> VM<'a> {
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,
+                self.env.config.fork,
             )?;
 
             let call_frame = &mut self.current_call_frame;
@@ -1020,9 +1020,7 @@ impl<'a> VM<'a> {
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        Ok(Bytes::from(
-            self.current_call_frame.memory.load_range(offset, size)?,
-        ))
+        self.current_call_frame.memory.load_range(offset, size)
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {

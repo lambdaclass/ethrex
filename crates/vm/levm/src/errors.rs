@@ -41,6 +41,14 @@ impl From<PrecompileError> for VMError {
     }
 }
 
+/// Useful to use ? in try_into, specially when slicing with known bounds to fixed size arrays,
+/// which is a error that never really happens.
+impl From<std::array::TryFromSliceError> for VMError {
+    fn from(_: std::array::TryFromSliceError) -> Self {
+        VMError::Internal(InternalError::TypeConversion)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum ExceptionalHalt {
     #[error("Stack Underflow")]
@@ -190,6 +198,14 @@ pub enum PrecompileError {
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
     BLS12381G2PointNotInCurve,
+    #[error("Mod-exp base length is too large")]
+    ModExpBaseTooLarge,
+    #[error("Mod-exp exponent length is too large")]
+    ModExpExpTooLarge,
+    #[error("Mod-exp modulus length is too large")]
+    ModExpModulusTooLarge,
+    #[error("Coordinate Exceeds Field Modulus")]
+    CoordinateExceedsFieldModulus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

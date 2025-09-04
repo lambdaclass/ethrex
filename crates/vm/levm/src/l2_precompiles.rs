@@ -35,10 +35,11 @@ pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     let result = match address {
         address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_remaining)?,
-        _ => return precompiles::execute_precompile(address, calldata, gas_remaining),
+        _ => return precompiles::execute_precompile(address, calldata, gas_remaining, fork),
     };
     Ok(result)
 }

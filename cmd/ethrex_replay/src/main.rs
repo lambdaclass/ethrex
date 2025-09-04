@@ -1,13 +1,7 @@
+use clap::Parser;
+use ethrex_replay::cli::EthrexReplayCLI;
 use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
-
-mod bench;
-mod block_run_report;
-mod cache;
-mod cli;
-mod fetcher;
-mod plot_composition;
-mod run;
 
 #[cfg(feature = "jemalloc")]
 use jemallocator::Jemalloc;
@@ -31,7 +25,10 @@ async fn main() {
             .finish(),
     )
     .expect("setting default subscriber failed");
-    if let Err(e) = cli::start().await {
+
+    let EthrexReplayCLI { command } = EthrexReplayCLI::parse();
+
+    if let Err(e) = command.run().await {
         tracing::error!("{e:?}");
         std::process::exit(1);
     }

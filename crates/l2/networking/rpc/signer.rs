@@ -9,7 +9,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
 use keccak_hash::keccak;
-use reqwest::{Client, Url};
+use reqwest::{Client, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
 use url::ParseError;
@@ -101,16 +101,33 @@ impl RemoteSigner {
         let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
 
         let client = Client::new();
-        client
+        let response = client
             .post(url)
             .body(body)
             .header("content-type", "application/json")
             .send()
-            .await?
-            .text()
-            .await?
-            .parse::<Signature>()
-            .map_err(SignerError::FromHexError)
+            .await?;
+
+        match response.status() {
+            StatusCode::OK => response
+                .text()
+                .await?
+                .parse::<Signature>()
+                .map_err(SignerError::FromHexError),
+            StatusCode::NOT_FOUND => Err(SignerError::Web3SignerError(
+                "Private key not found in web3signer server".to_string(),
+            )),
+            StatusCode::BAD_REQUEST => Err(SignerError::Web3SignerError(
+                "Bad request format".to_string(),
+            )),
+            StatusCode::INTERNAL_SERVER_ERROR => Err(SignerError::Web3SignerError(
+                "Internal server error".to_string(),
+            )),
+            _ => Err(SignerError::Web3SignerError(format!(
+                "Unknown error {}",
+                response.status().as_str(),
+            ))),
+        }
     }
 }
 
@@ -124,6 +141,8 @@ pub enum SignerError {
     FromHexError(#[from] FromHexError),
     #[error("Tried to sign Privileged L2 transaction")]
     PrivilegedL2TxUnsupported,
+    #[error("Web3signer error: {0}")]
+    Web3SignerError(String),
 }
 
 fn parse_signature(signature: Signature) -> (U256, U256, bool) {
@@ -172,7 +191,8 @@ impl Signable for LegacyTransaction {
     async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
         let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
 
-        self.v = U256::from(signature[64]);
+        let recovery_id = U256::from(signature[64]);
+        self.v = recovery_id + 27;
         (self.r, self.s, _) = parse_signature(signature);
 
         Ok(())

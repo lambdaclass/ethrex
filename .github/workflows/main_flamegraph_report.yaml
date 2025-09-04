@@ -34,7 +34,7 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/addr2line
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
-            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
+            ${{ env.HOME }}/ethrex/ethrex/tooling/ef_tests/state/vectors
           key: ${{ runner.os }}-extra-binaries
 
       - name: Change perf settings
@@ -85,8 +85,8 @@ jobs:
 
       - name: Download EF Tests
         run: |
-          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
-            cd cmd/ef_tests/state
+          if [ ! -f "$HOME/ethrex/ethrex/tooling/ef_tests/state/vectors" ]; then
+            cd tooling/ef_tests/state
             make download-evm-ef-tests
           fi
 

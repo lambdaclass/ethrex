@@ -3,10 +3,10 @@ name: Run Hive Tests
 on:
   workflow_call:
     inputs:
-      # Must be 'main'/'trigger' or 'daily'
       job_type:
         required: true
         type: string
+        description: "Allowed values: 'trigger' or 'daily'"
     outputs:
       report_artifact_name:
         description: "The name of the hive report artifact"
@@ -43,29 +43,28 @@ jobs:
             }
 
     steps:
-      - name: Checkout sources
-        if: ${{ inputs.job_type != 'main' }}
-        uses: actions/checkout@v4
-
-      - name: Checkout sources
-        if: ${{ inputs.job_type == 'main' }}
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Build image
-        if: ${{ inputs.job_type != 'main' }}
+      - name: Verify input parameters
+        if: ${{ inputs.job_type != 'trigger' && inputs.job_type != 'daily' }}
         run: |
-          make build-image
-          # Tests use ethrex:latest so we retag it
-          docker tag ethrex:unstable ethrex:latest
+          echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
+          exit 1
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Pull image
-        if: ${{ inputs.job_type == 'main' }}
+        if: ${{ github.ref_name == 'main' }}
         run: |
-          docker pull ghcr.io/lambdaclass/ethrex:unstable
-          # Tests use ethrex:latest so we retag it
-          docker tag ghcr.io/lambdaclass/ethrex:unstable ethrex:latest
+          docker pull ghcr.io/lambdaclass/ethrex:main
+          # Tests use ethrex:ci so we retag it
+          docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
+
+      - name: Build image
+        uses: ./.github/actions/build-docker
+        if: ${{ github.ref_name != 'main' }}
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -79,13 +78,13 @@ jobs:
       - name: Set custom hive flags
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
-            EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
+            EEST_FIXTURES="https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_develop.tar.gz"
             EEST_BRANCH=main
             echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
+        run: cd hive && ./hive --client-file ../.github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
         continue-on-error: true
 
       - name: Upload results
