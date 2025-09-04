@@ -24,6 +24,7 @@ use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
@@ -816,12 +817,14 @@ impl Syncer {
                 .await?;
             info!("Finish downloading account ranges from peers");
 
+            *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
+                *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
                     SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
@@ -854,8 +857,13 @@ impl Syncer {
                         let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
+                            METRICS
+                                .account_tries_inserted
+                                .fetch_add(1, Ordering::Relaxed);
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
+                        *METRICS.current_step.blocking_lock() =
+                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
                         let current_state_root = trie.hash()?;
                         Ok(current_state_root)
                     })
@@ -868,10 +876,16 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
+            *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
+            *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+            METRICS.storage_accounts_initial.store(
+                storage_accounts.accounts_with_storage_root.len() as u64,
+                Ordering::Relaxed,
+            );
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
@@ -897,7 +911,7 @@ impl Syncer {
                 };
 
                 info!(
-                    "Started request_storage_ranges with {} accounts with storage root known",
+                    "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 chunk_index = self
@@ -912,7 +926,7 @@ impl Syncer {
                     .map_err(SyncError::PeerHandler)?;
 
                 info!(
-                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
+                    "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
                     // because we don't know if the storage root is still valid
@@ -924,10 +938,18 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
+            METRICS.storage_accounts_healed.store(
+                storage_accounts.healed_accounts.len() as u64,
+                Ordering::Relaxed,
+            );
+            *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
+            *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            *METRICS.current_step.lock().await =
+                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -977,10 +999,12 @@ impl Syncer {
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
+            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Finished storing storage tries");
         }
 
+        *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
         info!("Starting Healing Process");
         let mut global_state_leafs_healed: u64 = 0;
         let mut global_storage_leafs_healed: u64 = 0;
@@ -1014,11 +1038,13 @@ impl Syncer {
             )
             .await;
         }
+        *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
         let mut bytecode_iter = store
             .iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
@@ -1042,6 +1068,7 @@ impl Syncer {
                 .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
                 .await?;
         }
+        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 

@@ -23,7 +23,7 @@ use std::{
     collections::BTreeMap,
     io,
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
 use tokio::{
@@ -31,7 +31,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
@@ -185,259 +185,204 @@ pub async fn periodically_show_peer_stats(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
 ) {
-    periodically_show_peer_stats_during_syncing(blockchain).await;
+    periodically_show_peer_stats_during_syncing(blockchain, peers.clone()).await;
     periodically_show_peer_stats_after_sync(peers).await;
 }
 
-pub async fn periodically_show_peer_stats_during_syncing(blockchain: Arc<Blockchain>) {
+pub async fn periodically_show_peer_stats_during_syncing(
+    blockchain: Arc<Blockchain>,
+    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+) {
     let start = std::time::Instant::now();
     loop {
-        if blockchain.is_synced() {
-            return;
-        }
-        let metrics_enabled = *METRICS.enabled.lock().await;
-        // Show the metrics only when these are enabled
-        if !metrics_enabled {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-        let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
-
-        let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
-
-        let rlpx_disconnections = METRICS.disconnections_by_client_type.lock().await;
-
-        /* Snap Sync */
-
-        let total_headers_to_download = METRICS.headers_to_download.lock().await;
-        let downloaded_headers = METRICS.downloaded_headers.lock().await;
-        let remaining_headers = total_headers_to_download.saturating_sub(*downloaded_headers);
-
-        let current_headers_download_progress = if *total_headers_to_download == 0 {
-            0.0
-        } else {
-            (*downloaded_headers as f64 / *total_headers_to_download as f64) * 100.0
-        };
-
-        let mut maybe_headers_download_time =
-            METRICS.headers_download_start_time.lock().await.map(|t| {
-                t.elapsed()
-                    .expect("Failed to get current headers download time")
-            });
-
-        let mut maybe_time_taken_to_download_headers =
-            METRICS.time_taken_to_download_headers.lock().await;
-
-        if remaining_headers == 0 {
-            if maybe_time_taken_to_download_headers.is_none() {
-                *maybe_time_taken_to_download_headers = maybe_headers_download_time;
-            } else {
-                maybe_headers_download_time = *maybe_time_taken_to_download_headers;
+        {
+            if blockchain.is_synced() {
+                return;
             }
-        }
+            let metrics_enabled = *METRICS.enabled.lock().await;
+            // Show the metrics only when these are enabled
+            if !metrics_enabled {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
 
-        let downloaded_account_tries = *METRICS.downloaded_account_tries.lock().await;
+            // Common metrics
+            let elapsed = format_duration(start.elapsed());
+            let peer_number = peers.lock().await.len();
+            let current_step = METRICS.current_step.lock().await.clone();
 
-        let time_taken_to_download_account_tries = {
-            let end_time = METRICS
-                .account_tries_download_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
-
-            METRICS
-                .account_tries_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-        };
-
-        let time_taken_to_download_storage_tries = {
-            let end_time = METRICS
-                .storage_tries_download_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
-
-            METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .unwrap_or(Duration::from_secs(0))
-                })
-        };
-
-        let total_storage_tries_to_download = METRICS.storage_tries_to_download.lock().await;
-
-        let downloaded_storage_tries = METRICS.downloaded_storage_tries.lock().await;
-
-        let remaining_storage_tries =
-            total_storage_tries_to_download.saturating_sub(*downloaded_storage_tries);
-
-        let current_storage_tries_download_progress = if *total_storage_tries_to_download == 0 {
-            0.0
-        } else {
-            (*downloaded_storage_tries as f64 / *total_storage_tries_to_download as f64) * 100.0
-        };
-
-        // Storage tries state roots
-        let total_storage_tries_state_roots_to_compute =
-            METRICS.storage_tries_state_roots_to_compute.lock().await;
-
-        let computed_storage_tries_state_roots = METRICS.storage_tries_state_roots_computed.get();
-
-        let remaining_storage_tries_state_roots = total_storage_tries_state_roots_to_compute
-            .saturating_sub(computed_storage_tries_state_roots);
-
-        let current_storage_tries_state_roots_progress =
-            if *total_storage_tries_state_roots_to_compute == 0 {
-                0.0
+            // Headers metrics
+            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
+            let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
+            let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
+            let headers_download_progress = if headers_to_download == 0 {
+                "0%".to_string()
             } else {
-                (computed_storage_tries_state_roots as f64
-                    / *total_storage_tries_state_roots_to_compute as f64)
-                    * 100.0
+                format!(
+                    "{:.2}%",
+                    (headers_downloaded as f64 / headers_to_download as f64) * 100.0
+                )
             };
 
-        let time_taken_to_compute_storage_tries_state_roots = {
-            let end_time = METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+            // Account leaves metrics
+            let account_leaves_downloaded =
+                METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
+                (METRICS.account_tries_inserted.load(Ordering::Relaxed) as f64
+                    / account_leaves_downloaded as f64)
+                    * 100.0
+            } else {
+                0.0
+            };
+            let account_leaves_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get storage tries state roots compute time")
-                })
-        };
+                METRICS
+                    .account_tries_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let account_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-        let time_taken_to_download_bytecodes = {
-            let end_time = METRICS
-                .bytecode_download_end_time
-                .lock()
-                .await
-                .unwrap_or(SystemTime::now());
+                METRICS
+                    .account_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
 
-            METRICS
-                .bytecode_download_start_time
-                .lock()
-                .await
-                .map(|start_time| {
-                    end_time
-                        .duration_since(start_time)
-                        .expect("Failed to get storage tries download time")
-                })
-        };
+            // Storage leaves metrics
+            let storage_leaves_downloaded =
+                METRICS.downloaded_storage_slots.load(Ordering::Relaxed);
+            let storage_accounts = METRICS.storage_accounts_initial.load(Ordering::Relaxed);
+            let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
+            let storage_leaves_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-        let total_bytecodes_to_download = METRICS.bytecodes_to_download.lock().await;
+                METRICS
+                    .storage_tries_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let storage_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-        let downloaded_bytecodes = METRICS.downloaded_bytecodes.lock().await;
+                METRICS
+                    .storage_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
 
-        let remaining_bytecodes = total_bytecodes_to_download.saturating_sub(*downloaded_bytecodes);
+            // Healing stuff
+            let heal_time = format_duration({
+                let end_time = METRICS
+                    .heal_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
 
-        let current_bytecodes_download_progress = if *total_bytecodes_to_download == 0 {
-            0.0
-        } else {
-            (*downloaded_bytecodes as f64 / *total_bytecodes_to_download as f64) * 100.0
-        };
+                METRICS
+                    .heal_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let healed_accounts = METRICS
+                .global_state_trie_leafs_healed
+                .load(Ordering::Relaxed);
+            let healed_storages = METRICS
+                .global_storage_tries_leafs_healed
+                .load(Ordering::Relaxed);
+            let heal_current_throttle =
+                if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
+                    "\x1b[31mDatabase\x1b[0m"
+                } else {
+                    "\x1b[32mPeers\x1b[0m"
+                };
 
-        debug!(
-            r#"
-P2P:
-====
+            // Bytecode metrics
+            let bytecodes_download_time = format_duration({
+                let end_time = METRICS
+                    .bytecode_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .bytecode_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+
+            let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+
+            info!(
+                "P2P Snap Sync:
 elapsed: {elapsed}
-{current_contacts} current contacts ({new_contacts_rate} contacts/m)
-{discarded_nodes} discarded nodes
-{discovered_nodes} total discovered nodes over time
-{sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
-{peers} peers ({new_peers_rate} new peers/m)
-{lost_peers} lost peers
-{rlpx_connections} total peers made over time
-{rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
-{rlpx_failed_connection_attempts} failed connection attempts
-Clients diversity: {peers_by_client:#?}
-
-Snap Sync:
-==========
-headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers}, elapsed: {headers_download_time})
-downloaded account tries: {downloaded_account_tries}, elapsed: {account_tries_download_time}
-storage tries progress: {storage_tries_download_progress} (total: {storage_tries_to_download}, downloaded: {downloaded_storage_tries}, remaining: {remaining_storage_tries}, slots: {downloaded_storage_slots}, tasks: {storage_tries_tasks_queued}, elapsed: {storage_tries_download_time})
-account tries state root: {account_tries_state_root}
-storage tries state root progress: {storage_tries_state_roots_compute_progress} (total: {total_storage_tries_state_roots_to_compute}, computed: {computed_storage_tries_state_roots}, remaining: {remaining_storage_tries_state_roots}, elapsed: {storage_tries_state_roots_compute_time})
-bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {downloaded_bytecodes}, remaining: {remaining_bytecodes}, elapsed: {bytecodes_download_time})"#,
-            elapsed = format_duration(start.elapsed()),
-            peers = METRICS.peers.lock().await,
-            current_contacts = METRICS.contacts.lock().await,
-            new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
-            discarded_nodes = METRICS.discarded_nodes.get(),
-            discovered_nodes = METRICS.discovered_nodes.get(),
-            sent_pings = METRICS.pings_sent.get(),
-            sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
-            new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
-            lost_peers = rlpx_disconnections
-                .values()
-                .flat_map(|x| x.values())
-                .sum::<u64>(),
-            rlpx_connections = METRICS.connection_establishments.get(),
-            rlpx_connection_attempts = METRICS.connection_attempts.get(),
-            new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
-            rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
-            peers_by_client = rlpx_connection_client_types,
-            headers_download_progress = format!("{current_headers_download_progress:.2}%"),
-            headers_to_download = total_headers_to_download,
-            downloaded_headers = downloaded_headers,
-            downloaded_account_tries = downloaded_account_tries,
-            storage_tries_download_progress =
-                format!("{current_storage_tries_download_progress:.2}%"),
-            storage_tries_to_download = total_storage_tries_to_download,
-            downloaded_storage_tries = downloaded_storage_tries,
-            bytecodes_download_progress = format!("{current_bytecodes_download_progress:.2}%"),
-            bytecodes_to_download = total_bytecodes_to_download,
-            downloaded_bytecodes = downloaded_bytecodes,
-            headers_download_time = maybe_headers_download_time
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
-            account_tries_download_time = time_taken_to_download_account_tries
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
-            storage_tries_download_time = time_taken_to_download_storage_tries
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
-            bytecodes_download_time = time_taken_to_download_bytecodes
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_owned()),
-            account_tries_state_root = METRICS
-                .account_tries_state_root
-                .lock()
-                .await
-                .map(|state_root| format!("{state_root:#x}"),)
-                .unwrap_or_else(|| "N/A".to_owned()),
-            storage_tries_state_roots_compute_progress =
-                format!("{current_storage_tries_state_roots_progress:.2}%"),
-            total_storage_tries_state_roots_to_compute = total_storage_tries_state_roots_to_compute,
-            computed_storage_tries_state_roots = computed_storage_tries_state_roots,
-            remaining_storage_tries_state_roots = remaining_storage_tries_state_roots,
-            storage_tries_state_roots_compute_time =
-                time_taken_to_compute_storage_tries_state_roots
-                    .map(format_duration)
-                    .unwrap_or_else(|| "-".to_owned()),
-            downloaded_storage_slots = *METRICS.downloaded_storage_slots.lock().await,
-            storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
-        );
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
+{peer_number} peers
+\x1b[93mCurrent step:\x1b[0m {current_step}
+---
+headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
+account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
+account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
+storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
+storage leaves insertion: {storage_leaves_inserted_time}
+healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
+bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
+            );
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
 }
 
