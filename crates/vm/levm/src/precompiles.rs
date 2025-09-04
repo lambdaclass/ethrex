@@ -1051,21 +1051,11 @@ pub fn p_256_verify(
     }
 
     // Parse parameters
-    let message_hash = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let r = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let s = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let x = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let y = calldata
-        .get(128..160)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let message_hash = &calldata[0..32];
+    let r = &calldata[32..64];
+    let s = &calldata[64..96];
+    let x = &calldata[96..128];
+    let y = &calldata[128..160];
 
     {
         let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
