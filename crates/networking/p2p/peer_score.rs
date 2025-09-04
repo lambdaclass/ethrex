@@ -71,9 +71,7 @@ impl PeerScores {
         let peer_score = self.scores.entry(peer_id).or_insert(PeerScore::default());
         peer_score.active = false;
     }
-}
 
-impl PeerScores {
     /// Returns the peer with the highest score.
     /// If `update_peers_from_kademlia` is true, it updates the peer list
     /// from the Kademlia table before selecting the best peer.

@@ -8,6 +8,7 @@ use crate::{
     sync::AccountStorageRoots,
     sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     utils::current_unix_time,
+    peer_score::PeerScores
 };
 
 use bytes::Bytes;
@@ -145,7 +146,6 @@ pub async fn heal_storage_trie(
         store,
         membatch,
         peer_handler: peers,
-        scored_peers: HashMap::new(),
         requests: HashMap::new(),
         staleness_timestamp,
         state_root,
@@ -237,7 +237,6 @@ pub async fn heal_storage_trie(
             &mut requests_task_joinset,
             &state.peer_handler,
             state.state_root,
-            &mut state.scored_peers,
             &task_sender,
         )
         .await;
@@ -309,7 +308,6 @@ async fn ask_peers_for_nodes(
     >,
     peers: &PeerHandler,
     state_root: H256,
-    scored_peers: &mut HashMap<H256, PeerScore>,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
@@ -389,7 +387,7 @@ fn create_node_requests(
 
 fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
-    scored_peers: &mut HashMap<H256, PeerScore>,
+    scored_peers: &mut PeerScores,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
     succesful_downloads: &mut usize,
