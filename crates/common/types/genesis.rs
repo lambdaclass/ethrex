@@ -320,15 +320,15 @@ impl ChainConfig {
     }
 
     pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
