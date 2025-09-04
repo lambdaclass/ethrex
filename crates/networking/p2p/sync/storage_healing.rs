@@ -1,9 +1,7 @@
 use crate::{
-    kademlia::PeerChannels,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
-    peer_score::PeerScores,
     rlpx::{
-        p2p::{Capability, SUPPORTED_SNAP_CAPABILITIES},
+        p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
     sync::{
@@ -61,15 +59,6 @@ type Membatch = HashMap<MembatchKey, MembatchEntry>;
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
     peer_id: H256,
-}
-
-#[derive(Debug, Clone)]
-pub struct PeerScore {
-    /// This tracks if a peer has a task in flight
-    /// So we can't use it yet
-    in_flight: bool,
-    /// This tracks the score of a peer
-    score: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +165,12 @@ pub async fn heal_storage_trie(
         yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             state.last_update = Instant::now();
+            peers
+                .peer_scores
+                .lock()
+                .await
+                .insert_new_peers(&peers.peer_table)
+                .await;
             info!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 peers

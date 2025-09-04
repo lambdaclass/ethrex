@@ -1001,7 +1001,7 @@ impl Syncer {
             healing_done = heal_storage_trie(
                 pivot_header.state_root,
                 &storage_accounts,
-                self.peers.clone(),
+                &mut self.peers,
                 store.clone(),
                 HashMap::new(),
                 calculate_staleness_timestamp(pivot_header.timestamp),
