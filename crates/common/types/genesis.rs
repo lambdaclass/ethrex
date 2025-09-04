@@ -361,6 +361,8 @@ impl ChainConfig {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
+        } else if self.is_osaka_activated(block_timestamp) {
+            Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
