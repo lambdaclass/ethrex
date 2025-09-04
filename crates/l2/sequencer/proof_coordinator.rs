@@ -34,8 +34,6 @@ use tracing::{debug, error, info, warn};
 use ethrex_metrics::l2::metrics::METRICS;
 #[cfg(feature = "metrics")]
 use std::{collections::HashMap, time::SystemTime};
-#[cfg(feature = "metrics")]
-use tokio::sync::Mutex;
 
 #[serde_as]
 #[derive(Serialize, Deserialize)]
@@ -182,7 +180,7 @@ pub struct ProofCoordinator {
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
     #[cfg(feature = "metrics")]
-    request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
+    request_timestamps: Arc<HashMap<u64, SystemTime>>,
 }
 
 impl ProofCoordinator {
@@ -231,7 +229,7 @@ impl ProofCoordinator {
             needed_proof_types,
             commit_hash: get_commit_hash(),
             #[cfg(feature = "metrics")]
-            request_timestamp: Arc::new(Mutex::new(HashMap::new())),
+            request_timestamps: Arc::new(HashMap::new()),
         })
     }
 
@@ -329,25 +327,29 @@ impl ProofCoordinator {
             }
         }
 
-        let response =
-            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
-                debug!("Sending empty BatchResponse");
-                ProofData::empty_batch_response()
-            } else {
-                let input = self.create_prover_input(batch_to_verify).await?;
-                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-                metrics!(
-                    // First request starts a timer until a proof is received. The elapsed time will be
-                    // the estimated proving time.
-                    // This should be used for development only and runs on the assumption that:
-                    //   1. There's a single prover
-                    //   2. Communication does not fail
-                    //   3. Communication adds negligible overhead in comparison with proving time
-                    let mut lock = self.request_timestamp.lock().await;
-                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
-                );
-                ProofData::batch_response(batch_to_verify, input)
-            };
+        let response = if all_proofs_exist
+            || !self.rollup_store.contains_batch(&batch_to_verify).await?
+        {
+            debug!("Sending empty BatchResponse");
+            ProofData::empty_batch_response()
+        } else {
+            let input = self.create_prover_input(batch_to_verify).await?;
+            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+            metrics!(
+                // First request starts a timer until a proof is received. The elapsed time will be
+                // the estimated proving time.
+                // This should be used for development only and runs on the assumption that:
+                //   1. There's a single prover
+                //   2. Communication does not fail
+                //   3. Communication adds negligible overhead in comparison with proving time
+                let request_timestamps = Arc::get_mut(&mut self.request_timestamps)
+                    .ok_or(
+                        ProofCoordinatorError::Unreachable("could not get a mutable reference to request_timestamps".to_string())
+                    )?;
+                request_timestamps.entry(batch_to_verify).or_insert(SystemTime::now());
+            );
+            ProofData::batch_response(batch_to_verify, input)
+        };
 
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_verify}");
@@ -379,7 +381,10 @@ impl ProofCoordinator {
         } else {
             metrics!(
                 tracing::warn!("getting request timestamp for batch {batch_number}");
-                let mut request_timestamps = self.request_timestamp.lock().await;
+                let request_timestamps = Arc::get_mut(&mut self.request_timestamps)
+                    .ok_or(
+                        ProofCoordinatorError::Unreachable("could not get a mutable reference to request_timestamps".to_string())
+                    )?;
                 let request_timestamp = request_timestamps.get(&batch_number).ok_or(
                     ProofCoordinatorError::InternalError(
                         "request timestamp could not be found".to_string(),
