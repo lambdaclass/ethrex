@@ -15,7 +15,7 @@ ethrex-storage-rollup.workspace = true
 ethereum-types.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio-util = { workspace = true, features = ["codec", "net"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true

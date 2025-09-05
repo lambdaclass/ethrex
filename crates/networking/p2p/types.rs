@@ -201,7 +201,9 @@ impl Node {
     }
 
     pub fn udp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.ip, self.udp_port)
+        // Nodes that use ipv6 currently are only ipv4 masked addresses, so we can convert it to an ipv4 address.
+        // If in the future we have real ipv6 nodes, we will need to handle them differently.
+        SocketAddr::new(self.ip.to_canonical(), self.udp_port)
     }
 
     pub fn tcp_addr(&self) -> SocketAddr {
