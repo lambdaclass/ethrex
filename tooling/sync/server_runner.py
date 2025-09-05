@@ -52,6 +52,9 @@ def parse_args():
         default=60,
         help="Time to wait until new block in seconds (default: 60)",
     )
+    parser.add_argument(
+        "--debug-assert", action="store_true", help="Whether it should be compiled with debug assertions"
+    )
 
     return parser.parse_args()
 
@@ -102,6 +105,8 @@ def get_variables(args):
         variables["HEALING"] = "1"
     if args.memory:
         variables["MEMORY"] = "1"
+    if args.debug_assert:
+        variables["DEBUG_ASSERT"] = "1"
     variables["SERVER_SYNC_NETWORK"] = args.network
     variables["SERVER_SYNC_BRANCH"] = args.branch
 
