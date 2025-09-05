@@ -12,7 +12,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after, send_interval},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
@@ -118,7 +118,7 @@ impl DiscoverySideCar {
 
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, node.udp_addr())
+            .send_to(&buf, SocketAddr::new(node.ip.to_canonical(), node.udp_port))
             .await
             .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
@@ -142,16 +142,11 @@ impl DiscoverySideCar {
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
 
-        // Known issue #4232: currently udp_socket is only a IPv4 socket, so it will fail trying to send
-        // node to IPv6 addresses. For now we just print a trace to record the issue and return
-        if node.ip.is_ipv6() {
-            trace!("Sending FindNode message to ipv6 addresses, skipping.");
-            return Ok(());
-        }
-
+        // Nodes that use ipv6 currently are only ipv4 masked addresses, so we can convert it to an ipv4 address.
+        // If in the future we have real ipv6 nodes, we will need to handle them differently.
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .send_to(&buf, SocketAddr::new(node.ip.to_canonical(), node.udp_port))
             .await
             .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
