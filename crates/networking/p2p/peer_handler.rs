@@ -1685,7 +1685,6 @@ impl PeerHandler {
         .await
         .ok()
         .flatten();
-        drop(receiver);
         let Some((slots, proof)) = request_result else {
             tracing::debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
@@ -1894,6 +1893,7 @@ impl PeerHandler {
         info!("get_block_header: requesting header with number {block_number}");
 
         let mut receiver = peer_channel.receiver.lock().await;
+        debug!("locked the receiver for the peer_channel");
         peer_channel
             .connection
             .cast(CastMessage::BackendMessage(request.clone()))
