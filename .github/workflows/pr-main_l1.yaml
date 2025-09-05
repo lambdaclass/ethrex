@@ -111,7 +111,7 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-fork-${{ matrix.arch-suffix }}
+          name: hive-fork${{ matrix.arch-suffix }}
           path: hive
 
   setup-hive-upstream:
@@ -135,7 +135,7 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-upstream-${{ matrix.arch-suffix }}
+          name: hive-upstream${{ matrix.arch-suffix }}
           path: hive
 
   run-assertoor:
