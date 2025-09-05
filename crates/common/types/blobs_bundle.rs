@@ -116,7 +116,7 @@ impl BlobsBundle {
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
-        if blob_count > max_blobs as usize {
+        if blob_count > max_blobs {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
@@ -196,10 +196,10 @@ impl AddAssign for BlobsBundle {
     }
 }
 
-const MAX_BLOB_COUNT: u64 = 6;
-const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
+const MAX_BLOB_COUNT: usize = 6;
+const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
-fn max_blobs_per_block(fork: Fork) -> u64 {
+fn max_blobs_per_block(fork: Fork) -> usize {
     if fork >= Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
     } else {

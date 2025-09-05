@@ -61,6 +61,6 @@ fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> Result<bool, Authen
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AuthenticationError::InvalidIssuedAtClaim)?
-        .as_secs() as usize;
-    Ok((now as isize - token_data.claims.iat as isize).abs() > 60)
+        .as_secs();
+    Ok((now as i64 - token_data.claims.iat as i64).abs() > 60)
 }
