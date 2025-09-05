@@ -332,6 +332,13 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
         }
         .into());
     }
+    if vm.env.config.fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT_TX {
+        return Err(TxValidationError::Type3TxBlobCountExceeded {
+            max_blob_count: MAX_BLOB_COUNT_TX,
+            actual_blob_count: blob_count,
+        }
+        .into());
+    }
 
     // (15) TYPE_3_TX_CONTRACT_CREATION
     // NOTE: This will never happen, since the EIP-4844 tx (type 3) does not have a TxKind field

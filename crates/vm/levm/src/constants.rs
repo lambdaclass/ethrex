@@ -55,6 +55,8 @@ pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: u64 = 5007716; // Defined in [EI
 // is. Use the `max_blobs_per_block` function instead
 pub const MAX_BLOB_COUNT: u32 = 6;
 pub const MAX_BLOB_COUNT_ELECTRA: u32 = 9;
+// Max blob count per tx (introduced by Osaka fork)
+pub const MAX_BLOB_COUNT_TX: usize = 6;
 
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
