@@ -1,7 +1,9 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{
+    PeerHandlerCallMessage, PeerHandlerCallResponse, PeerHandlerError, SNAP_LIMIT, SyncState,
+};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -22,6 +24,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::{
@@ -77,7 +80,7 @@ pub struct Syncer {
     /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
     /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
-    peers: PeerHandler,
+    peers: GenServerHandle<PeerHandler>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
@@ -88,7 +91,7 @@ pub struct Syncer {
 
 impl Syncer {
     pub fn new(
-        peers: PeerHandler,
+        peers: GenServerHandle<PeerHandler>,
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
@@ -108,7 +111,7 @@ impl Syncer {
     pub fn dummy() -> Self {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy(),
+            peers: PeerHandler::dummy().start(),
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
@@ -188,14 +191,43 @@ impl Syncer {
             );
             debug!("Requesting Block Headers from {current_head}");
 
-            let Some(mut block_headers) = self
+            match self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .call(PeerHandlerCallMessage::DownloadHeaders(
+                    current_head_number,
+                    sync_head,
+                ))
                 .await
-            else {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+            {
+                Ok(PeerHandlerCallResponse::InProgress) => {
+                    debug!("Peer handler has started downloading headers, waiting...");
+                }
+                _ => {
+                    warn!("Peer handler failed to start downloading headers, aborting sync");
+                    return Ok(());
+                }
+            }
+
+            let mut block_headers = loop {
+                match self.peers.call(PeerHandlerCallMessage::CurrentState).await {
+                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::FinishedHeaders(
+                        headers,
+                    ))) => break headers,
+                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::RetrievingHeaders {
+                        ..
+                    })) => {
+                        debug!("Peer Handler is still downloading headers");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                    _ => {
+                        error!("Something went very wrong");
+                        todo!()
+                    } // TODO: handle other cases
+                }
             };
+
+            error!("CONTINUE WITH PEER HANDLER SPAWNIFICATION");
+            // todo!("CONTINUE WITH PEER HANDLER SPAWNIFICATION");
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
@@ -261,25 +293,26 @@ impl Syncer {
             }
 
             // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
-                match block_sync_state {
-                    BlockSyncState::Full(ref mut state) => {
-                        state
-                            .process_incoming_headers(
-                                block_headers,
-                                sync_head_found,
-                                self.blockchain.clone(),
-                                self.peers.clone(),
-                                self.cancel_token.clone(),
-                            )
-                            .await?;
-                    }
-                    BlockSyncState::Snap(ref mut state) => {
-                        state.process_incoming_headers(block_headers).await?
-                    }
-                }
-            }
+            todo!("RE-ENABLE");
+            // block_headers.remove(0);
+            // if !block_headers.is_empty() {
+            //     match block_sync_state {
+            //         BlockSyncState::Full(ref mut state) => {
+            //             state
+            //                 .process_incoming_headers(
+            //                     block_headers,
+            //                     sync_head_found,
+            //                     self.blockchain.clone(),
+            //                     self.peers.clone(),
+            //                     self.cancel_token.clone(),
+            //                 )
+            //                 .await?;
+            //         }
+            //         BlockSyncState::Snap(ref mut state) => {
+            //             state.process_incoming_headers(block_headers).await?
+            //         }
+            //     }
+            // }
 
             if sync_head_found {
                 break;
@@ -323,102 +356,103 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
-        loop {
-            debug!("Sync Log 1: In Full Sync");
-            debug!(
-                "Sync Log 3: State current headears len {}",
-                block_sync_state.current_headers.len()
-            );
-            debug!(
-                "Sync Log 4: State current blocks len {}",
-                block_sync_state.current_blocks.len()
-            );
+        todo!("REENABLE");
+        // loop {
+        //     debug!("Sync Log 1: In Full Sync");
+        //     debug!(
+        //         "Sync Log 3: State current headears len {}",
+        //         block_sync_state.current_headers.len()
+        //     );
+        //     debug!(
+        //         "Sync Log 4: State current blocks len {}",
+        //         block_sync_state.current_blocks.len()
+        //     );
 
-            debug!("Requesting Block Headers from {current_head}");
+        //     debug!("Requesting Block Headers from {current_head}");
 
-            let Some(mut block_headers) = self
-                .peers
-                .request_block_headers(current_head_number, sync_head)
-                .await
-            else {
-                warn!("Sync failed to find target block header, aborting");
-                debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                return Ok(());
-            };
+        //     let Some(mut block_headers) = self
+        //         .peers
+        //         .request_block_headers(current_head_number, sync_head)
+        //         .await
+        //     else {
+        //         warn!("Sync failed to find target block header, aborting");
+        //         debug!("Sync Log 8: Sync failed to find target block header, aborting");
+        //         return Ok(());
+        //     };
 
-            debug!("Sync Log 9: Received {} block headers", block_headers.len());
+        //     debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
-            let (first_block_hash, first_block_number, first_block_parent_hash) =
-                match block_headers.first() {
-                    Some(header) => (header.hash(), header.number, header.parent_hash),
-                    None => continue,
-                };
-            let (last_block_hash, last_block_number) = match block_headers.last() {
-                Some(header) => (header.hash(), header.number),
-                None => continue,
-            };
-            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-            if first_block_hash == last_block_hash
-                && first_block_hash == current_head
-                && current_head != sync_head
-            {
-                // There is no path to the sync head this goes back until it find a common ancerstor
-                warn!("Sync failed to find target block header, going back to the previous parent");
-                current_head = first_block_parent_hash;
-                continue;
-            }
+        //     let (first_block_hash, first_block_number, first_block_parent_hash) =
+        //         match block_headers.first() {
+        //             Some(header) => (header.hash(), header.number, header.parent_hash),
+        //             None => continue,
+        //         };
+        //     let (last_block_hash, last_block_number) = match block_headers.last() {
+        //         Some(header) => (header.hash(), header.number),
+        //         None => continue,
+        //     };
+        //     // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+        //     // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+        //     if first_block_hash == last_block_hash
+        //         && first_block_hash == current_head
+        //         && current_head != sync_head
+        //     {
+        //         // There is no path to the sync head this goes back until it find a common ancerstor
+        //         warn!("Sync failed to find target block header, going back to the previous parent");
+        //         current_head = first_block_parent_hash;
+        //         continue;
+        //     }
 
-            debug!(
-                "Received {} block headers| First Number: {} Last Number: {}",
-                block_headers.len(),
-                first_block_number,
-                last_block_number
-            );
+        //     debug!(
+        //         "Received {} block headers| First Number: {} Last Number: {}",
+        //         block_headers.len(),
+        //         first_block_number,
+        //         last_block_number
+        //     );
 
-            // If we have a pending block from new_payload request
-            // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
-            }
+        //     // If we have a pending block from new_payload request
+        //     // attach it to the end if it matches the parent_hash of the latest received header
+        //     if let Some(ref block) = pending_block {
+        //         if block.header.parent_hash == last_block_hash {
+        //             block_headers.push(block.header.clone());
+        //         }
+        //     }
 
-            // Filter out everything after the sync_head
-            let mut sync_head_found = false;
-            if let Some(index) = block_headers
-                .iter()
-                .position(|header| header.hash() == sync_head)
-            {
-                sync_head_found = true;
-                block_headers.drain(index + 1..);
-            }
+        //     // Filter out everything after the sync_head
+        //     let mut sync_head_found = false;
+        //     if let Some(index) = block_headers
+        //         .iter()
+        //         .position(|header| header.hash() == sync_head)
+        //     {
+        //         sync_head_found = true;
+        //         block_headers.drain(index + 1..);
+        //     }
 
-            // Update current fetch head
-            current_head = last_block_hash;
+        //     // Update current fetch head
+        //     current_head = last_block_hash;
 
-            // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
-                let mut finished = false;
-                while !finished {
-                    finished = block_sync_state
-                        .process_incoming_headers(
-                            block_headers.clone(),
-                            sync_head_found,
-                            self.blockchain.clone(),
-                            self.peers.clone(),
-                            self.cancel_token.clone(),
-                        )
-                        .await?;
-                    block_headers.clear();
-                }
-            }
+        //     // Discard the first header as we already have it
+        //     block_headers.remove(0);
+        //     if !block_headers.is_empty() {
+        //         let mut finished = false;
+        //         while !finished {
+        //             finished = block_sync_state
+        //                 .process_incoming_headers(
+        //                     block_headers.clone(),
+        //                     sync_head_found,
+        //                     self.blockchain.clone(),
+        //                     self.peers.clone(),
+        //                     self.cancel_token.clone(),
+        //                 )
+        //                 .await?;
+        //             block_headers.clear();
+        //         }
+        //     }
 
-            if sync_head_found {
-                break;
-            };
-        }
+        //     if sync_head_found {
+        //         break;
+        //     };
+        // }
         Ok(())
     }
 
@@ -771,6 +805,7 @@ impl Syncer {
         store: Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
+        todo!("REENABLE EVERYTHING HERE");
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
@@ -781,9 +816,10 @@ impl Syncer {
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        while block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-        }
+        // TODO: REENABLE
+        // while block_is_stale(&pivot_header) {
+        //     pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+        // }
         debug!(
             "Selected block {} as pivot for snap sync",
             pivot_header.number
@@ -794,221 +830,221 @@ impl Syncer {
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
         let mut storage_accounts = AccountStorageRoots::default();
-        if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
-            // We start by downloading all of the leafs of the trie of accounts
-            // The function request_account_range writes the leafs into files in
-            // account_state_snapshots_dir
+        // if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
+        //     // We start by downloading all of the leafs of the trie of accounts
+        //     // The function request_account_range writes the leafs into files in
+        //     // account_state_snapshots_dir
 
-            info!("Starting to download account ranges from peers");
-            self.peers
-                .request_account_range(
-                    H256::zero(),
-                    H256::repeat_byte(0xff),
-                    account_state_snapshots_dir.clone(),
-                    &mut pivot_header,
-                    block_sync_state,
-                )
-                .await?;
-            info!("Finish downloading account ranges from peers");
+        //     info!("Starting to download account ranges from peers");
+        //     self.peers
+        //         .request_account_range(
+        //             H256::zero(),
+        //             H256::repeat_byte(0xff),
+        //             account_state_snapshots_dir.clone(),
+        //             &mut pivot_header,
+        //             block_sync_state,
+        //         )
+        //         .await?;
+        //     info!("Finish downloading account ranges from peers");
 
-            // We read the account leafs from the files in account_state_snapshots_dir, write it into
-            // the trie to compute the nodes and stores the accounts with storages for later use
-            let mut computed_state_root = *EMPTY_TRIE_HASH;
-            for entry in std::fs::read_dir(&account_state_snapshots_dir)
-                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-            {
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
-                })?;
-                info!("Reading account file from entry {entry:?}");
-                let snapshot_path = entry.path();
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-                let account_states_snapshot: Vec<(H256, AccountState)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+        //     // We read the account leafs from the files in account_state_snapshots_dir, write it into
+        //     // the trie to compute the nodes and stores the accounts with storages for later use
+        //     let mut computed_state_root = *EMPTY_TRIE_HASH;
+        //     for entry in std::fs::read_dir(&account_state_snapshots_dir)
+        //         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        //     {
+        //         let entry = entry.map_err(|err| {
+        //             SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
+        //         })?;
+        //         info!("Reading account file from entry {entry:?}");
+        //         let snapshot_path = entry.path();
+        //         let snapshot_contents = std::fs::read(&snapshot_path)
+        //             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        //         let account_states_snapshot: Vec<(H256, AccountState)> =
+        //             RLPDecode::decode(&snapshot_contents)
+        //                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                    account_states_snapshot.iter().cloned().unzip();
+        //         let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
+        //             account_states_snapshot.iter().cloned().unzip();
 
-                storage_accounts.accounts_with_storage_root.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, state.storage_root))
-                        }),
-                );
+        //         storage_accounts.accounts_with_storage_root.extend(
+        //             account_hashes
+        //                 .iter()
+        //                 .zip(account_states.iter())
+        //                 .filter_map(|(hash, state)| {
+        //                     (state.storage_root != *EMPTY_TRIE_HASH)
+        //                         .then_some((*hash, state.storage_root))
+        //                 }),
+        //         );
 
-                info!("Inserting accounts into the state trie");
+        //         info!("Inserting accounts into the state trie");
 
-                let store_clone = store.clone();
-                let current_state_root =
-                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
+        //         let store_clone = store.clone();
+        //         let current_state_root =
+        //             tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+        //                 let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
-                        for (account_hash, account) in account_states_snapshot {
-                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                        }
-                        let current_state_root = trie.hash()?;
-                        Ok(current_state_root)
-                    })
-                    .await??;
+        //                 for (account_hash, account) in account_states_snapshot {
+        //                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+        //                 }
+        //                 let current_state_root = trie.hash()?;
+        //                 Ok(current_state_root)
+        //             })
+        //             .await??;
 
-                computed_state_root = current_state_root;
-            }
+        //         computed_state_root = current_state_root;
+        //     }
 
-            info!(
-                "Finished inserting account ranges, total storage accounts: {}",
-                storage_accounts.accounts_with_storage_root.len()
-            );
+        //     info!(
+        //         "Finished inserting account ranges, total storage accounts: {}",
+        //         storage_accounts.accounts_with_storage_root.len()
+        //     );
 
-            info!("Original state root: {state_root:?}");
-            info!("Computed state root after request_account_rages: {computed_state_root:?}");
+        //     info!("Original state root: {state_root:?}");
+        //     info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
-            // We start downloading the storage leafs. To do so, we need to be sure that the storage root
-            // is correct. To do so, we always heal the state trie before requesting storage rates
-            let mut chunk_index = 0_u64;
-            let mut state_leafs_healed = 0_u64;
-            loop {
-                while block_is_stale(&pivot_header) {
-                    pivot_header =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-                }
-                // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-                // We just need to update the pivot and start again
-                if !heal_state_trie_wrap(
-                    pivot_header.state_root,
-                    store.clone(),
-                    &self.peers,
-                    calculate_staleness_timestamp(pivot_header.timestamp),
-                    &mut state_leafs_healed,
-                    &mut storage_accounts,
-                )
-                .await?
-                {
-                    continue;
-                };
+        //     // We start downloading the storage leafs. To do so, we need to be sure that the storage root
+        //     // is correct. To do so, we always heal the state trie before requesting storage rates
+        //     let mut chunk_index = 0_u64;
+        //     let mut state_leafs_healed = 0_u64;
+        //     loop {
+        //         while block_is_stale(&pivot_header) {
+        //             pivot_header =
+        //                 update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+        //         }
+        //         // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
+        //         // We just need to update the pivot and start again
+        //         if !heal_state_trie_wrap(
+        //             pivot_header.state_root,
+        //             store.clone(),
+        //             &self.peers,
+        //             calculate_staleness_timestamp(pivot_header.timestamp),
+        //             &mut state_leafs_healed,
+        //             &mut storage_accounts,
+        //         )
+        //         .await?
+        //         {
+        //             continue;
+        //         };
 
-                info!(
-                    "Started request_storage_ranges with {} accounts with storage root known",
-                    storage_accounts.accounts_with_storage_root.len()
-                );
-                chunk_index = self
-                    .peers
-                    .request_storage_ranges(
-                        &mut storage_accounts,
-                        account_storages_snapshots_dir.clone(),
-                        chunk_index,
-                        &mut pivot_header,
-                    )
-                    .await
-                    .map_err(SyncError::PeerHandler)?;
+        //         info!(
+        //             "Started request_storage_ranges with {} accounts with storage root known",
+        //             storage_accounts.accounts_with_storage_root.len()
+        //         );
+        //         chunk_index = self
+        //             .peers
+        //             .request_storage_ranges(
+        //                 &mut storage_accounts,
+        //                 account_storages_snapshots_dir.clone(),
+        //                 chunk_index,
+        //                 &mut pivot_header,
+        //             )
+        //             .await
+        //             .map_err(SyncError::PeerHandler)?;
 
-                info!(
-                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
-                    storage_accounts.accounts_with_storage_root.len(),
-                    // These accounts are marked as heals if they're a big account. This is
-                    // because we don't know if the storage root is still valid
-                    storage_accounts.healed_accounts.len(),
-                );
-                if !block_is_stale(&pivot_header) {
-                    break;
-                }
-                info!("We stopped because of staleness, restarting loop");
-            }
-            info!("Finished request_storage_ranges");
+        //         info!(
+        //             "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
+        //             storage_accounts.accounts_with_storage_root.len(),
+        //             // These accounts are marked as heals if they're a big account. This is
+        //             // because we don't know if the storage root is still valid
+        //             storage_accounts.healed_accounts.len(),
+        //         );
+        //         if !block_is_stale(&pivot_header) {
+        //             break;
+        //         }
+        //         info!("We stopped because of staleness, restarting loop");
+        //     }
+        //     info!("Finished request_storage_ranges");
 
-            let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                Arc::new(Mutex::new(HashMap::new()));
+        //     let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+        //         Arc::new(Mutex::new(HashMap::new()));
 
-            let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
-            for entry in std::fs::read_dir(&account_storages_snapshots_dir)
-                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-            {
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
-                })?;
-                info!("Reading account storage file from entry {entry:?}");
+        //     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
+        //     for entry in std::fs::read_dir(&account_storages_snapshots_dir)
+        //         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+        //     {
+        //         let entry = entry.map_err(|err| {
+        //             SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
+        //         })?;
+        //         info!("Reading account storage file from entry {entry:?}");
 
-                let snapshot_path = entry.path();
+        //         let snapshot_path = entry.path();
 
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        //         let snapshot_contents = std::fs::read(&snapshot_path)
+        //             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
-                let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+        //         let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+        //             RLPDecode::decode(&snapshot_contents)
+        //                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-                let maybe_big_account_storage_state_roots_clone =
-                    maybe_big_account_storage_state_roots.clone();
-                let store_clone = store.clone();
-                let pivot_hash_moved = pivot_header.hash();
-                info!("Starting compute of account_storages_snapshot");
-                let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-                    let store: Store = store_clone;
+        //         let maybe_big_account_storage_state_roots_clone =
+        //             maybe_big_account_storage_state_roots.clone();
+        //         let store_clone = store.clone();
+        //         let pivot_hash_moved = pivot_header.hash();
+        //         info!("Starting compute of account_storages_snapshot");
+        //         let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+        //             let store: Store = store_clone;
 
-                    // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
-                    // We need to fix this issue in request_storage_ranges and remove this filter.
-                    account_storages_snapshot
-                        .into_par_iter()
-                        .filter(|(_account_hash, storage)| !storage.is_empty())
-                        .map(|(account_hash, key_value_pairs)| {
-                            compute_storage_roots(
-                                maybe_big_account_storage_state_roots_clone.clone(),
-                                store.clone(),
-                                account_hash,
-                                key_value_pairs,
-                                pivot_hash_moved,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, SyncError>>()
-                })
-                .await??;
-                info!("Writing to db");
+        //             // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
+        //             // We need to fix this issue in request_storage_ranges and remove this filter.
+        //             account_storages_snapshot
+        //                 .into_par_iter()
+        //                 .filter(|(_account_hash, storage)| !storage.is_empty())
+        //                 .map(|(account_hash, key_value_pairs)| {
+        //                     compute_storage_roots(
+        //                         maybe_big_account_storage_state_roots_clone.clone(),
+        //                         store.clone(),
+        //                         account_hash,
+        //                         key_value_pairs,
+        //                         pivot_hash_moved,
+        //                     )
+        //                 })
+        //                 .collect::<Result<Vec<_>, SyncError>>()
+        //         })
+        //         .await??;
+        //         info!("Writing to db");
 
-                store
-                    .write_storage_trie_nodes_batch(storage_trie_node_changes)
-                    .await?;
-            }
+        //         store
+        //             .write_storage_trie_nodes_batch(storage_trie_node_changes)
+        //             .await?;
+        //     }
 
-            info!("Finished storing storage tries");
-        }
+        //     info!("Finished storing storage tries");
+        // }
 
         info!("Starting Healing Process");
         let mut global_state_leafs_healed: u64 = 0;
         let mut global_storage_leafs_healed: u64 = 0;
         let mut healing_done = false;
-        while !healing_done {
-            // This if is an edge case for the skip snap sync scenario
-            if block_is_stale(&pivot_header) {
-                pivot_header =
-                    update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-            }
-            healing_done = heal_state_trie_wrap(
-                pivot_header.state_root,
-                store.clone(),
-                &self.peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
-                &mut global_state_leafs_healed,
-                &mut storage_accounts,
-            )
-            .await?;
-            if !healing_done {
-                continue;
-            }
-            healing_done = heal_storage_trie(
-                pivot_header.state_root,
-                &storage_accounts,
-                self.peers.clone(),
-                store.clone(),
-                HashMap::new(),
-                calculate_staleness_timestamp(pivot_header.timestamp),
-                &mut global_storage_leafs_healed,
-            )
-            .await;
-        }
+        // while !healing_done {
+        //     // This if is an edge case for the skip snap sync scenario
+        //     if block_is_stale(&pivot_header) {
+        //         pivot_header =
+        //             update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+        //     }
+        //     healing_done = heal_state_trie_wrap(
+        //         pivot_header.state_root,
+        //         store.clone(),
+        //         &self.peers,
+        //         calculate_staleness_timestamp(pivot_header.timestamp),
+        //         &mut global_state_leafs_healed,
+        //         &mut storage_accounts,
+        //     )
+        //     .await?;
+        //     if !healing_done {
+        //         continue;
+        //     }
+        //     healing_done = heal_storage_trie(
+        //         pivot_header.state_root,
+        //         &storage_accounts,
+        //         self.peers.clone(),
+        //         store.clone(),
+        //         HashMap::new(),
+        //         calculate_staleness_timestamp(pivot_header.timestamp),
+        //         &mut global_storage_leafs_healed,
+        //     )
+        //     .await;
+        // }
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
@@ -1019,26 +1055,26 @@ impl Syncer {
             .expect("we couldn't iterate over accounts")
             .map(|(_, state)| state.code_hash)
             .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
-            // Download bytecodes
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
-            info!(
-                "Starting bytecode download of {} hashes",
-                bytecode_hashes.len()
-            );
-            let bytecodes = self
-                .peers
-                .request_bytecodes(&bytecode_hashes)
-                .await
-                .map_err(SyncError::PeerHandler)?
-                .ok_or(SyncError::BytecodesNotFound)?;
-            store
-                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-                .await?;
-        }
+        // for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+        //     // Download bytecodes
+        //     bytecode_hashes.sort();
+        //     bytecode_hashes.dedup();
+        //     info!(
+        //         "Starting bytecode download of {} hashes",
+        //         bytecode_hashes.len()
+        //     );
+        //     let bytecodes = self
+        //         .peers
+        //         .request_bytecodes(&bytecode_hashes)
+        //         .await
+        //         .map_err(SyncError::PeerHandler)?
+        //         .ok_or(SyncError::BytecodesNotFound)?;
+        //     store
+        //         .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+        //         .await?;
+        // }
 
-        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        // store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())

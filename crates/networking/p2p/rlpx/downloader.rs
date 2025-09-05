@@ -13,7 +13,10 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{
     kademlia::PeerChannels,
-    peer_handler::{BlockRequestOrder, BytecodeTaskResult, HASH_MAX, StorageTaskResult},
+    peer_handler::{
+        BlockRequestOrder, BytecodeTaskResult, DownloaderResponse, HASH_MAX, PeerHandler,
+        PeerHandlerCastMessage, StorageTaskResult,
+    },
     rlpx::{
         Message as RLPxMessage,
         connection::server::CastMessage,
@@ -41,6 +44,7 @@ pub const CURRENT_HEAD_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
 use tracing::{debug, error, warn};
 
+#[derive(Debug)]
 pub struct Downloader {
     peer_id: H256,
     peer_channels: PeerChannels,
@@ -102,6 +106,14 @@ pub enum DownloaderCallResponse {
 
 #[derive(Clone)]
 pub enum DownloaderCastRequest {
+    HeadersNew {
+        response_handle: GenServerHandle<PeerHandler>,
+        start_block: u64,
+        chunk_limit: u64,
+    },
+    //
+    // OLD METHODS, REMOVE EVENTUALLY
+    //
     Headers {
         task_sender: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
         start_block: u64,
@@ -409,6 +421,96 @@ impl GenServer for Downloader {
         _handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
+            DownloaderCastRequest::HeadersNew {
+                mut response_handle,
+                start_block,
+                chunk_limit,
+            } => {
+                debug!("Requesting block headers from peer {}", self.peer_id);
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(start_block),
+                    limit: chunk_limit,
+                    skip: 0,
+                    reverse: false,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    warn!("Failed to send message to peer: {err:?}");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Headers(vec![]),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                };
+
+                let block_headers =
+                    match tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::BlockHeaders(BlockHeaders {
+                                    id,
+                                    block_headers,
+                                })) if id == request_id => {
+                                    return Some(block_headers);
+                                }
+                                // Ignore replies that don't match the expected id (such as late responses)
+                                Some(_) => continue,
+                                None => return None, // EOF
+                            }
+                        }
+                    })
+                    .await
+                    {
+                        Ok(Some(headers)) => headers,
+                        _ => {
+                            response_handle
+                                .cast(PeerHandlerCastMessage::TaskFinished {
+                                    peer_id: self.peer_id(),
+                                    response: DownloaderResponse::Headers(vec![]),
+                                })
+                                .await
+                                .unwrap(); // TODO: Handle unwrap
+                            return CastResponse::Stop;
+                        }
+                    };
+
+                if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Headers(block_headers),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                } else {
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer: {}",
+                        self.peer_id
+                    );
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Headers(vec![]),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                }
+                CastResponse::Stop
+            }
+            //
+            // OLD METHODS, REMOVE EVENTUALLY
+            //
             DownloaderCastRequest::Headers {
                 task_sender,
                 start_block,

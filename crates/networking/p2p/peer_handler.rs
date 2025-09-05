@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    fmt::Debug,
     io::ErrorKind,
+    path::Display,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -14,7 +16,11 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::Node;
 use rand::random;
-use spawned_concurrency::tasks::GenServer;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle,
+    InitResult::{self, Success},
+    send_interval,
+};
 use tokio::{sync::Mutex, time::Instant};
 
 use crate::{
@@ -77,6 +83,35 @@ impl PeerInformation {
 pub struct PeerHandler {
     pub peer_table: Kademlia,
     pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
+    pending_tasks: VecDeque<Task>,
+    started_tasks: HashMap<H256, (Task, Instant)>,
+    sync_state: SyncState,
+}
+
+#[derive(Clone, Debug)]
+enum Task {
+    Headers { start_block: u64, chunk_limit: u64 },
+}
+
+#[derive(Clone, Debug)]
+pub enum SyncState {
+    Idle,
+    RetrievingHeaders {
+        sync_head_number: u64,
+        current_show: u64,
+        acc_headers: Vec<BlockHeader>,
+    },
+    FinishedHeaders(Vec<BlockHeader>),
+}
+
+impl std::fmt::Display for SyncState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncState::Idle => write!(f, "Idle"),
+            SyncState::RetrievingHeaders { .. } => write!(f, "RetrievingHeaders"),
+            SyncState::FinishedHeaders(_) => write!(f, "FinishedHeaders"),
+        }
+    }
 }
 
 pub enum BlockRequestOrder {
@@ -116,6 +151,9 @@ impl PeerHandler {
         Self {
             peer_table,
             peers_info: Default::default(),
+            pending_tasks: vec![].into(),
+            started_tasks: Default::default(),
+            sync_state: SyncState::Idle,
         }
     }
 
@@ -168,6 +206,7 @@ impl PeerHandler {
     }
 
     // TODO: once peer handler becomes an actor, call this periodically
+    // TODO: redundant as `reset_timed_out_tasks`
     /// Helper function that frees peers after being busy
     /// for more than the tolerated time
     pub async fn reset_timed_out_busy_peers(&self) {
@@ -178,6 +217,18 @@ impl PeerHandler {
             {
                 debug!("Resetting peer that was busy for too long");
                 peer.request_time = None;
+            }
+        }
+    }
+
+    pub async fn reset_timed_out_tasks(&mut self) {
+        for (peer_id, (task, start_time)) in self.started_tasks.clone() {
+            // TODO: HEAVY CLONE?
+            if start_time.elapsed() > PEER_REPLY_TIMEOUT {
+                debug!("Resetting task for peer {peer_id} that was busy for too long");
+                self.pending_tasks.push_back(task);
+                self.started_tasks.remove(&peer_id);
+                self.mark_peer_as_free(peer_id).await;
             }
         }
     }
@@ -243,7 +294,7 @@ impl PeerHandler {
     /// Returns a random available `Downloader` with supported capabilities,
     /// or None if there are no peers are available
     async fn get_random_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
-        self.update_peers_info().await;
+        // self.update_peers_info().await;
 
         let free_downloaders = self
             .peers_info
@@ -280,7 +331,7 @@ impl PeerHandler {
     /// Returns the best available `Downloader` with supported capabilities,
     /// or None if there are no peers are available
     async fn get_best_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
-        self.update_peers_info().await;
+        // self.update_peers_info().await;
 
         let free_downloaders = self
             .peers_info
@@ -386,7 +437,7 @@ impl PeerHandler {
             .elapsed()
             .unwrap_or_default();
 
-        info!("Sync head block number retrieved");
+        info!("OLD Sync head block number retrieved");
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
@@ -1611,6 +1662,323 @@ impl PeerHandler {
         {
             Ok(DownloaderCallResponse::BlockHeader(block_header)) => Ok(Some(block_header)),
             _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum PeerHandlerCastMessage {
+    UpdatePeers,
+    AssignTasks,
+    /// Called from a `Downloader` when a task is finished
+    TaskFinished {
+        peer_id: H256,
+        response: DownloaderResponse,
+    },
+    UpdateState(SyncState),
+}
+
+#[derive(Clone)]
+pub enum DownloaderResponse {
+    Headers(Vec<BlockHeader>),
+}
+
+#[derive(Clone)]
+pub enum PeerHandlerCallMessage {
+    CurrentState,
+    DownloadHeaders(u64, H256),
+}
+
+#[derive(Clone)]
+pub enum PeerHandlerCallResponse {
+    CurrentState(SyncState),
+    InProgress,
+    // Possible errors
+    SyncHeadNotFound,
+}
+
+impl GenServer for PeerHandler {
+    type CastMsg = PeerHandlerCastMessage;
+    type CallMsg = PeerHandlerCallMessage;
+    type OutMsg = PeerHandlerCallResponse;
+    type Error = ();
+
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
+        // TODO: keep handle for shutdown
+        let _peer_updater = send_interval(
+            Duration::from_secs(2),
+            handle.clone(),
+            PeerHandlerCastMessage::UpdatePeers,
+        );
+
+        // TODO: keep handle for shutdown
+        let _task_assigner = send_interval(
+            Duration::from_secs(2),
+            handle.clone(),
+            PeerHandlerCastMessage::AssignTasks,
+        );
+
+        Ok(Success(self))
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CastResponse {
+        match message {
+            PeerHandlerCastMessage::UpdatePeers => {
+                self.update_peers_info().await;
+            }
+            PeerHandlerCastMessage::AssignTasks => {
+                self.reset_timed_out_tasks().await;
+
+                if self.pending_tasks.is_empty() {
+                    debug!("No pending tasks to assign");
+                    return CastResponse::NoReply;
+                }
+
+                let capabilities = match self.sync_state {
+                    SyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
+                    // Idle or finished states, should not get here
+                    _ => &SUPPORTED_SNAP_CAPABILITIES,
+                };
+
+                while let Some(available_downloader) = match self.sync_state {
+                    SyncState::RetrievingHeaders { .. } => {
+                        self.get_random_downloader(capabilities).await
+                    }
+                    // Idle or finished states, should not get here
+                    _ => self.get_random_downloader(capabilities).await,
+                } {
+                    let Some(next_task) = self.pending_tasks.pop_front() else {
+                        // No tasks to assign
+                        return CastResponse::NoReply;
+                    };
+
+                    let peer_id = available_downloader.peer_id();
+                    let mut downloader_handle = available_downloader.start();
+                    match next_task {
+                        Task::Headers {
+                            start_block,
+                            chunk_limit,
+                        } => {
+                            let response_handle = handle.clone();
+                            downloader_handle
+                                .cast(DownloaderCastRequest::HeadersNew {
+                                    response_handle,
+                                    start_block,
+                                    chunk_limit,
+                                })
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    debug!("Sent Downloader actor {peer_id} new request");
+                    self.started_tasks
+                        .insert(peer_id, (next_task, Instant::now()));
+                }
+
+                if !self.pending_tasks.is_empty() {
+                    warn!(
+                        "There are {} pending tasks, but no available peers to handle them",
+                        self.pending_tasks.len()
+                    );
+                }
+            }
+            PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
+                debug!("Peer handler received a task finalization message from {peer_id}");
+                self.mark_peer_as_free(peer_id).await;
+                let Some((_, (requested_task, _))) = self.started_tasks.remove_entry(&peer_id)
+                else {
+                    // Should never happen
+                    debug!(
+                        "Received task finished from peer {peer_id} but we have no record of it"
+                    );
+                    return CastResponse::NoReply;
+                };
+
+                match response {
+                    DownloaderResponse::Headers(headers) => {
+                        if headers.is_empty() {
+                            debug!("Peer {peer_id} returned empty headers");
+                            self.record_peer_failure(peer_id).await;
+                            self.pending_tasks.push_back(requested_task);
+                            return CastResponse::NoReply;
+                        }
+                        let downloaded_count = headers.len() as u64;
+                        *METRICS.downloaded_headers.lock().await += downloaded_count;
+
+                        if let SyncState::RetrievingHeaders {
+                            sync_head_number: _,
+                            current_show,
+                            acc_headers,
+                        } = &mut self.sync_state
+                        {
+                            let batch_show = downloaded_count / 10_000;
+
+                            if *current_show < batch_show {
+                                debug!(
+                                    "Downloaded {} headers from peer {} (current count: {downloaded_count})",
+                                    headers.len(),
+                                    peer_id
+                                );
+                                *current_show += 1;
+                            }
+                            acc_headers.extend_from_slice(&headers);
+                        }
+
+                        let downloaded_headers = headers.len() as u64;
+
+                        // create a new task if the returned headers are less than the requested chunk limit
+                        let Task::Headers {
+                            start_block,
+                            chunk_limit,
+                        } = requested_task;
+                        if downloaded_headers < chunk_limit {
+                            let new_start = start_block + downloaded_headers;
+                            debug!(
+                                "Task for ({start_block}, {chunk_limit}) was not completed, re-adding to the queue, {} remaining headers",
+                                chunk_limit - downloaded_headers
+                            );
+                            self.pending_tasks.push_back(Task::Headers {
+                                start_block: new_start,
+                                chunk_limit: chunk_limit - downloaded_headers,
+                            });
+                        } else {
+                            if let SyncState::RetrievingHeaders {
+                                sync_head_number,
+                                current_show: _,
+                                acc_headers,
+                            } = &mut self.sync_state
+                            {
+                                let pending = *sync_head_number + 1 - acc_headers.len() as u64;
+                                if pending == 0 {
+                                    info!("Finished downloading all block headers");
+                                    handle
+                                        .clone()
+                                        .cast(PeerHandlerCastMessage::UpdateState(
+                                            SyncState::FinishedHeaders(acc_headers.clone()), // TODO: clonning of headers migh be costly on memory
+                                        ))
+                                        .await
+                                        .unwrap();
+                                } else {
+                                    debug!("{pending} headers remaining to download");
+                                }
+                            }
+                        }
+                        self.record_peer_success(peer_id).await;
+                    }
+                }
+            }
+            PeerHandlerCastMessage::UpdateState(new_state) => {
+                info!("Sync state updated: {} -> {}", self.sync_state, new_state);
+                self.sync_state = new_state;
+            }
+        }
+        CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            PeerHandlerCallMessage::CurrentState => CallResponse::Reply(
+                PeerHandlerCallResponse::CurrentState(self.sync_state.clone()),
+            ),
+            PeerHandlerCallMessage::DownloadHeaders(start, sync_head) => {
+                // Retrieve sync head number
+                let mut sync_head_number = 0_u64;
+                let sync_head_number_retrieval_start = SystemTime::now();
+                info!("Retrieving sync head block number from peers");
+
+                let mut retries = 1;
+                while sync_head_number == 0 {
+                    if retries > 10 {
+                        // sync_head might be invalid
+                        return CallResponse::Reply(PeerHandlerCallResponse::SyncHeadNotFound);
+                    }
+                    let peers_table = self
+                        .peer_table
+                        .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                        .await;
+
+                    for (peer_id, peer_channels) in peers_table {
+                        let mut downloader = Downloader::new(peer_id, peer_channels).start();
+                        match downloader
+                            .call(DownloaderCallRequest::CurrentHead { sync_head })
+                            .await
+                        {
+                            Ok(DownloaderCallResponse::CurrentHead(number)) => {
+                                sync_head_number = number;
+                                if number != 0 {
+                                    break;
+                                }
+                            }
+                            _ => {
+                                debug!(
+                                    "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}"
+                                );
+                            }
+                        }
+                    }
+
+                    retries += 1;
+                }
+
+                let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
+                    .elapsed()
+                    .unwrap_or_default();
+
+                info!("Sync head block number retrieved");
+
+                *METRICS.time_to_retrieve_sync_head_block.lock().await =
+                    Some(sync_head_number_retrieval_elapsed);
+                *METRICS.sync_head_block.lock().await = sync_head_number;
+                *METRICS.headers_to_download.lock().await = sync_head_number + 1;
+                *METRICS.sync_head_hash.lock().await = sync_head;
+
+                // Create tasks
+
+                let block_count = sync_head_number + 1 - start;
+                let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
+
+                // partition the amount of headers in `K` tasks
+                let chunk_limit = block_count / chunk_count;
+
+                let mut pending_tasks = VecDeque::new();
+
+                for i in 0..chunk_count {
+                    pending_tasks.push_back(Task::Headers {
+                        start_block: i * chunk_limit + start,
+                        chunk_limit,
+                    });
+                }
+
+                // Push the remainder
+                if block_count % chunk_count != 0 {
+                    pending_tasks.push_back(Task::Headers {
+                        start_block: chunk_count * chunk_limit + start,
+                        chunk_limit: block_count % chunk_count,
+                    });
+                }
+
+                debug!(
+                    "Created {} initial tasks for headers download",
+                    pending_tasks.len()
+                );
+                self.pending_tasks = pending_tasks;
+
+                self.sync_state = SyncState::RetrievingHeaders {
+                    sync_head_number,
+                    current_show: 0,
+                    acc_headers: vec![],
+                };
+
+                CallResponse::Reply(PeerHandlerCallResponse::InProgress)
+            }
         }
     }
 }

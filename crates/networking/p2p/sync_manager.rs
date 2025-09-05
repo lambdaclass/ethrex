@@ -6,6 +6,7 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
+use spawned_concurrency::tasks::GenServer;
 use tokio::{
     sync::Mutex,
     time::{Duration, sleep},
@@ -40,7 +41,7 @@ impl SyncManager {
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
-            peer_handler,
+            peer_handler.start(),
             snap_enabled.clone(),
             cancel_token,
             blockchain,
