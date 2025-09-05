@@ -838,7 +838,7 @@ impl Syncer {
                     start: H256::zero(),
                     limit: H256::repeat_byte(0xff),
                     account_state_snapshots_dir: account_state_snapshots_dir.clone(),
-                    pivot_header,
+                    pivot_header: pivot_header.clone(),
                     block_sync_state: block_sync_state.clone(),
                 })
                 .await
@@ -931,54 +931,74 @@ impl Syncer {
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut state_leafs_healed = 0_u64;
-            todo!("ENABLE");
-            // loop {
-            //     while block_is_stale(&pivot_header) {
-            //         pivot_header =
-            //             update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-            //     }
-            //     // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-            //     // We just need to update the pivot and start again
-            //     if !heal_state_trie_wrap(
-            //         pivot_header.state_root,
-            //         store.clone(),
-            //         &self.peers,
-            //         calculate_staleness_timestamp(pivot_header.timestamp),
-            //         &mut state_leafs_healed,
-            //         &mut storage_accounts,
-            //     )
-            //     .await?
-            //     {
-            //         continue;
-            //     };
+            loop {
+                while block_is_stale(&pivot_header) {
+                    warn!("Stale block, update!")
+                    // pivot_header =
+                    //     update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                }
+                // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
+                // We just need to update the pivot and start again
+                // if !heal_state_trie_wrap(
+                //     pivot_header.state_root,
+                //     store.clone(),
+                //     &self.peers,
+                //     calculate_staleness_timestamp(pivot_header.timestamp),
+                //     &mut state_leafs_healed,
+                //     &mut storage_accounts,
+                // )
+                // .await?
+                // {
+                //     continue;
+                // };
 
-            //     info!(
-            //         "Started request_storage_ranges with {} accounts with storage root known",
-            //         storage_accounts.accounts_with_storage_root.len()
-            //     );
-            //     chunk_index = self
-            //         .peers
-            //         .request_storage_ranges(
-            //             &mut storage_accounts,
-            //             account_storages_snapshots_dir.clone(),
-            //             chunk_index,
-            //             &mut pivot_header,
-            //         )
-            //         .await
-            //         .map_err(SyncError::PeerHandler)?;
+                match self
+                    .peers
+                    .call(PeerHandlerCallMessage::DownloadStorageRanges {
+                        storage_accounts,
+                        account_storages_snapshot_dir: account_storages_snapshots_dir.clone(),
+                        chunk_index,
+                        pivot_header: pivot_header.clone(),
+                    })
+                    .await
+                {
+                    Ok(PeerHandlerCallResponse::InProgress) => {
+                        info!("Starting to download storage ranges");
+                    }
+                    _ => {
+                        warn!(
+                            "Peer handler failed to start downloading storage ranges, aborting sync"
+                        );
+                        return Ok(());
+                    }
+                }
 
-            //     info!(
-            //         "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
-            //         storage_accounts.accounts_with_storage_root.len(),
-            //         // These accounts are marked as heals if they're a big account. This is
-            //         // because we don't know if the storage root is still valid
-            //         storage_accounts.healed_accounts.len(),
-            //     );
-            //     if !block_is_stale(&pivot_header) {
-            //         break;
-            //     }
-            //     info!("We stopped because of staleness, restarting loop");
-            // }
+                (chunk_index, storage_accounts) = loop {
+                    match self.peers.call(PeerHandlerCallMessage::CurrentState).await {
+                        Ok(PeerHandlerCallResponse::CurrentState(
+                            SyncState::FinishedStorageRanges(chunk_index, storage_accounts),
+                        )) => {
+                            info!("Finish downloading storage ranges from peers");
+                            break (chunk_index, storage_accounts);
+                        }
+                        Ok(PeerHandlerCallResponse::CurrentState(
+                            SyncState::RetrievingStorageRanges { .. },
+                        )) => {
+                            info!("Peer Handler is still downloading storage ranges");
+                            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        }
+                        _ => {
+                            error!("Something went very wrong");
+                            todo!()
+                        }
+                    }
+                };
+
+                if !block_is_stale(&pivot_header) {
+                    break;
+                }
+                info!("We stopped because of staleness, restarting loop");
+            }
             info!("Finished request_storage_ranges");
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
@@ -1071,15 +1091,15 @@ impl Syncer {
         //     .await;
         // }
 
-        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        // debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        // debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
-        let mut bytecode_iter = store
-            .iter_accounts(pivot_header.state_root)
-            .expect("we couldn't iterate over accounts")
-            .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        // let mut bytecode_iter = store
+        //     .iter_accounts(pivot_header.state_root)
+        //     .expect("we couldn't iterate over accounts")
+        //     .map(|(_, state)| state.code_hash)
+        //     .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
         // for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
         //     // Download bytecodes
         //     bytecode_hashes.sort();
@@ -1110,22 +1130,22 @@ impl Syncer {
 
         let all_block_hashes = block_sync_state.to_snap_block_hashes();
 
-        let numbers_and_hashes = all_block_hashes
-            .into_iter()
-            .rev()
-            .enumerate()
-            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
-            .collect::<Vec<_>>();
+        // let numbers_and_hashes = all_block_hashes
+        //     .into_iter()
+        //     .rev()
+        //     .enumerate()
+        //     .map(|(i, hash)| (pivot_header.number - i as u64, hash))
+        //     .collect::<Vec<_>>();
 
-        store
-            .forkchoice_update(
-                Some(numbers_and_hashes),
-                pivot_header.number,
-                pivot_header.hash(),
-                None,
-                None,
-            )
-            .await?;
+        // store
+        //     .forkchoice_update(
+        //         Some(numbers_and_hashes),
+        //         pivot_header.number,
+        //         pivot_header.hash(),
+        //         None,
+        //         None,
+        //     )
+        //     .await?;
         Ok(())
     }
 }
@@ -1242,7 +1262,8 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
 }
-#[derive(Debug, Default)]
+
+#[derive(Debug, Default, Clone)]
 /// We store for optimization the accounts that need to heal storage
 pub struct AccountStorageRoots {
     /// The accounts that have not been healed are guaranteed to have the original storage root

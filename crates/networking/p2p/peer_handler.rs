@@ -105,6 +105,7 @@ pub enum SyncState {
     FinishedHeaders(Vec<BlockHeader>),
     RetrievingAccountRanges {
         account_state_snapshots_dir: String,
+        chunk_file_index: u64,
         pivot_header: BlockHeader,
         block_sync_state: BlockSyncState,
         completed_tasks: u64,
@@ -112,6 +113,8 @@ pub enum SyncState {
         all_accounts_state: Vec<AccountState>,
     },
     FinishedAccountRanges,
+    RetrievingStorageRanges {},
+    FinishedStorageRanges(u64, AccountStorageRoots),
 }
 
 impl std::fmt::Display for SyncState {
@@ -122,6 +125,8 @@ impl std::fmt::Display for SyncState {
             SyncState::FinishedHeaders(_) => write!(f, "FinishedHeaders"),
             SyncState::RetrievingAccountRanges { .. } => write!(f, "RetrievingAccountRanges"),
             SyncState::FinishedAccountRanges => write!(f, "FinishedAccountRanges"),
+            SyncState::RetrievingStorageRanges { .. } => write!(f, "RetrievingStorageRanges"),
+            SyncState::FinishedStorageRanges(_, _) => write!(f, "FinishedStorageRanges"),
         }
     }
 }
@@ -1713,6 +1718,12 @@ pub enum PeerHandlerCallMessage {
         pivot_header: BlockHeader,
         block_sync_state: BlockSyncState,
     },
+    DownloadStorageRanges {
+        storage_accounts: AccountStorageRoots,
+        account_storages_snapshot_dir: String,
+        chunk_index: u64,
+        pivot_header: BlockHeader,
+    },
 }
 
 #[derive(Clone)]
@@ -1760,7 +1771,6 @@ impl GenServer for PeerHandler {
                 self.reset_timed_out_tasks().await;
 
                 if self.pending_tasks.is_empty() {
-                    debug!("No pending tasks to assign");
                     return CastResponse::NoReply;
                 }
 
@@ -1809,6 +1819,7 @@ impl GenServer for PeerHandler {
                         } => {
                             let SyncState::RetrievingAccountRanges {
                                 account_state_snapshots_dir: _,
+                                chunk_file_index: _,
                                 pivot_header,
                                 block_sync_state: _,
                                 completed_tasks: _,
@@ -1847,13 +1858,6 @@ impl GenServer for PeerHandler {
                     self.mark_peer_as_busy(peer_id).await;
                     self.started_tasks
                         .insert(peer_id, (next_task, Instant::now()));
-                }
-
-                if !self.pending_tasks.is_empty() {
-                    debug!(
-                        "There are {} pending tasks, but no available peers to handle them",
-                        self.pending_tasks.len()
-                    );
                 }
             }
             PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
@@ -1947,13 +1951,12 @@ impl GenServer for PeerHandler {
                         }
                     }
                     DownloaderResponse::AccountRange(accounts, chunk_start_end) => {
-                        info!("RECEIVED ACCOUNT RANGE FROM PEER");
                         // TODO: WE ARE MISSING THE IF STATEMENT OF
-                        // if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
-                        // AND ALSO THE ONE OF
                         // if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
+
                         if let SyncState::RetrievingAccountRanges {
-                            account_state_snapshots_dir: _,
+                            account_state_snapshots_dir,
+                            chunk_file_index,
                             pivot_header: _,
                             block_sync_state: _,
                             completed_tasks,
@@ -1989,18 +1992,41 @@ impl GenServer for PeerHandler {
                                 peer_info.score += 1;
                             }
 
-                            debug!(
-                                "Downloaded {} accounts from peer {}",
-                                accounts.len(),
-                                peer_id
-                            );
-
                             all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
                             all_accounts_state.extend(
                                 accounts
                                     .iter()
                                     .map(|unit| AccountState::from(unit.account.clone())),
                             );
+
+                            // TODO: MOVE THIS SOMEWHERE ELSE
+                            if all_accounts_state.len() * size_of::<AccountState>()
+                                >= 1024 * 1024 * 1024 * 8
+                            {
+                                let current_account_hashes = std::mem::take(all_account_hashes);
+                                let current_account_states = std::mem::take(all_accounts_state);
+
+                                let account_state_chunk = current_account_hashes
+                                    .into_iter()
+                                    .zip(current_account_states)
+                                    .collect::<Vec<(H256, AccountState)>>()
+                                    .encode_to_vec();
+
+                                let account_state_snapshots_dir_cloned =
+                                    account_state_snapshots_dir.clone();
+                                // let dump_account_result_sender_cloned = dump_account_result_sender.clone();
+                                let index = chunk_file_index.clone();
+                                tokio::task::spawn(async move {
+                                    let path = get_account_state_snapshot_file(
+                                        account_state_snapshots_dir_cloned,
+                                        index,
+                                    );
+                                    dump_to_file(path, account_state_chunk).unwrap(); // TODO: HANDLE UNWRAP
+                                });
+
+                                *chunk_file_index += 1;
+                            }
+                            // TODO: MOVE THIS SOMEWHERE ELSE
 
                             if *completed_tasks >= CHUNK_COUNT {
                                 info!("Finished downloading all account ranges");
@@ -2130,6 +2156,13 @@ impl GenServer for PeerHandler {
                 pivot_header,
                 block_sync_state,
             } => {
+                // Create used directory if it doesn't exist
+                if !std::fs::exists(&account_state_snapshots_dir).unwrap()
+                // TODO: handle unwrap
+                {
+                    std::fs::create_dir_all(&account_state_snapshots_dir).unwrap(); // TODO: handle unwrap
+                }
+
                 // Create tasks
                 // split the range in chunks of same length
                 let start_u256 = U256::from_big_endian(&start.0);
@@ -2169,12 +2202,24 @@ impl GenServer for PeerHandler {
                 self.started_tasks = HashMap::new();
                 self.sync_state = SyncState::RetrievingAccountRanges {
                     account_state_snapshots_dir,
+                    chunk_file_index: 0,
                     pivot_header,
                     block_sync_state,
                     completed_tasks: 0,
                     all_account_hashes: vec![],
                     all_accounts_state: vec![],
                 };
+                CallResponse::Reply(PeerHandlerCallResponse::InProgress)
+            }
+            PeerHandlerCallMessage::DownloadStorageRanges {
+                storage_accounts,
+                account_storages_snapshot_dir,
+                chunk_index,
+                pivot_header,
+            } => {
+                self.pending_tasks = vec![].into();
+                self.started_tasks = HashMap::new();
+                self.sync_state = SyncState::RetrievingStorageRanges {};
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }
         }
