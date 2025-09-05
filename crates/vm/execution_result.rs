@@ -1,9 +1,11 @@
-use bytes::Bytes;
-use ethrex_common::Address;
-use ethrex_common::{H256, types::Log};
-use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
+#[cfg(feature = "revm")]
+use ethrex_common::{Address, H256};
 #[cfg(feature = "revm")]
 use revm::primitives::{ExecutionResult as RevmExecutionResult, result::Output as RevmOutput};
+
+use bytes::Bytes;
+use ethrex_common::types::Log;
+use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
 
 #[derive(Debug)]
 pub enum ExecutionResult {

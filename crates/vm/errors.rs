@@ -1,11 +1,9 @@
-use std::fmt::Display;
-
-use ethereum_types::{H160, H256};
-use ethrex_common::{Address, types::BlockHash};
-use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
-use ethrex_trie::TrieError;
 #[cfg(feature = "revm")]
 use revm::primitives::result::EVMError as RevmError;
+#[cfg(feature = "revm")]
+use std::fmt::Display;
+
+use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -23,8 +23,8 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
+#[cfg(not(feature = "revm"))]
 use levm::LEVM;
-use std::fmt;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -77,7 +77,7 @@ impl Evm {
         }
     }
 
-    pub fn new_for_l2(db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
+    pub fn new_for_l2(_db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
         #[cfg(feature = "revm")]
         {
             Err(EvmError::InvalidEVM(
@@ -87,7 +87,7 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            let wrapped_db: DynVmDatabase = Box::new(db);
+            let wrapped_db: DynVmDatabase = Box::new(_db);
 
             let evm = Evm {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
@@ -290,11 +290,11 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
-        fork: Fork,
+        _fork: Fork,
     ) -> Result<ExecutionResult, EvmError> {
         #[cfg(feature = "revm")]
         {
-            let spec_id = fork_to_spec_id(fork);
+            let spec_id = fork_to_spec_id(_fork);
             self::revm::helpers::simulate_tx_from_generic(tx, header, &mut self.state, spec_id)
         }
 
@@ -308,11 +308,11 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
-        fork: Fork,
+        _fork: Fork,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         #[cfg(feature = "revm")]
         let result = {
-            let spec_id = fork_to_spec_id(fork);
+            let spec_id = fork_to_spec_id(_fork);
             self::revm::helpers::create_access_list(tx, header, &mut self.state, spec_id)?
         };
 

@@ -27,8 +27,6 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
-use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
 use std::cmp::min;
 
 /// The struct implements the following functions:
