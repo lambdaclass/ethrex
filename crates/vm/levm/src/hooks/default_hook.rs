@@ -317,15 +317,27 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     }
 
     // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-    if vm.env.config.fork >= Fork::Osaka {
-        let blob_count = blob_hashes.len();
-        if blob_count > MAX_BLOB_COUNT_TX {
-            return Err(TxValidationError::Type3TxBlobCountExceeded {
-                max_blob_count: MAX_BLOB_COUNT_TX,
-                actual_blob_count: blob_count,
-            }
-            .into());
+    let max_blob_count = vm
+        .env
+        .config
+        .blob_schedule
+        .max
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let blob_count = blob_hashes.len();
+    if blob_count > max_blob_count {
+        return Err(TxValidationError::Type3TxBlobCountExceeded {
+            max_blob_count,
+            actual_blob_count: blob_count,
         }
+        .into());
+    }
+    if vm.env.config.fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT_TX {
+        return Err(TxValidationError::Type3TxBlobCountExceeded {
+            max_blob_count: MAX_BLOB_COUNT_TX,
+            actual_blob_count: blob_count,
+        }
+        .into());
     }
 
     // (15) TYPE_3_TX_CONTRACT_CREATION
