@@ -388,7 +388,6 @@ impl PeerHandler {
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                trace!("We don't have any task in the queue not started");
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
