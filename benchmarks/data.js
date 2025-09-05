@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757103631100,
+  "lastUpdate": 1757104100384,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12475,6 +12475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167599115359,
             "range": "± 610499979",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "06b0889e5ecca8254600d0a44fbb962261bfa3d6",
+          "message": "fix(l1): replay witness get code missing (#4280)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Gets the witness with the proper block number instead of using Latest\n(when it wasn't specified) to avoid getting a witness that differs with\nthe requested block number that we say we are looking for.\n- Different execution clients access state at different times, one can\naccess code of an account before a particular validation and the other\none can access it later. In the case in which the validation failed, the\nlatter client will generate a witness without the code whereas the\nformer will actually need that code.\n- A possible fix would be to access data ONLY when we are 100% sure that\nwe are going to use it. But this would mean making the code uglier in\norder to fix this, which is probably not worth it.\n- The fix that I propose here is to assume that the witness is correct\nand return a default value when it wasn't found in it, because it would\nmean that it isn't relevant for execution. We also print a warning\nalongside this for debugging purposes if there's a state root mismatch.",
+          "timestamp": "2025-09-05T19:36:06Z",
+          "tree_id": "744ef517543e26f0d3540e5bab6aadb2a4021e1e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/06b0889e5ecca8254600d0a44fbb962261bfa3d6"
+        },
+        "date": 1757104080157,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168784693765,
+            "range": "± 1438916947",
             "unit": "ns/iter"
           }
         ]
