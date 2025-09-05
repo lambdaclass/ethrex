@@ -142,6 +142,12 @@ impl Kademlia {
         self.peers.lock().await.insert(new_peer_id, new_peer);
     }
 
+    /// Checks if a peer is connected.
+    pub async fn is_connected(&self, peer_id: &H256) -> bool {
+        let peers = self.peers.lock().await;
+        peers.contains_key(peer_id)
+    }
+
     pub async fn get_peer_channels(
         &self,
         _capabilities: &[Capability],
