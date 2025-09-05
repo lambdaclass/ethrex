@@ -307,11 +307,10 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    trace!("Failed to download chunk from peer {peer_id}");
-
                     self.peer_scores.lock().await.free_peer(peer_id);
+                    self.peer_scores.lock().await.record_failure(peer_id);
 
-                    debug!("Downloader {peer_id} freed");
+                    debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
@@ -353,6 +352,7 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
+                self.peer_scores.lock().await.record_success(peer_id);
                 self.peer_scores.lock().await.free_peer(peer_id);
                 debug!("Downloader {peer_id} freed");
             }
