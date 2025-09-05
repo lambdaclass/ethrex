@@ -749,9 +749,9 @@ impl PeerHandler {
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
+        let mut last_update = SystemTime::now();
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>()
@@ -795,11 +795,11 @@ impl PeerHandler {
                 chunk_file += 1;
             }
 
-            let new_last_metrics_update = last_metrics_update
+            if last_update
                 .elapsed()
-                .unwrap_or(Duration::from_secs(1));
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
+                .expect("Time shouldn't be in the past")
+                >= Duration::from_secs(1)
+            {
                 self.peer_scores
                     .lock()
                     .await
@@ -875,9 +875,7 @@ impl PeerHandler {
                 .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
-                debug!(
-                    "We are missing peers for all the chunks in the request_account_range_request"
-                );
+                debug!("We are missing peers in request_account_range_request");
                 continue;
             };
             self.peer_scores.lock().await.mark_in_use(peer_id);
@@ -898,6 +896,7 @@ impl PeerHandler {
                     .await
                     .expect("Should be able to update pivot")
             }
+
             tokio::spawn(PeerHandler::request_account_range_worker(
                 peer_id,
                 chunk_start,
@@ -906,10 +905,6 @@ impl PeerHandler {
                 peer_channel,
                 tx,
             ));
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                last_metrics_update = SystemTime::now();
-            }
         }
 
         // TODO: This is repeated code, consider refactoring
