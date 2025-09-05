@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     io::ErrorKind,
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::{random, seq::SliceRandom};
+use rand::seq::SliceRandom;
 use tokio::sync::Mutex;
 
 use super::peer_score::PeerScores;
@@ -212,11 +212,6 @@ impl PeerHandler {
 
         let mut ret = Vec::<BlockHeader>::new();
 
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
-
         let mut sync_head_number = 0_u64;
 
         let sync_head_number_retrieval_start = SystemTime::now();
@@ -291,7 +286,6 @@ impl PeerHandler {
         }
 
         let mut downloaded_count = 0_u64;
-        let mut metrics_downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
@@ -808,6 +802,7 @@ impl PeerHandler {
                 METRICS
                     .downloaded_account_tries
                     .store(downloaded_count, Ordering::Relaxed);
+                last_update = SystemTime::now();
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {

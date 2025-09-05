@@ -22,7 +22,6 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
-    kademlia::PeerChannels,
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,

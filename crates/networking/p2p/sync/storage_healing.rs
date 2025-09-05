@@ -1,5 +1,4 @@
 use crate::{
-    kademlia::PeerChannels,
     metrics::METRICS,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
