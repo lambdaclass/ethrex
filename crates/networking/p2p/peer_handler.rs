@@ -1383,11 +1383,13 @@ impl PeerHandler {
                 .expect("Last update shouldn't be in the past")
                 > Duration::from_secs(2)
             {
+                trace!("Updating peer scores");
                 self.peer_scores
                     .lock()
                     .await
                     .update_peers(&self.peer_table)
                     .await;
+                last_update = SystemTime::now();
             }
 
             if let Ok(result) = task_receiver.try_recv() {
