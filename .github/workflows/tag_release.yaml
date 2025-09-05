@@ -99,13 +99,13 @@ jobs:
         if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
         uses: lambdaclass/get-solc@master
         with:
-          version: v0.8.29
+          version: v0.8.30
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc (Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         run: |
-          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
+          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.30
           sudo chmod +x /usr/local/bin/solc
 
       - name: Build ethrex
