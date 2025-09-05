@@ -10,8 +10,8 @@ tasks:
         - name: check_consensus_sync_status
           title: "Check if CL client is synced"
           config:
-            pollInterval: 30s
+            pollInterval: 60s
         - name: check_execution_sync_status
           title: "Check if EL client is synced"
           config:
-            pollInterval: 30s
+            pollInterval: 60s
