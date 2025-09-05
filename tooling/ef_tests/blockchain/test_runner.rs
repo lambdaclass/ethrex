@@ -40,7 +40,6 @@ pub fn parse_and_execute(
     let hashes_of_fusaka_tests_to_run: Vec<&str> = vec![
         "0xf0672af9718013a1f396a9268e91e220ff09e7fa97480844e31da500f8ef291f", //All opcodes test
     ];
-    
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
