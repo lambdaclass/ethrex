@@ -78,8 +78,6 @@ pub fn execution_witness_from_rpc_chain_config(
     chain_config: ChainConfig,
     first_block_number: u64,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let codes = rpc_witness.codes;
-
     let block_headers = rpc_witness
         .headers
         .iter()
@@ -122,7 +120,7 @@ pub fn execution_witness_from_rpc_chain_config(
     }
 
     let witness = ExecutionWitnessResult {
-        codes,
+        codes: rpc_witness.codes,
         codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
         state_trie: None,              // `None` because we'll rebuild the tries afterwards
         storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
@@ -134,8 +132,6 @@ pub fn execution_witness_from_rpc_chain_config(
         touched_account_storage_slots,
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
-
-    // witness.rebuild_state_trie()?;
 
     Ok(witness)
 }

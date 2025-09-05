@@ -26,17 +26,13 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    // Indexed by code hash
     // Used evm bytecodes
-    // #[serde(
-    //     serialize_with = "serialize_code",
-    //     deserialize_with = "deserialize_code"
-    // )]
-    // #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
+    // Indexed by code hash
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub codes_hashed: BTreeMap<H256, Bytes>,
     #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    // Used evm bytecodes
     pub codes: Vec<Bytes>,
     // Pruned state MPT
     #[serde(skip)]
