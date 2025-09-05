@@ -11,8 +11,10 @@ use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
+use ethrex_prover_lib::backends::Backend;
 use ethrex_vm::EvmEngine;
 use std::str::FromStr;
+use zkvm_interface::io::ProgramInput;
 
 use crate::modules::types::TestCase;
 use crate::modules::{
@@ -158,6 +160,33 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         return Err(RunnerError::Custom(
             "Test expected an error but execution didn't fail.".to_string(),
         ));
+    }
+
+    if result.is_err() {
+        return Ok(());
+    }
+
+    let blocks = vec![block];
+
+    let witness = blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .unwrap();
+
+    let program_input = ProgramInput {
+        blocks,
+        db: witness,
+        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
+        ..Default::default()
+    };
+
+    #[cfg(feature = "sp1")]
+    let backend = Backend::SP1;
+    #[cfg(not(feature = "sp1"))]
+    let backend = Backend::Exec;
+
+    if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
+        println!("This shouldn't have failed {}", e);
     }
 
     Ok(())
