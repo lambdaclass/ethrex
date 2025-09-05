@@ -1321,7 +1321,6 @@ impl PeerHandler {
         let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =
             tokio::task::JoinSet::new();
 
-        let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
@@ -1332,6 +1331,8 @@ impl PeerHandler {
             .iter()
             .map(|a| *a.0)
             .collect::<Vec<_>>();
+
+        let mut last_update = SystemTime::now();
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
@@ -1377,9 +1378,17 @@ impl PeerHandler {
                 chunk_index += 1;
             }
 
-            let new_last_metrics_update = last_metrics_update
+            if last_update
                 .elapsed()
-                .unwrap_or(Duration::from_secs(1));
+                .expect("Last update shouldn't be in the past")
+                > Duration::from_secs(2)
+            {
+                self.peer_scores
+                    .lock()
+                    .await
+                    .update_peers(&self.peer_table)
+                    .await;
+            }
 
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
@@ -1569,10 +1578,6 @@ impl PeerHandler {
                 chunk_storage_roots,
                 tx,
             ));
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                last_metrics_update = SystemTime::now();
-            }
         }
 
         {
@@ -1685,7 +1690,7 @@ impl PeerHandler {
         };
         if slots.is_empty() && proof.is_empty() {
             tx.send(empty_task_result).await.ok();
-            tracing::debug!("Received empty account range");
+            tracing::debug!("Received empty storage range");
             return Ok(());
         }
         // Check we got some data and no more than the requested amount
