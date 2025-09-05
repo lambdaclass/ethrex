@@ -3,7 +3,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
+        AccountInfo, AccountUpdate, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
@@ -49,13 +49,6 @@ impl ExecutionWitnessWrapper {
         self.lock_mutex()?
             .get_block_parent_header(block_number)
             .cloned()
-    }
-
-    pub fn initialize_block_header_hashes(
-        &self,
-        blocks: &[Block],
-    ) -> Result<(), ExecutionWitnessError> {
-        self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
 }
 

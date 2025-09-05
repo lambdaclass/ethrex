@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::types::Block;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
@@ -378,31 +377,6 @@ impl ExecutionWitnessResult {
                 "Could not find code for hash {code_hash}"
             ))),
         }
-    }
-
-    /// Hashes all block headers, initializing their inner `hash` field
-    pub fn initialize_block_header_hashes(
-        &self,
-        blocks: &[Block],
-    ) -> Result<(), ExecutionWitnessError> {
-        for block in blocks {
-            let hash = self
-                .block_headers
-                .get(&block.header.number)
-                .map(|header| header.hash())
-                .ok_or(ExecutionWitnessError::Custom(
-                    format!(
-                        "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
-                        block.header.number,
-                        self.block_headers.keys().min(),
-                        self.block_headers.keys().max()
-                    )
-                ))?;
-            // this returns err if it's already set, so we drop the Result as we don't
-            // care if it was already initialized.
-            let _ = block.header.hash.set(hash);
-        }
-        Ok(())
     }
 }
 

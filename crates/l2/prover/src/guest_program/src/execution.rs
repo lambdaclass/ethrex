@@ -241,14 +241,16 @@ fn execute_stateless(
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
+    // Hashing is an expensive operation in zkVMs, 
+    let _ = db.block_headers.values().map(BlockHeader::hash);
+
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
-    // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
+    
     // (once in get_first_invalid_block_hash(), later in validate_block()).
-    wrapped_db.initialize_block_header_hashes(blocks)?;
 
     // Validate execution witness' block hashes, except parent block hash (latest block hash).
     if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
