@@ -111,6 +111,12 @@ pub enum DownloaderCastRequest {
         start_block: u64,
         chunk_limit: u64,
     },
+    AccountRangeNew {
+        response_handle: GenServerHandle<PeerHandler>,
+        root_hash: H256,
+        starting_hash: H256,
+        limit_hash: H256,
+    },
     //
     // OLD METHODS, REMOVE EVENTUALLY
     //
@@ -502,6 +508,156 @@ impl GenServer for Downloader {
                         .cast(PeerHandlerCastMessage::TaskFinished {
                             peer_id: self.peer_id(),
                             response: DownloaderResponse::Headers(vec![]),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                }
+                CastResponse::Stop
+            }
+            DownloaderCastRequest::AccountRangeNew {
+                mut response_handle,
+                root_hash,
+                starting_hash,
+                limit_hash,
+            } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetAccountRange(GetAccountRange {
+                    id: request_id,
+                    root_hash,
+                    starting_hash,
+                    limit_hash,
+                    response_bytes: MAX_RESPONSE_BYTES,
+                });
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::AccountRange(
+                                Vec::new(),
+                                Some((starting_hash, limit_hash)),
+                            ),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                }
+                if let Some((accounts, proof)) =
+                    tokio::time::timeout(ACCOUNT_RANGE_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::AccountRange(AccountRange {
+                                    id,
+                                    accounts,
+                                    proof,
+                                })) if id == request_id => return Some((accounts, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                {
+                    if accounts.is_empty() {
+                        response_handle
+                            .cast(PeerHandlerCastMessage::TaskFinished {
+                                peer_id: self.peer_id(),
+                                response: DownloaderResponse::AccountRange(
+                                    Vec::new(),
+                                    Some((starting_hash, limit_hash)),
+                                ),
+                            })
+                            .await
+                            .unwrap(); // TODO: Handle unwrap
+                        return CastResponse::Stop;
+                    }
+                    // Unzip & validate response
+                    let proof = encodable_to_proof(&proof);
+                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                        .clone()
+                        .into_iter()
+                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                        .unzip();
+                    let encoded_accounts = account_states
+                        .iter()
+                        .map(|acc| acc.encode_to_vec())
+                        .collect::<Vec<_>>();
+
+                    let Ok(should_continue) = verify_range(
+                        root_hash,
+                        &starting_hash,
+                        &account_hashes,
+                        &encoded_accounts,
+                        &proof,
+                    ) else {
+                        response_handle
+                            .cast(PeerHandlerCastMessage::TaskFinished {
+                                peer_id: self.peer_id(),
+                                response: DownloaderResponse::AccountRange(
+                                    Vec::new(),
+                                    Some((starting_hash, limit_hash)),
+                                ),
+                            })
+                            .await
+                            .unwrap(); // TODO: Handle unwrap
+                        return CastResponse::Stop;
+                    };
+
+                    // If the range has more accounts to fetch, we send the new chunk
+                    let chunk_left = if should_continue {
+                        let last_hash = match account_hashes.last() {
+                            Some(last_hash) => last_hash,
+                            None => {
+                                response_handle
+                                    .cast(PeerHandlerCastMessage::TaskFinished {
+                                        peer_id: self.peer_id(),
+                                        response: DownloaderResponse::AccountRange(
+                                            Vec::new(),
+                                            Some((starting_hash, limit_hash)),
+                                        ),
+                                    })
+                                    .await
+                                    .unwrap(); // TODO: Handle unwrap
+                                error!("Account hashes last failed, this shouldn't happen");
+                                return CastResponse::Stop;
+                            }
+                        };
+                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        let new_start = H256::from_uint(&new_start_u256);
+                        Some((new_start, limit_hash))
+                    } else {
+                        None
+                    };
+
+                    let accounts = accounts
+                        .into_iter()
+                        .filter(|unit| unit.hash <= limit_hash)
+                        .collect();
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::AccountRange(accounts, chunk_left),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                } else {
+                    tracing::debug!("Failed to get account range");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::AccountRange(
+                                Vec::new(),
+                                Some((starting_hash, limit_hash)),
+                            ),
                         })
                         .await
                         .unwrap(); // TODO: Handle unwrap

@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     io::ErrorKind,
-    path::Display,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -45,6 +44,7 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
+pub const CHUNK_COUNT: u64 = 800;
 
 pub const SNAP_LIMIT: usize = 128;
 
@@ -91,9 +91,10 @@ pub struct PeerHandler {
 #[derive(Clone, Debug)]
 enum Task {
     Headers { start_block: u64, chunk_limit: u64 },
+    AccountRanges { chunk_start: H256, chunk_end: H256 },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum SyncState {
     Idle,
     RetrievingHeaders {
@@ -102,6 +103,15 @@ pub enum SyncState {
         acc_headers: Vec<BlockHeader>,
     },
     FinishedHeaders(Vec<BlockHeader>),
+    RetrievingAccountRanges {
+        account_state_snapshots_dir: String,
+        pivot_header: BlockHeader,
+        block_sync_state: BlockSyncState,
+        completed_tasks: u64,
+        all_account_hashes: Vec<H256>,
+        all_accounts_state: Vec<AccountState>,
+    },
+    FinishedAccountRanges,
 }
 
 impl std::fmt::Display for SyncState {
@@ -110,7 +120,15 @@ impl std::fmt::Display for SyncState {
             SyncState::Idle => write!(f, "Idle"),
             SyncState::RetrievingHeaders { .. } => write!(f, "RetrievingHeaders"),
             SyncState::FinishedHeaders(_) => write!(f, "FinishedHeaders"),
+            SyncState::RetrievingAccountRanges { .. } => write!(f, "RetrievingAccountRanges"),
+            SyncState::FinishedAccountRanges => write!(f, "FinishedAccountRanges"),
         }
+    }
+}
+
+impl Debug for SyncState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
     }
 }
 
@@ -1678,20 +1696,28 @@ pub enum PeerHandlerCastMessage {
     UpdateState(SyncState),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum DownloaderResponse {
     Headers(Vec<BlockHeader>),
+    AccountRange(Vec<AccountRangeUnit>, Option<(H256, H256)>),
 }
 
 #[derive(Clone)]
 pub enum PeerHandlerCallMessage {
     CurrentState,
     DownloadHeaders(u64, H256),
+    DownloadAccountRanges {
+        start: H256,
+        limit: H256,
+        account_state_snapshots_dir: String,
+        pivot_header: BlockHeader,
+        block_sync_state: BlockSyncState,
+    },
 }
 
 #[derive(Clone)]
 pub enum PeerHandlerCallResponse {
-    CurrentState(SyncState),
+    CurrentState(SyncState), // TODO: REWORK THIS, RETURNING A MID-STATE MIGHT BE COSTLY
     InProgress,
     // Possible errors
     SyncHeadNotFound,
@@ -1706,14 +1732,14 @@ impl GenServer for PeerHandler {
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // TODO: keep handle for shutdown
         let _peer_updater = send_interval(
-            Duration::from_secs(2),
+            Duration::from_secs(5),
             handle.clone(),
             PeerHandlerCastMessage::UpdatePeers,
         );
 
         // TODO: keep handle for shutdown
         let _task_assigner = send_interval(
-            Duration::from_secs(2),
+            Duration::from_millis(100),
             handle.clone(),
             PeerHandlerCastMessage::AssignTasks,
         );
@@ -1740,6 +1766,7 @@ impl GenServer for PeerHandler {
 
                 let capabilities = match self.sync_state {
                     SyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
+                    SyncState::RetrievingAccountRanges { .. } => &SUPPORTED_SNAP_CAPABILITIES,
                     // Idle or finished states, should not get here
                     _ => &SUPPORTED_SNAP_CAPABILITIES,
                 };
@@ -1747,6 +1774,9 @@ impl GenServer for PeerHandler {
                 while let Some(available_downloader) = match self.sync_state {
                     SyncState::RetrievingHeaders { .. } => {
                         self.get_random_downloader(capabilities).await
+                    }
+                    SyncState::RetrievingAccountRanges { .. } => {
+                        self.get_best_downloader(capabilities).await
                     }
                     // Idle or finished states, should not get here
                     _ => self.get_random_downloader(capabilities).await,
@@ -1771,16 +1801,56 @@ impl GenServer for PeerHandler {
                                     chunk_limit,
                                 })
                                 .await
-                                .unwrap();
+                                .unwrap(); // TODO: handle unwrap
+                        }
+                        Task::AccountRanges {
+                            chunk_start,
+                            chunk_end,
+                        } => {
+                            let SyncState::RetrievingAccountRanges {
+                                account_state_snapshots_dir: _,
+                                pivot_header,
+                                block_sync_state: _,
+                                completed_tasks: _,
+                                all_account_hashes: _,
+                                all_accounts_state: _,
+                            } = &mut self.sync_state
+                            else {
+                                // TODO: I don't know in which case this can happen
+                                error!(
+                                    "There's an account ranges task, but the peer handler is not in the correct state"
+                                );
+                                return CastResponse::NoReply;
+                            };
+
+                            if block_is_stale(&pivot_header) {
+                                warn!("request_account_range became stale, updating pivot");
+                                // TODO: update pivot
+                                // *pivot_header = update_pivot(pivot_header.number, self, &mut block_sync_state)
+                                //     .await
+                                //     .expect("Should be able to update pivot")
+                            }
+
+                            let response_handle = handle.clone();
+                            downloader_handle
+                                .cast(DownloaderCastRequest::AccountRangeNew {
+                                    response_handle,
+                                    root_hash: pivot_header.state_root,
+                                    starting_hash: chunk_start,
+                                    limit_hash: chunk_end,
+                                })
+                                .await
+                                .unwrap(); // TODO: handle unwrap
                         }
                     }
                     debug!("Sent Downloader actor {peer_id} new request");
+                    self.mark_peer_as_busy(peer_id).await;
                     self.started_tasks
                         .insert(peer_id, (next_task, Instant::now()));
                 }
 
                 if !self.pending_tasks.is_empty() {
-                    warn!(
+                    debug!(
                         "There are {} pending tasks, but no available peers to handle them",
                         self.pending_tasks.len()
                     );
@@ -1802,7 +1872,10 @@ impl GenServer for PeerHandler {
                     DownloaderResponse::Headers(headers) => {
                         if headers.is_empty() {
                             debug!("Peer {peer_id} returned empty headers");
-                            self.record_peer_failure(peer_id).await;
+                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
+                            {
+                                peer_info.score -= 1;
+                            }
                             self.pending_tasks.push_back(requested_task);
                             return CastResponse::NoReply;
                         }
@@ -1831,43 +1904,115 @@ impl GenServer for PeerHandler {
                         let downloaded_headers = headers.len() as u64;
 
                         // create a new task if the returned headers are less than the requested chunk limit
-                        let Task::Headers {
+                        if let Task::Headers {
                             start_block,
                             chunk_limit,
-                        } = requested_task;
-                        if downloaded_headers < chunk_limit {
-                            let new_start = start_block + downloaded_headers;
-                            debug!(
-                                "Task for ({start_block}, {chunk_limit}) was not completed, re-adding to the queue, {} remaining headers",
-                                chunk_limit - downloaded_headers
-                            );
-                            self.pending_tasks.push_back(Task::Headers {
-                                start_block: new_start,
-                                chunk_limit: chunk_limit - downloaded_headers,
-                            });
-                        } else {
-                            if let SyncState::RetrievingHeaders {
-                                sync_head_number,
-                                current_show: _,
-                                acc_headers,
-                            } = &mut self.sync_state
-                            {
-                                let pending = *sync_head_number + 1 - acc_headers.len() as u64;
-                                if pending == 0 {
-                                    info!("Finished downloading all block headers");
-                                    handle
-                                        .clone()
-                                        .cast(PeerHandlerCastMessage::UpdateState(
-                                            SyncState::FinishedHeaders(acc_headers.clone()), // TODO: clonning of headers migh be costly on memory
-                                        ))
-                                        .await
-                                        .unwrap();
-                                } else {
-                                    debug!("{pending} headers remaining to download");
+                        } = requested_task
+                        {
+                            if downloaded_headers < chunk_limit {
+                                let new_start = start_block + downloaded_headers;
+                                debug!(
+                                    "Task for ({start_block}, {chunk_limit}) was not completed, re-adding to the queue, {} remaining headers",
+                                    chunk_limit - downloaded_headers
+                                );
+                                self.pending_tasks.push_back(Task::Headers {
+                                    start_block: new_start,
+                                    chunk_limit: chunk_limit - downloaded_headers,
+                                });
+                            } else {
+                                if let SyncState::RetrievingHeaders {
+                                    sync_head_number,
+                                    current_show: _,
+                                    acc_headers,
+                                } = &mut self.sync_state
+                                {
+                                    let pending = *sync_head_number + 1 - acc_headers.len() as u64;
+                                    if pending == 0 {
+                                        info!("Finished downloading all block headers");
+                                        handle
+                                            .clone()
+                                            .cast(PeerHandlerCastMessage::UpdateState(
+                                                SyncState::FinishedHeaders(acc_headers.clone()), // TODO: clonning of headers migh be costly on memory
+                                            ))
+                                            .await
+                                            .unwrap();
+                                    } else {
+                                        debug!("{pending} headers remaining to download");
+                                    }
                                 }
                             }
                         }
-                        self.record_peer_success(peer_id).await;
+                        if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id) {
+                            peer_info.score += 1;
+                        }
+                    }
+                    DownloaderResponse::AccountRange(accounts, chunk_start_end) => {
+                        info!("RECEIVED ACCOUNT RANGE FROM PEER");
+                        // TODO: WE ARE MISSING THE IF STATEMENT OF
+                        // if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+                        // AND ALSO THE ONE OF
+                        // if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
+                        if let SyncState::RetrievingAccountRanges {
+                            account_state_snapshots_dir: _,
+                            pivot_header: _,
+                            block_sync_state: _,
+                            completed_tasks,
+                            all_account_hashes,
+                            all_accounts_state,
+                        } = &mut self.sync_state
+                        {
+                            if let Some((chunk_start, chunk_end)) = chunk_start_end {
+                                if chunk_start <= chunk_end {
+                                    self.pending_tasks.push_back(Task::AccountRanges {
+                                        chunk_start,
+                                        chunk_end,
+                                    });
+                                } else {
+                                    *completed_tasks += 1;
+                                }
+                            }
+                            if chunk_start_end.is_none() {
+                                *completed_tasks += 1;
+                            }
+
+                            if accounts.is_empty() {
+                                if let Some(peer_info) =
+                                    self.peers_info.lock().await.get_mut(&peer_id)
+                                {
+                                    peer_info.score -= 1;
+                                }
+                                self.pending_tasks.push_back(requested_task);
+                                return CastResponse::NoReply;
+                            }
+                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
+                            {
+                                peer_info.score += 1;
+                            }
+
+                            debug!(
+                                "Downloaded {} accounts from peer {}",
+                                accounts.len(),
+                                peer_id
+                            );
+
+                            all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
+                            all_accounts_state.extend(
+                                accounts
+                                    .iter()
+                                    .map(|unit| AccountState::from(unit.account.clone())),
+                            );
+
+                            if *completed_tasks >= CHUNK_COUNT {
+                                info!("Finished downloading all account ranges");
+                                handle
+                                    .clone()
+                                    .cast(PeerHandlerCastMessage::UpdateState(
+                                        SyncState::FinishedAccountRanges,
+                                    ))
+                                    .await
+                                    .unwrap();
+                            }
+                        }
                     }
                 }
             }
@@ -1886,7 +2031,7 @@ impl GenServer for PeerHandler {
     ) -> CallResponse<Self> {
         match message {
             PeerHandlerCallMessage::CurrentState => CallResponse::Reply(
-                PeerHandlerCallResponse::CurrentState(self.sync_state.clone()),
+                PeerHandlerCallResponse::CurrentState(self.sync_state.clone()), // TODO: CLONING STATE HERE IS COSTLY WITHOUT A GOOD REASON
             ),
             PeerHandlerCallMessage::DownloadHeaders(start, sync_head) => {
                 // Retrieve sync head number
@@ -1941,7 +2086,6 @@ impl GenServer for PeerHandler {
                 *METRICS.sync_head_hash.lock().await = sync_head;
 
                 // Create tasks
-
                 let block_count = sync_head_number + 1 - start;
                 let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
@@ -1970,13 +2114,67 @@ impl GenServer for PeerHandler {
                     pending_tasks.len()
                 );
                 self.pending_tasks = pending_tasks;
-
+                self.started_tasks = HashMap::new();
                 self.sync_state = SyncState::RetrievingHeaders {
                     sync_head_number,
                     current_show: 0,
                     acc_headers: vec![],
                 };
 
+                CallResponse::Reply(PeerHandlerCallResponse::InProgress)
+            }
+            PeerHandlerCallMessage::DownloadAccountRanges {
+                start,
+                limit,
+                account_state_snapshots_dir,
+                pivot_header,
+                block_sync_state,
+            } => {
+                // Create tasks
+                // split the range in chunks of same length
+                let start_u256 = U256::from_big_endian(&start.0);
+                let limit_u256 = U256::from_big_endian(&limit.0);
+
+                let chunk_size = (limit_u256 - start_u256) / CHUNK_COUNT;
+
+                // list of tasks to be executed
+                let mut pending_tasks = VecDeque::new();
+                for i in 0..CHUNK_COUNT {
+                    let chunk_start_u256 = chunk_size * i + start_u256;
+                    // We subtract one because ranges are inclusive
+                    let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
+                    let chunk_start = H256::from_uint(&(chunk_start_u256));
+                    let chunk_end = H256::from_uint(&(chunk_end_u256));
+                    pending_tasks.push_back(Task::AccountRanges {
+                        chunk_start,
+                        chunk_end,
+                    });
+                }
+
+                // Modify the last chunk to include the limit
+                let last_task = pending_tasks.back_mut().unwrap(); // TODO: handle unwrap
+                if let Task::AccountRanges {
+                    chunk_start: _,
+                    chunk_end,
+                } = last_task
+                {
+                    *chunk_end = limit;
+                };
+
+                debug!(
+                    "Created {} initial tasks for account ranges download",
+                    pending_tasks.len()
+                );
+                self.pending_tasks = pending_tasks;
+                self.started_tasks = HashMap::new();
+                self.sync_state = SyncState::RetrievingAccountRanges {
+                    account_state_snapshots_dir,
+                    pivot_header,
+                    block_sync_state,
+                    completed_tasks: 0,
+                    all_account_hashes: vec![],
+                    all_accounts_state: vec![],
+                };
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }
         }
