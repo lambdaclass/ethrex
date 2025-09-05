@@ -77,6 +77,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
+    requested_block_headers: Vec<BlockHeader>,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
     let codes = rpc_witness
         .codes
@@ -84,7 +85,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .map(|code| (keccak_hash::keccak(code), code.clone()))
         .collect::<BTreeMap<_, _>>();
 
-    let block_headers = rpc_witness
+    let mut block_headers = rpc_witness
         .headers
         .iter()
         .map(Bytes::as_ref)
@@ -94,6 +95,10 @@ pub fn execution_witness_from_rpc_chain_config(
         .iter()
         .map(|header| (header.number, header.clone()))
         .collect::<BTreeMap<_, _>>();
+
+    for header in requested_block_headers {
+        block_headers.entry(header.number).or_insert_with(|| header);
+    }
 
     let parent_number = first_block_number
         .checked_sub(1)
