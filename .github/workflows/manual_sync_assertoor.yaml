@@ -1,8 +1,8 @@
 name: Sync Ethrex
 
 on:
-  pull_request:
-    branches: ["**"]
+  schedule:
+    - cron: "0 */2 * * *"
   workflow_dispatch:
 
 permissions:
