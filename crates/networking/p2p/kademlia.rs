@@ -30,6 +30,8 @@ pub struct Contact {
     pub disposable: bool,
     // Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
+    // This is a known-bad peer (on another network, no matching capabilities, etc)
+    pub unwanted: bool,
 }
 
 impl Contact {
@@ -56,6 +58,7 @@ impl From<Node> for Contact {
             n_find_node_sent: 0,
             disposable: false,
             knows_us: true,
+            unwanted: false,
         }
     }
 }
@@ -155,6 +158,26 @@ impl Kademlia {
                     .channels
                     .clone()
                     .map(|peer_channels| (*peer_id, peer_channels))
+            })
+            .collect()
+    }
+
+    pub async fn get_peer_channels_with_capabilities(
+        &self,
+        _capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels, Vec<Capability>)> {
+        self.peers
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(peer_id, peer_data)| {
+                peer_data.channels.clone().map(|peer_channels| {
+                    (
+                        *peer_id,
+                        peer_channels,
+                        peer_data.supported_capabilities.clone(),
+                    )
+                })
             })
             .collect()
     }
