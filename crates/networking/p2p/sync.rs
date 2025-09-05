@@ -1124,13 +1124,13 @@ impl Syncer {
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
 
 fn compute_storage_roots(
-    maybe_big_account_storage_state_roots_clone: Arc<Mutex<HashMap<H256, H256>>>,
+    maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
-    let account_storage_root = match maybe_big_account_storage_state_roots_clone
+    let account_storage_root = match maybe_big_account_storage_state_roots
         .lock()
         .map_err(|_| SyncError::MaybeBigAccount)?
         .entry(account_hash)
@@ -1149,18 +1149,18 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_state_root, changes) = storage_trie.collect_changes_since_last_hash();
-
-    maybe_big_account_storage_state_roots_clone
-        .lock()
-        .map_err(|_| SyncError::MaybeBigAccount)?
-        .insert(account_hash, computed_state_root);
+    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
-    if computed_state_root == account_state.storage_root {
+    if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
+    } else {
+        maybe_big_account_storage_state_roots
+            .lock()
+            .map_err(|_| SyncError::MaybeBigAccount)?
+            .insert(account_hash, computed_storage_root);
     }
 
     Ok((account_hash, changes))
