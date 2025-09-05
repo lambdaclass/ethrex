@@ -1,0 +1,45 @@
+name: Workflow Failure Alerts
+
+on:
+  workflow_run:
+    workflows:
+      - L1
+      - L2 (SP1 Backend)
+      - L2 (without proving)
+      - L2 Prover
+      - L2 Prover (TDX)
+      - L2 TDX build
+      - LEVM
+      - Publish Docker
+      - Replay proving
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  notify-on-failure:
+    name: Notify Slack on failure (main)
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.conclusion != 'success' &&
+          github.event.workflow_run.event == 'push' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Post failure to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+        run: |
+          bash .github/scripts/notify_workflow_failure.sh "$SLACK_WEBHOOK_URL"
