@@ -56,7 +56,10 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+    let witness = match eth_client
+        .get_witness(BlockIdentifier::Number(requested_block_number), None)
+        .await
+    {
         Ok(witness) => {
             execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
                 .expect("Failed to convert witness")
