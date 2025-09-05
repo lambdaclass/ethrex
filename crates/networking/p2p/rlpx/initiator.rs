@@ -68,7 +68,10 @@ impl RLPxInitiator {
 
         for contact in self.context.table.table.lock().await.values() {
             let node_id = contact.node.node_id();
-            if !already_tried_peers.contains(&node_id) && contact.knows_us {
+            if !already_tried_peers.contains(&node_id)
+                && contact.knows_us
+                && !self.context.table.is_connected(&node_id).await
+            {
                 already_tried_peers.insert(node_id);
 
                 RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
