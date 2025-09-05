@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757086025967,
+  "lastUpdate": 1757100253453,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12325,6 +12325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171076664600,
             "range": "± 369671583",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bc9bc50f698183e78623e8c7d711efac7d6dbddf",
+          "message": "feat(l1): improve transaction broadcasting logic (#4259)\n\n**Motivation**\n\nCurrent version just broadcast every transaction we receive to every\nactive peer we have. This presents some issues on performance, memory\nand even in code responsibilities.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nReorganizes the transaction broadcast logic\nWhen a new peer connection is initialized, we send the hashes of all the\ntxs in the mempool.\nThen every time we receive new txs, we add them to the mempool and send\nthem to our peers, we send the txs to a sqrt of our peers, while sending\nonly the hashes to the rest.\nThe mempool itself is the one responsible for knowing which txs need to\nbe broadcasted. Every time we add a new tx to the mempool we add it to\nthe list of pending broadcast, then once we broadcast them, we erase\nthem. Also if a tx is removed from the mempool before being broadcasted\nit is also deleted from the broadcast pool.\n\nThere is one possible scenario where we could send a tx twice to the\nsame peer, that is if after the tx left the mempool, we receive it again\nand add it back, we would send it again to the peers.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4241",
+          "timestamp": "2025-09-05T18:26:46Z",
+          "tree_id": "db7aeac38d493954414ea6674c453c031b95bbc3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc9bc50f698183e78623e8c7d711efac7d6dbddf"
+        },
+        "date": 1757100232329,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167118563903,
+            "range": "± 447755887",
             "unit": "ns/iter"
           }
         ]
