@@ -36,26 +36,24 @@ use once_cell::sync::OnceCell;
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
+
+    // Cache these to avoid doing repeat calculations, since we need the RLP encoded size when checking for the size limit
+    // We cache the RLP encodes of the body and the header rather than the entire block because these are the ones that are stored
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    pub cached_body_rlp_encode: Vec<u8>,
+    pub cached_body_rlp_encode: OnceCell<Vec<u8>>,
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    pub cached_header_rlp_encode: Vec<u8>,
+    pub cached_header_rlp_encode: OnceCell<Vec<u8>>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        let body_rlp = body.encode_to_vec();
-        let header_rlp = header.encode_to_vec();
         Block {
             header,
             body,
-
-            // Cache these to avoid doing repeat calculations, since we need the RLP encoded size when checking for the size limit
-            // We cache the RLP encodes of the body and the header rather than the entire block because these are the ones that are stored
-            cached_body_rlp_encode: body_rlp,
-            cached_header_rlp_encode: header_rlp,
+            cached_body_rlp_encode: OnceCell::new(),
+            cached_header_rlp_encode: OnceCell::new(),
         }
     }
 
@@ -68,12 +66,19 @@ impl Block {
     // However, the store uses the encode of the body and the header, whereas for the max size we need the size of the encode of the block as a whole
     // So we cache the body and header, and calculate the size of the block encode based off of them
     pub fn get_rlp_encode_size(&self) -> usize {
-        let body_fields_rlp_size = if self.cached_body_rlp_encode[0] <= 0xf7 {
-            self.cached_body_rlp_encode.len() - 1
+        let cached_body_rlp_encode = self
+            .cached_body_rlp_encode
+            .get_or_init(|| self.body.encode_to_vec());
+        let cached_header_rlp_encode = self
+            .cached_header_rlp_encode
+            .get_or_init(|| self.header.encode_to_vec());
+
+        let body_fields_rlp_size = if cached_body_rlp_encode[0] <= 0xf7 {
+            cached_body_rlp_encode.len() - 1
         } else {
-            self.cached_body_rlp_encode.len() - (self.cached_body_rlp_encode[0] as usize - 0xf7) - 1
+            cached_body_rlp_encode.len() - (cached_body_rlp_encode[0] as usize - 0xf7) - 1
         };
-        let header_rlp_size = self.cached_header_rlp_encode.len();
+        let header_rlp_size = cached_header_rlp_encode.len();
 
         let block_rlp_payload_length = header_rlp_size + body_fields_rlp_size;
         if block_rlp_payload_length > 55 {
