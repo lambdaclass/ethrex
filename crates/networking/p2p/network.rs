@@ -185,7 +185,7 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-    peers_score: Option<Arc<Mutex<PeerScores>>>,
+    peers_score: Arc<Mutex<PeerScores>>,
 ) {
     periodically_show_peer_stats_during_syncing(blockchain, peers.clone(), peers_score).await;
     periodically_show_peer_stats_after_sync(peers).await;
@@ -194,7 +194,7 @@ pub async fn periodically_show_peer_stats(
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-    peer_scores: Option<Arc<Mutex<PeerScores>>>,
+    peer_scores: Arc<Mutex<PeerScores>>,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -212,10 +212,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peers.lock().await.len();
-            let peer_scores_number = match peer_scores.clone() {
-                Some(peer_scores_internal) => peer_scores_internal.lock().await.len(),
-                None => 0,
-            };
+            let peer_scores_number = peer_scores.lock().await.len();
             let current_step = METRICS.current_step.lock().await.clone();
 
             // Headers metrics
