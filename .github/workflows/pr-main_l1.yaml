@@ -175,7 +175,7 @@ jobs:
       - name: Run assertoor
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
-          enclave_name: ${{ matrix.enclave_name }}
+          enclave_name: ${{ matrix.enclave_name }}-${{ matrix.runner }}
           kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/ethpandaops/ethereum-package"
           ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
