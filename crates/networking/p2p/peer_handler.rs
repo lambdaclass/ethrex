@@ -745,7 +745,8 @@ impl PeerHandler {
 
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
-        let mut last_update = SystemTime::now();
+        let mut last_update: SystemTime = SystemTime::now();
+        let mut we_are_missing_peers = false;
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>()
@@ -803,6 +804,10 @@ impl PeerHandler {
                     .downloaded_account_tries
                     .store(downloaded_count, Ordering::Relaxed);
                 last_update = SystemTime::now();
+                if we_are_missing_peers {
+                    debug!("We are missing peers to go full speed in request_account_range");
+                }
+                we_are_missing_peers = false;
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
@@ -870,7 +875,8 @@ impl PeerHandler {
                 .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
-                debug!("We are missing peers in request_account_range_request");
+                trace!("We are missing peers in request_account_range_request");
+                we_are_missing_peers = true;
                 continue;
             };
 
