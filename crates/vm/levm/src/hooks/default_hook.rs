@@ -319,9 +319,9 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
     if vm.env.config.fork >= Fork::Osaka {
         let blob_count = blob_hashes.len();
-        if blob_count > MAX_BLOB_COUNT as usize {
+        if blob_count > MAX_BLOB_COUNT_TX {
             return Err(TxValidationError::Type3TxBlobCountExceeded {
-                max_blob_count: MAX_BLOB_COUNT as usize,
+                max_blob_count: MAX_BLOB_COUNT_TX,
                 actual_blob_count: blob_count,
             }
             .into());
