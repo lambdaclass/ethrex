@@ -873,7 +873,6 @@ impl PeerHandler {
                 debug!("We are missing peers in request_account_range_request");
                 continue;
             };
-            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
@@ -883,6 +882,7 @@ impl PeerHandler {
                 continue;
             };
 
+            self.peer_scores.lock().await.mark_in_use(peer_id);
             let tx = task_sender.clone();
 
             if block_is_stale(pivot_header) {
