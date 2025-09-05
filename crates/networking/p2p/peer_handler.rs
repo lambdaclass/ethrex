@@ -1659,7 +1659,9 @@ impl PeerHandler {
             limit_hash: task.end_hash.unwrap_or(HASH_MAX),
             response_bytes: MAX_RESPONSE_BYTES,
         });
+        debug!("Starting the task processing");
         let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        debug!("Locked the receiver");
         if let Err(err) = (free_downloader_channels_clone.connection)
             .cast(CastMessage::BackendMessage(request))
             .await
