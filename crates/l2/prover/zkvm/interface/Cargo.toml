@@ -36,6 +36,7 @@ methods = ["risc0"]
 default = []
 risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
+openvm = []
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 

@@ -22,6 +22,7 @@ pub enum Backend {
     SP1,
     #[cfg(feature = "risc0")]
     RISC0,
+    #[cfg(feature = "openvm")]
     OpenVM,
 }
 
@@ -36,6 +37,7 @@ impl FromStr for Backend {
             "sp1" => Ok(Backend::SP1),
             #[cfg(feature = "risc0")]
             "risc0" => Ok(Backend::RISC0),
+            #[cfg(feature = "openvm")]
             "openvm" => Ok(Backend::OpenVM),
             _ => Err(Self::Err::from("Invalid backend")),
         }
@@ -48,5 +50,6 @@ pub enum ProveOutput {
     SP1(sp1::ProveOutput),
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
+    #[cfg(feature = "openvm")]
     OpenVM(openvm::ProgramOutput),
 }

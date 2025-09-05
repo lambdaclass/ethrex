@@ -4388,6 +4388,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "kzg-rs",
+ "openvm-sdk",
  "risc0-zkp",
  "risc0-zkvm",
  "rkyv",

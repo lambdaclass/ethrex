@@ -42,6 +42,8 @@ risc0-zkp = { version = "=2.0.2", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk" , optional = true }
+
 [dev-dependencies]
 ethrex-storage.workspace = true
 
@@ -55,6 +57,7 @@ default = ["l2"]
 # prover backends
 risc0 = ["zkvm_interface/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
 sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
+openvm = ["zkvm_interface/openvm", "dep:openvm-sdk"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]

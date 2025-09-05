@@ -8,6 +8,7 @@ fn main() {
     #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
 
+    #[cfg(all(not(clippy), feature = "openvm"))]
     build_openvm_program();
 }
 
@@ -95,6 +96,7 @@ fn build_sp1_program() {
     };
 }
 
+#[cfg(all(not(clippy), feature = "openvm"))]
 fn build_openvm_program() {
     use openvm_build::GuestOptions;
     use openvm_sdk::Sdk;
