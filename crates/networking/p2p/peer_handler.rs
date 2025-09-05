@@ -22,7 +22,10 @@ use crate::{
     rlpx::{
         connection::server::CastMessage,
         eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
+            blocks::{
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
+            },
             receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
@@ -550,7 +553,69 @@ impl PeerHandler {
         Some(ret)
     }
 
-    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
+    pub async fn request_block_headers_full_sync(
+        &self,
+        start: H256,
+        order: BlockRequestOrder,
+    ) -> Option<Vec<BlockHeader>> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request_id = rand::random();
+            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                id: request_id,
+                startblock: start.into(),
+                limit: BLOCK_HEADER_LIMIT,
+                skip: 0,
+                reverse: matches!(order, BlockRequestOrder::NewToOld),
+            });
+            let (peer_id, mut peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
+            let mut receiver = peer_channel.receiver.lock().await;
+            if let Err(err) = peer_channel
+                .connection
+                .cast(CastMessage::BackendMessage(request))
+                .await
+            {
+                self.record_peer_failure(peer_id).await;
+                debug!("Failed to send message to peer: {err:?}");
+                continue;
+            }
+            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                            if id == request_id =>
+                        {
+                            return Some(block_headers);
+                        }
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => continue,
+                        None => return None, // Retry request
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|headers| (!headers.is_empty()).then_some(headers))
+            {
+                if are_block_headers_chained(&block_headers, &order) {
+                    self.record_peer_success(peer_id).await;
+                    return Some(block_headers);
+                } else {
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                    );
+                    self.record_peer_critical_failure(peer_id).await;
+                }
+            }
+            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
+        }
+        None
+    }
+
+    /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
     ///
     /// If it fails, returns an error message.
     async fn download_chunk_from_peer(

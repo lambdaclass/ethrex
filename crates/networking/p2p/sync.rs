@@ -1,7 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -317,10 +317,6 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let mut current_head_number = store
-            .get_block_number(current_head)
-            .await?
-            .ok_or(SyncError::BlockNumber(current_head))?;
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
@@ -341,7 +337,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .request_block_headers_full_sync(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -391,7 +387,6 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
-            current_head_number = last_block_number;
 
             // Discard the first header as we already have it
             block_headers.remove(0);
