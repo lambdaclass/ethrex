@@ -2,11 +2,12 @@ pub mod levm;
 pub mod revm;
 #[cfg(feature = "revm")]
 use self::revm::{
+    REVM,
     db::{EvmState, evm_state},
     helpers::{fork_to_spec_id, spec_id},
 };
-#[cfg(feature = "revm")]
-use revm::REVM;
+#[cfg(not(feature = "revm"))]
+use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
@@ -21,8 +22,6 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
-#[cfg(not(feature = "revm"))]
-use levm::LEVM;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -32,7 +31,7 @@ pub struct Evm {
     #[cfg(feature = "revm")]
     pub state: EvmState,
 
-    // LEVM build
+    // For simplifying compilation we decided to include them both in revm and levm builds.
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
 }
