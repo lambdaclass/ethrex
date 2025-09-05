@@ -395,11 +395,7 @@ impl ExecutionWitnessResult {
         blocks: &[Block],
     ) -> Result<(), ExecutionWitnessError> {
         for block in blocks {
-            let hash = self
-                .block_headers
-                .get(&block.header.number)
-                .map(|header| header.hash())
-                .ok_or(ExecutionWitnessError::Custom(
+            let header = self.block_headers.get(&block.header.number).ok_or(ExecutionWitnessError::Custom(
                     format!(
                         "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
                         block.header.number,
@@ -407,6 +403,16 @@ impl ExecutionWitnessResult {
                         self.block_headers.keys().max()
                     )
                 ))?;
+
+            // headers hash should happen in the stateless execution
+            if header.hash.get().is_some() {
+                return Err(ExecutionWitnessError::Custom(format!(
+                    "Block header hash is already set for {}",
+                    block.header.number
+                )));
+            }
+
+            let hash = header.hash();
             // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
             let _ = block.header.hash.set(hash);
