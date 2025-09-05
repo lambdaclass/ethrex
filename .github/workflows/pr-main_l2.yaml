@@ -108,7 +108,7 @@ jobs:
       - name: Install solc
         uses: lambdaclass/get-solc@master
         with:
-          version: v0.8.29
+          version: v0.8.30
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # also creates empty verification keys (as workflow runs with exec backend)
@@ -181,7 +181,7 @@ jobs:
       - name: Install solc
         uses: lambdaclass/get-solc@master
         with:
-          version: v0.8.29
+          version: v0.8.30
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Download ethrex image artifact
@@ -285,7 +285,7 @@ jobs:
       - name: Install solc
         uses: lambdaclass/get-solc@master
         with:
-          version: v0.8.29
+          version: v0.8.30
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
