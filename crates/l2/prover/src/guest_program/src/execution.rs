@@ -16,6 +16,7 @@ use ethrex_common::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
+use keccak_hash::keccak;
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
@@ -167,7 +168,8 @@ pub fn stateless_validation_l2(
         state_trie: None,
         storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
-        state_nodes: db.state_nodes.clone(),
+        state_nodes: BTreeMap::new(), // empty map because this must be filled during stateless execution
+        nodes: db.nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
@@ -238,6 +240,13 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    // hash nodes
+    db.state_nodes = db
+        .nodes
+        .drain(..)
+        .map(|node| (keccak(&node), node))
+        .collect();
+
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 

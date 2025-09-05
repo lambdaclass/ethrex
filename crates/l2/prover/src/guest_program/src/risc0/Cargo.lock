@@ -2089,6 +2089,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-hash",
  "rkyv",
  "serde",
  "serde_json",

@@ -384,6 +384,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
+            nodes: Vec::new(),
             touched_account_storage_slots,
             account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })

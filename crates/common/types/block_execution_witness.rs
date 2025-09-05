@@ -50,10 +50,15 @@ pub struct ExecutionWitnessResult {
     pub chain_config: ChainConfig,
     /// This maps node hashes to their corresponding RLP-encoded nodes.
     /// It is used to rebuild the state trie and storage tries.
-    /// This is precomputed during ExecutionWitness construction to avoid
-    /// recomputing it when rebuilding tries.
-    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
+    /// This is computed during ExecutionWitness construction to avoid
+    /// issues of trust assumptions.
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub state_nodes: BTreeMap<H256, NodeRLP>,
+    /// This are the RLP-encoded nodes for the state trie.
+    /// They are latter encoded and moved to the state_node
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub nodes: Vec<NodeRLP>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.

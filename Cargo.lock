@@ -5180,6 +5180,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-hash",
  "risc0-build",
  "risc0-zkvm",
  "rkyv",
