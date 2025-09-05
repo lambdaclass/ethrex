@@ -54,10 +54,10 @@ jobs:
   test:
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        arch-suffix: ["", "-arm"]
     # "Test" is a required check, don't change the name
     name: Test
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -76,8 +76,8 @@ jobs:
     name: Build Docker
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+        arch-suffix: ["", "-arm"]
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     steps:
       - uses: actions/checkout@v4
       - id: docker
@@ -89,15 +89,15 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_image-${{ matrix.runner }}
+          name: ethrex_image${{ matrix.arch-suffix }}
           path: /tmp/ethrex_image.tar
 
   setup-hive-fork:
     name: "Setup Hive"
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+        arch-suffix: ["", "-arm"]
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     env:
       HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
     steps:
@@ -111,15 +111,15 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-fork-${{ matrix.runner }}
+          name: hive-fork-${{ matrix.arch-suffix }}
           path: hive
 
   setup-hive-upstream:
     name: "Setup Hive"
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+        arch-suffix: ["", "-arm"]
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     env:
       HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
     steps:
@@ -135,7 +135,7 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive-upstream-${{ matrix.runner }}
+          name: hive-upstream-${{ matrix.arch-suffix }}
           path: hive
 
   run-assertoor:
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        arch-suffix: ["", "-arm"]
         include:
           - name: Transaction Check
             enclave_name: "ethrex-assertoor-tx"
@@ -157,7 +157,7 @@ jobs:
           # - name: Ethrex Only With Different Consensus Clients Check
           #   enclave_name: "ethrex-different-consensus-assertoor"
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
 
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +165,7 @@ jobs:
       - name: Download etherex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image-${{ matrix.runner }}
+          name: ethrex_image${{ matrix.arch-suffix }}
           path: /tmp
 
       - name: Load image
@@ -175,7 +175,7 @@ jobs:
       - name: Run assertoor
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
-          enclave_name: ${{ matrix.enclave_name }}-${{ matrix.runner }}
+          enclave_name: ${{ matrix.enclave_name }}${{ matrix.arch-suffix }}
           kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/ethpandaops/ethereum-package"
           ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
@@ -188,7 +188,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        arch-suffix: ["", "-arm"]
         include:
           - name: "Rpc Compat tests"
             hive_version: "fork"
@@ -223,7 +223,7 @@ jobs:
           #   simulation: ethereum/sync
           #   test_pattern: ""
           #   ethrex_flags: "--syncmode snap"
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -231,13 +231,13 @@ jobs:
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image-${{ matrix.runner }}
+          name: ethrex_image-${{ matrix.arch-suffix }}
           path: /tmp
 
       - name: Download hive artifacts
         uses: actions/download-artifact@v4
         with:
-          name: hive-${{ matrix.hive_version || 'upstream' }}-${{ matrix.runner }}
+          name: hive-${{ matrix.hive_version || 'upstream' }}${{ matrix.arch-suffix }}
 
       - name: Load image
         run: |
@@ -250,8 +250,8 @@ jobs:
     name: Execute an L1 block
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+        arch-suffix: ["", "-arm"]
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -279,8 +279,8 @@ jobs:
     name: Integration Test
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+        arch-suffix: ["", "-arm"]
+    runs-on: ubuntu-24.04${{ matrix.arch-suffix }}
     needs: [run-assertoor, run-hive]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
