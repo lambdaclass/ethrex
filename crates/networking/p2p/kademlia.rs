@@ -30,6 +30,8 @@ pub struct Contact {
     pub disposable: bool,
     // Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
+    // This is a known-bad peer (on another network, no matching capabilities, etc)
+    pub unwanted: bool
 }
 
 impl Contact {

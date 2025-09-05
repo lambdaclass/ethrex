@@ -215,6 +215,20 @@ impl GenServer for RLPxConnection {
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream).await
                 {
+                    if let Some(contact) = established_state
+                        .table
+                        .table
+                        .lock()
+                        .await
+                        .get_mut(&established_state.node.node_id())
+                    {
+                        match &reason {
+                            RLPxError::NoMatchingCapabilities() | RLPxError::HandshakeError(_) => {
+                                contact.unwanted = true
+                            }
+                            _ => {}
+                        }
+                    }
                     connection_failed(
                         &mut established_state,
                         "Failed to initialize RLPx connection",
