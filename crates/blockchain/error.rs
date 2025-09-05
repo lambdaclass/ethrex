@@ -83,6 +83,8 @@ pub enum MempoolError {
     TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
+    #[error("Transaction gas max limit exceeded for Osaka")]
+    TxMaxGasLimitExceededError,
     #[error("Transaction priority fee above gas fee")]
     TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]

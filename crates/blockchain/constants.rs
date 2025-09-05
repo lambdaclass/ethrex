@@ -44,3 +44,5 @@ pub const TX_DATA_NON_ZERO_GAS_EIP2028: u64 = 16;
 pub const GAS_LIMIT_BOUND_DIVISOR: u64 = 1024;
 
 pub const MIN_GAS_LIMIT: u64 = 5000;
+
+pub const OSAKA_MAX_GAS_LIMIT: u64 = 16777216;
