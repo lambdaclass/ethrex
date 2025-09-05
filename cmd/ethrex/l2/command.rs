@@ -31,7 +31,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
@@ -96,6 +96,8 @@ impl L2Command {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
+#[clap(group = clap::ArgGroup::new("owner_signing").required(false))]
+#[clap(group = clap::ArgGroup::new("sequencer_signing").required(false))]
 pub enum Command {
     #[command(about = "Initialize an ethrex prover", visible_alias = "p")]
     Prover {
@@ -140,15 +142,6 @@ pub enum Command {
         #[arg(help = "ID of the batch to revert to")]
         batch: u64,
         #[arg(
-            long = "network",
-            default_value_t = Network::default(),
-            value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
-            env = "ETHREX_NETWORK",
-            value_parser = clap::value_parser!(Network),
-        )]
-        network: Network,
-        #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
             default_value_t = default_datadir(),
@@ -156,18 +149,107 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
-        #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        #[arg(
+            long = "pause",
+            default_value_t = false,
+            help = "Pause contracts before trying to revert the batch",
+            requires = "owner_signing"
+        )]
+        pause_contracts: bool,
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            help = "URL of the L1 RPC"
+        )]
+        rpc_url: Url,
+        #[arg(help = "The address of the OnChainProposer contract")]
+        contract_address: Address,
+        #[arg(
+            long,
+            value_parser = parse_private_key,
+            env = "OWNER_PRIVATE_KEY",
+            help = "The private key of the owner",
+            help_heading  = "Contract owner account options",
+            group = "owner_signing",
+        )]
+        owner_private_key: Option<SecretKey>,
+        #[arg(
+            long = "owner-remote-signer-url",
+            value_name = "URL",
+            env = "OWNER_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            help_heading = "Contract owner account options",
+            conflicts_with = "owner_private_key",
+            requires = "owner_remote_signer_public_key"
+        )]
+        owner_remote_signer_url: Option<Url>,
+        #[arg(
+            long = "owner-remote-signer-public-key",
+            value_name = "OWNER_PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "ETHREX_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            group = "owner_signing",
+            requires = "owner_remote_signer_url",
+            help_heading  = "Contract owner account options"
+        )]
+        owner_remote_signer_public_key: Option<PublicKey>,
+        #[arg(
+            long,
+            value_parser = parse_private_key,
+            env = "SEQUENCER_PRIVATE_KEY", 
+            help = "The private key of the sequencer", 
+            help_heading  = "Sequencer account options",
+            group = "sequencer_signing",
+        )]
+        sequencer_private_key: Option<SecretKey>,
+        #[arg(
+            long = "sequencer-remote-signer-url",
+            value_name = "URL",
+            env = "SEQUENCER_REMOTE_SIGNER_URL",
+            help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+            help_heading = "Sequencer account options",
+            conflicts_with = "sequencer_private_key",
+            requires = "sequencer_remote_signer_public_key"
+        )]
+        sequencer_remote_signer_url: Option<Url>,
+        #[arg(
+            long = "sequencer-remote-signer-public-key",
+            value_name = "SEQUENCER_PUBLIC_KEY",
+            value_parser = utils::parse_public_key,
+            env = "SEQUENCER_REMOTE_SIGNER_PUBLIC_KEY",
+            help = "Public key to request the remote signature from.",
+            group = "sequencer_signing",
+            requires = "sequencer_remote_signer_url",
+            help_heading  = "Sequencer account options"
+        )]
+        sequencer_remote_signer_public_key: Option<PublicKey>,
+        #[arg(
+            default_value_t = false,
+            help = "If enabled the command will also delete the blocks from the Blockchain database",
+            long = "delete-blocks",
+            requires = "network"
+        )]
+        delete_blocks: bool,
+        #[arg(
+            long = "network",
+            value_name = "GENESIS_FILE_PATH",
+            help = "Receives a `Genesis` struct in json format. Only required if using --delete-blocks",
+            env = "ETHREX_NETWORK",
+            value_parser = clap::value_parser!(Network),
+        )]
+        network: Option<Network>,
     },
     #[command(about = "Pause L1 contracts")]
     Pause {
         #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        contract_call_options: ContractCallOptions,
     },
     #[command(about = "Unpause L1 contracts")]
     Unpause {
         #[command(flatten)]
-        contract_pause_options: ContractPauseOptions,
+        contract_call_options: ContractCallOptions,
     },
     #[command(about = "Deploy in L1 all contracts needed by an L2.")]
     Deploy {
@@ -457,61 +539,73 @@ impl Command {
                 batch,
                 datadir,
                 network,
-                contract_pause_options: opts,
+                contract_address,
+                owner_private_key,
+                owner_remote_signer_public_key,
+                owner_remote_signer_url,
+                sequencer_private_key,
+                sequencer_remote_signer_public_key,
+                sequencer_remote_signer_url,
+                rpc_url,
+                delete_blocks,
+                pause_contracts,
             } => {
                 let data_dir = init_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
-                if opts
-                    .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
-                    .await
-                    .is_ok()
+                let owner_contract_options = ContractCallOptions {
+                    contract_address,
+                    private_key: owner_private_key,
+                    remote_signer_public_key: owner_remote_signer_public_key,
+                    remote_signer_url: owner_remote_signer_url,
+                    rpc_url: rpc_url.clone(),
+                };
+                let sequencer_contract_options = if sequencer_private_key.is_some()
+                    || sequencer_remote_signer_public_key.is_some()
                 {
+                    Some(ContractCallOptions {
+                        contract_address,
+                        private_key: sequencer_private_key,
+                        remote_signer_public_key: sequencer_remote_signer_public_key,
+                        remote_signer_url: sequencer_remote_signer_url,
+                        rpc_url,
+                    })
+                } else {
+                    None
+                };
+                if pause_contracts {
+                    info!("Pausing OnChainProposer contract");
+                    owner_contract_options
+                        .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
+                        .await?;
                     info!("Paused OnChainProposer contract");
+                }
+                if let Some(contract_opts) = sequencer_contract_options.as_ref() {
                     info!("Doing revert on OnChainProposer...");
-                    opts.call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
-                        .await?
+                    contract_opts
+                        .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
+                        .await?;
+                    info!("Reverted to batch {batch} on OnChainProposer")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
-                info!("Updating store...");
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
-                let last_kept_block = rollup_store
-                    .get_block_numbers_by_batch(batch)
-                    .await?
-                    .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
-                    .unwrap_or(0);
 
-                let genesis = network.get_genesis()?;
-                let store = init_store(&data_dir, genesis).await;
+                let last_kept_block =
+                    delete_batch_from_rollup_store(batch, &rollup_store_dir).await?;
 
-                rollup_store.revert_to_batch(batch).await?;
-
-                let mut block_to_delete = last_kept_block + 1;
-                while store
-                    .get_canonical_block_hash(block_to_delete)
-                    .await?
-                    .is_some()
-                {
-                    store.remove_block(block_to_delete).await?;
-                    block_to_delete += 1;
+                if delete_blocks {
+                    delete_blocks_from_batch(&data_dir, network, last_kept_block).await?;
                 }
-                let last_kept_header = store
-                    .get_block_header(last_kept_block)?
-                    .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-                store
-                    .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                    .await?;
 
-                if opts
-                    .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
-                    .await
-                    .is_ok()
-                {
-                    info!("Unpaused OnChainProposer...");
-                };
+                if pause_contracts {
+                    info!("Unpausing OnChainProposer contract");
+                    owner_contract_options
+                        .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
+                        .await?;
+                    info!("Unpaused OnChainProposer contract");
+                }
             }
             Command::Pause {
-                contract_pause_options: opts,
+                contract_call_options: opts,
             } => {
                 info!("Pausing contract {}", opts.contract_address);
                 opts.call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
@@ -519,7 +613,7 @@ impl Command {
                     .inspect(|_| info!("Succesfully paused contract"))?;
             }
             Command::Unpause {
-                contract_pause_options: opts,
+                contract_call_options: opts,
             } => {
                 info!("Unpausing contract {}", opts.contract_address);
                 opts.call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
@@ -535,7 +629,7 @@ impl Command {
 }
 
 #[derive(Parser)]
-pub struct ContractPauseOptions {
+pub struct ContractCallOptions {
     #[arg(help = "The address of the target contract")]
     contract_address: Address,
     #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
@@ -568,7 +662,7 @@ pub struct ContractPauseOptions {
     remote_signer_public_key: Option<PublicKey>,
 }
 
-impl ContractPauseOptions {
+impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
         let client = EthClient::new(self.rpc_url.as_str())?;
         let signer = parse_signer(
@@ -580,4 +674,49 @@ impl ContractPauseOptions {
         call_contract(&client, &signer, self.contract_address, selector, params).await?;
         Ok(())
     }
+}
+
+async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> eyre::Result<u64> {
+    info!("Deleting batch from rollup store...");
+    let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
+    let last_kept_block = rollup_store
+        .get_block_numbers_by_batch(batch)
+        .await?
+        .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
+        .unwrap_or(0);
+    rollup_store.revert_to_batch(batch).await?;
+    info!("Succesfully deleted batch from rollup store");
+    Ok(last_kept_block)
+}
+
+async fn delete_blocks_from_batch(
+    data_dir: &str,
+    network: Option<Network>,
+    last_kept_block: u64,
+) -> eyre::Result<()> {
+    info!("Deleting blocks from blockchain store...");
+    let Some(network) = network else {
+        return Err(eyre::eyre!("Network not provided"));
+    };
+    let genesis = network.get_genesis()?;
+
+    let mut block_to_delete = last_kept_block + 1;
+    let store = init_store(data_dir, genesis).await;
+
+    while store
+        .get_canonical_block_hash(block_to_delete)
+        .await?
+        .is_some()
+    {
+        debug!("Deleting block {block_to_delete}");
+        store.remove_block(block_to_delete).await?;
+        block_to_delete += 1;
+    }
+    let last_kept_header = store
+        .get_block_header(last_kept_block)?
+        .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
+    store
+        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .await?;
+    Ok(())
 }
