@@ -1,7 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -21,6 +21,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_vm::EvmError;
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -127,7 +128,7 @@ impl Syncer {
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
@@ -277,6 +278,7 @@ impl Syncer {
                         state
                             .process_incoming_headers(
                                 block_headers,
+                                sync_head,
                                 sync_head_found,
                                 self.blockchain.clone(),
                                 self.peers.clone(),
@@ -319,18 +321,10 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let mut current_head_number = store
-            .get_block_number(current_head)
-            .await?
-            .ok_or(SyncError::BlockNumber(current_head))?;
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
-        let pending_block = match store.get_pending_block(sync_head).await {
-            Ok(res) => res,
-            Err(e) => return Err(e.into()),
-        };
 
         loop {
             debug!("Sync Log 1: In Full Sync");
@@ -347,7 +341,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .request_block_headers_full_sync(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -385,14 +379,6 @@ impl Syncer {
                 last_block_number
             );
 
-            // If we have a pending block from new_payload request
-            // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
-            }
-
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
             if let Some(index) = block_headers
@@ -405,7 +391,6 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
-            current_head_number = last_block_number;
 
             // Discard the first header as we already have it
             block_headers.remove(0);
@@ -415,6 +400,7 @@ impl Syncer {
                     finished = block_sync_state
                         .process_incoming_headers(
                             block_headers.clone(),
+                            sync_head,
                             sync_head_found,
                             self.blockchain.clone(),
                             self.peers.clone(),
@@ -595,13 +581,24 @@ impl FullBlockSyncState {
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
+        sync_head: H256,
+        mut sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<bool, SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
+        // If we have the sync_head as a pending block form a new_payload request and its parent_hash matches the hash of the latest received header
+        // we set the sync_head as found and later, after requesting all blocks, we'll add the pending block in current_blocks for execution.
+        if let Some(block) = self.store.get_pending_block(sync_head).await? {
+            if let Some(last_header) = self.current_headers.last() {
+                if block.header.parent_hash == last_header.hash() {
+                    sync_head_found = true;
+                }
+            }
+        }
+
         let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
@@ -626,6 +623,14 @@ impl FullBlockSyncState {
             .map(|(header, body)| Block { header, body });
         self.current_blocks.extend(blocks);
         // }
+        // Since there's a pending block that's the descendant of the last requested hash we include it in current_blocks to execute all of them.
+        if let Some(block) = self.store.get_pending_block(sync_head).await? {
+            if let Some(last_block) = self.current_blocks.last() {
+                if sync_head_found && last_block.hash() == block.header.parent_hash {
+                    self.current_blocks.push(block);
+                }
+            }
+        }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
         //     || (!self.current_blocks.is_empty() && sync_head_found)
@@ -645,7 +650,7 @@ impl FullBlockSyncState {
                 .hash()
         );
         let execution_start = Instant::now();
-        let block_batch: Vec<Block> = self
+        let mut block_batch: Vec<Block> = self
             .current_blocks
             .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
             .collect();
@@ -666,7 +671,7 @@ impl FullBlockSyncState {
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
-            block_batch,
+            block_batch.clone(),
             sync_head_found,
             cancel_token.clone(),
         )
@@ -674,12 +679,41 @@ impl FullBlockSyncState {
         {
             if let Some(batch_failure) = batch_failure {
                 warn!("Failed to add block during FullSync: {err}");
-                self.store
-                    .set_latest_valid_ancestor(
-                        batch_failure.failed_block_hash,
-                        batch_failure.last_valid_hash,
-                    )
-                    .await?;
+                // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor.
+                match err {
+                    ChainError::InvalidBlock(_)
+                    | ChainError::InvalidTransaction(_)
+                    | ChainError::EvmError(EvmError::Transaction(_))
+                    | ChainError::EvmError(EvmError::Header(_))
+                    | ChainError::EvmError(EvmError::InvalidDepositRequest) => {
+                        let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
+                        if let Some(index) = block_batch
+                            .iter()
+                            .position(|x| x.hash() == batch_failure.failed_block_hash)
+                        {
+                            blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
+                        }
+
+                        for block in blocks_with_invalid_ancestor {
+                            self.store
+                                .set_latest_valid_ancestor(
+                                    block.hash(),
+                                    batch_failure.last_valid_hash,
+                                )
+                                .await?;
+                        }
+                        // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                        for header in self.current_headers.clone() {
+                            self.store
+                                .set_latest_valid_ancestor(
+                                    header.hash(),
+                                    batch_failure.last_valid_hash,
+                                )
+                                .await?;
+                        }
+                    }
+                    _ => (),
+                }
             }
             return Err(err.into());
         }
