@@ -61,7 +61,7 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
                 .map(Into::into)
                 .collect(),
             keys,
-            codes: value.codes.values().cloned().collect(),
+            codes: value.codes_hashed.values().cloned().collect(),
             headers: value
                 .block_headers
                 .values()
@@ -79,11 +79,7 @@ pub fn execution_witness_from_rpc_chain_config(
     first_block_number: u64,
     requested_block_headers: Vec<BlockHeader>,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let codes = rpc_witness
-        .codes
-        .iter()
-        .map(|code| (keccak_hash::keccak(code), code.clone()))
-        .collect::<BTreeMap<_, _>>();
+    let codes = rpc_witness.codes;
 
     let mut block_headers = rpc_witness
         .headers
@@ -130,9 +126,10 @@ pub fn execution_witness_from_rpc_chain_config(
         }
     }
 
-    let mut witness = ExecutionWitnessResult {
+    let witness = ExecutionWitnessResult {
         codes,
-        state_trie: None, // `None` because we'll rebuild the tries afterwards
+        codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+        state_trie: None,              // `None` because we'll rebuild the tries afterwards
         storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,

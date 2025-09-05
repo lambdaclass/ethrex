@@ -164,6 +164,7 @@ pub fn stateless_validation_l2(
     let mut initial_db = ExecutionWitnessResult {
         block_headers: db.block_headers.clone(),
         chain_config: db.chain_config,
+        codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
         codes: db.codes.clone(),
         state_trie: None,
         storage_tries: BTreeMap::new(),
@@ -245,6 +246,13 @@ fn execute_stateless(
         .nodes
         .drain(..)
         .map(|node| (keccak(&node), node))
+        .collect();
+
+    // hash codes
+    db.codes_hashed = db
+        .codes
+        .drain(..)
+        .map(|code| (keccak(&code), code))
         .collect();
 
     db.rebuild_state_trie()

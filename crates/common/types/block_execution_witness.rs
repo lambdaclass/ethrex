@@ -28,12 +28,16 @@ use sha3::{Digest, Keccak256};
 pub struct ExecutionWitnessResult {
     // Indexed by code hash
     // Used evm bytecodes
-    #[serde(
-        serialize_with = "serialize_code",
-        deserialize_with = "deserialize_code"
-    )]
-    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
-    pub codes: BTreeMap<H256, Bytes>,
+    // #[serde(
+    //     serialize_with = "serialize_code",
+    //     deserialize_with = "deserialize_code"
+    // )]
+    // #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub codes_hashed: BTreeMap<H256, Bytes>,
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    pub codes: Vec<Bytes>,
     // Pruned state MPT
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -173,7 +177,7 @@ impl ExecutionWitnessResult {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes.insert(info.code_hash, code.clone());
+                        self.codes_hashed.insert(info.code_hash, code.clone());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -377,7 +381,7 @@ impl ExecutionWitnessResult {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.codes.get(&code_hash) {
+        match self.codes_hashed.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(ExecutionWitnessError::Database(format!(
                 "Could not find code for hash {code_hash}"
