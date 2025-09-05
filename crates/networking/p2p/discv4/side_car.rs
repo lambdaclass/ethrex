@@ -118,7 +118,7 @@ impl DiscoverySideCar {
 
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, node.udp_addr())
+            .send_to(&buf, SocketAddr::new(node.ip.to_canonical(), node.udp_port))
             .await
             .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
@@ -141,9 +141,12 @@ impl DiscoverySideCar {
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
+
+        // Nodes that use ipv6 currently are only ipv4 masked addresses, so we can convert it to an ipv4 address.
+        // If in the future we have real ipv6 nodes, we will need to handle them differently.
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .send_to(&buf, SocketAddr::new(node.ip.to_canonical(), node.udp_port))
             .await
             .map_err(DiscoverySideCarError::MessageSendFailure)?;
 

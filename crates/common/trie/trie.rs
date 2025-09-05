@@ -12,7 +12,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -124,7 +124,7 @@ impl Trie {
 
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
-    pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if !self.root.is_valid() {
             return Ok(None);
         }
@@ -134,7 +134,7 @@ impl Trie {
             .root
             .get_node(self.db.as_ref())?
             .ok_or(TrieError::InconsistentTree)?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+            .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
         self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
@@ -251,7 +251,7 @@ impl Trie {
 
     pub fn empty_in_memory() -> Self {
         Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            HashMap::new(),
+            BTreeMap::new(),
         )))))
     }
 
@@ -264,20 +264,20 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: NodeHash,
-        mut state_nodes: HashMap<NodeHash, NodeRLP>,
+        state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
         let root_rlp = state_nodes
-            .remove(&root_hash)
+            .get(&root_hash.finalize())
             .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
-            all_nodes: &mut HashMap<NodeHash, Vec<u8>>,
+            all_nodes: &BTreeMap<H256, Vec<u8>>,
             cur_node_hash: &NodeHash,
-            cur_node_rlp: NodeRLP,
-            traversed_nodes: &mut HashMap<NodeHash, NodeRLP>,
+            cur_node_rlp: &NodeRLP,
+            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
-            let node = Node::decode_raw(&cur_node_rlp)?;
-            traversed_nodes.insert(*cur_node_hash, cur_node_rlp);
+            let node = Node::decode_raw(cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
 
             Ok(match node {
                 Node::Branch(mut node) => {
@@ -287,7 +287,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.remove(&hash) {
+                            *choice = match all_nodes.get(&hash.finalize()) {
                                 Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                                 None => hash.into(),
                             };
@@ -301,7 +301,7 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match all_nodes.remove(&hash) {
+                    node.child = match all_nodes.get(&hash.finalize()) {
                         Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
                         None => hash.into(),
                     };
@@ -312,8 +312,8 @@ impl Trie {
             })
         }
 
-        let mut necessary_nodes = HashMap::new();
-        let root = inner(&mut state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        let mut necessary_nodes = BTreeMap::new();
+        let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
@@ -430,11 +430,11 @@ impl Trie {
 
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let hmap: BTreeMap<NodeHash, Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
@@ -659,7 +659,7 @@ mod test {
         trie.insert(b"horse".to_vec(), b"stallion".to_vec())
             .unwrap();
         trie.insert(b"doge".to_vec(), b"coin".to_vec()).unwrap();
-        trie.remove(b"horse".to_vec()).unwrap();
+        trie.remove(&b"horse".to_vec()).unwrap();
         assert_eq!(trie.get(&b"do".to_vec()).unwrap(), Some(b"verb".to_vec()));
         assert_eq!(trie.get(&b"doge".to_vec()).unwrap(), Some(b"coin".to_vec()));
     }
@@ -670,7 +670,7 @@ mod test {
         trie.insert(vec![185], vec![185]).unwrap();
         trie.insert(vec![185, 0], vec![185, 0]).unwrap();
         trie.insert(vec![185, 1], vec![185, 1]).unwrap();
-        trie.remove(vec![185, 1]).unwrap();
+        trie.remove(&vec![185, 1]).unwrap();
         assert_eq!(trie.get(&vec![185, 0]).unwrap(), Some(vec![185, 0]));
         assert_eq!(trie.get(&vec![185]).unwrap(), Some(vec![185]));
         assert!(trie.get(&vec![185, 1]).unwrap().is_none());
@@ -827,7 +827,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    let removed = trie.remove(val.clone()).unwrap();
+                    let removed = trie.remove(val).unwrap();
                     prop_assert_eq!(removed, Some(val.clone()));
                 }
             }
@@ -858,7 +858,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    let removed = trie.remove(val.clone()).unwrap();
+                    let removed = trie.remove(&val.clone()).unwrap();
                     prop_assert_eq!(removed, Some(val.clone()));
                 }
             }
@@ -903,7 +903,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    trie.remove(val.clone()).unwrap();
+                    trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -931,7 +931,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    trie.remove(val.clone()).unwrap();
+                    trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -988,7 +988,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    trie.remove(val.clone()).unwrap();
+                    trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -1019,7 +1019,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    trie.remove(val.clone()).unwrap();
+                    trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -1116,7 +1116,7 @@ mod test {
         cita_trie.insert(b.clone(), b.clone()).unwrap();
         trie.insert(a.clone(), a.clone()).unwrap();
         trie.insert(b.clone(), b.clone()).unwrap();
-        trie.remove(a.clone()).unwrap();
+        trie.remove(&a).unwrap();
         cita_trie.remove(&a).unwrap();
         let _ = cita_trie.root();
         let cita_proof = cita_trie.get_proof(&a).unwrap();
