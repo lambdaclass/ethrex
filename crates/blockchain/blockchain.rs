@@ -24,6 +24,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -358,12 +359,12 @@ impl Blockchain {
                 first_needed_block_number = **block_number_from_logger;
             }
         }
-        let mut block_headers = BTreeMap::new();
+        let mut block_headers_bytes = Vec::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
             )?;
-            block_headers.insert(block_number, header);
+            block_headers_bytes.push(header.encode_to_vec().into());
         }
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
@@ -375,13 +376,16 @@ impl Blockchain {
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
-            block_headers,
+            block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
+            block_headers_bytes,
             chain_config,
             storage_tries: BTreeMap::new(),
-            parent_block_header: self
-                .storage
-                .get_block_header_by_hash(first_block_header.parent_hash)?
-                .ok_or(ChainError::ParentNotFound)?,
+            // parent_block_header: self
+            //     .storage
+            //     .get_block_header_by_hash(first_block_header.parent_hash)?
+            //     .ok_or(ChainError::ParentNotFound)?,
+            parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
+            first_block_number: first_block_header.number,
             nodes_hashed: BTreeMap::new(), // This must be filled during stateless execution
             nodes,
             touched_account_storage_slots,

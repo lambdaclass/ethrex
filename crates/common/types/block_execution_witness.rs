@@ -31,8 +31,8 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub codes_hashed: BTreeMap<H256, Bytes>,
-    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
     // Used evm bytecodes
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
     pub codes: Vec<Bytes>,
     // Pruned state MPT
     #[serde(skip)]
@@ -43,9 +43,18 @@ pub struct ExecutionWitnessResult {
     #[rkyv(with = rkyv::with::Skip)]
     pub storage_tries: BTreeMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub block_headers: BTreeMap<u64, BlockHeader>,
+    // Block headers as raw bytes
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    pub block_headers_bytes: Vec<Bytes>,
     // Parent block header to get the initial state root
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub parent_block_header: BlockHeader,
+    /// The block number of the first block
+    pub first_block_number: u64,
     // Chain config
     pub chain_config: ChainConfig,
     /// This maps node hashes to their corresponding RLP-encoded nodes.
