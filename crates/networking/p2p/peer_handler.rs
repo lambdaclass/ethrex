@@ -1527,6 +1527,11 @@ impl PeerHandler {
                 }
             }
 
+            if block_is_stale(pivot_header) {
+                info!("request_storage_ranges became stale, breaking");
+                break;
+            }
+
             let Some(task) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= task_count {
                     break;
@@ -1563,11 +1568,6 @@ impl PeerHandler {
                     chunk_account_hashes.first().unwrap_or(&H256::zero()),
                     chunk_storage_roots.first().unwrap_or(&H256::zero()),
                 );
-            }
-
-            if block_is_stale(pivot_header) {
-                info!("request_storage_ranges became stale, breaking");
-                break;
             }
 
             tokio::spawn(PeerHandler::request_storage_ranges_worker(
