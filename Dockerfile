@@ -1,4 +1,4 @@
-FROM rust:1.87 AS chef
+FROM debian:trixie AS chef
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y \
     libc6 \
     libssl-dev \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    rustup \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup default 1.87
 RUN cargo install cargo-chef
 
 WORKDIR /ethrex
@@ -65,7 +67,7 @@ RUN cargo build --release $BUILD_FLAGS
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
 # This image must have glibc and libssl
-FROM gcr.io/distroless/cc-debian12
+FROM gcr.io/distroless/cc-debian13
 WORKDIR /usr/local/bin
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
