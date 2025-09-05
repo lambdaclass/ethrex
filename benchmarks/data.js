@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757104100384,
+  "lastUpdate": 1757104264552,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12505,6 +12505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168784693765,
             "range": "± 1438916947",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8cc08b76b9daa99c8b1d8503ebc52941d0e2ae72",
+          "message": "ci(l1): add new workflow to test snap sync on public testnets (#4303)\n\n**Motivation**\nTo be able to continually test snap sync on hoodi and other testnets\n\n**Description**\n- Adds a periodical job that syncs hoodi every two hours\n- It can also be manually triggered\n \nHere are some runs:\nhttps://github.com/lambdaclass/ethrex/actions/workflows/manual_sync_assertoor.yaml\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-05T19:38:16Z",
+          "tree_id": "2a013c755414636685f5c3dd2d5a9702e50812a1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8cc08b76b9daa99c8b1d8503ebc52941d0e2ae72"
+        },
+        "date": 1757104244540,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165411907932,
+            "range": "± 623463025",
             "unit": "ns/iter"
           }
         ]
