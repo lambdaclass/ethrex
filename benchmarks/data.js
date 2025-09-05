@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757100253453,
+  "lastUpdate": 1757102657507,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12355,6 +12355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167118563903,
             "range": "± 447755887",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ae286f61d690d48bceb369beea0fbd3558fd7faa",
+          "message": "feat(l1): run with debug assert (#4331)\n\n**Motivation**\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds an option to the makefile and server runner script to run with\ndebug assertions enabled\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-05T19:11:40Z",
+          "tree_id": "52a4354383bf183fa5f3984e431cd888ae1e3789",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ae286f61d690d48bceb369beea0fbd3558fd7faa"
+        },
+        "date": 1757102637702,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169726905394,
+            "range": "± 909036662",
             "unit": "ns/iter"
           }
         ]
