@@ -154,7 +154,7 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-            for block in update_batch.blocks {
+            for mut block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
@@ -169,13 +169,23 @@ impl StoreEngine for Store {
 
                 tx.upsert::<Bodies>(
                     hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                    BlockBodyRLP::from_bytes(
+                        block
+                            .cached_body_rlp_encode
+                            .take()
+                            .unwrap_or(block.body.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 
                 tx.upsert::<Headers>(
                     hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                    BlockHeaderRLP::from_bytes(
+                        block
+                            .cached_header_rlp_encode
+                            .take()
+                            .unwrap_or(block.header.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 
@@ -261,7 +271,7 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            for block in blocks {
+            for mut block in blocks {
                 let number = block.header.number;
                 let hash = block.hash();
 
@@ -275,13 +285,23 @@ impl StoreEngine for Store {
 
                 tx.upsert::<Bodies>(
                     hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                    BlockBodyRLP::from_bytes(
+                        block
+                            .cached_body_rlp_encode
+                            .take()
+                            .unwrap_or(block.body.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 
                 tx.upsert::<Headers>(
                     hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                    BlockHeaderRLP::from_bytes(
+                        block
+                            .cached_header_rlp_encode
+                            .take()
+                            .unwrap_or(block.header.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 

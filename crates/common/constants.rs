@@ -57,3 +57,9 @@ pub const GAS_PER_BLOB: u32 = 1 << 17;
 
 // Minimum base fee per blob
 pub const MIN_BASE_FEE_PER_BLOB_GAS: u64 = 1;
+
+// === EIP-7934 constants ===
+
+pub const MAX_BLOCK_SIZE: u64 = 10_485_760;
+pub const SAFETY_MARGIN: u64 = 2_097_152;
+pub const MAX_RLP_BLOCK_SIZE: u64 = MAX_BLOCK_SIZE - SAFETY_MARGIN;
