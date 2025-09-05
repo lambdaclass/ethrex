@@ -1532,13 +1532,6 @@ impl PeerHandler {
                 break;
             }
 
-            let Some(task) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= task_count {
-                    break;
-                }
-                continue;
-            };
-
             let Some((peer_id, peer_channel)) = self
                 .peer_scores
                 .lock()
@@ -1546,6 +1539,13 @@ impl PeerHandler {
                 .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
+                continue;
+            };
+
+            let Some(task) = tasks_queue_not_started.pop_front() else {
+                if completed_tasks >= task_count {
+                    break;
+                }
                 continue;
             };
 
