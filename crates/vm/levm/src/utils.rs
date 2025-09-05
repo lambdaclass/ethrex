@@ -20,7 +20,10 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
-    evm::calculate_create_address, types::{tx_fields::*, Account, Fork, Transaction}, utils::u256_to_big_endian, Address, H256, U256
+    Address, H256, U256,
+    evm::calculate_create_address,
+    types::{Account, Fork, Transaction, tx_fields::*},
+    utils::u256_to_big_endian,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
