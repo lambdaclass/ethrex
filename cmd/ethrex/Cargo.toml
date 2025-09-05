@@ -71,6 +71,7 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
+rocksdb = ["ethrex-storage/rocksdb"]
 blst = ["ethrex-vm/blst"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]

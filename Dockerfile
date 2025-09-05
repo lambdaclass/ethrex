@@ -51,7 +51,9 @@ COPY .git ./.git
 COPY .cargo/ ./.cargo
 
 # Optional build flags
-ARG BUILD_FLAGS=""
+# NOTE: Change this to test hive with rocksdb
+# We should revert this to the default
+ARG BUILD_FLAGS="--features rocksdb"
 ENV COMPILE_CONTRACTS=true
 RUN cargo build --release $BUILD_FLAGS
 

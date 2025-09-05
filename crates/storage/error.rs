@@ -10,6 +10,9 @@ pub enum StoreError {
     #[cfg(feature = "libmdbx")]
     #[error("Libmdbx error: {0}")]
     LibmdbxError(anyhow::Error),
+    #[cfg(feature = "rocksdb")]
+    #[error("Rocksdb error: {0}")]
+    RocksdbError(#[from] rocksdb::Error),
     #[error("{0}")]
     Custom(String),
     #[error(transparent)]
