@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757102657507,
+  "lastUpdate": 1757102804911,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12385,6 +12385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169726905394,
             "range": "± 909036662",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "347fed933e1162d57da43fcf7cef67fb5b5fe38b",
+          "message": "feat(l1): improve syncing helper function update_pivot (#4270)\n\n**Motivation**\nThe current update_pivot funciton in crates/networking/p2p/sync.rs has\nseveral room for improvement, primarily in the logic.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nThe function now estimates the new block number based on the block\ntimestamp\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4261\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-09-05T19:14:32Z",
+          "tree_id": "1dfcd32d7ab04a37c32742444fd3095291ab8bea",
+          "url": "https://github.com/lambdaclass/ethrex/commit/347fed933e1162d57da43fcf7cef67fb5b5fe38b"
+        },
+        "date": 1757102778122,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167453624930,
+            "range": "± 342352420",
             "unit": "ns/iter"
           }
         ]
