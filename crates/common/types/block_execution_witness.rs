@@ -389,20 +389,16 @@ impl ExecutionWitnessResult {
         }
     }
 
-    /// Hashes all block headers, initializing their inner `hash` field
+    /// Hashes headers in witness and in blocks only once if they are repeated to avoid double hashing.
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
     ) -> Result<(), ExecutionWitnessError> {
         for block in blocks {
-            let header = self.block_headers.get(&block.header.number).ok_or(ExecutionWitnessError::Custom(
-                    format!(
-                        "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
-                        block.header.number,
-                        self.block_headers.keys().min(),
-                        self.block_headers.keys().max()
-                    )
-                ))?;
+            let header = self
+                .block_headers
+                .get(&block.header.number)
+                .unwrap_or(&block.header);
 
             // headers hash should happen in the stateless execution
             if header.hash.get().is_some() {
