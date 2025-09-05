@@ -283,13 +283,21 @@ impl StoreEngine for Store {
 
                 tx.upsert::<Bodies>(
                     hash.into(),
-                    BlockBodyRLP::from_bytes(block.cached_body_rlp_encode),
+                    BlockBodyRLP::from_bytes(
+                        block
+                            .cached_body_rlp_encode
+                            .get_or_init(|| block.body.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 
                 tx.upsert::<Headers>(
                     hash.into(),
-                    BlockHeaderRLP::from_bytes(block.cached_header_rlp_encode),
+                    BlockHeaderRLP::from_bytes(
+                        block
+                            .cached_header_rlp_encode
+                            .get_or_init(|| block.header.encode_to_vec()),
+                    ),
                 )
                 .map_err(StoreError::LibmdbxError)?;
 
