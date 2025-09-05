@@ -1,5 +1,3 @@
-use openvm_sdk::keygen::AppVerifyingKey;
-
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
@@ -9,6 +7,8 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
+
+    build_openvm_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -98,14 +98,11 @@ fn build_sp1_program() {
 fn build_openvm_program() {
     use openvm_build::GuestOptions;
     use openvm_sdk::Sdk;
-    use serde::Serialize;
 
     let sdk = Sdk::standard();
 
     let guest_opts = GuestOptions::default();
-
-    let target_path = "./openvm/out/riscv32im-openvm-elf";
-
+    let target_path = "./openvm/";
     let _elf = sdk
         .build(guest_opts, target_path, &None, None)
         .expect("could not build OpenVM program");

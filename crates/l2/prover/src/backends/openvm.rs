@@ -1,7 +1,16 @@
+use openvm_sdk::{Sdk, StdIn};
+
 pub struct ProgramOutput(pub [u8; 32]);
 
-pub fn execute(_input: zkvm_interface::io::ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    unimplemented!("OpenVM execute is not implemented yet");
+const PROGRAM_ELF: &[u8] = include_bytes!("../../zkvm/interface/openvm/out/riscv32im-openvm-elf");
+
+pub fn execute(input: zkvm_interface::io::ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    let sdk = Sdk::standard();
+
+    let mut stdin = StdIn::default();
+    stdin.write(&input);
+
+    sdk.execute(PROGRAM_ELF.clone(), stdin.clone())?;
 }
 
 pub fn prove(

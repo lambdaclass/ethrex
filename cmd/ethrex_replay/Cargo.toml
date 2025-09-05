@@ -40,6 +40,7 @@ jemalloc = { version = "0.3.0", optional = true }
 [features]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
+openvm = []
 gpu = ["ethrex-prover/gpu"]
 l2 = ["zkvm_interface/l2", "ethrex-prover/l2"]
 profiling = ["ethrex-prover/profiling"]
