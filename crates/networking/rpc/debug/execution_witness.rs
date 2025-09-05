@@ -205,6 +205,7 @@ pub fn execution_witness_from_rpc_chain_config(
         state_nodes: state_nodes.clone(),
         storage_trie_nodes,
         touched_account_storage_slots,
+        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 
     // block execution - this is for getting the account updates
@@ -220,6 +221,7 @@ pub fn execution_witness_from_rpc_chain_config(
             state_nodes: witness.state_nodes.clone(),
             storage_trie_nodes: witness.storage_trie_nodes.clone(),
             touched_account_storage_slots: witness.touched_account_storage_slots.clone(),
+            account_hashes_by_address: witness.account_hashes_by_address.clone(),
         };
         witness_clone.rebuild_state_trie()?;
         let wrapped_db = ExecutionWitnessWrapper::new(witness_clone);
@@ -302,7 +304,7 @@ fn apply_account_updates_from_trie_with_witness<'a>(
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
-                        storage_trie.remove(hashed_key).map_err(|e| {
+                        storage_trie.remove(&hashed_key).map_err(|e| {
                             ExecutionWitnessError::Custom(format!(
                                 "Failed to remove storage key: {e}",
                             ))
