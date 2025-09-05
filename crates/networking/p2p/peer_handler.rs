@@ -1685,6 +1685,7 @@ impl PeerHandler {
         .await
         .ok()
         .flatten();
+        drop(receiver);
         let Some((slots, proof)) = request_result else {
             tracing::debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
