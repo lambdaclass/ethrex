@@ -78,7 +78,7 @@ pub async fn get_blockdata(
             witness,
             chain_config,
             requested_block_number,
-            &[block],
+            &[&block],
         )
         .expect("Failed to convert witness"),
         Err(e) => {
@@ -174,8 +174,13 @@ async fn fetch_rangedata_from_client(
         .wrap_err("Failed to get execution witness for range")?;
 
     // TODO: review this default - it is just a placeholder for now
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from, &blocks)
-        .expect("Failed to convert witness");
+    let witness = execution_witness_from_rpc_chain_config(
+        witness,
+        chain_config,
+        from,
+        &blocks.iter().collect::<Vec<_>>(),
+    )
+    .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()

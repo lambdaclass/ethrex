@@ -80,7 +80,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-    blocks: &[Block],
+    blocks: &[&Block],
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
     let codes = rpc_witness
         .codes
