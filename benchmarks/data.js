@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757104333999,
+  "lastUpdate": 1757107442690,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12565,6 +12565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164307797272,
             "range": "± 475603892",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "aaac95a8e1d9e4f6e46b7646d6bda9dc7532d5c9",
+          "message": "feat(l1): improve peer discovery (#4340)\n\n**Motivation**\n\nCurrently we don't have as many peers as we should, which slows down\nsnap sync on networks like hoodi.\n\n**Description**\n\nThis PR:\n- Remember unwated (different network, no matching capabilities) peers\nand avoids trying again with them\n- Avoids starting new connections to nodes we are already connected with\n\nThis allows the whole contact table to be explored, leading to more\npeers.",
+          "timestamp": "2025-09-05T20:31:41Z",
+          "tree_id": "ff7068df5129fcd9614c4e4a48df05f9ef7c5100",
+          "url": "https://github.com/lambdaclass/ethrex/commit/aaac95a8e1d9e4f6e46b7646d6bda9dc7532d5c9"
+        },
+        "date": 1757107423332,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168853676475,
+            "range": "± 488206130",
             "unit": "ns/iter"
           }
         ]
