@@ -1,13 +1,13 @@
 use ethrex_common::{
     Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
+    evm::calculate_create_address,
     serde_utils,
     types::{
         BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
         bloom_from_logs,
     },
 };
-use ethrex_vm::create_contract_address;
 
 use serde::{Deserialize, Serialize};
 
@@ -192,7 +192,7 @@ impl RpcReceiptTxInfo {
             _ => (None, None),
         };
         let (contract_address, to) = match transaction.to() {
-            TxKind::Create => (Some(create_contract_address(from, nonce)), None),
+            TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
             TxKind::Call(addr) => (None, Some(addr)),
         };
         Ok(Self {

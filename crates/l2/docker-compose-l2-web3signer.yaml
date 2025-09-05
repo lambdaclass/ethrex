@@ -17,7 +17,6 @@ services:
       --http.addr 0.0.0.0
       --http.port 1729
       --authrpc.port 8552
-      --evm levm
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
       --committer.remote-signer-url http://web3signer:9000

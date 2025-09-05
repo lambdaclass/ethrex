@@ -1,3 +1,5 @@
+#![cfg(feature = "revm")]
+
 use std::collections::HashSet;
 
 use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
@@ -10,7 +12,10 @@ use revm_inspectors::tracing::{
 };
 use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
 
-use crate::{EvmError, backends::revm::run_evm, helpers::spec_id};
+use crate::{
+    EvmError,
+    backends::revm::{helpers::spec_id, run_evm},
+};
 
 use super::{REVM, block_env, db::EvmState, tx_env};
 
