@@ -371,12 +371,23 @@ impl PeerHandler {
             }
 
             if new_last_metrics_update >= Duration::from_secs(1) {
+                debug!("Updating the peer scores table");
                 self.peer_scores
                     .lock()
                     .await
                     .update_peers(&self.peer_table)
                     .await;
             }
+            let Some((peer_id, mut peer_channel)) = self
+                .peer_scores
+                .lock()
+                .await
+                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+                .await
+            else {
+                trace!("We didn't get a peer from the table");
+                continue;
+            };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
@@ -394,15 +405,6 @@ impl PeerHandler {
             };
 
             let tx = task_sender.clone();
-            let Some((peer_id, mut peer_channel)) = self
-                .peer_scores
-                .lock()
-                .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
-                .await
-            else {
-                continue;
-            };
             self.peer_scores.lock().await.mark_in_use(peer_id);
 
             debug!("Downloader {peer_id} is now busy");
