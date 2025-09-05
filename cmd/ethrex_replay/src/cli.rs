@@ -683,7 +683,7 @@ pub async fn produce_l1_blocks(
     let mut current_parent_hash = head_block_hash;
     let mut current_timestamp = initial_timestamp;
 
-    for _ in 0..=n_blocks {
+    for _ in 0..n_blocks {
         let block = produce_l1_block(
             blockchain.clone(),
             store,
