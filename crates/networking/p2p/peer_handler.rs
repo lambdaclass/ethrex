@@ -1804,6 +1804,7 @@ impl PeerHandler {
 
             if block_is_stale(pivot_header) {
                 info!("request_storage_ranges became stale, breaking");
+                info!("Pending accounts with storage roots: {:?}", account_storage_roots.not_finished_big_accounts);
                 break;
             }
 
