@@ -1125,6 +1125,11 @@ impl PeerHandler {
                 } = result;
                 self.peer_scores.lock().await.free_peer(peer_id);
 
+                debug!(
+                    "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
+                    bytecodes.len(),
+                );
+
                 if remaining_start < remaining_end {
                     tasks_queue_not_started.push_back((remaining_start, remaining_end));
                 } else {
@@ -1138,11 +1143,6 @@ impl PeerHandler {
                 downloaded_count += bytecodes.len() as u64;
 
                 self.peer_scores.lock().await.record_success(peer_id);
-
-                debug!(
-                    "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
-                    bytecodes.len(),
-                );
                 for (i, bytecode) in bytecodes.into_iter().enumerate() {
                     all_bytecodes[start_index + i] = bytecode;
                 }
@@ -1170,7 +1170,6 @@ impl PeerHandler {
             else {
                 continue;
             };
-            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
@@ -1179,6 +1178,7 @@ impl PeerHandler {
                 }
                 continue;
             };
+            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             let tx = task_sender.clone();
 
