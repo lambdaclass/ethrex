@@ -221,7 +221,12 @@ impl DiscoveryServer {
             Entry::Occupied(_) => (),
             Entry::Vacant(entry) => {
                 let ping_hash = self.ping(&node).await?;
-                let contact = entry.insert(Contact::from(node));
+                let mut new_node = node.clone();
+                if new_node.tcp_port == 0 {
+                    // If the node does not have a TCP port, we assume it's the same as the UDP port
+                    new_node.tcp_port = new_node.udp_port;
+                }
+                let contact = entry.insert(Contact::from(new_node));
                 contact.record_sent_ping(ping_hash);
             }
         }
@@ -536,7 +541,12 @@ impl GenServer for ConnectionHandler {
                         if !discarded_contacts.contains(&node_id)
                             && node_id != self.discovery_server.local_node.node_id()
                         {
-                            vacant_entry.insert(Contact::from(node));
+                            let mut new_node = node.clone();
+                            if new_node.tcp_port == 0 {
+                                // If the node does not have a TCP port, we assume it's the same as the UDP port
+                                new_node.tcp_port = new_node.udp_port;
+                            }
+                            vacant_entry.insert(Contact::from(new_node));
                             METRICS.record_new_discovery().await;
                         }
                     };
