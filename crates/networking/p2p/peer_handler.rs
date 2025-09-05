@@ -311,6 +311,7 @@ impl PeerHandler {
             if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
+                trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
 
@@ -325,18 +326,10 @@ impl PeerHandler {
                 }
 
                 downloaded_count += headers.len() as u64;
-                metrics_downloaded_count += headers.len() as u64;
 
-                if last_update
-                    .elapsed()
-                    .expect("Last update is in the present")
-                    >= Duration::from_secs(1)
-                {
-                    METRICS
-                        .downloaded_headers
-                        .fetch_add(metrics_downloaded_count, Ordering::Relaxed);
-                    metrics_downloaded_count = 0;
-                }
+                METRICS
+                    .downloaded_headers
+                    .fetch_add(headers.len() as u64, Ordering::Relaxed);
 
                 let batch_show = downloaded_count / 10_000;
 
