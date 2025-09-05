@@ -205,7 +205,7 @@ impl Blockchain {
         })?;
 
         let mut block_hashes = HashMap::new();
-        let mut codes_hashed = BTreeMap::new();
+        let mut codes = Vec::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -305,7 +305,7 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes_hashed.insert(*code_hash, code);
+                codes.push(code);
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -374,7 +374,7 @@ impl Blockchain {
 
         Ok(ExecutionWitnessResult {
             codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
-            codes: codes_hashed.values().cloned().collect(),
+            codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
             state_trie: None,
             block_headers,
