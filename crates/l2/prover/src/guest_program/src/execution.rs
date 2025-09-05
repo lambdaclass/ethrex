@@ -169,6 +169,7 @@ pub fn stateless_validation_l2(
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
+        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 
     let StatelessResult {
@@ -245,14 +246,18 @@ fn execute_stateless(
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
-    // Validate block hashes, except parent block hash (latest block hash)
+    // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
+    // (once in get_first_invalid_block_hash(), later in validate_block()).
+    wrapped_db.initialize_block_header_hashes(blocks)?;
+
+    // Validate execution witness' block hashes, except parent block hash (latest block hash).
     if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
         return Err(StatelessExecutionError::InvalidBlockHash(
             invalid_block_header,
         ));
     }
 
-    // Validate parent block header
+    // Validate the initial state
     let parent_block_header = &wrapped_db
         .get_block_parent_header(
             blocks
@@ -262,15 +267,6 @@ fn execute_stateless(
                 .number,
         )
         .map_err(StatelessExecutionError::ExecutionWitness)?;
-    let first_block_header = &blocks
-        .first()
-        .ok_or(StatelessExecutionError::EmptyBatchError)?
-        .header;
-    if parent_block_header.hash() != first_block_header.parent_hash {
-        return Err(StatelessExecutionError::InvalidParentBlockHeader);
-    }
-
-    // Validate the initial state
     let initial_state_hash = wrapped_db
         .state_trie_root()
         .map_err(StatelessExecutionError::ExecutionWitness)?;
@@ -331,8 +327,9 @@ fn execute_stateless(
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
         validate_requests_hash(&block.header, &chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
-        parent_block_header = &block.header;
         acc_receipts.push(receipts);
+
+        parent_block_header = &block.header;
     }
 
     // Calculate final state root hash and check

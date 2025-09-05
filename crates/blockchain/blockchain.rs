@@ -344,13 +344,11 @@ impl Blockchain {
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
         needed_block_numbers.sort();
-        // The last block number we need is the parent of the last block we execute
         let last_needed_block_number = blocks
             .last()
             .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
             .header
-            .number
-            .saturating_sub(1);
+            .number;
         // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
         let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
         if let Some(block_number_from_logger) = needed_block_numbers.first() {
@@ -387,6 +385,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             touched_account_storage_slots,
+            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 
