@@ -380,7 +380,7 @@ impl ExecutionWitnessResult {
         }
     }
 
-    /// Hashes all block headers, initializing their inner `hash` field
+    /// Hashes headers in witness and in blocks only once if they are repeated to avoid double hashing.
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
