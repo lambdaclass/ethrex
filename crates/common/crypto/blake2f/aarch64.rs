@@ -259,38 +259,38 @@ fn inner(
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d0.0), vaddq_u64(a.1, d0.1));
         *d = uint64x2x2_t(vxarq_u64::<32>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
-        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.0, d.0));
+        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
         *b = uint64x2x2_t(vxarq_u64::<24>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
 
         // G(d1)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d1.0), vaddq_u64(a.1, d1.1));
-        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
-        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.0, d.0));
-        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
+        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<16>(d.1, a.1));
+        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
+        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<63>(b.1, c.1));
 
         // Apply diagonalization.
-        *b = uint64x2x2_t(vextq_u64::<1>(a.0, a.1), vextq_u64::<1>(a.1, a.0));
-        *c = uint64x2x2_t(c.1, c.0);
-        *d = uint64x2x2_t(vextq_u64::<1>(d.1, d.0), vextq_u64::<1>(d.0, d.1));
+        *a = uint64x2x2_t(vextq_u64::<1>(a.1, a.0), vextq_u64::<1>(a.0, a.1));
+        *c = uint64x2x2_t(vextq_u64::<1>(c.0, c.1), vextq_u64::<1>(c.1, c.0));
+        *d = uint64x2x2_t(d.1, d.0);
 
         // G(d2)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d2.0), vaddq_u64(a.1, d2.1));
         *d = uint64x2x2_t(vxarq_u64::<32>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
-        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.0, d.0));
+        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
         *b = uint64x2x2_t(vxarq_u64::<24>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
 
         // G(d3)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d3.0), vaddq_u64(a.1, d3.1));
-        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
-        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.0, d.0));
-        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
+        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<16>(d.1, a.1));
+        *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
+        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<63>(b.1, c.1));
 
         // Revert diagonalization.
-        *b = uint64x2x2_t(vextq_u64::<1>(a.1, a.0), vextq_u64::<1>(a.0, a.1));
-        *c = uint64x2x2_t(c.1, c.0);
-        *d = uint64x2x2_t(vextq_u64::<1>(d.0, d.1), vextq_u64::<1>(d.1, d.0));
+        *a = uint64x2x2_t(vextq_u64::<1>(a.0, a.1), vextq_u64::<1>(a.1, a.0));
+        *c = uint64x2x2_t(vextq_u64::<1>(c.1, c.0), vextq_u64::<1>(c.0, c.1));
+        *d = uint64x2x2_t(d.1, d.0);
     }
 }
