@@ -1,6 +1,6 @@
 use std::{cmp::max, io::Write, time::SystemTime};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
     fork_choice::apply_fork_choice,
@@ -10,7 +10,7 @@ use ethrex_common::{
     Address, H256,
     types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt, payload::PayloadBundle},
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::{EngineType, Store};
@@ -19,8 +19,6 @@ use reqwest::Url;
 use tracing::info;
 
 use crate::bench::run_and_measure;
-#[cfg(feature = "l2")]
-use crate::fetcher::get_batchdata;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
@@ -31,6 +29,9 @@ use crate::{
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
+
+#[cfg(feature = "l2")]
+use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -50,12 +51,16 @@ pub struct EthrexReplayCLI {
 
 #[derive(Subcommand)]
 pub enum EthrexReplayCommand {
+    #[cfg(not(feature = "l2"))]
     #[command(about = "Replay a single block")]
     Block(BlockOptions),
+    #[cfg(not(feature = "l2"))]
     #[command(about = "Replay multiple blocks")]
     Blocks(BlocksOptions),
+    #[cfg(not(feature = "l2"))]
     #[command(about = "Replay a range of blocks")]
     BlockRange(BlockRangeOptions),
+    #[cfg(not(feature = "l2"))]
     #[command(about = "Plots the composition of a range of blocks.")]
     BlockComposition {
         #[arg(help = "Starting block. (Inclusive)")]
@@ -72,6 +77,7 @@ pub enum EthrexReplayCommand {
         )]
         network: Network,
     },
+    #[cfg(not(feature = "l2"))]
     #[command(
         subcommand,
         about = "Store the state prior to the execution of the block"
@@ -79,6 +85,7 @@ pub enum EthrexReplayCommand {
     Cache(CacheSubcommand),
     #[command(subcommand, about = "Replay a custom block or batch")]
     Custom(CustomSubcommand),
+    #[cfg(not(feature = "l2"))]
     #[command(about = "Replay a single transaction")]
     Transaction(TransactionOpts),
     #[cfg(feature = "l2")]
@@ -89,14 +96,15 @@ pub enum EthrexReplayCommand {
 #[cfg(feature = "l2")]
 #[derive(Subcommand)]
 pub enum L2Subcommand {
-    #[command(about = "Replay an L2 transaction")]
-    Transaction(TransactionOpts),
     #[command(about = "Replay an L2 batch")]
     Batch(BatchOptions),
-    #[command(subcommand, about = "Replay a custom L2 block or batch")]
-    Custom(CustomSubcommand),
+    #[command(about = "Replay an L2 block")]
+    Block(BlockOptions),
+    #[command(about = "Replay an L2 transaction")]
+    Transaction(TransactionOpts),
 }
 
+#[cfg(not(feature = "l2"))]
 #[derive(Parser)]
 pub enum CacheSubcommand {
     #[command(about = "Cache a single block.")]
@@ -116,6 +124,8 @@ pub enum CustomSubcommand {
 }
 
 #[derive(Parser, Clone)]
+#[clap(group = ArgGroup::new("replay_mode").required(true))]
+#[clap(group = ArgGroup::new("data_source").required(true))]
 pub struct EthrexReplayOptions {
     #[arg(long, group = "replay_mode")]
     pub execute: bool,
@@ -139,6 +149,7 @@ pub struct BlockOptions {
     pub opts: EthrexReplayOptions,
 }
 
+#[cfg(not(feature = "l2"))]
 #[derive(Parser)]
 pub struct BlocksOptions {
     #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
@@ -147,6 +158,7 @@ pub struct BlocksOptions {
     opts: EthrexReplayOptions,
 }
 
+#[cfg(not(feature = "l2"))]
 #[derive(Parser)]
 pub struct BlockRangeOptions {
     #[arg(long, help = "Starting block. (Inclusive)")]
@@ -181,63 +193,12 @@ pub struct BatchOptions {
     opts: EthrexReplayOptions,
 }
 
-#[derive(Parser)]
-pub struct CustomBatchOptions {
-    #[arg(long, help = "Number of blocks to include in the batch.")]
-    n_blocks: u64,
-    #[command(flatten)]
-    opts: EthrexReplayOptions,
-}
-
 impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Block(BlockOptions { block, opts }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
-                let l2 = false;
-
-                let (eth_client, network) = setup(&opts, l2).await?;
-
-                let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
-
-                let block = cache.blocks.first().cloned().ok_or_else(|| {
-                    eyre::Error::msg("no block found in the cache, this should never happen")
-                })?;
-
-                let start = SystemTime::now();
-
-                let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
-
-                let replayer_mode = replayer_mode(opts.execute);
-
-                let block_run_report = BlockRunReport::new_for(
-                    block,
-                    network.clone(),
-                    block_run_result,
-                    replayer_mode.clone(),
-                    start.elapsed()?,
-                );
-
-                block_run_report.log();
-
-                if opts.to_csv {
-                    let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-                    let mut file = std::fs::OpenOptions::new()
-                        .append(true)
-                        .create(true)
-                        .open(file_name)?;
-
-                    file.write_all(block_run_report.to_csv().as_bytes())?;
-
-                    file.write_all(b"\n")?;
-
-                    file.flush()?;
-                }
-            }
+            #[cfg(not(feature = "l2"))]
+            Self::Block(block_opts) => replay_block(block_opts).await?,
+            #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
@@ -253,17 +214,14 @@ impl EthrexReplayCommand {
                         blocks.len()
                     );
 
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: Some(*block_number),
-                            opts: opts.clone(),
-                        })
-                        .run()
-                        .await
+                    replay_block(BlockOptions {
+                        block: Some(*block_number),
+                        opts: opts.clone(),
                     })
                     .await?;
                 }
             }
+            #[cfg(not(feature = "l2"))]
             Self::BlockRange(BlockRangeOptions { start, end, opts }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
@@ -276,17 +234,14 @@ impl EthrexReplayCommand {
                 }
 
                 for block in start..=end {
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: Some(block),
-                            opts: opts.clone(),
-                        })
-                        .run()
-                        .await
+                    replay_block(BlockOptions {
+                        block: Some(block),
+                        opts: opts.clone(),
                     })
                     .await?;
                 }
             }
+            #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
                 let (eth_client, network) = setup(&opts, false).await?;
 
@@ -300,6 +255,7 @@ impl EthrexReplayCommand {
                     info!("Latest block data cached successfully.");
                 }
             }
+            #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions { mut blocks, opts })) => {
                 blocks.sort();
 
@@ -316,6 +272,7 @@ impl EthrexReplayCommand {
 
                 info!("Blocks data cached successfully.");
             }
+            #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
                 let (eth_client, network) = setup(&opts, false).await?;
 
@@ -341,34 +298,9 @@ impl EthrexReplayCommand {
                     println!("Successfully proved batch in {elapsed:.2} seconds.");
                 }
             }
-            Self::Transaction(TransactionOpts { tx_hash, opts, l2 }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
-                let (eth_client, network) = setup(&opts, l2).await?;
-
-                // Get the block number of the transaction
-                let tx = eth_client
-                    .get_transaction_by_hash(tx_hash)
-                    .await?
-                    .ok_or(eyre::Error::msg("error fetching transaction"))?;
-
-                let cache = get_blockdata(
-                    eth_client,
-                    network,
-                    BlockIdentifier::Number(tx.block_number.as_u64()),
-                )
-                .await?;
-
-                let (receipt, transitions) = run_tx(cache, tx_hash, l2).await?;
-
-                print_receipt(receipt);
-
-                for transition in transitions {
-                    print_transition(transition);
-                }
-            }
+            #[cfg(not(feature = "l2"))]
+            Self::Transaction(opts) => replay_transaction(opts).await?,
+            #[cfg(not(feature = "l2"))]
             Self::BlockComposition {
                 start,
                 end,
@@ -393,16 +325,12 @@ impl EthrexReplayCommand {
                 opts,
                 l2: _,
             })) => {
-                Box::pin(async {
-                    EthrexReplayCommand::Transaction(TransactionOpts {
-                        tx_hash,
-                        opts,
-                        l2: true,
-                    })
-                    .run()
-                    .await
+                replay_transaction(TransactionOpts {
+                    tx_hash,
+                    opts,
+                    l2: true,
                 })
-                .await?;
+                .await?
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
@@ -416,6 +344,8 @@ impl EthrexReplayCommand {
 
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
+            #[cfg(feature = "l2")]
+            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(opts))) => {
                 let elapsed = replay_custom_l2_blocks(1, &opts).await?;
@@ -464,6 +394,102 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     Ok(gas_used)
 }
 
+async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
+    if tx_opts.opts.cached {
+        unimplemented!("cached mode is not implemented yet");
+    }
+
+    let tx_hash = tx_opts.tx_hash;
+
+    let l2 = tx_opts.l2;
+
+    let (eth_client, network) = setup(&tx_opts.opts, l2).await?;
+
+    // Get the block number of the transaction
+    let tx = eth_client
+        .get_transaction_by_hash(tx_hash)
+        .await?
+        .ok_or(eyre::Error::msg("error fetching transaction"))?;
+
+    let cache = get_blockdata(
+        eth_client,
+        network,
+        BlockIdentifier::Number(tx.block_number.as_u64()),
+    )
+    .await?;
+
+    let (receipt, transitions) = run_tx(cache, tx_hash, l2).await?;
+
+    print_receipt(receipt);
+
+    for transition in transitions {
+        print_transition(transition);
+    }
+
+    Ok(())
+}
+
+async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
+    let opts = block_opts.opts;
+
+    let block = block_opts.block;
+
+    if opts.cached {
+        unimplemented!("cached mode is not implemented yet");
+    }
+
+    let l2 = false;
+
+    let (eth_client, network) = setup(&opts, l2).await?;
+
+    #[cfg(feature = "l2")]
+    if network != Network::LocalDevnetL2 {
+        return Err(eyre::Error::msg(
+            "L2 mode is only supported on LocalDevnetL2 network",
+        ));
+    }
+
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+
+    let block =
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?;
+
+    let start = SystemTime::now();
+
+    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+
+    let replayer_mode = replayer_mode(opts.execute)?;
+
+    let block_run_report = BlockRunReport::new_for(
+        block,
+        network.clone(),
+        block_run_result,
+        replayer_mode.clone(),
+        start.elapsed()?,
+    );
+
+    block_run_report.log();
+
+    if opts.to_csv {
+        let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(file_name)?;
+
+        file.write_all(block_run_report.to_csv().as_bytes())?;
+
+        file.write_all(b"\n")?;
+
+        file.flush()?;
+    }
+
+    Ok(())
+}
+
 fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
@@ -480,21 +506,23 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool) -> ReplayerMode {
+pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     if execute {
         #[cfg(feature = "sp1")]
-        return ReplayerMode::ExecuteSP1;
+        return Ok(ReplayerMode::ExecuteSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return ReplayerMode::ExecuteRISC0;
+        return Ok(ReplayerMode::ExecuteRISC0);
         #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return ReplayerMode::Execute;
+        return Ok(ReplayerMode::Execute);
     } else {
         #[cfg(feature = "sp1")]
-        return ReplayerMode::ProveSP1;
+        return Ok(ReplayerMode::ProveSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return ReplayerMode::ProveRISC0;
+        return Ok(ReplayerMode::ProveRISC0);
         #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return ReplayerMode::Execute;
+        return Err(eyre::Error::msg(
+            "proving mode is not supported without SP1 or RISC0 features",
+        ));
     }
 }
 

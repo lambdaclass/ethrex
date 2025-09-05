@@ -1,8 +1,8 @@
 use crate::{
     cli::Options,
     utils::{
-        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
-        read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
+        read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -10,25 +10,25 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
-
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, peer_table, public_key_from_signing_key},
+    kademlia::Kademlia,
+    network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
+    utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-use local_ip_address::local_ip;
+use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
     fs,
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -124,7 +124,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -141,6 +141,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        init_datadir(&opts.datadir),
     )
     .await;
 
@@ -169,7 +170,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -191,18 +192,19 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
-        blockchain,
+        blockchain.clone(),
         get_client_version(),
         based_context,
     );
-
-    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+        blockchain,
+        peer_table.peers.clone(),
+    ));
 }
 
 #[cfg(feature = "dev")]
@@ -288,18 +290,13 @@ pub fn get_signer(data_dir: &str) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
+    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
-        parse_socket_addr(&opts.p2p_addr, &opts.p2p_port).expect("Failed to parse addr and port");
+        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
 
-    // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
-    // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = if udp_socket_addr.ip() == Ipv4Addr::new(0, 0, 0, 0) {
-        local_ip().expect("Failed to get local ip")
-    } else {
-        udp_socket_addr.ip()
-    };
+    let p2p_node_ip = local_ip()
+        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
 
     let local_public_key = public_key_from_signing_key(signer);
 
@@ -369,17 +366,13 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
-) -> eyre::Result<(
-    String,
-    CancellationToken,
-    Arc<Mutex<KademliaTable>>,
-    Arc<Mutex<NodeRecord>>,
-)> {
+) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+    display_chain_initialization(&genesis);
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -397,7 +390,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

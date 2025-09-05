@@ -117,7 +117,7 @@ async fn main() {
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
                     replay_execution(
-                        replayer_mode(opts.execute),
+                        replayer_mode(opts.execute).unwrap(),
                         network,
                         rpc_url,
                         slack_webhook_url,
@@ -137,7 +137,7 @@ async fn main() {
 
         let handle = tokio::spawn(async move {
             replay_proving(
-                replayer_mode(opts.execute),
+                replayer_mode(opts.execute).unwrap(),
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (
