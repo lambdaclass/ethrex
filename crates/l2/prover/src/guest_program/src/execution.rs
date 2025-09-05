@@ -15,7 +15,9 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
+use keccak_hash::keccak;
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
@@ -161,13 +163,17 @@ pub fn stateless_validation_l2(
     use std::collections::BTreeMap;
 
     let mut initial_db = ExecutionWitnessResult {
-        block_headers: db.block_headers.clone(),
+        block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
+        block_headers_bytes: db.block_headers_bytes.clone(),
         chain_config: db.chain_config,
+        codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
         codes: db.codes.clone(),
         state_trie: None,
         storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
-        state_nodes: db.state_nodes.clone(),
+        first_block_number: db.first_block_number,
+        nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
+        nodes: db.nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
@@ -238,6 +244,45 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    // Decode block headers from bytes and create a mapping of block number to header
+    db.block_headers = db
+        .block_headers_bytes
+        .drain(..)
+        .map(|bytes| BlockHeader::decode(bytes.as_ref()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            StatelessExecutionError::Internal(format!("Failed to decode block headers: {}", e))
+        })?
+        .into_iter()
+        .map(|header| (header.number, header))
+        .collect();
+
+    let parent_number =
+        db.first_block_number
+            .checked_sub(1)
+            .ok_or(ExecutionWitnessError::Custom(
+                "First block number cannot be zero".to_string(),
+            ))?;
+
+    let parent_header = db.block_headers.get(&parent_number).cloned().ok_or(
+        ExecutionWitnessError::MissingParentHeaderOf(db.first_block_number),
+    )?;
+    db.parent_block_header = parent_header;
+
+    // hash nodes
+    db.nodes_hashed = db
+        .nodes
+        .drain(..)
+        .map(|node| (keccak(&node), node))
+        .collect();
+
+    // hash codes
+    db.codes_hashed = db
+        .codes
+        .drain(..)
+        .map(|code| (keccak(&code), code))
+        .collect();
+
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 

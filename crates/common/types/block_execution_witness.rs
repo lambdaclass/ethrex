@@ -26,14 +26,14 @@ use sha3::{Digest, Keccak256};
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
-    // Indexed by code hash
     // Used evm bytecodes
-    #[serde(
-        serialize_with = "serialize_code",
-        deserialize_with = "deserialize_code"
-    )]
-    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, crate::rkyv_utils::BytesWrapper>)]
-    pub codes: BTreeMap<H256, Bytes>,
+    // Indexed by code hash
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub codes_hashed: BTreeMap<H256, Bytes>,
+    // Used evm bytecodes
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    pub codes: Vec<Bytes>,
     // Pruned state MPT
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -43,17 +43,31 @@ pub struct ExecutionWitnessResult {
     #[rkyv(with = rkyv::with::Skip)]
     pub storage_tries: BTreeMap<Address, Trie>,
     // Block headers needed for BLOCKHASH opcode
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub block_headers: BTreeMap<u64, BlockHeader>,
+    // Block headers as raw bytes
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    pub block_headers_bytes: Vec<Bytes>,
     // Parent block header to get the initial state root
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
     pub parent_block_header: BlockHeader,
+    /// The block number of the first block
+    pub first_block_number: u64,
     // Chain config
     pub chain_config: ChainConfig,
     /// This maps node hashes to their corresponding RLP-encoded nodes.
     /// It is used to rebuild the state trie and storage tries.
-    /// This is precomputed during ExecutionWitness construction to avoid
-    /// recomputing it when rebuilding tries.
-    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
-    pub state_nodes: BTreeMap<H256, NodeRLP>,
+    /// This is computed during ExecutionWitness construction to avoid
+    /// issues of trust assumptions.
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    /// This are the RLP-encoded nodes for the state trie.
+    /// They are latter encoded and moved to the state_node
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub nodes: Vec<NodeRLP>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -95,7 +109,7 @@ impl ExecutionWitnessResult {
 
         let state_trie = Trie::from_nodes(
             NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.state_nodes,
+            &self.nodes_hashed,
         )
         .map_err(|e| {
             ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
@@ -121,7 +135,7 @@ impl ExecutionWitnessResult {
 
         Trie::from_nodes(
             NodeHash::Hashed(account_state.storage_root),
-            &self.state_nodes,
+            &self.nodes_hashed,
         )
         .ok()
     }
@@ -168,7 +182,7 @@ impl ExecutionWitnessResult {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes.insert(info.code_hash, code.clone());
+                        self.codes_hashed.insert(info.code_hash, code.clone());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -372,7 +386,7 @@ impl ExecutionWitnessResult {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.codes.get(&code_hash) {
+        match self.codes_hashed.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => {
                 // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
@@ -393,10 +407,20 @@ impl ExecutionWitnessResult {
         blocks: &[Block],
     ) -> Result<(), ExecutionWitnessError> {
         for block in blocks {
-            let hash = self
+            let header = self
                 .block_headers
                 .get(&block.header.number)
-                .map_or_else(|| block.header.hash(), |header| header.hash());
+                .unwrap_or(&block.header);
+
+            // headers hash should happen in the stateless execution
+            if header.hash.get().is_some() {
+                return Err(ExecutionWitnessError::Custom(format!(
+                    "Block header hash is already set for {}",
+                    block.header.number
+                )));
+            }
+
+            let hash = header.hash();
             // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
             let _ = block.header.hash.set(hash);

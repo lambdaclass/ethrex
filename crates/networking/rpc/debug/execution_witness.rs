@@ -8,8 +8,7 @@ use ethrex_common::{
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use keccak_hash::keccak;
+use ethrex_rlp::encode::RLPEncode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -55,13 +54,13 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
 
         Self {
             state: value
-                .state_nodes
+                .nodes_hashed
                 .values()
                 .cloned()
                 .map(Into::into)
                 .collect(),
             keys,
-            codes: value.codes.values().cloned().collect(),
+            codes: value.codes_hashed.values().cloned().collect(),
             headers: value
                 .block_headers
                 .values()
@@ -78,37 +77,7 @@ pub fn execution_witness_from_rpc_chain_config(
     chain_config: ChainConfig,
     first_block_number: u64,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let codes = rpc_witness
-        .codes
-        .iter()
-        .map(|code| (keccak_hash::keccak(code), code.clone()))
-        .collect::<BTreeMap<_, _>>();
-
-    let block_headers = rpc_witness
-        .headers
-        .iter()
-        .map(Bytes::as_ref)
-        .map(BlockHeader::decode)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("Failed to decode block headers from RpcExecutionWitness")
-        .iter()
-        .map(|header| (header.number, header.clone()))
-        .collect::<BTreeMap<_, _>>();
-
-    let parent_number = first_block_number
-        .checked_sub(1)
-        .ok_or(ExecutionWitnessError::Custom(
-            "First block number cannot be zero".to_string(),
-        ))?;
-
-    let parent_header = block_headers.get(&parent_number).cloned().ok_or(
-        ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
-    )?;
-
-    let mut state_nodes = BTreeMap::new();
-    for node in rpc_witness.state.iter() {
-        state_nodes.insert(keccak(node), node.to_vec());
-    }
+    let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
 
     let mut touched_account_storage_slots = BTreeMap::new();
     let mut address = Address::default();
@@ -125,19 +94,21 @@ pub fn execution_witness_from_rpc_chain_config(
         }
     }
 
-    let mut witness = ExecutionWitnessResult {
-        codes,
-        state_trie: None, // `None` because we'll rebuild the tries afterwards
+    let witness = ExecutionWitnessResult {
+        codes: rpc_witness.codes,
+        codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+        state_trie: None,              // `None` because we'll rebuild the tries afterwards
         storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
-        block_headers,
+        block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
         chain_config,
-        parent_block_header: parent_header,
-        state_nodes,
+        parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
+        first_block_number,
+        block_headers_bytes: rpc_witness.headers,
+        nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
+        nodes,
         touched_account_storage_slots,
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
-
-    witness.rebuild_state_trie()?;
 
     Ok(witness)
 }
