@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757103545752,
+  "lastUpdate": 1757103631100,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12445,6 +12445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168518769296,
             "range": "± 845189815",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e360298da467784d86d5f4c2db3391068c72c884",
+          "message": "feat(l2): revert batches improvements (#4305)\n\n**Motivation**\n\nImprove the revert-batch tool\n\n**Description**\n\n- Move deleting blocks from the blockchain db to --delete-blocks flag\n- Separate contract owner and sequencer Ethereum accounts\n- Improve logging\n\nCloses #4281 \nCloses #4298",
+          "timestamp": "2025-09-05T19:28:27Z",
+          "tree_id": "4a7090006a4370451b965a82ef852f194a940671",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e360298da467784d86d5f4c2db3391068c72c884"
+        },
+        "date": 1757103611878,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167599115359,
+            "range": "± 610499979",
             "unit": "ns/iter"
           }
         ]
