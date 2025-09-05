@@ -231,7 +231,7 @@ jobs:
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image-${{ matrix.arch-suffix }}
+          name: ethrex_image${{ matrix.arch-suffix }}
           path: /tmp
 
       - name: Download hive artifacts
