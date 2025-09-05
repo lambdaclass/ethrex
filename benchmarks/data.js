@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757107442690,
+  "lastUpdate": 1757109486209,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12595,6 +12595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168853676475,
             "range": "± 488206130",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "16d895bfc3abee0d13ceb625be4016236bffb68f",
+          "message": "fix(l1): `ethrex_replay` temporary fix for block header hashes (#4341)\n\n**Motivation**\n\n`ethrex_replay` was broken due to not finding the current block header\nin the `block_headers` map.\n\n**Description**\n\nTemporary solution for fixing it.\nInitialize the header by looking it in the block\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-09-05T21:06:14Z",
+          "tree_id": "86d7f8196c2fee8bef18354e74a9137082ee2079",
+          "url": "https://github.com/lambdaclass/ethrex/commit/16d895bfc3abee0d13ceb625be4016236bffb68f"
+        },
+        "date": 1757109465145,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167003374636,
+            "range": "± 599472883",
             "unit": "ns/iter"
           }
         ]
