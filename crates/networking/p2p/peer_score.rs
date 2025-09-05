@@ -90,6 +90,9 @@ impl PeerScores {
         self.scores
             .iter()
             .filter_map(|(id, peer_score)| {
+                if peer_score.active {
+                    return None;
+                }
                 let Some(peer_data) = &peer_table.get(id) else {
                     return None;
                 };

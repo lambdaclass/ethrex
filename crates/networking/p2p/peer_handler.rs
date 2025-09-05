@@ -732,10 +732,6 @@ impl PeerHandler {
         last_task.1 = limit;
 
         // 2) request the chunks from peers
-        let peers_table = self
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
 
         let mut downloaded_count = 0_u64;
         let mut all_account_hashes = Vec::new();
