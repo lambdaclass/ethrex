@@ -834,7 +834,7 @@ pub async fn produce_custom_l2_blocks(
     let mut current_parent_hash = head_block_hash;
     let mut current_timestamp = initial_timestamp;
 
-    for _ in 0..=n_blocks {
+    for _ in 0..n_blocks {
         let block = produce_custom_l2_block(
             blockchain.clone(),
             store,
