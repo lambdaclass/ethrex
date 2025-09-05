@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757102804911,
+  "lastUpdate": 1757103545752,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12415,6 +12415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167453624930,
             "range": "± 342352420",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a38e9ff8ef9b7b6d47a013b9632d4370da4c30c4",
+          "message": "feat(l1): add max blobs per tx check (Osaka EIP-7594) (#4332)\n\n**Motivation**\nAdd the max blobs per tx check introduced by\n[EIP-7594](https://eips.ethereum.org/EIPS/eip-7594)\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add max blobs per tx check to levm pre check sequence\n* Enable ef tests for eip-7594\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4152",
+          "timestamp": "2025-09-05T19:25:49Z",
+          "tree_id": "4521b00a74433e712479f43451e0939aa0ed56dc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a38e9ff8ef9b7b6d47a013b9632d4370da4c30c4"
+        },
+        "date": 1757103526164,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168518769296,
+            "range": "± 845189815",
             "unit": "ns/iter"
           }
         ]
