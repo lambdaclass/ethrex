@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757025121379,
+  "lastUpdate": 1757085550084,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12265,6 +12265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169353493411,
             "range": "± 715942099",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "119eb3e52da7c84bfa16b978096496c1e653caa3",
+          "message": "ci(l1): make replay not required (#4316)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nmake replay test not required so we can merge despite it failing, maybe\nin the future when things become more stable we can make it required\nagain.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-05T14:17:59Z",
+          "tree_id": "2ba81e5f70cbe070ca6b8c57599def7892e5b4fe",
+          "url": "https://github.com/lambdaclass/ethrex/commit/119eb3e52da7c84bfa16b978096496c1e653caa3"
+        },
+        "date": 1757085531603,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170099315136,
+            "range": "± 559135453",
             "unit": "ns/iter"
           }
         ]
