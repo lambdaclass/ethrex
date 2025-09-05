@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757104264552,
+  "lastUpdate": 1757104333999,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12535,6 +12535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165411907932,
             "range": "± 623463025",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e4ab856fb1ed71d3ac77d7b60c97ea09050d4998",
+          "message": "ci(l1,l2): add workflow to notify failed jobs in main. (#4258)\n\n**Motivation**\nGet a slack notification if a main job fails\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-05T19:40:27Z",
+          "tree_id": "208370386e437c43cda584b7dc26928648438caa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e4ab856fb1ed71d3ac77d7b60c97ea09050d4998"
+        },
+        "date": 1757104313193,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164307797272,
+            "range": "± 475603892",
             "unit": "ns/iter"
           }
         ]
