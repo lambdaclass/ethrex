@@ -110,6 +110,10 @@ impl BlockProducer {
         };
         let head_hash = head_header.hash();
         let head_beacon_block_root = H256::zero();
+        let timestamp: u64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_millis()
+            .try_into()?;
 
         // The proposer leverages the execution payload framework used for the engine API,
         // but avoids calling the API methods and unnecesary re-execution.
@@ -120,7 +124,7 @@ impl BlockProducer {
         // Proposer creates a new payload
         let args = BuildPayloadArgs {
             parent: head_hash,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            timestamp,
             fee_recipient: self.coinbase_address,
             random: H256::zero(),
             withdrawals: Default::default(),
