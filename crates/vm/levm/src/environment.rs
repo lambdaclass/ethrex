@@ -91,7 +91,7 @@ impl EVMConfig {
     }
 
     fn max_blobs_per_block(fork: Fork) -> u32 {
-        if fork == Fork::Prague {
+        if fork >= Fork::Prague {
             MAX_BLOB_COUNT_ELECTRA
         } else {
             MAX_BLOB_COUNT
