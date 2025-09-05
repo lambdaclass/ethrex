@@ -219,6 +219,8 @@ pub async fn get_batchdata(
     network: Network,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
+    use ethrex_l2_rpc::clients::get_batch_by_number;
+
     let file_name = format!("cache_batch_{batch_number}.bin");
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting batch data from cache");
