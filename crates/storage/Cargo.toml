@@ -28,7 +28,7 @@ bincode = "1.3.3"
 [features]
 default = []
 libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
-rocksdb = ["dep:rocksdb", "dep:tokio"]
+rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb", "dep:tokio"]
 
 [dev-dependencies]
 hex.workspace = true
