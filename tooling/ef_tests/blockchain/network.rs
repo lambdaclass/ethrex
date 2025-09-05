@@ -71,13 +71,16 @@ lazy_static! {
     };
 
     pub static ref BPO1_TO_BPO2_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
         bpo2_time: Some(0x3a98),
-        ..*PRAGUE_CONFIG
+        ..*OSAKA_CONFIG
     };
 
     pub static ref BPO2_TO_BPO3_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
         bpo3_time: Some(0x3a98),
-        ..*PRAGUE_CONFIG
+        ..*OSAKA_CONFIG
     };
 
 }
