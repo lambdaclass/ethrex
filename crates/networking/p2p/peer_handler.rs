@@ -1286,7 +1286,7 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
-        trace!("Starting request_storage_ranges function");
+        debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
@@ -1331,7 +1331,7 @@ impl PeerHandler {
             .collect::<Vec<_>>();
 
         let mut last_update = SystemTime::now();
-        trace!("Starting request_storage_ranges loop");
+        debug!("Starting request_storage_ranges loop");
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
                 > RANGE_FILE_CHUNK_SIZE as usize
@@ -1355,6 +1355,7 @@ impl PeerHandler {
                 }
                 let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
                 if !disk_joinset.is_empty() {
+                    debug!("Writing to disk");
                     disk_joinset
                         .join_next()
                         .await
@@ -1381,7 +1382,7 @@ impl PeerHandler {
                 .expect("Last update shouldn't be in the past")
                 > Duration::from_secs(2)
             {
-                trace!("Updating peer scores");
+                debug!("Updating peer scores");
                 self.peer_scores
                     .lock()
                     .await
@@ -1408,7 +1409,7 @@ impl PeerHandler {
                 }
 
                 if remaining_start < remaining_end {
-                    trace!("Failed to download chunk from peer {peer_id}");
+                    debug!("Failed to download entire chunk from peer {peer_id}");
                     if hash_start.is_zero() {
                         // Task is common storage range request
                         let task = StorageTask {
