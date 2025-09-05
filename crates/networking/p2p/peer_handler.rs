@@ -1609,6 +1609,10 @@ impl PeerHandler {
                                 start_hash: hash_start,
                                 end_hash: Some(hash_end),
                             };
+                            account_storage_roots
+                                .not_finished_big_accounts
+                                .insert(hash_start);
+                            info!("Added hash start {hash_start} to not_finished_big_accounts 2");
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
                             accounts_done.push(current_account_hashes[remaining_start]);
@@ -1627,6 +1631,10 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
                         }
+                        account_storage_roots
+                            .not_finished_big_accounts
+                            .remove(&hash_start);
+                        info!("Removed hash start {hash_start} from not_finished_big_accounts");
                         // Task found a big storage account, so we split the chunk into multiple chunks
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
                         let missing_storage_range = U256::MAX - start_hash_u256;
@@ -1663,6 +1671,10 @@ impl PeerHandler {
                                 end_hash: Some(end_hash),
                             };
                             tasks_queue_not_started.push_back(task);
+                            account_storage_roots
+                                .not_finished_big_accounts
+                                .insert(hash_start);
+                            info!("Added hash start {hash_start} to not_finished_big_accounts");
                             task_count += 1;
                         }
                         debug!("Split big storage account into {chunk_count} chunks.");

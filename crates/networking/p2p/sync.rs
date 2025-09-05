@@ -1243,6 +1243,8 @@ pub struct AccountStorageRoots {
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,
+    /// Big accounts which have not yet finished
+    pub not_finished_big_accounts: HashSet<H256>,
 }
 
 #[derive(thiserror::Error, Debug)]
