@@ -168,6 +168,7 @@ pub fn stateless_validation_l2(
         storage_tries: BTreeMap::new(),
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
+        storage_trie_nodes: db.storage_trie_nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };

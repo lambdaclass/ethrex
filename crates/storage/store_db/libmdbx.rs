@@ -578,12 +578,12 @@ impl StoreEngine for Store {
             self.db.clone(),
             hashed_address.0,
         ));
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, NodeHash::from(storage_root).into()))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, NodeHash::from(state_root).into()))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
@@ -591,7 +591,7 @@ impl StoreEngine for Store {
             LibmdbxLockedTrieDB::<StateTrieNodes>::new(self.db.clone())
                 .map_err(StoreError::Trie)?,
         );
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, NodeHash::from(state_root).into()))
     }
 
     fn open_locked_storage_trie(
@@ -606,7 +606,7 @@ impl StoreEngine for Store {
             )
             .map_err(StoreError::Trie)?,
         );
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, NodeHash::from(storage_root).into()))
     }
 
     async fn get_canonical_block_hash(

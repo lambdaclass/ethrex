@@ -5,7 +5,7 @@ use std::{
 
 use ethrex_rlp::decode::RLPDecode;
 
-use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
+use crate::{Node, NodeHash, NodeRef, Trie, TrieDB, TrieError};
 
 pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
 
@@ -20,8 +20,7 @@ impl TrieLogger {
         Ok(lock.clone())
     }
 
-    pub fn open_trie(trie: Trie) -> (TrieWitness, Trie) {
-        let root = trie.hash_no_commit();
+    pub fn open_trie(trie: Trie, root: NodeRef) -> (TrieWitness, Trie) {
         let db = trie.db;
         let witness = Arc::new(Mutex::new(HashSet::new()));
         let logger = TrieLogger {

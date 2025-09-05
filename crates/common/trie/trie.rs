@@ -71,15 +71,14 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
-        Self {
-            db,
-            root: if root != *EMPTY_TRIE_HASH {
-                NodeHash::from(root).into()
-            } else {
-                Default::default()
-            },
+    pub fn open(db: Box<dyn TrieDB>, root: NodeRef) -> Self {
+        if matches!(root, NodeRef::Hash(NodeHash::Hashed(hash)) if hash == *EMPTY_TRIE_HASH) {
+            return Self {
+                db,
+                root: Default::default(),
+            };
         }
+        Self { db, root }
     }
 
     /// Return a reference to the internal database.
@@ -128,7 +127,6 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
-
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
@@ -315,8 +313,8 @@ impl Trie {
         let mut necessary_nodes = BTreeMap::new();
         let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
-
         let mut trie = Trie::new(in_memory_trie);
+
         trie.root = root;
 
         Ok(trie)

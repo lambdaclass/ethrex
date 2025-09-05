@@ -27,8 +27,10 @@ use ethrex_metrics::metrics;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::NodeHash;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
+use keccak_hash::keccak;
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
@@ -192,12 +194,14 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-
-        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+        let root = trie.hash_no_commit();
+        let (state_trie_witness, mut trie) =
+            TrieLogger::open_trie(trie, NodeHash::from(root).into());
 
         let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
+        let mut encoded_storage_tries: HashMap<Address, Vec<Vec<u8>>> = HashMap::new();
 
         // Store the root node in case the block is empty and the witness does not record any nodes
         let root_node = trie.root_node().map_err(|_| {
@@ -271,8 +275,9 @@ impl Blockchain {
                 if !acc_keys.is_empty() {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
+                        let root = storage_trie.hash_no_commit();
                         let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie);
+                            TrieLogger::open_trie(storage_trie, NodeHash::from(root).into());
                         // Access all the keys
                         for storage_key in acc_keys {
                             let hashed_key = hash_key(storage_key);
@@ -325,6 +330,10 @@ impl Blockchain {
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
+                encoded_storage_tries
+                    .entry(address)
+                    .or_default()
+                    .extend(witness);
             }
             trie = updated_trie;
         }
@@ -372,6 +381,14 @@ impl Blockchain {
             state_nodes.insert(H256::from_slice(hash.as_slice()), node);
         }
 
+        let storage_trie_nodes = encoded_storage_tries
+            .into_iter()
+            .map(|(address, nodes)| {
+                let hashes = nodes.iter().map(keccak).collect();
+                (address, hashes)
+            })
+            .collect::<BTreeMap<_, _>>();
+
         Ok(ExecutionWitnessResult {
             codes,
             //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
@@ -384,6 +401,7 @@ impl Blockchain {
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
+            storage_trie_nodes,
             touched_account_storage_slots,
             account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })

@@ -54,6 +54,8 @@ pub struct ExecutionWitnessResult {
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
     pub state_nodes: BTreeMap<H256, NodeRLP>,
+    #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H160Wrapper, crate::rkyv_utils::H256VecWrapper>)]
+    pub storage_trie_nodes: BTreeMap<Address, Vec<H256>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -119,11 +121,14 @@ impl ExecutionWitnessResult {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            &self.state_nodes,
-        )
-        .ok()
+        // TODO: Saves space but decreases performance - We could get duplicated map to avoid look up
+        let storage_nodes = self.storage_trie_nodes.get(address)?;
+        let mut nodes = BTreeMap::new();
+        for node_hash in storage_nodes.iter() {
+            let node = self.state_nodes.get(node_hash)?;
+            nodes.insert(*node_hash, node.clone());
+        }
+        Trie::from_nodes(NodeHash::Hashed(account_state.storage_root), &nodes).ok()
     }
 
     /// Helper function to apply account updates to the execution witness
