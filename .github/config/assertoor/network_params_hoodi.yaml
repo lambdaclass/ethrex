@@ -15,4 +15,4 @@ additional_services:
 
 assertoor_params:
   tests:
-    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/hoodi-gh-action/.github/config/assertoor/syncing-check.yaml
+    - https://raw.githubusercontent.com/lambdaclass/ethrex/main/.github/config/assertoor/syncing-check.yaml
