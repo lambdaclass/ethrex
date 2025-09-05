@@ -380,10 +380,6 @@ impl Blockchain {
             block_headers_bytes,
             chain_config,
             storage_tries: BTreeMap::new(),
-            // parent_block_header: self
-            //     .storage
-            //     .get_block_header_by_hash(first_block_header.parent_hash)?
-            //     .ok_or(ChainError::ParentNotFound)?,
             parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
             first_block_number: first_block_header.number,
             nodes_hashed: BTreeMap::new(), // This must be filled during stateless execution

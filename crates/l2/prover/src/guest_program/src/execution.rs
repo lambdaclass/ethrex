@@ -18,7 +18,7 @@ use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
 use keccak_hash::keccak;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::{
@@ -244,16 +244,18 @@ fn execute_stateless(
     mut db: ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let block_headers: BTreeMap<u64, BlockHeader> = db
+    // Decode block headers from bytes and create a mapping of block number to header
+    db.block_headers = db
         .block_headers_bytes
         .drain(..)
-        .map(|arg0: bytes::Bytes| BlockHeader::decode(arg0.as_ref()))
+        .map(|bytes| BlockHeader::decode(bytes.as_ref()))
         .collect::<Result<Vec<_>, _>>()
-        .expect("Failed to decode block headers from RpcExecutionWitness")
-        .iter()
-        .map(|header| (header.number, header.clone()))
-        .collect::<BTreeMap<_, _>>();
-    db.block_headers = block_headers;
+        .map_err(|e| {
+            StatelessExecutionError::Internal(format!("Failed to decode block headers: {}", e))
+        })?
+        .into_iter()
+        .map(|header| (header.number, header))
+        .collect();
 
     let parent_number =
         db.first_block_number
