@@ -305,13 +305,9 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut last_metrics_update = SystemTime::now();
+        let mut last_update = SystemTime::now();
 
         loop {
-            let new_last_metrics_update = last_metrics_update
-                .elapsed()
-                .unwrap_or(Duration::from_secs(1));
-
             if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -331,7 +327,11 @@ impl PeerHandler {
                 downloaded_count += headers.len() as u64;
                 metrics_downloaded_count += headers.len() as u64;
 
-                if new_last_metrics_update >= Duration::from_secs(1) {
+                if last_update
+                    .elapsed()
+                    .expect("Last update is in the present")
+                    >= Duration::from_secs(1)
+                {
                     METRICS
                         .downloaded_headers
                         .fetch_add(metrics_downloaded_count, Ordering::Relaxed);
@@ -370,13 +370,18 @@ impl PeerHandler {
                 debug!("Downloader {peer_id} freed");
             }
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            if last_update
+                .elapsed()
+                .expect("Last update is always in the past")
+                >= Duration::from_secs(1)
+            {
                 debug!("Updating the peer scores table");
                 self.peer_scores
                     .lock()
                     .await
                     .update_peers(&self.peer_table)
                     .await;
+                last_update = SystemTime::now();
             }
             let Some((peer_id, mut peer_channel)) = self
                 .peer_scores
@@ -430,15 +435,6 @@ impl PeerHandler {
                         error!("Failed to send headers result through channel. Error: {err}")
                     })
             });
-
-            // 4) assign the tasks to the peers
-            //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-
-            // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                last_metrics_update = SystemTime::now();
-            }
         }
 
         METRICS.downloaded_headers.store(
