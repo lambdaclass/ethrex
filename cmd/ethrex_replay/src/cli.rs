@@ -691,12 +691,13 @@ impl SubcommandCustom {
 
                 #[cfg(not(feature = "l2"))]
                 let mut blockchain =
-                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1, false);
                 #[cfg(feature = "l2")]
                 let blockchain = Arc::new(Blockchain::new(
                     EvmEngine::LEVM,
                     store.clone(),
                     BlockchainType::L2,
+                    false,
                 ));
 
                 let genesis_hash = genesis.get_block().hash();
@@ -808,12 +809,13 @@ impl SubcommandCustom {
 
                 #[cfg(not(feature = "l2"))]
                 let mut blockchain =
-                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1);
+                    Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1, false);
                 #[cfg(feature = "l2")]
                 let blockchain = Arc::new(Blockchain::new(
                     EvmEngine::LEVM,
                     store.clone(),
                     BlockchainType::L2,
+                    false,
                 ));
 
                 let mut blocks = Vec::new();
