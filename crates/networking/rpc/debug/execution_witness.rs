@@ -55,7 +55,7 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
 
         Self {
             state: value
-                .state_nodes
+                .nodes_hashed
                 .values()
                 .cloned()
                 .map(Into::into)
@@ -129,7 +129,7 @@ pub fn execution_witness_from_rpc_chain_config(
         block_headers,
         chain_config,
         parent_block_header: parent_header,
-        state_nodes: BTreeMap::new(), // empty map because this must be filled during stateless execution
+        nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
         nodes: state_nodes.values().cloned().collect(),
         touched_account_storage_slots,
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution

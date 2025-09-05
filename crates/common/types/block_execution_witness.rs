@@ -58,7 +58,7 @@ pub struct ExecutionWitnessResult {
     /// issues of trust assumptions.
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
-    pub state_nodes: BTreeMap<H256, NodeRLP>,
+    pub nodes_hashed: BTreeMap<H256, NodeRLP>,
     /// This are the RLP-encoded nodes for the state trie.
     /// They are latter encoded and moved to the state_node
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -104,7 +104,7 @@ impl ExecutionWitnessResult {
 
         let state_trie = Trie::from_nodes(
             NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.state_nodes,
+            &self.nodes_hashed,
         )
         .map_err(|e| {
             ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
@@ -130,7 +130,7 @@ impl ExecutionWitnessResult {
 
         Trie::from_nodes(
             NodeHash::Hashed(account_state.storage_root),
-            &self.state_nodes,
+            &self.nodes_hashed,
         )
         .ok()
     }

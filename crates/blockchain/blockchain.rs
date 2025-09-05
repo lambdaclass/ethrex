@@ -31,7 +31,6 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -369,11 +368,7 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        let mut state_nodes = BTreeMap::new();
-        for node in used_trie_nodes.into_iter() {
-            let hash = Keccak256::digest(&node);
-            state_nodes.insert(H256::from_slice(hash.as_slice()), node);
-        }
+        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
         Ok(ExecutionWitnessResult {
             codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
@@ -387,8 +382,8 @@ impl Blockchain {
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
-            state_nodes: BTreeMap::new(), // This must be filled during stateless execution
-            nodes: state_nodes.values().cloned().collect(),
+            nodes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+            nodes,
             touched_account_storage_slots,
             account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
