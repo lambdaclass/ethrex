@@ -1,6 +1,4 @@
 pub mod levm;
-
-#[cfg(feature = "revm")]
 pub mod revm;
 #[cfg(feature = "revm")]
 use self::revm::{
