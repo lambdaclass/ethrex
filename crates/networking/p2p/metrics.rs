@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, LazyLock},
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime},
 };
 
@@ -12,7 +15,7 @@ use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
 
 pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Metrics {
     _registry: Registry,
     pub window_size: Duration,
@@ -21,7 +24,7 @@ pub struct Metrics {
     /// Nodes we've contacted over time.
     pub discovered_nodes: IntCounter,
     /// Nodes that successfully answered our ping.
-    pub contacts: Arc<Mutex<u64>>,
+    pub contacts: AtomicU64,
     pub new_contacts_events: Arc<Mutex<VecDeque<SystemTime>>>,
     /// Nodes we either fail to ping or failed to pong us.
     pub discarded_nodes: IntCounter,
@@ -42,7 +45,7 @@ pub struct Metrics {
     /// The rate at which we get new peers
     pub new_connection_establishments_rate: Gauge,
     /// Peers.
-    pub peers: Arc<Mutex<u64>>,
+    pub peers: AtomicU64,
     /// The amount of clients connected grouped by client type
     pub peers_by_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
     /// Ex-peers by client type and then reason of disconnection.
@@ -52,51 +55,46 @@ pub struct Metrics {
 
     /* Snap Sync */
     // Common
-    pub sync_head_block: Arc<Mutex<u64>>,
+    pub sync_head_block: AtomicU64,
     pub sync_head_hash: Arc<Mutex<H256>>,
+    pub current_step: Arc<Mutex<String>>,
 
     // Headers
-    pub headers_to_download: Arc<Mutex<u64>>,
-    pub downloaded_headers: Arc<Mutex<u64>>,
-    pub total_header_downloaders: Arc<Mutex<u64>>,
-    pub free_header_downloaders: Arc<Mutex<u64>>,
-    pub header_downloads_tasks_queued: Arc<Mutex<u64>>,
+    pub headers_to_download: AtomicU64,
+    pub downloaded_headers: AtomicU64,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_headers: Arc<Mutex<Option<Duration>>>,
 
     // Account tries
-    pub downloaded_account_tries: Arc<Mutex<u64>>,
-    pub total_accounts_downloaders: Arc<Mutex<u64>>,
-    pub free_accounts_downloaders: Arc<Mutex<u64>>,
-    pub accounts_downloads_tasks_queued: Arc<Mutex<u64>>,
+    pub downloaded_account_tries: AtomicU64,
+    pub account_tries_inserted: AtomicU64,
     pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
-    pub account_tries_state_root: Arc<Mutex<Option<H256>>>,
+    pub account_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub account_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage tries
-    pub storage_tries_to_download: Arc<Mutex<u64>>,
-    pub downloaded_storage_tries: Arc<Mutex<u64>>,
-    pub free_storages_downloaders: Arc<Mutex<u64>>,
-    pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage slots
-    pub downloaded_storage_slots: Arc<Mutex<u64>>,
-
-    // Storage tries state roots
-    pub storage_tries_state_roots_to_compute: Arc<Mutex<u64>>,
+    pub downloaded_storage_slots: AtomicU64,
+    pub storage_accounts_initial: AtomicU64,
+    pub storage_accounts_healed: AtomicU64,
+    pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_state_roots_computed: IntCounter,
-    pub storage_tries_state_roots_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_state_roots_end_time: Arc<Mutex<Option<SystemTime>>>,
+
+    // Healing
+    pub healing_empty_try_recv: AtomicU64,
+    pub global_state_trie_leafs_healed: AtomicU64,
+    pub global_storage_tries_leafs_healed: AtomicU64,
+    pub heal_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub heal_start_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Bytecodes
-    pub bytecodes_to_download: Arc<Mutex<u64>>,
-    pub downloaded_bytecodes: Arc<Mutex<u64>>,
-    pub total_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub free_bytecode_downloaders: Arc<Mutex<u64>>,
-    pub bytecode_downloads_tasks_queued: Arc<Mutex<u64>>,
+    pub bytecodes_to_download: AtomicU64,
+    pub downloaded_bytecodes: AtomicU64,
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -119,7 +117,7 @@ impl Metrics {
 
         self.discovered_nodes.inc();
 
-        *self.contacts.lock().await += 1;
+        self.contacts.fetch_add(1, Ordering::Relaxed);
 
         self.update_rate(&mut events, &self.new_contacts_rate).await;
     }
@@ -127,7 +125,7 @@ impl Metrics {
     pub async fn record_new_discarded_node(&self) {
         self.discarded_nodes.inc();
 
-        *self.contacts.lock().await -= 1;
+        self.contacts.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub async fn record_new_rlpx_conn_attempt(&self) {
@@ -148,7 +146,7 @@ impl Metrics {
 
         self.connection_establishments.inc();
 
-        *self.peers.lock().await += 1;
+        self.peers.fetch_add(1, Ordering::Relaxed);
 
         self.update_rate(&mut events, &self.new_connection_establishments_rate)
             .await;
@@ -178,7 +176,7 @@ impl Metrics {
         client_version: &str,
         reason: DisconnectReason,
     ) {
-        *self.peers.lock().await -= 1;
+        self.peers.fetch_add(1, Ordering::Relaxed);
 
         let mut clients = self.peers_by_client_type.lock().await;
         let split = client_version.split('/').collect::<Vec<&str>>();
@@ -522,7 +520,7 @@ impl Default for Metrics {
             window_size: Duration::from_secs(60),
 
             discovered_nodes,
-            contacts: Arc::new(Mutex::new(0)),
+            contacts: AtomicU64::new(0),
             new_contacts_rate,
             discarded_nodes,
 
@@ -538,7 +536,7 @@ impl Default for Metrics {
             pings_sent_events: Arc::new(Mutex::new(VecDeque::new())),
             pings_sent_rate,
 
-            peers: Arc::new(Mutex::new(0)),
+            peers: AtomicU64::new(0),
             peers_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
@@ -547,49 +545,48 @@ impl Default for Metrics {
 
             /* Snap Sync */
             // Common
-            sync_head_block: Arc::new(Mutex::new(0)),
+            sync_head_block: AtomicU64::new(0),
             sync_head_hash: Arc::new(Mutex::new(H256::default())),
+            current_step: Arc::new(Mutex::new("".to_string())),
+
             // Headers
-            headers_to_download: Arc::new(Mutex::new(0)),
-            downloaded_headers: Arc::new(Mutex::new(0)),
-            total_header_downloaders: Arc::new(Mutex::new(0)),
-            free_header_downloaders: Arc::new(Mutex::new(0)),
-            header_downloads_tasks_queued: Arc::new(Mutex::new(0)),
+            headers_to_download: AtomicU64::new(0),
+            downloaded_headers: AtomicU64::new(0),
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_headers: Arc::new(Mutex::new(None)),
+
             // Account tries
-            downloaded_account_tries: Arc::new(Mutex::new(0)),
-            total_accounts_downloaders: Arc::new(Mutex::new(0)),
-            free_accounts_downloaders: Arc::new(Mutex::new(0)),
-            accounts_downloads_tasks_queued: Arc::new(Mutex::new(0)),
+            downloaded_account_tries: AtomicU64::new(0),
+            account_tries_inserted: AtomicU64::new(0),
             account_tries_download_start_time: Arc::new(Mutex::new(None)),
             account_tries_download_end_time: Arc::new(Mutex::new(None)),
-            account_tries_state_root: Arc::new(Mutex::new(None)),
+            account_tries_insert_start_time: Arc::new(Mutex::new(None)),
+            account_tries_insert_end_time: Arc::new(Mutex::new(None)),
 
             // Storage tries
-            storage_tries_to_download: Arc::new(Mutex::new(0)),
-            downloaded_storage_tries: Arc::new(Mutex::new(0)),
-            free_storages_downloaders: Arc::new(Mutex::new(0)),
-            storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Storage slots
-            downloaded_storage_slots: Arc::new(Mutex::new(0)),
+            downloaded_storage_slots: AtomicU64::new(0),
 
             // Storage tries state roots
-            storage_tries_state_roots_to_compute: Arc::new(Mutex::new(0)),
             storage_tries_state_roots_computed,
-            storage_tries_state_roots_start_time: Arc::new(Mutex::new(None)),
-            storage_tries_state_roots_end_time: Arc::new(Mutex::new(None)),
+            storage_accounts_initial: AtomicU64::new(0),
+            storage_accounts_healed: AtomicU64::new(0),
+            storage_tries_insert_end_time: Arc::new(Mutex::new(None)),
+            storage_tries_insert_start_time: Arc::new(Mutex::new(None)),
+
+            // Healing
+            healing_empty_try_recv: AtomicU64::new(1),
+            global_state_trie_leafs_healed: AtomicU64::new(0),
+            global_storage_tries_leafs_healed: AtomicU64::new(0),
+            heal_end_time: Arc::new(Mutex::new(None)),
+            heal_start_time: Arc::new(Mutex::new(None)),
 
             // Bytecodes
-            bytecodes_to_download: Arc::new(Mutex::new(0)),
-            downloaded_bytecodes: Arc::new(Mutex::new(0)),
-            total_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            free_bytecode_downloaders: Arc::new(Mutex::new(0)),
-            bytecode_downloads_tasks_queued: Arc::new(Mutex::new(0)),
+            bytecodes_to_download: AtomicU64::new(0),
+            downloaded_bytecodes: AtomicU64::new(0),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
 
