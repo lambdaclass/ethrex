@@ -189,8 +189,7 @@ mod test {
     fn resume_trie() {
         use crate::trie_db::test_utils::libmdbx::{new_db_with_path, open_db};
 
-        const TRIE_DIR: &str = "trie-db-resume-trie-test";
-        let trie_dir = TempDir::new(TRIE_DIR).expect("Failed to create temp dir");
+        let trie_dir = TempDir::new().expect("Failed to create temp dir");
         let trie_dir = trie_dir.path();
 
         // Create new trie from clean DB
