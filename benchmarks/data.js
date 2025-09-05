@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757085550084,
+  "lastUpdate": 1757086025967,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12295,6 +12295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170099315136,
             "range": "± 559135453",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1eda8bff8c47ccac481097a9a5eda8de7118981c",
+          "message": "fix(l1): fixed update_pivot deadlock (#4329)\n\n**Motivation**\n\nFix a deadlock in request_account_range\n\n**Description**\n\n- Localizes the lock of the scores to a smaller scope in\nrequest_account_range which doesn't conflict with update_pivot",
+          "timestamp": "2025-09-05T14:26:54Z",
+          "tree_id": "80b89074a49da17ecf4ad7c8402eb6b477c8b38c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1eda8bff8c47ccac481097a9a5eda8de7118981c"
+        },
+        "date": 1757086007901,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171076664600,
+            "range": "± 369671583",
             "unit": "ns/iter"
           }
         ]
