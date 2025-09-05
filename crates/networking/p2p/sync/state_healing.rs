@@ -154,7 +154,7 @@ async fn heal_state_trie(
                 .peer_scores
                 .lock()
                 .await
-                .insert_new_peers(&peers.peer_table)
+                .update_peers(&peers.peer_table)
                 .await;
         }
 

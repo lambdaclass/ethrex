@@ -71,11 +71,13 @@ impl PeerScores {
         peer_score.active = false;
     }
 
-    pub async fn insert_new_peers(&mut self, kademlia_table: &kademlia::Kademlia) {
+    pub async fn update_peers(&mut self, kademlia_table: &kademlia::Kademlia) {
         let peer_table = kademlia_table.peers.lock().await;
         for (peer_id, _) in peer_table.iter() {
             self.scores.entry(*peer_id).or_insert(PeerScore::default());
         }
+        self.scores
+            .retain(|peer_id, _| peer_table.contains_key(peer_id));
     }
 
     /// Returns the peer and it's peer channel with the highest score.
@@ -105,5 +107,9 @@ impl PeerScores {
             })
             .max_by(|v1, v2| v1.1.cmp(&v2.1))
             .map(|(k, _, v)| (k, v))
+    }
+
+    pub fn len(&self) -> usize {
+        self.scores.len()
     }
 }

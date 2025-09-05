@@ -179,7 +179,7 @@ pub async fn heal_storage_trie(
                 .peer_scores
                 .lock()
                 .await
-                .insert_new_peers(&peers.peer_table)
+                .update_peers(&peers.peer_table)
                 .await;
             debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",

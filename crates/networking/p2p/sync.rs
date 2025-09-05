@@ -1159,7 +1159,7 @@ pub async fn update_pivot(
             .peer_scores
             .lock()
             .await
-            .insert_new_peers(&peers.peer_table)
+            .update_peers(&peers.peer_table)
             .await;
         let (peer_id, mut peer_channel) = peers
             .peer_scores

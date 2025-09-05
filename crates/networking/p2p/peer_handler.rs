@@ -374,7 +374,7 @@ impl PeerHandler {
                 self.peer_scores
                     .lock()
                     .await
-                    .insert_new_peers(&self.peer_table)
+                    .update_peers(&self.peer_table)
                     .await;
             }
 
@@ -816,7 +816,7 @@ impl PeerHandler {
                 self.peer_scores
                     .lock()
                     .await
-                    .insert_new_peers(&self.peer_table)
+                    .update_peers(&self.peer_table)
                     .await;
                 METRICS
                     .downloaded_account_tries
@@ -1124,6 +1124,7 @@ impl PeerHandler {
             .fetch_add(all_bytecode_hashes.len() as u64, Ordering::Relaxed);
 
         let mut completed_tasks = 0;
+        let mut last_update = SystemTime::now();
 
         loop {
             if let Ok(result) = task_receiver.try_recv() {
@@ -1159,12 +1160,17 @@ impl PeerHandler {
                 }
             }
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
+            if last_update
+                .elapsed()
+                .expect("Should never be in the future")
+                >= Duration::from_secs(1)
+            {
                 self.peer_scores
                     .lock()
                     .await
-                    .insert_new_peers(&self.peer_table)
+                    .update_peers(&self.peer_table)
                     .await;
+                last_update = SystemTime::now();
             };
 
             let Some((peer_id, mut peer_channel)) = self
