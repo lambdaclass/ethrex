@@ -5,6 +5,13 @@ on:
     branches: ["**"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ethrex-sync-server
+  cancel-in-progress: false
+
 jobs:
   run-hoodi:
     name: Hoodi Sync Check
