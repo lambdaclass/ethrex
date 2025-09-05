@@ -88,7 +88,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .map(|code| (keccak_hash::keccak(code), code.clone()))
         .collect::<BTreeMap<_, _>>();
 
-    let block_headers = rpc_witness
+    let mut block_headers = rpc_witness
         .headers
         .iter()
         .map(Bytes::as_ref)
@@ -108,6 +108,12 @@ pub fn execution_witness_from_rpc_chain_config(
     let parent_header = block_headers.get(&parent_number).cloned().ok_or(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
+
+    for block in blocks {
+        block_headers
+            .entry(block.header.number)
+            .or_insert_with(|| block.header.clone());
+    }
 
     let mut state_nodes = BTreeMap::new();
     for node in rpc_witness.state.iter() {
