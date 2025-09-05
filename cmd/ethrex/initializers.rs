@@ -20,14 +20,14 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
-use local_ip_address::local_ip;
+use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
     fs,
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -288,18 +288,13 @@ pub fn get_signer(data_dir: &str) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
+    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
-        parse_socket_addr(&opts.p2p_addr, &opts.p2p_port).expect("Failed to parse addr and port");
+        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
 
-    // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
-    // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = if udp_socket_addr.ip() == Ipv4Addr::new(0, 0, 0, 0) {
-        local_ip().expect("Failed to get local ip")
-    } else {
-        udp_socket_addr.ip()
-    };
+    let p2p_node_ip = local_ip()
+        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
 
     let local_public_key = public_key_from_signing_key(signer);
 

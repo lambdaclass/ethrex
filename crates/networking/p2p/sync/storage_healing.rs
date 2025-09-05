@@ -1,12 +1,15 @@
 use crate::{
     kademlia::PeerChannels,
+    metrics::METRICS,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
-    sync::AccountStorageRoots,
-    sync::state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+    sync::{
+        AccountStorageRoots,
+        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+    },
     utils::current_unix_time,
 };
 
@@ -19,6 +22,7 @@ use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, VecDeque},
+    sync::atomic::Ordering,
     time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
@@ -26,7 +30,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
@@ -137,6 +141,7 @@ pub async fn heal_storage_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> bool {
+    *METRICS.current_step.lock().await = "Healing Storage".to_string();
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
@@ -179,8 +184,14 @@ pub async fn heal_storage_trie(
     loop {
         yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            METRICS
+                .global_storage_tries_leafs_healed
+                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+            METRICS
+                .healing_empty_try_recv
+                .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
-            info!(
+            debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 state
                     .peer_handler

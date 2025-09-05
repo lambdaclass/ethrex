@@ -177,9 +177,9 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
+    		--discovery.port 30303 \
     		--metrics \
     		--metrics.port 3701 \
-    		--discovery.port 30303 \
     		--network $(NETWORK) \
     		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
