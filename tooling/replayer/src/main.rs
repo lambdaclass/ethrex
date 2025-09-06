@@ -300,6 +300,7 @@ async fn replay_latest_block(
                 panic!("Failed to get latest block number from {rpc_url}: {e}");
             })
             .as_u64();
+        tokio::time::sleep(Duration::from_secs(12)).await;
     }
 
     if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
