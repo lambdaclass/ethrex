@@ -321,7 +321,7 @@ impl Subcommand {
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&opts.datadir, opts.force);
                 }
 
                 let network = get_network(opts);
