@@ -2620,6 +2620,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
@@ -2642,7 +2643,6 @@ dependencies = [
  "tui-logger",
  "tui-scrollview",
  "vergen-git2",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -2819,6 +2819,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid 1.18.1",
 ]
 
 [[package]]
@@ -3306,6 +3307,25 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "guest_program"
+version = "0.1.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -5318,6 +5338,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-vm",
+ "guest_program",
  "hex",
  "keccak-hash",
  "secp256k1",
@@ -5325,7 +5346,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "zerocopy",
- "zkvm_interface",
 ]
 
 [[package]]
@@ -5784,7 +5804,7 @@ dependencies = [
  "rend",
  "rkyv_derive",
  "tinyvec",
- "uuid 1.17.0",
+ "uuid 1.18.1",
 ]
 
 [[package]]
@@ -7529,10 +7549,11 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.17.0"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
+checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
 dependencies = [
+ "getrandom 0.3.3",
  "js-sys",
  "wasm-bindgen",
 ]
@@ -8259,25 +8280,6 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
-]
-
-[[package]]
-name = "zkvm_interface"
-version = "0.1.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 2.0.12",
 ]
 
 [[package]]
