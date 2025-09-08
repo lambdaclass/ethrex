@@ -90,21 +90,30 @@ impl PeerScores {
         let peer_table = kademlia_table.peers.lock().await;
         self.scores
             .iter()
+            // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_score)| {
+                // If the peer is already in use right now, we skip it
                 if peer_score.active {
                     return None;
                 }
+
+                // if the peer has disconnected and isn't in the peer table, we skip it
                 let Some(peer_data) = &peer_table.get(id) else {
                     return None;
                 };
+
+                // if the peer doesn't have all the capabilities we need, we skip it
                 if !capabilities
                     .iter()
                     .all(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     return None;
                 }
+
+                // if the peer doesn't have the channel open, we skip it
                 let peer_channel = peer_data.channels.clone()?;
 
+                // We return the id, the score and the channel to connect with
                 Some((*id, peer_score.score, peer_channel))
             })
             .max_by(|v1, v2| v1.1.cmp(&v2.1))
