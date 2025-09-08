@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757339042456,
+  "lastUpdate": 1757342912218,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12655,6 +12655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170699837150,
             "range": "± 2312545237",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "667399b86fc73ecec9d047e456245a9c0b059424",
+          "message": "chore(l2): improve logs in eth client request (#4338)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nETH client doesn't log too much, making it difficult to debug different\nproblems.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd trace, debug, and warning logs for better debugging.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-08T13:53:39Z",
+          "tree_id": "d9165aba3131ab194f986d097d14c14b2f1eeb86",
+          "url": "https://github.com/lambdaclass/ethrex/commit/667399b86fc73ecec9d047e456245a9c0b059424"
+        },
+        "date": 1757342893619,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167921692475,
+            "range": "± 876558155",
             "unit": "ns/iter"
           }
         ]
