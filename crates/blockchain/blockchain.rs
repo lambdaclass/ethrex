@@ -12,7 +12,7 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
@@ -177,7 +177,7 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
-    ) -> Result<ExecutionWitnessResult, ChainError> {
+    ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -305,7 +305,7 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes.push(code);
+                codes.push(code.to_vec());
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -364,28 +364,29 @@ impl Blockchain {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
             )?;
-            block_headers_bytes.push(header.encode_to_vec().into());
+            block_headers_bytes.push(header.encode_to_vec());
         }
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
-        Ok(ExecutionWitnessResult {
-            codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+        let mut keys = Vec::new();
+
+        for (address, touched_storage_slots) in touched_account_storage_slots {
+            keys.push(address.as_bytes().to_vec());
+            for slot in touched_storage_slots.iter() {
+                keys.push(slot.as_bytes().to_vec());
+            }
+        }
+
+        Ok(ExecutionWitness {
             codes,
-            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
-            state_trie: None,
-            block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
             block_headers_bytes,
-            chain_config,
-            storage_tries: BTreeMap::new(),
-            parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
             first_block_number: first_block_header.number,
-            nodes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+            chain_config,
             nodes,
-            touched_account_storage_slots,
-            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
+            keys,
         })
     }
 
