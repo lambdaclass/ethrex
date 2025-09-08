@@ -49,16 +49,12 @@ impl Cache {
         }
     }
 
-    pub fn into_witness(&self) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-        execution_witness_from_rpc_chain_config(
+    pub fn into_replay_input(&self) -> Result<ReplayInput, ExecutionWitnessError> {
+        let witness = execution_witness_from_rpc_chain_config(
             self.witness_rpc.clone(),
             self.network.get_genesis().unwrap().config, //TODO: Remove unwrap?
             self.block.header.number,
-        )
-    }
-
-    pub fn into_replay_input(&self) -> Result<ReplayInput, ExecutionWitnessError> {
-        let witness = self.into_witness()?;
+        )?;
         Ok(ReplayInput {
             blocks: vec![self.block.clone()],
             witness,
