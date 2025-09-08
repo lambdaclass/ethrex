@@ -1,6 +1,6 @@
+use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::types::{Block, block_execution_witness::GuestProgramState};
 use eyre::Context;
 use rkyv::rancor::Error;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
