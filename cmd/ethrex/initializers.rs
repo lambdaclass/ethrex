@@ -130,7 +130,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -139,8 +139,6 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
-
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -178,7 +176,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -198,7 +196,7 @@ pub async fn init_network(
         local_node_record,
         tracker.clone(),
         signer,
-        peer_table.clone(),
+        peer_handler.peer_table.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
@@ -211,7 +209,8 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_table.peers.clone(),
+        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_scores,
     ));
 }
 
@@ -399,7 +398,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table();
+    let peer_handler = PeerHandler::new(peer_table());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -408,7 +407,7 @@ pub async fn init_l1(
 
     init_rpc_api(
         &opts,
-        peer_table.clone(),
+        peer_handler.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -434,7 +433,7 @@ pub async fn init_l1(
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            peer_handler.clone(),
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
@@ -445,5 +444,10 @@ pub async fn init_l1(
         info!("P2P is disabled");
     }
 
-    Ok((data_dir, cancel_token, peer_table, local_node_record))
+    Ok((
+        data_dir,
+        cancel_token,
+        peer_handler.peer_table,
+        local_node_record,
+    ))
 }
