@@ -43,6 +43,7 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
             for (account_hash, account) in account_states_snapshot {
                 trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
             }
+            println!("Comitting to disk");
             let current_state_root = trie.hash()?;
             Ok(current_state_root)
         };
