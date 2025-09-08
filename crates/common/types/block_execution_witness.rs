@@ -387,7 +387,7 @@ impl ExecutionWitnessResult {
         }
     }
 
-    /// Hashes all block headers, initializing their inner `hash` field
+    /// Hashes headers in witness and in blocks only once if they are repeated to avoid double hashing.
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
@@ -396,15 +396,7 @@ impl ExecutionWitnessResult {
             let hash = self
                 .block_headers
                 .get(&block.header.number)
-                .map(|header| header.hash())
-                .ok_or(ExecutionWitnessError::Custom(
-                    format!(
-                        "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
-                        block.header.number,
-                        self.block_headers.keys().min(),
-                        self.block_headers.keys().max()
-                    )
-                ))?;
+                .map_or_else(|| block.header.hash(), |header| header.hash());
             // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
             let _ = block.header.hash.set(hash);
