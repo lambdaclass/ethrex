@@ -81,11 +81,3 @@ impl Cache {
             .wrap_err("Failed to write pretty JSON data")
     }
 }
-
-pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
-    let mut file = BufWriter::new(File::create(file_name)?);
-    let pretty_json = serde_json::to_string_pretty(cache)
-        .wrap_err("Failed to serialize with serde_json (pretty)")?;
-    file.write_all(pretty_json.as_bytes())
-        .wrap_err("Failed to write pretty JSON data")
-}
