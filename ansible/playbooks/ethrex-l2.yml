@@ -26,7 +26,7 @@
       copy:
         src: "{{ lookup('env', 'GENESIS_JSON_FILE') }}"
         dest: "{{ uploaded_json_genesis_file }}"
-      when: lookup('env', 'GENESIS_JSON_FILE') | length != 0 # Copy genesis JSON from ansible host only if envvar is set.
+      when: lookup('env', 'GENESIS_JSON_FILE') | length > 0 # Copy genesis JSON from ansible host only if envvar is set.
 
     - name: Download defualt dev genesis (If a custom one is not provided)
       get_url:

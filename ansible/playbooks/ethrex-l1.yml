@@ -2,7 +2,6 @@
   hosts: l1
   vars:
     ansible_ssh_user: app
-    rust_version: "1.88.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethereum_metrics_exporter_version: "0.27.4"
     lighthouse_version: "7.0.1"

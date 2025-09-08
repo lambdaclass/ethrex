@@ -45,7 +45,7 @@ inventory: ## Generates inventory for ansible
 		fi; \
 		if [ -n "$(METRICS_IP)" ]; then \
 			echo "[metrics]" >> inventory.ini; \
-			for ip in $$(echo $(METRICS_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ForwardAgent=yes'" >> inventory.ini; done; \
+			for ip in $$(echo $(METRICS_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 	else \
@@ -55,13 +55,13 @@ inventory: ## Generates inventory for ansible
 database: ## Installs Postgres database
 	PGUSER=$(PGUSER)
 	PGPASSWORD=$(PGPASSWORD)
-	ansible-playbook -i inventory.ini database.yml
+	ansible-playbook -i inventory.ini playbooks/database.yml
 
 ethrex-l1: ## Installs Ethrex L1
 	NETWORK=$(NETWORK)
 	EVM=$(EVM)
 	BOOTNODES=$(BOOTNODES)
-	ansible-playbook -i inventory.ini ethrex-l1.yml
+	ansible-playbook -i inventory.ini playbooks/ethrex-l1.yml
 
 ethrex-l2: ## Installs Ethrex L2
 	GENESIS_JSON_FILE=$(GENESIS_JSON_FILE)
@@ -72,17 +72,17 @@ ethrex-l2: ## Installs Ethrex L2
 	COINBASE_ADDRESS=$(COINBASE_ADDRESS)
 	ETH_TESTNET_RPC=$(TESTNET_RPC)
 	INFURA_API_KEY=$(INFURA_API_KEY)
-	ansible-playbook -i inventory.ini ethrex-l2.yml
+	ansible-playbook -i inventory.ini plabooks/ethrex-l2.yml
 
 ethrex-prover-exec: ## Installs ethrex prover exec
 	ETHREX_SEQUENCER_ADDRESS=$(ETHREX_SEQUENCER_ADDRESS)
 	ETHREX_SEQUENCER_PORT=$(ETHREX_SEQUENCER_PORT)
-	ansible-playbook -i inventory.ini ethrex-prover-exec.yml
+	ansible-playbook -i inventory.ini playbooks/ethrex-prover-exec.yml
 
 ethrex-prover-sp1: ## Installs ethrex prover SP1
 	ETHREX_SEQUENCER_ADDRESS=$(ETHREX_SEQUENCER_ADDRESS)
 	ETHREX_SEQUENCER_PORT=$(ETHREX_SEQUENCER_PORT)
-	ansible-playbook -i inventory.ini ethrex-prover-sp1.yml
+	ansible-playbook -i inventory.ini playbooks/ethrex-prover-sp1.yml
 
 explorer_backend: ## Installs explorer backend
 	DATABASE_URL=$(DATABASE_URL)
@@ -99,7 +99,7 @@ explorer_backend: ## Installs explorer backend
 	POOL_SIZE=25
 	POOL_SIZE_API=25
 	DISABLE_WEBAPP=true
-	ansible-playbook -i inventory.ini explorer_backend.yml
+	ansible-playbook -i inventory.ini playbooks/explorer_backend.yml
 
 explorer_frontend: ## Installs explorer frontend
 	NEXT_PUBLIC_API_HOST=$(NEXT_PUBLIC_API_HOST)
@@ -124,10 +124,8 @@ explorer_frontend: ## Installs explorer frontend
 	NEXT_PUBLIC_GRAPHIQL_TRANSACTION=none
 	NEXT_PUBLIC_API_SPEC_URL=none
 	NEXT_PUBLIC_NAVIGATION_HIDDEN_LINKS="['eth_rpc_api','rpc_api']"
-	ansible-playbook -i inventory.ini explorer_frontend.yml
+	ansible-playbook -i inventory.ini playbooks/explorer_frontend.yml
 
 metrics: ## Installs grafana and metrics
-	ALERTS_SLACK_CHANNEL=$(ALERTS_SLACK_CHANNEL)
-	ALERTS_SLACK_TOKEN=$(ALERTS_SLACK_TOKEN)
 	GRAFANA_PASSWORD=$(GRAFANA_PASSWORD)
-	ansible-playbook -i inventory.ini metrics.yml
+	ansible-playbook -i inventory.ini playbooks/metrics.yml

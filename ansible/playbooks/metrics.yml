@@ -1,0 +1,97 @@
+- name: Metrics Setup
+  hosts: metrics
+
+  vars:
+    ansible_ssh_user: admin
+    ethrex_dir: "/home/{{ ansible_user }}/ethrex"
+    grafana:
+      - name: dashboards_l1
+        local: "{{ playbook_dir }}/../../metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/"
+        remote: "/etc/grafana/dashboards/"
+      - name: dashboards_l2
+        local: "{{ playbook_dir }}/../../metrics/provisioning/grafana_provisioning/dashboards/l2_dashboards/"
+        remote: "/etc/grafana/dashboards/"
+
+  tasks:
+    - name: Ensure rsync is installed on remote
+      become: true
+      apt:
+        name:
+          - rsync
+        state: present
+        update_cache: true
+
+    - name: Check if Grafana is installed
+      stat:
+        path: /usr/sbin/grafana-server
+      register: grafana_stat
+
+    - name: Clone monitoring stack repository locally
+      delegate_to: localhost
+      git:
+        repo: "git@github.com:lambdaclass/monitoring-stack.git"
+        version: debian-13-support ### TEMPORAL
+        dest: "{{ playbook_dir }}/monitoring-stack"
+        #version: main
+      when: not grafana_stat.stat.exists
+
+    - name: Run monitoring stack deployment from localhost (this step will take some time)
+      delegate_to: localhost
+      make:
+        chdir: "{{ playbook_dir }}/monitoring-stack"
+        target: all
+        params:
+          GRAFANA_PASSWORD: "{{ lookup('env', 'GRAFANA_PASSWORD') }}"
+          TARGET: "{{ inventory_hostname }}"
+      environment:
+        ANSIBLE_INVENTORY: "{{ playbook_dir }}/inventory.ini"
+      when: not grafana_stat.stat.exists
+
+    - name: Create alerts directory
+      become: true
+      file:
+        path: "/etc/grafana/provisioning/alerting/"
+        state: directory
+        mode: '0755'
+        owner: grafana
+        group: grafana
+
+    - name: Copy ETHREX dashboards to /etc/grafana/dashboards
+      become: true
+      synchronize:
+        src: "{{ item.local }}"
+        dest: "{{ item.remote }}"
+        rsync_opts:
+          - "-avz"
+          - "--ignore-existing" # Avoid overwriting existing grafana config from monitoring-stack
+      loop: "{{ grafana }}"
+
+    - name: Add Ethereum Metrics Exporter scrape config
+      become: true
+      blockinfile:
+        path: /etc/prometheus/prometheus.yml
+        insertafter: "scrape_configs:"
+        block: |
+          {{ text | indent(2, first=true) }}
+        state: present
+      vars:
+        text: |
+          - job_name: 'ethereum_metrics_exporter'
+            static_configs:
+              - targets: ['localhost:8081']
+
+    - name: Restart Grafana and Prometheus
+      become: true
+      systemd:
+        name: "{{ item.service }}"
+        state: restarted
+        daemon_reload: true
+      loop:
+        - service: grafana-server
+        - service: prometheus
+
+    - name: Remove local monitoring stack repo
+      delegate_to: localhost
+      file:
+        path: "{{ playbook_dir }}/monitoring-stack"
+        state: absent
