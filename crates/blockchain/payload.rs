@@ -8,12 +8,13 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -216,6 +217,7 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
+    pub size: usize,
 }
 
 impl PayloadBuildContext {
@@ -242,6 +244,8 @@ impl PayloadBuildContext {
             BlockchainType::L2 => Evm::new_for_l2(evm_engine, vm_db)?,
         };
 
+        let size = payload.encode_to_vec().len();
+
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -255,6 +259,7 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
+            size,
         })
     }
 }
@@ -519,6 +524,14 @@ impl Blockchain {
                 txs.pop();
                 continue;
             }
+
+            // Check whether the transaction wouldn't put the block above the size limit
+            // https://eips.ethereum.org/EIPS/eip-7934
+            let tx_rlp_size = head_tx.encode_to_vec().len();
+            if tx_rlp_size + context.size > MAX_RLP_BLOCK_SIZE as usize {
+                break;
+            }
+            context.size += tx_rlp_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.hash();
