@@ -78,7 +78,6 @@ impl RLPxInitiator {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
 
-            already_tried_peers.clear();
         if peer_number > self.target_peers {
             return false;
         }
