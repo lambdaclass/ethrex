@@ -36,16 +36,18 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
 
-pub fn init_tracing(opts: &Options) {
+pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy()
         .add_directive(Directive::from(opts.log_level));
 
-    let fmt_layer = fmt::layer().with_filter(log_filter);
+    let (filter, filter_handle) = reload::Layer::new(log_filter);
+
+    let fmt_layer = fmt::layer().with_filter(filter);
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
@@ -54,6 +56,8 @@ pub fn init_tracing(opts: &Options) {
     };
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    filter_handle
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -129,6 +133,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -154,6 +159,7 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
+        log_filter_handler,
     );
 
     tracker.spawn(rpc_api);
@@ -364,6 +370,7 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
@@ -404,6 +411,7 @@ pub async fn init_l1(
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        log_filter_handler,
     )
     .await;
 
