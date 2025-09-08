@@ -1,6 +1,7 @@
-use crate::{backends::Backend, config::ProverConfig, prove, to_batch_proof};
+use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
+use guest_program::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -9,7 +10,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 use url::Url;
-use zkvm_interface::io::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
     let prover_worker = Prover::new(config);
@@ -23,7 +23,7 @@ struct ProverData {
 
 struct Prover {
     backend: Backend,
-    proof_coordinator_endpoint: Url,
+    proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
     aligned_mode: bool,
     commit_hash: String,
@@ -33,7 +33,7 @@ impl Prover {
     pub fn new(cfg: ProverConfig) -> Self {
         Self {
             backend: cfg.backend,
-            proof_coordinator_endpoint: cfg.proof_coordinator,
+            proof_coordinator_endpoints: cfg.proof_coordinators,
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
             commit_hash: get_commit_hash(),
@@ -41,44 +41,49 @@ impl Prover {
     }
 
     pub async fn start(&self) {
-        info!("Prover started on {}", self.proof_coordinator_endpoint);
+        info!(
+            "Prover started for {:?}",
+            self.proof_coordinator_endpoints
+                .iter()
+                .map(|url| url.to_string())
+                .collect::<Vec<String>>()
+        );
         // Build the prover depending on the prover_type passed as argument.
         loop {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
-            let Ok(prover_data) = self
-                .request_new_input()
-                .await
-                .inspect_err(|e| error!("Failed to request new data: {e}"))
-            else {
-                continue;
-            };
 
-            let Some(prover_data) = prover_data else {
-                continue;
-            };
+            for endpoint in &self.proof_coordinator_endpoints {
+                let Ok(Some(prover_data)) = self
+                    .request_new_input(endpoint)
+                    .await
+                    .inspect_err(|e| error!(%endpoint, "Failed to request new data from: {e}"))
+                else {
+                    continue;
+                };
 
-            // If we get the input
-            // Generate the Proof
-            let Ok(batch_proof) = prove(self.backend, prover_data.input, self.aligned_mode)
-                .and_then(|output| to_batch_proof(output, self.aligned_mode))
-                .inspect_err(|e| error!("{}", e.to_string()))
-            else {
-                continue;
-            };
+                // If we get the input
+                // Generate the Proof
+                let Ok(batch_proof) = prove(self.backend, prover_data.input, self.aligned_mode)
+                    .and_then(|output| to_batch_proof(output, self.aligned_mode))
+                    .inspect_err(|e| error!(%endpoint, "{}", e.to_string()))
+                else {
+                    continue;
+                };
 
-            let _ = self
-                .submit_proof(prover_data.batch_number, batch_proof)
-                .await
-                .inspect_err(|e|
+                let _ = self
+                    .submit_proof(endpoint, prover_data.batch_number, batch_proof)
+                    .await
+                    .inspect_err(|e|
                     // TODO: Retry?
-                    warn!("Failed to submit proof: {e}"));
+                    warn!(%endpoint, "Failed to submit proof: {e}"));
+            }
         }
     }
 
-    async fn request_new_input(&self) -> Result<Option<ProverData>, String> {
+    async fn request_new_input(&self, endpoint: &Url) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
         let request = ProofData::batch_request(self.commit_hash.clone());
-        let response = connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &request)
+        let response = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
@@ -98,12 +103,13 @@ impl Prover {
 
         let (Some(batch_number), Some(input)) = (batch_number, input) else {
             warn!(
+                %endpoint,
                 "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
             );
             return Ok(None);
         };
 
-        info!("Received Response for batch_number: {batch_number}");
+        info!(%endpoint, "Received Response for batch_number: {batch_number}");
         Ok(Some(ProverData {
             batch_number,
             input: ProgramInput {
@@ -118,18 +124,23 @@ impl Prover {
         }))
     }
 
-    async fn submit_proof(&self, batch_number: u64, batch_proof: BatchProof) -> Result<(), String> {
+    async fn submit_proof(
+        &self,
+        endpoint: &Url,
+        batch_number: u64,
+        batch_proof: BatchProof,
+    ) -> Result<(), String> {
         let submit = ProofData::proof_submit(batch_number, batch_proof);
 
         let ProofData::ProofSubmitACK { batch_number } =
-            connect_to_prover_server_wr(&self.proof_coordinator_endpoint, &submit)
+            connect_to_prover_server_wr(endpoint, &submit)
                 .await
                 .map_err(|e| format!("Failed to get SubmitAck: {e}"))?
         else {
             return Err("Expecting ProofData::SubmitAck".to_owned());
         };
 
-        info!("Received submit ack for batch_number: {batch_number}");
+        info!(%endpoint, "Received submit ack for batch_number: {batch_number}");
         Ok(())
     }
 }

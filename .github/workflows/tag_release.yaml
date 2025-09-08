@@ -117,8 +117,8 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
-          mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk verification_keys/ethrex-riscv32im-succinct-zkvm-vk
+          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk verification_keys/ethrex-riscv32im-succinct-zkvm-vk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -176,19 +176,14 @@ jobs:
       - name: Format name
         run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+      # Pushes to ghcr.io/lambdaclass/ethrex
+      - name: Build and push Docker image
+        id: push
+        uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
 

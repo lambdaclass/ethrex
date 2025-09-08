@@ -12,7 +12,7 @@ lint: ## 🧹 Linter check
 	# Note that we are compiling without the "gpu" feature (see #4048 for why)
 	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
 	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
 CRATE ?= *
@@ -31,7 +31,7 @@ $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfi
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex:unstable --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex -- \
@@ -62,27 +62,20 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
-LOCALNET_CONFIG_FILE ?= ./fixtures/networks/network_params.yaml
+KURTOSIS_CONFIG_FILE ?= ./fixtures/networks/default.yaml
 
 # If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
-localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(LOCALNET_CONFIG_FILE)
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
-
-hoodi: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start client in hoodi network
-	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/hoodi.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex:local)
+localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
+	@set -e; \
+	trap 'printf "\nStopping localnet...\n"; $(MAKE) stop-localnet || true; exit 0' INT TERM HUP QUIT; \
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(KURTOSIS_CONFIG_FILE); \
+	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
-
-stop-localnet-silent:
-	@echo "Double checking local net is not already started..."
-	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
-	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
 HIVE_BRANCH ?= master
 
@@ -126,7 +119,7 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 # EEST Hive
 TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat cmd/ef_tests/blockchain/.fixtures_url)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
 
 run-hive-eest-engine: ## Run hive EEST Engine tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine

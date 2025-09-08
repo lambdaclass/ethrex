@@ -75,16 +75,10 @@ P2P options:
       --p2p.enabled
 
 
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P protocol.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -199,17 +193,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -452,7 +439,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinator <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
 
 Options:
   -h, --help
@@ -464,7 +451,7 @@ Prover client options:
           [default: exec]
           [possible values: exec]
 
-      --proof-coordinator <URL>
+      --proof-coordinators <URL>
           URL of the sequencer's proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]

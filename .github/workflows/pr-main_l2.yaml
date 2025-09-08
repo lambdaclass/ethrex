@@ -41,8 +41,8 @@ jobs:
 
       - name: Create placeholder SP1 ELF
         run: |
-          mkdir -p crates/l2/prover/zkvm/interface/sp1/out
-          touch crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
+          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -67,12 +67,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+        uses: ./.github/actions/build-docker
         with:
-          context: .
-          tags: ethrex:unstable
-          load: true
-          outputs: type=docker,dest=/tmp/ethrex_image.tar
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          tags: ethrex:main
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -117,7 +116,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
@@ -157,6 +156,7 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
@@ -199,7 +199,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -250,6 +250,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose up --detach --no-deps ethrex_l2
 
       - name: Run test

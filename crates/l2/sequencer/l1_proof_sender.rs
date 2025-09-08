@@ -6,14 +6,20 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+use ethrex_metrics::metrics;
+use ethrex_rpc::{
+    EthClient,
+    clients::{EthClientError, eth::errors::EstimateGasError},
+};
 use ethrex_storage_rollup::StoreRollup;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::{
     configs::AlignedConfig,
@@ -26,7 +32,10 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    common::{
+        errors,
+        types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    },
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -70,7 +79,7 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
-            ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
+            ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
@@ -110,7 +119,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)
+            .map_err(ProofSenderError::InternalError)
     }
 
     async fn verify_and_send_proof(&mut self) -> Result<(), ProofSenderError> {
@@ -123,13 +132,11 @@ impl L1ProofSender {
         .await
         .map_err(|err| {
             error!("Failed to get next batch to send: {err}");
-            ProofSenderError::InternalError(err.to_string())
+            ProofSenderError::UnexpectedError(err.to_string())
         })?;
 
-        let last_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
@@ -182,7 +189,7 @@ impl L1ProofSender {
         aligned_proof: BatchProof,
     ) -> Result<(), ProofSenderError> {
         let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
-            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
+            ProofSenderError::UnexpectedError(format!("Failed to read ELF file: {e}"))
         })?;
 
         let verification_data = VerificationData {
@@ -203,27 +210,35 @@ impl L1ProofSender {
             })?;
 
         let Signer::Local(local_signer) = &self.signer else {
-            return Err(ProofSenderError::InternalError(
+            return Err(ProofSenderError::UnexpectedError(
                 "Aligned mode only supports local signer".to_string(),
             ));
         };
 
         let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
-            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+            .map_err(|_| ProofSenderError::UnexpectedError("Failed to create wallet".to_owned()))?;
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
 
         debug!("Sending proof to Aligned");
 
-        submit(
+        let algined_verification_result = submit(
             self.network.clone(),
             &verification_data,
             fee_estimation,
             wallet,
             nonce,
         )
-        .await
-        .map_err(|err| {
+        .await;
+
+        if let Err(errors::SubmitError::InvalidProof(_)) = algined_verification_result.as_ref() {
+            warn!("Deleting invalid ALIGNED proof");
+            self.rollup_store
+                .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                .await?;
+        }
+
+        algined_verification_result.map_err(|err| {
             ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
         })?;
 
@@ -278,13 +293,46 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let verify_tx_hash = send_verify_tx(
+        let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
             &self.signer,
         )
-        .await?;
+        .await;
+
+        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+            send_verify_tx_result.as_ref()
+        {
+            if error.contains("Invalid TDX proof") {
+                warn!("Deleting invalid TDX proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
+                    .await?;
+            } else if error.contains("Invalid RISC0 proof") {
+                warn!("Deleting invalid RISC0 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
+                    .await?;
+            } else if error.contains("Invalid SP1 proof") {
+                warn!("Deleting invalid SP1 proof");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)
+                    .await?;
+            }
+        }
+
+        let verify_tx_hash = send_verify_tx_result?;
+
+        metrics!(
+            let verify_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(verify_tx_hash)
+                .await?
+                .ok_or(ProofSenderError::UnexpectedError("no verify tx receipt".to_string()))?;
+            let verify_gas_used = verify_tx_receipt.tx_info.gas_used.try_into()?;
+            METRICS.set_batch_verification_gas(batch_number, verify_gas_used)?;
+        );
 
         self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)

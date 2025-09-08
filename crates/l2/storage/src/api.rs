@@ -60,6 +60,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
 
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
+
     async fn get_verify_tx_by_batch(
         &self,
         batch_number: u64,
@@ -137,6 +139,12 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
         proof_type: ProverType,
     ) -> Result<Option<BatchProof>, RollupStoreError>;
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
