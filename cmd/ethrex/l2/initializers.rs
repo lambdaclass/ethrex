@@ -21,8 +21,8 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{EnvFilter, Registry, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 use crate::cli::Options as L1Options;
@@ -47,6 +47,7 @@ async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -75,6 +76,7 @@ async fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         l2_opts.sponsor_private_key,
         rollup_store,
+        log_filter_handler,
     );
 
     tracker.spawn(rpc_api);
@@ -129,7 +131,7 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) {
+pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -139,12 +141,18 @@ pub fn init_tracing(opts: &L2Options) {
         tracing::subscriber::set_global_default(subscriber)
             .expect("setting default subscriber failed");
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
+
+        // Monitor already registers all log levels
+        None
     } else {
-        initializers::init_tracing(&opts.node_opts);
+        Some(initializers::init_tracing(&opts.node_opts))
     }
 }
 
-pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
+pub async fn init_l2(
+    opts: L2Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<()> {
     if opts.node_opts.evm == EvmEngine::REVM {
         panic!("L2 Doesn't support REVM, use LEVM instead.");
     }
@@ -189,6 +197,7 @@ pub async fn init_l2(opts: L2Options) -> eyre::Result<()> {
         cancel_token.clone(),
         tracker.clone(),
         rollup_store.clone(),
+        log_filter_handler,
     )
     .await;
 
