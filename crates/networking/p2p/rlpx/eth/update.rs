@@ -32,6 +32,14 @@ impl BlockRangeUpdate {
             lastest_block_hash,
         })
     }
+
+    /// Validates an incoming BlockRangeUpdate from a peer
+    pub fn validate(&self) -> Result<(), RLPxError> {
+        if self.earliest_block > self.lastest_block || self.lastest_block_hash.is_zero() {
+            return Err(RLPxError::InvalidBlockRangeUpdate);
+        }
+        Ok(())
+    }
 }
 
 impl RLPxMessage for BlockRangeUpdate {
