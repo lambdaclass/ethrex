@@ -169,6 +169,7 @@ pub fn stateless_validation_l2(
         parent_block_header: db.parent_block_header.clone(),
         state_nodes: db.state_nodes.clone(),
         touched_account_storage_slots: BTreeMap::new(),
+        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 
     let StatelessResult {
