@@ -12,12 +12,12 @@ use keccak_hash::H256;
 
 fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
-    for entry in std::fs::read_dir("home/admin/.local/share/ethrex/account_snapshot_dir")
+    for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_snapshot_dir")
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
     {
         let entry = entry.map_err(|err| {
             SyncError::SnapshotReadError(
-                "home/admin/.local/share/ethrex/account_snapshot_dir"
+                "/home/admin/.local/share/ethrex/account_snapshot_dir"
                     .clone()
                     .into(),
                 err,
