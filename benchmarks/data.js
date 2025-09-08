@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757342912218,
+  "lastUpdate": 1757343214454,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12685,6 +12685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167921692475,
             "range": "± 876558155",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f460384b2c424a1100ee584c2df2e6eedb08554",
+          "message": "feat(l1,l2): enable log levels update in runtime (#4324)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nSometimes we want to change the log level, primarly for debugging, and\nrestarting the node would break the case of study.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd a custom `admin_setLogLevel` endpoint that enables the node operator\nto specify a new log filter, just like with `RUST_LOG`.\n\nHow to test:\n1. Run a node (e.g. `ethrex --dev`)\n2. Change the log levels:\n    ```\ncurl localhost:8545 -H 'content-type: application/json' -d '{\"jsonrpc\":\n\"2.0\", \"id\": \"1\", \"method\": \"admin_setLogLevel\", \"params\":\n[\"ethrex_dev::block_producer=info\"]}'\n     ```\n3. You should now only see `ethrex_dev::block_producer` logs\n\n> [!WARNING]\n> The `admin` namespace is currently unauthenticated and cannot be\nturned off. Be aware of this in public nodes\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4299",
+          "timestamp": "2025-09-08T13:54:07Z",
+          "tree_id": "a1293abd074c3d087d7eeab0fbe3e83d090d405f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5f460384b2c424a1100ee584c2df2e6eedb08554"
+        },
+        "date": 1757343195298,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170449741650,
+            "range": "± 794165098",
             "unit": "ns/iter"
           }
         ]
