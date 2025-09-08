@@ -1,5 +1,6 @@
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, block_execution_witness::GuestProgramState};
 use eyre::Context;
 use rkyv::rancor::Error;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -20,14 +21,14 @@ pub struct L2Fields {
 #[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub witness: ExecutionWitnessResult,
+    pub witness: ExecutionWitness,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitnessResult) -> Self {
+    pub fn new(blocks: Vec<Block>, witness: ExecutionWitness) -> Self {
         Self {
             blocks,
             witness,

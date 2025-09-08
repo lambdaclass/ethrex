@@ -5,7 +5,7 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
+        block_execution_witness::{ExecutionWitness, ExecutionWitnessError, GuestProgramState},
     },
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -39,37 +39,33 @@ pub struct RpcExecutionWitness {
     pub headers: Vec<Bytes>,
 }
 
-impl From<ExecutionWitnessResult> for RpcExecutionWitness {
-    fn from(value: ExecutionWitnessResult) -> Self {
+impl From<ExecutionWitness> for RpcExecutionWitness {
+    fn from(value: ExecutionWitness) -> Self {
         let mut keys = Vec::new();
 
-        let touched_account_storage_slots = value.touched_account_storage_slots;
-
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(Bytes::copy_from_slice(address.as_bytes()));
-            for slot in touched_storage_slots.iter() {
-                keys.push(Bytes::copy_from_slice(slot.as_bytes()));
-            }
-        }
+        // for (address, touched_storage_slots) in touched_account_storage_slots {
+        //     keys.push(Bytes::copy_from_slice(address.as_bytes()));
+        //     for slot in touched_storage_slots.iter() {
+        //         keys.push(Bytes::copy_from_slice(slot.as_bytes()));
+        //     }
+        // }
 
         Self {
             state: value
-                .nodes_hashed
-                .values()
-                .cloned()
-                .map(Into::into)
+                .nodes
+                .iter()
+                .map(|node| Bytes::copy_from_slice(node))
                 .collect(),
-            keys,
+            keys, // TODO: change this
             codes: value
-                .codes_hashed
-                .values()
+                .codes
+                .iter()
                 .map(|code| Bytes::copy_from_slice(code))
                 .collect(),
             headers: value
-                .block_headers
-                .values()
-                .map(BlockHeader::encode_to_vec)
-                .map(Into::into)
+                .block_headers_bytes
+                .iter()
+                .map(|header| Bytes::copy_from_slice(header))
                 .collect(),
         }
     }
@@ -80,7 +76,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
+) -> Result<ExecutionWitness, ExecutionWitnessError> {
     let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
     let codes = rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect();
     let block_headers_bytes = rpc_witness
@@ -104,20 +100,13 @@ pub fn execution_witness_from_rpc_chain_config(
         }
     }
 
-    let witness = ExecutionWitnessResult {
+    let witness = ExecutionWitness {
         codes,
-        codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
-        state_trie: None,              // `None` because we'll rebuild the tries afterwards
-        storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
-        block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
         chain_config,
-        parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
         first_block_number,
         block_headers_bytes,
-        nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
         nodes,
-        touched_account_storage_slots,
-        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
+        // Do we need to add touched_account_storage_slots??
     };
 
     Ok(witness)

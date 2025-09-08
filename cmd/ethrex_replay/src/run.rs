@@ -1,14 +1,20 @@
 use crate::cache::Cache;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountUpdate, BlockHeader, ELASTICITY_MULTIPLIER, Receipt,
+        block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
-use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, GuestProgramStateWrapper, backends::levm::LEVM};
 use eyre::Ok;
 use guest_program::input::ProgramInput;
+use keccak_hash::keccak;
 use std::{
+    collections::BTreeMap,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
 };
@@ -49,8 +55,58 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut prover_db = cache.witness;
-    prover_db.rebuild_state_trie()?;
-    let mut wrapped_db = ExecutionWitnessWrapper::new(prover_db);
+
+    let block_headers: BTreeMap<u64, BlockHeader> = prover_db
+        .block_headers_bytes
+        .drain(..)
+        .map(|bytes| BlockHeader::decode(bytes.as_ref()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|header| (header.number, header))
+        .collect();
+
+    let parent_number = prover_db
+        .first_block_number
+        .checked_sub(1)
+        .ok_or_else(|| eyre::eyre!("First block number cannot be zero"))?;
+
+    let parent_header = block_headers
+        .get(&parent_number)
+        .cloned()
+        .ok_or_else(|| eyre::eyre!("Missing parent header {}", parent_number))?;
+
+    // hash nodes
+    let nodes_hashed = prover_db
+        .nodes
+        .drain(..)
+        .map(|node| {
+            let node = node.to_vec();
+            (keccak(&node), node)
+        })
+        .collect();
+
+    // hash codes
+    let codes_hashed = prover_db
+        .codes
+        .drain(..)
+        .map(|code| (keccak(&code), code))
+        .collect();
+
+    let mut execution_witness = GuestProgramState {
+        codes_hashed,
+        state_trie: None,
+        storage_tries: BTreeMap::new(),
+        block_headers,
+        parent_block_header: parent_header,
+        first_block_number: prover_db.first_block_number,
+        chain_config: prover_db.chain_config,
+        nodes_hashed,
+        touched_account_storage_slots: BTreeMap::new(),
+        account_hashes_by_address: BTreeMap::new(),
+    };
+
+    execution_witness.rebuild_state_trie()?;
+    let mut wrapped_db = GuestProgramStateWrapper::new(execution_witness);
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 

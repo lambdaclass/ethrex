@@ -25,15 +25,12 @@ use sha3::{Digest, Keccak256};
 /// feeding the DB into a zkVM program to prove the execution.
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
-pub struct ExecutionWitnessResult {
+pub struct GuestProgramState {
     // Used evm bytecodes
     // Indexed by code hash
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
-    // Used evm bytecodes
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub codes: Vec<Vec<u8>>,
     // Pruned state MPT
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -46,9 +43,6 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub block_headers: BTreeMap<u64, BlockHeader>,
-    // Block headers as raw bytes
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub block_headers_bytes: Vec<Vec<u8>>,
     // Parent block header to get the initial state root
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -64,10 +58,6 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub nodes_hashed: BTreeMap<H256, NodeRLP>,
-    /// These are the RLP-encoded nodes for the state trie.
-    /// They are later encoded and moved to the state_node
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub nodes: Vec<Vec<u8>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -77,6 +67,25 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
     pub account_hashes_by_address: BTreeMap<Address, Vec<u8>>,
+}
+
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionWitness {
+    // Used evm bytecodes
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub codes: Vec<Vec<u8>>,
+    // Block headers as raw bytes
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub block_headers_bytes: Vec<Vec<u8>>,
+    /// The block number of the first block
+    pub first_block_number: u64,
+    // Chain config
+    pub chain_config: ChainConfig,
+    /// These are the RLP-encoded nodes for the state trie.
+    /// They are later encoded and moved to the state_node
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub nodes: Vec<Vec<u8>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -99,7 +108,7 @@ pub enum ExecutionWitnessError {
     Custom(String),
 }
 
-impl ExecutionWitnessResult {
+impl GuestProgramState {
     /// Use the state nodes to build the state trie and store them in `self.state_trie`
     /// This function will fail if the state trie cannot be rebuilt.
     pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {

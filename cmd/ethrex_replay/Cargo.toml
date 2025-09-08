@@ -16,6 +16,7 @@ ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 ethrex-l2-rpc.workspace = true
+ethrex-rlp.workspace = true
 
 guest_program = { path = "../../crates/l2/prover/src/guest_program", default-features = false }
 ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
@@ -33,6 +34,7 @@ clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
 rkyv.workspace = true
+keccak-hash.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 

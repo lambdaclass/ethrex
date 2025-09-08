@@ -4,24 +4,24 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
+        block_execution_witness::{ExecutionWitnessError, GuestProgramState},
     },
 };
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
-pub struct ExecutionWitnessWrapper {
-    inner: Arc<Mutex<ExecutionWitnessResult>>,
+pub struct GuestProgramStateWrapper {
+    inner: Arc<Mutex<GuestProgramState>>,
 }
 
-impl ExecutionWitnessWrapper {
-    pub fn new(db: ExecutionWitnessResult) -> Self {
+impl GuestProgramStateWrapper {
+    pub fn new(db: GuestProgramState) -> Self {
         Self {
             inner: Arc::new(Mutex::new(db)),
         }
     }
 
-    fn lock_mutex(&self) -> Result<MutexGuard<ExecutionWitnessResult>, ExecutionWitnessError> {
+    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, ExecutionWitnessError> {
         self.inner
             .lock()
             .map_err(|_| ExecutionWitnessError::Database("Failed to lock DB".to_string()))
@@ -59,7 +59,7 @@ impl ExecutionWitnessWrapper {
     }
 }
 
-impl VmDatabase for ExecutionWitnessWrapper {
+impl VmDatabase for GuestProgramStateWrapper {
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?

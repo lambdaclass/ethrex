@@ -12,7 +12,7 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
@@ -177,7 +177,7 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
-    ) -> Result<ExecutionWitnessResult, ChainError> {
+    ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -371,21 +371,12 @@ impl Blockchain {
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
-        Ok(ExecutionWitnessResult {
-            codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+        Ok(ExecutionWitness {
             codes,
-            //TODO: See if we should call rebuild_tries() here for initializing these fields so that we don't have an inconsistent struct. (#4056)
-            state_trie: None,
-            block_headers: BTreeMap::new(), // empty map because we'll rebuild it in the stateless execution
             block_headers_bytes,
-            chain_config,
-            storage_tries: BTreeMap::new(),
-            parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
             first_block_number: first_block_header.number,
-            nodes_hashed: BTreeMap::new(), // This must be filled during stateless execution
+            chain_config,
             nodes,
-            touched_account_storage_slots,
-            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 
