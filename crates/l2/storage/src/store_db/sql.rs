@@ -10,7 +10,7 @@ use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
-    params::{IntoParams, Params},
+    params::{IntoParams, IntoValue, Params},
 };
 
 /// ### SQLStore
@@ -28,23 +28,16 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 16] = [
-    "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
+const DB_SCHEMA: [&str; 9] = [
+    "CREATE TABLE batches (number INT PRIMARY KEY, first_block INT NOT NULL, last_block INT NOT NULL, privileged_transactions_hash BLOB, state_root BLOB NOT NULL, commit_tx BLOB, verify_tx BLOB, signature BLOB)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
-    "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
-    "CREATE TABLE commit_txs (batch INT PRIMARY KEY, commit_tx BLOB)",
-    "CREATE TABLE verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
-    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
-    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
-    "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
-    "INSERT INTO latest_sent VALUES (0, 0)",
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE precommit_privileged (_id INT PRIMARY KEY, start INT, end INT)",
+    "CREATE TABLE precommit_privileged (start INT, end INT)",
+    "CREATE TABLE operation_count (transactions INT, privileged_transactions INT, messages INT)",
+    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
 ];
 
 impl SQLStore {
@@ -83,7 +76,7 @@ impl SQLStore {
         self.query("PRAGMA journal_mode=WAL;", ()).await?;
         let mut rows = self
             .query(
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name='blocks'",
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='batches'",
                 (),
             )
             .await?;
@@ -121,85 +114,21 @@ impl SQLStore {
         Ok(())
     }
 
-    async fn store_batch_number_by_block_in_tx(
-        &self,
-        block_number: u64,
-        batch_number: u64,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        let queries = vec![
-            (
-                "DELETE FROM blocks WHERE block_number = ?1",
-                vec![block_number].into_params()?,
-            ),
-            (
-                "INSERT INTO blocks VALUES (?1, ?2)",
-                vec![block_number, batch_number].into_params()?,
-            ),
-        ];
-        self.execute_in_tx(queries, db_tx).await
-    }
-
     async fn store_message_hashes_by_batch_in_tx(
         &self,
         batch_number: u64,
         message_hashes: Vec<H256>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
-        let mut queries = vec![(
-            "DELETE FROM messages WHERE batch = ?1",
-            vec![batch_number].into_params()?,
-        )];
+        let mut queries = vec![];
         for (index, hash) in message_hashes.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT INTO messages VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO messages VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
-        self.execute_in_tx(queries, db_tx).await
-    }
-
-    async fn store_privileged_transactions_hash_by_batch_number_in_tx(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        let queries = vec![
-            (
-                "DELETE FROM privileged_transactions WHERE batch = ?1",
-                vec![batch_number].into_params()?,
-            ),
-            (
-                "INSERT INTO privileged_transactions VALUES (?1, ?2)",
-                (
-                    batch_number,
-                    Vec::from(privileged_transactions_hash.to_fixed_bytes()),
-                )
-                    .into_params()?,
-            ),
-        ];
-        self.execute_in_tx(queries, db_tx).await
-    }
-
-    async fn store_state_root_by_batch_number_in_tx(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        let queries = vec![
-            (
-                "DELETE FROM state_roots WHERE batch = ?1",
-                vec![batch_number].into_params()?,
-            ),
-            (
-                "INSERT INTO state_roots VALUES (?1, ?2)",
-                (batch_number, Vec::from(state_root.to_fixed_bytes())).into_params()?,
-            ),
-        ];
         self.execute_in_tx(queries, db_tx).await
     }
 
@@ -209,44 +138,15 @@ impl SQLStore {
         state_diff: Vec<Blob>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
-        let mut queries = vec![(
-            "DELETE FROM blob_bundles WHERE batch = ?1",
-            vec![batch_number].into_params()?,
-        )];
+        let mut queries = vec![];
         for (index, blob) in state_diff.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT INTO blob_bundles VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO blob_bundles VALUES (?1, ?2, ?3)",
                 (batch_number, index, blob.to_vec()).into_params()?,
             ));
         }
-        self.execute_in_tx(queries, db_tx).await
-    }
-
-    async fn store_commit_tx_by_batch_in_tx(
-        &self,
-        batch_number: u64,
-        commit_tx: H256,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        let queries = vec![(
-            "INSERT OR REPLACE INTO commit_txs VALUES (?1, ?2)",
-            (batch_number, Vec::from(commit_tx.to_fixed_bytes())).into_params()?,
-        )];
-        self.execute_in_tx(queries, db_tx).await
-    }
-
-    async fn store_verify_tx_by_batch_in_tx(
-        &self,
-        batch_number: u64,
-        verify_tx: H256,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        let queries = vec![(
-            "INSERT OR REPLACE INTO verify_txs VALUES (?1, ?2)",
-            (batch_number, Vec::from(verify_tx.to_fixed_bytes())).into_params()?,
-        )];
         self.execute_in_tx(queries, db_tx).await
     }
 
@@ -257,30 +157,11 @@ impl SQLStore {
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let serialized = bincode::serialize(&account_updates)?;
-        let queries = vec![
-            (
-                "DELETE FROM account_updates WHERE block_number = ?1",
-                vec![block_number].into_params()?,
-            ),
-            (
-                "INSERT INTO account_updates VALUES (?1, ?2)",
-                (block_number, serialized).into_params()?,
-            ),
-        ];
-        self.execute_in_tx(queries, db_tx).await
-    }
-
-    async fn store_block_numbers_by_batch_in_tx(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-        db_tx: Option<&Transaction>,
-    ) -> Result<(), RollupStoreError> {
-        for block_number in block_numbers {
-            self.store_batch_number_by_block_in_tx(block_number, batch_number, db_tx)
-                .await?;
-        }
-        Ok(())
+        let query = vec![(
+            "INSERT OR REPLACE INTO account_updates VALUES (?1, ?2)",
+            (block_number, serialized).into_params()?,
+        )];
+        self.execute_in_tx(query, db_tx).await
     }
 }
 
@@ -311,14 +192,15 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<u64>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * from blocks WHERE block_number = ?1",
+                "SELECT number FROM batches WHERE first_block <= ?1 AND last_block >= ?1",
                 vec![block_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(read_from_row_int(&row, 1)?));
-        }
-        Ok(None)
+
+        rows.next()
+            .await?
+            .map(|row| read_from_row_int(&row, 0))
+            .transpose()
     }
 
     /// Gets the message hashes by a given batch number.
@@ -329,12 +211,12 @@ impl StoreEngineRollup for SQLStore {
         let mut hashes = vec![];
         let mut rows = self
             .query(
-                "SELECT * from messages WHERE batch = ?1 ORDER BY idx ASC",
+                "SELECT message_hash FROM messages WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 2)?;
+            let vec = read_from_row_blob(&row, 0)?;
             hashes.push(H256::from_slice(&vec));
         }
         if hashes.is_empty() {
@@ -348,20 +230,22 @@ impl StoreEngineRollup for SQLStore {
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
-        let mut blocks = Vec::new();
+    ) -> Result<Option<(BlockNumber, BlockNumber)>, RollupStoreError> {
         let mut rows = self
-            .query("SELECT * from blocks WHERE batch = ?1", vec![batch_number])
+            .query(
+                "SELECT first_block, last_block FROM batches WHERE number = ?1",
+                vec![batch_number],
+            )
             .await?;
-        while let Some(row) = rows.next().await? {
-            let val = read_from_row_int(&row, 0)?;
-            blocks.push(val);
-        }
-        if blocks.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(blocks))
-        }
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        Ok(Some((
+            read_from_row_int(&row, 0)?,
+            read_from_row_int(&row, 1)?,
+        )))
     }
 
     async fn get_privileged_transactions_hash_by_batch_number(
@@ -370,15 +254,17 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * from privileged_transactions WHERE batch = ?1",
+                "SELECT privileged_transactions_hash FROM batches WHERE number = ?1",
                 vec![batch_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
-            return Ok(Some(H256::from_slice(&vec)));
-        }
-        Ok(None)
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        let vec = read_from_row_blob(&row, 0)?;
+        Ok(Some(H256::from_slice(&vec)))
     }
 
     async fn get_state_root_by_batch_number(
@@ -387,15 +273,17 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * FROM state_roots WHERE batch = ?1",
+                "SELECT state_root FROM batches WHERE number = ?1",
                 vec![batch_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
-            return Ok(Some(H256::from_slice(&vec)));
-        }
-        Ok(None)
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        let vec = read_from_row_blob(&row, 0)?;
+        Ok(Some(H256::from_slice(&vec)))
     }
 
     async fn get_blob_bundle_by_batch_number(
@@ -405,12 +293,12 @@ impl StoreEngineRollup for SQLStore {
         let mut bundles = Vec::new();
         let mut rows = self
             .query(
-                "SELECT * FROM blob_bundles WHERE batch = ?1 ORDER BY idx ASC",
+                "SELECT blob_bundle FROM blob_bundles WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let val = read_from_row_blob(&row, 2)?;
+            let val = read_from_row_blob(&row, 0)?;
             bundles.push(
                 Blob::try_from(val).map_err(|_| {
                     RollupStoreError::Custom("error converting to Blob".to_string())
@@ -429,8 +317,11 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         commit_tx: H256,
     ) -> Result<(), RollupStoreError> {
-        self.store_commit_tx_by_batch_in_tx(batch_number, commit_tx, None)
-            .await
+        self.execute(
+            "UPDATE batches SET commit_tx = ?1 WHERE number = ?2",
+            (Vec::from(commit_tx.to_fixed_bytes()), batch_number),
+        )
+        .await
     }
 
     async fn get_commit_tx_by_batch(
@@ -439,15 +330,21 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT commit_tx FROM commit_txs WHERE batch = ?1",
+                "SELECT commit_tx FROM batches WHERE number = ?1",
                 vec![batch_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 0)?;
-            return Ok(Some(H256::from_slice(&vec)));
-        }
-        Ok(None)
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        // If commit_tx is NULL
+        let Ok(vec) = read_from_row_blob(&row, 0) else {
+            return Ok(None);
+        };
+
+        Ok(Some(H256::from_slice(&vec)))
     }
 
     async fn store_verify_tx_by_batch(
@@ -455,8 +352,11 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         verify_tx: H256,
     ) -> Result<(), RollupStoreError> {
-        self.store_verify_tx_by_batch_in_tx(batch_number, verify_tx, None)
-            .await
+        self.execute(
+            "UPDATE batches SET verify_tx = ?1 WHERE number = ?2",
+            (Vec::from(verify_tx.to_fixed_bytes()), batch_number),
+        )
+        .await
     }
 
     async fn get_verify_tx_by_batch(
@@ -465,15 +365,21 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT verify_tx FROM verify_txs WHERE batch = ?1",
+                "SELECT verify_tx FROM batches WHERE number = ?1",
                 vec![batch_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 0)?;
-            return Ok(Some(H256::from_slice(&vec)));
-        }
-        Ok(None)
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        // If verify_tx is NULL
+        let Ok(vec) = read_from_row_blob(&row, 0) else {
+            return Ok(None);
+        };
+
+        Ok(Some(H256::from_slice(&vec)))
     }
 
     async fn update_operations_count(
@@ -492,9 +398,9 @@ impl StoreEngineRollup for SQLStore {
         let mut rows = self.query("SELECT * from operation_count", ()).await?;
         if let Some(row) = rows.next().await? {
             return Ok([
+                read_from_row_int(&row, 0)?,
                 read_from_row_int(&row, 1)?,
                 read_from_row_int(&row, 2)?,
-                read_from_row_int(&row, 3)?,
             ]);
         }
         Err(RollupStoreError::Custom(
@@ -505,28 +411,27 @@ impl StoreEngineRollup for SQLStore {
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         let mut row = self
-            .query("SELECT * from blocks WHERE batch = ?1", vec![*batch_number])
+            .query(
+                "SELECT number FROM batches WHERE number = ?1",
+                vec![*batch_number],
+            )
             .await?;
         Ok(row.next().await?.is_some())
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        let mut rows = self.query("SELECT * from latest_sent", ()).await?;
-        if let Some(row) = rows.next().await? {
-            return read_from_row_int(&row, 1);
-        }
-        Err(RollupStoreError::Custom(
-            "missing operation_count row".to_string(),
-        ))
-    }
-
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
+        let mut rows = self
+            .query(
+                "SELECT MAX(number) FROM batches WHERE verify_tx IS NOT NULL",
+                (),
+            )
             .await?;
-        Ok(())
+
+        let Some(row) = rows.next().await? else {
+            return Ok(0);
+        };
+
+        read_from_row_int(&row, 0)
     }
 
     async fn get_account_updates_by_block_number(
@@ -535,15 +440,17 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * FROM account_updates WHERE block_number = ?1",
+                "SELECT updates FROM account_updates WHERE block_number = ?1",
                 vec![block_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
-            return Ok(Some(bincode::deserialize(&vec)?));
-        }
-        Ok(None)
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        let vec = read_from_row_blob(&row, 0)?;
+        Ok(Some(bincode::deserialize(&vec)?))
     }
 
     async fn store_account_updates_by_block_number(
@@ -558,19 +465,11 @@ impl StoreEngineRollup for SQLStore {
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let queries = vec![
             (
-                "DELETE FROM blocks WHERE batch > ?1",
+                "DELETE FROM batches WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
                 "DELETE FROM messages WHERE batch > ?1",
-                [batch_number].into_params()?,
-            ),
-            (
-                "DELETE FROM privileged_transactions WHERE batch > ?1",
-                [batch_number].into_params()?,
-            ),
-            (
-                "DELETE FROM state_roots WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
@@ -581,6 +480,7 @@ impl StoreEngineRollup for SQLStore {
                 "DELETE FROM batch_proofs WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
+            ("DELETE FROM precommit_privileged", Params::None),
         ];
         self.execute_in_tx(queries, None).await
     }
@@ -593,20 +493,7 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<(), RollupStoreError> {
         let serialized_proof = bincode::serialize(&proof)?;
         let prover_type: u32 = prover_type.into();
-        self.execute_in_tx(
-            vec![
-                (
-                    "DELETE FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
-                    (batch_number, prover_type).into_params()?,
-                ),
-                (
-                    "INSERT INTO batch_proofs VALUES (?1, ?2, ?3)",
-                    (batch_number, prover_type, serialized_proof).into_params()?,
-                ),
-            ],
-            None,
-        )
-        .await
+        self.execute("INSERT OR REPLACE INTO batch_proofs VALUES (?1, ?2, ?3) WHERE batch = ?1 AND prover_type = ?2", (batch_number, prover_type, serialized_proof).into_params()?).await
     }
 
     async fn get_proof_by_batch_and_type(
@@ -617,38 +504,48 @@ impl StoreEngineRollup for SQLStore {
         let prover_type: u32 = prover_type.into();
         let mut rows = self
             .query(
-                "SELECT proof from batch_proofs WHERE batch = ?1 AND prover_type = ?2",
+                "SELECT proof FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
                 (batch_number, prover_type),
             )
             .await?;
 
-        if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 0)?;
-            return Ok(Some(bincode::deserialize(&vec)?));
-        }
-        Ok(None)
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        let vec = read_from_row_blob(&row, 0)?;
+        Ok(Some(bincode::deserialize(&vec)?))
     }
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
         let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
-                .await?;
-        }
-        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
-            .await?;
+        let commit_tx = match batch.commit_tx {
+            Some(hash) => Vec::from(hash.to_fixed_bytes()).into_value()?,
+            None => Value::Null,
+        };
+
+        let verify_tx = match batch.verify_tx {
+            Some(hash) => Vec::from(hash.to_fixed_bytes()).into_value()?,
+            None => Value::Null,
+        };
+
+        self.execute_in_tx(vec![(
+            "INSERT INTO batches (number, first_block, last_block, privileged_transactions_hash, state_root, commit_tx, verify_tx) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                batch.number,
+                batch.first_block,
+                batch.last_block,
+                Vec::from(batch.privileged_transactions_hash.to_fixed_bytes()).into_value()?,
+                Vec::from(batch.state_root.to_fixed_bytes()).into_value()?,
+                commit_tx,
+                verify_tx,
+            ).into_params()?
+        )], Some(&transaction)).await?;
         self.store_message_hashes_by_batch_in_tx(
             batch.number,
             batch.message_hashes,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
-            batch.number,
-            batch.privileged_transactions_hash,
             Some(&transaction),
         )
         .await?;
@@ -658,20 +555,7 @@ impl StoreEngineRollup for SQLStore {
             Some(&transaction),
         )
         .await?;
-        self.store_state_root_by_batch_number_in_tx(
-            batch.number,
-            batch.state_root,
-            Some(&transaction),
-        )
-        .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(&transaction))
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(&transaction))
-                .await?;
-        }
+
         transaction.commit().await.map_err(RollupStoreError::from)
     }
 
@@ -724,18 +608,9 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
-        self.execute_in_tx(
-            vec![
-                (
-                    "DELETE FROM batch_signatures WHERE batch = ?1",
-                    vec![batch_number].into_params()?,
-                ),
-                (
-                    "INSERT INTO batch_signatures VALUES (?1, ?2)",
-                    (batch_number, Vec::from(signature.to_fixed_bytes())).into_params()?,
-                ),
-            ],
-            None,
+        self.execute(
+            "UPDATE batches SET signature=?1 WHERE batch = ?2)",
+            (Vec::from(signature.to_fixed_bytes()), batch_number).into_params()?,
         )
         .await
     }
@@ -746,7 +621,7 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT signature FROM batch_signatures WHERE batch = ?1",
+                "SELECT signature FROM batches WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
@@ -778,8 +653,8 @@ impl StoreEngineRollup for SQLStore {
     async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
         let mut rows = self.query("SELECT * from precommit_privileged", ()).await?;
         if let Some(row) = rows.next().await? {
-            let start = read_from_row_int(&row, 1)?;
-            let end = read_from_row_int(&row, 2)?;
+            let start = read_from_row_int(&row, 0)?;
+            let end = read_from_row_int(&row, 1)?;
             return Ok(Some(start..end));
         }
         Ok(None)
@@ -792,7 +667,7 @@ impl StoreEngineRollup for SQLStore {
         let mut queries = vec![("DELETE FROM precommit_privileged", ().into_params()?)];
         if let Some(range) = range {
             queries.push((
-                "INSERT INTO precommit_privileged VALUES (0, ?1, ?2)",
+                "INSERT INTO precommit_privileged VALUES (?1, ?2)",
                 (range.start, range.end).into_params()?,
             ));
         }
@@ -800,7 +675,7 @@ impl StoreEngineRollup for SQLStore {
     }
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
-        let mut rows = self.query("SELECT MAX(batch) FROM state_roots", ()).await?;
+        let mut rows = self.query("SELECT MAX(number) FROM batches", ()).await?;
         rows.next()
             .await?
             .map(|row| read_from_row_int(&row, 0))
@@ -816,17 +691,13 @@ mod tests {
     async fn test_schema_tables() -> anyhow::Result<()> {
         let store = SQLStore::new(":memory:")?;
         let tables = [
-            "blocks",
+            "batches",
             "messages",
-            "privileged_transactions",
-            "state_roots",
             "blob_bundles",
             "account_updates",
             "operation_count",
-            "latest_sent",
             "batch_proofs",
             "block_signatures",
-            "batch_signatures",
             "precommit_privileged",
         ];
         let mut attributes = Vec::new();
@@ -845,15 +716,17 @@ mod tests {
         }
         for (table, name, given_type) in attributes {
             let expected_type = match (table.as_str(), name.as_str()) {
-                ("blocks", "block_number") => "INT",
-                ("blocks", "batch") => "INT",
+                ("batches", "number") => "INT",
+                ("batches", "first_block") => "INT",
+                ("batches", "last_block") => "INT",
+                ("batches", "privileged_transactions_hash") => "BLOB",
+                ("batches", "state_root") => "BLOB",
+                ("batches", "commit_tx") => "BLOB",
+                ("batches", "verify_tx") => "BLOB",
+                ("batches", "signature") => "BLOB",
                 ("messages", "batch") => "INT",
                 ("messages", "idx") => "INT",
                 ("messages", "message_hash") => "BLOB",
-                ("privileged_transactions", "batch") => "INT",
-                ("privileged_transactions", "transactions_hash") => "BLOB",
-                ("state_roots", "batch") => "INT",
-                ("state_roots", "state_root") => "BLOB",
                 ("blob_bundles", "batch") => "INT",
                 ("blob_bundles", "idx") => "INT",
                 ("blob_bundles", "blob_bundle") => "BLOB",
@@ -863,16 +736,11 @@ mod tests {
                 ("operation_count", "transactions") => "INT",
                 ("operation_count", "privileged_transactions") => "INT",
                 ("operation_count", "messages") => "INT",
-                ("latest_sent", "_id") => "INT",
-                ("latest_sent", "batch") => "INT",
                 ("batch_proofs", "batch") => "INT",
                 ("batch_proofs", "prover_type") => "INT",
                 ("batch_proofs", "proof") => "BLOB",
                 ("block_signatures", "block_hash") => "BLOB",
                 ("block_signatures", "signature") => "BLOB",
-                ("batch_signatures", "batch") => "INT",
-                ("batch_signatures", "signature") => "BLOB",
-                ("precommit_privileged", "_id") => "INT",
                 ("precommit_privileged", "start") => "INT",
                 ("precommit_privileged", "end") => "INT",
                 _ => {

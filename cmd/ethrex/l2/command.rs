@@ -202,8 +202,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -686,7 +686,7 @@ async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> e
     let last_kept_block = rollup_store
         .get_block_numbers_by_batch(batch)
         .await?
-        .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
+        .map(|(_first, last)| last)
         .unwrap_or(0);
     rollup_store.revert_to_batch(batch).await?;
     info!("Succesfully deleted batch from rollup store");
