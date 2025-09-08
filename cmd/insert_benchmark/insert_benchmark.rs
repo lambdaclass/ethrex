@@ -33,7 +33,7 @@ pub fn open_store(data_dir: &str) -> Store {
     }
 }
 
-fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
+async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots")
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -56,8 +56,9 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 
         info!("Inserting accounts into the state trie");
 
-        let current_state_root: Result<H256, SyncError> = {
-            let mut trie = store.open_state_trie(computed_state_root)?;
+        let store_clone = store.clone();
+        let current_state_root: Result<H256, SyncError> = tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+            let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
             for (account_hash, account) in account_states_snapshot {
                 trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
@@ -65,19 +66,20 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
             info!("Comitting to disk");
             let current_state_root = trie.hash()?;
             Ok(current_state_root)
-        };
+        }).await?;
 
         computed_state_root = current_state_root?;
     }
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut opts = Options::default();
     //opts.log_level = tracing::Level::INFO;
     init_tracing(&opts);
     info!("Starting");
     let store: Store = open_store("/home/admin/.local/share/benchmarks/");
-    let _ = insert_accounts_into_db(store).inspect_err(|err| error!("We had the error {err:?}"));
+    let _ = insert_accounts_into_db(store).await.inspect_err(|err| error!("We had the error {err:?}"));
     info!("finishing");
 }
