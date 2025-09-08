@@ -1,5 +1,3 @@
-use std::{io::Write, time::SystemTime};
-
 use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_common::{
     H256,
@@ -8,13 +6,16 @@ use ethrex_common::{
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use eyre::Context;
 use reqwest::Url;
+use std::{io::Write, time::SystemTime};
+use tracing::debug;
 use tracing::info;
 
-use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
+use crate::fetcher::get_blockdata;
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, cache::ReplayInput};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -259,7 +260,14 @@ impl EthrexReplayCommand {
             Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
                 let (eth_client, network) = setup(&opts, false).await?;
 
-                get_rangedata(eth_client, network, start, end).await?;
+                for block_number in start..=end {
+                    get_blockdata(
+                        eth_client.clone(),
+                        network.clone(),
+                        BlockIdentifier::Number(block_number),
+                    )
+                    .await?;
+                }
 
                 info!("Block from {start} to {end} data cached successfully.");
             }
@@ -279,10 +287,26 @@ impl EthrexReplayCommand {
                 }
 
                 let eth_client = EthClient::new(&rpc_url)?;
+                let mut blocks = vec![];
+                for block_number in start..end {
+                    let file_name = format!("cache_{network}_{block_number}.json");
+                    let block = match Cache::load(&file_name).ok().map(|cache| cache.block) {
+                        Some(block) => {
+                            debug!("Getting block {block_number} from cache");
+                            block
+                        }
+                        None => {
+                            debug!("Getting block {block_number} from RPC");
+                            eth_client
+                                .get_raw_block(BlockIdentifier::Number(block_number))
+                                .await
+                                .wrap_err("failed to fetch block")?
+                        }
+                    };
+                    blocks.push(block);
+                }
 
-                let cache = get_rangedata(eth_client, network, start, end).await?;
-
-                plot(cache).await?;
+                plot(&blocks).await?;
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Transaction(TransactionOpts {
@@ -324,13 +348,13 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
     Ok((eth_client, network))
 }
 
-async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
-    let gas_used = get_total_gas_used(&cache.blocks);
+async fn replay(input: ReplayInput, opts: &EthrexReplayOptions) -> eyre::Result<u64> {
+    let gas_used = get_total_gas_used(&input.blocks);
 
     if opts.execute {
-        exec(BACKEND, cache).await?;
+        exec(BACKEND, input).await?;
     } else {
-        prove(BACKEND, cache).await?;
+        prove(BACKEND, input).await?;
     }
 
     Ok(gas_used)
@@ -391,16 +415,13 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         ));
     }
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+    let replay_input = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
-    let block =
-        cache.blocks.first().cloned().ok_or_else(|| {
-            eyre::Error::msg("no block found in the cache, this should never happen")
-        })?;
+    let block = replay_input.blocks[0].clone();
 
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+    let block_run_result = run_and_measure(replay(replay_input, &opts), opts.bench).await;
 
     let replayer_mode = replayer_mode(opts.execute)?;
 
@@ -468,8 +489,8 @@ pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     }
 }
 
-fn get_total_gas_used(blocks: &[Block]) -> f64 {
-    blocks.iter().map(|b| b.header.gas_used).sum::<u64>() as f64
+fn get_total_gas_used(blocks: &[Block]) -> u64 {
+    blocks.iter().map(|b| b.header.gas_used).sum::<u64>()
 }
 
 fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {

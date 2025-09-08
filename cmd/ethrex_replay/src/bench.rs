@@ -2,8 +2,8 @@ use serde_json::json;
 use std::fs::File;
 use tracing::info;
 
-pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
-    let rate = gas_used / 1e6 / elapsed;
+pub fn write_benchmark_file(gas_used: u64, elapsed: f64) {
+    let rate = gas_used as f64 / 1e6 / elapsed;
 
     let backend = if cfg!(feature = "sp1") {
         "SP1"
@@ -31,7 +31,7 @@ pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
 }
 
 pub async fn run_and_measure(
-    run: impl Future<Output = eyre::Result<f64>>,
+    run: impl Future<Output = eyre::Result<u64>>,
     write_to_file: bool,
 ) -> eyre::Result<()> {
     info!("Starting prover program");

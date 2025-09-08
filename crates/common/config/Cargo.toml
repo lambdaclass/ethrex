@@ -9,6 +9,7 @@ ethrex-common.workspace = true
 serde_json.workspace = true
 keccak-hash.workspace = true
 hex.workspace = true
+serde.workspace = true
 
 [lib]
 path = "lib.rs"

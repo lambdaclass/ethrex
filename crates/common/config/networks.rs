@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::types::{Genesis, GenesisError};
+use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
 const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
@@ -32,7 +33,7 @@ pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
@@ -40,7 +41,7 @@ pub enum Network {
     GenesisPath(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicNetwork {
     Hoodi,
     Holesky,
