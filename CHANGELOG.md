@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-02
+
+- Use x86-64-v2 cpu target on linux by default, dockerfile will use it too. [#4252](https://github.com/lambdaclass/ethrex/pull/4252)
+
 ### 2025-09-01
 
 - Process JUMPDEST gas and pc together with the given JUMP JUMPI opcode, improving performance. #[4220](https://github.com/lambdaclass/ethrex/pull/4220)
@@ -56,6 +60,7 @@
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
 - Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
+- Add Blake2 NEON implementation.
 
 ### 2025-07-30
 

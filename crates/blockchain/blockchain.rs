@@ -195,7 +195,7 @@ impl Blockchain {
 
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut touched_account_storage_slots = HashMap::new();
+        let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -205,7 +205,7 @@ impl Blockchain {
         })?;
 
         let mut block_hashes = HashMap::new();
-        let mut codes = HashMap::new();
+        let mut codes = BTreeMap::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -344,7 +344,8 @@ impl Blockchain {
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
         needed_block_numbers.sort();
-        // The last block number we need is the parent of the last block we execute
+
+        // Last needed block header for the witness is the parent of the last block we need to execute
         let last_needed_block_number = blocks
             .last()
             .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
@@ -358,7 +359,7 @@ impl Blockchain {
                 first_needed_block_number = **block_number_from_logger;
             }
         }
-        let mut block_headers = HashMap::new();
+        let mut block_headers = BTreeMap::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
@@ -380,13 +381,14 @@ impl Blockchain {
             state_trie: None,
             block_headers,
             chain_config,
-            storage_tries: HashMap::new(),
+            storage_tries: BTreeMap::new(),
             parent_block_header: self
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             touched_account_storage_slots,
+            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 

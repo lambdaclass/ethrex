@@ -5,7 +5,7 @@ services:
     ports:
       - "9092:9090"
     extra_hosts:
-      - "host.docker.internal:172.17.0.1"
+      - "host.docker.internal:host-gateway"
   grafana:
     ports:
       - "3802:3000"

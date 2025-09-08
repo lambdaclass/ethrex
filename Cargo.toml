@@ -11,7 +11,7 @@ members = [
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
-  "crates/l2/prover/zkvm/interface",
+  "crates/l2/prover/src/guest_program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
@@ -115,7 +115,8 @@ spawned-rt = "0.3.0"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 rayon = "1.10.0"
-rkyv = { version = "0.8.10", features = ["std"] }
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

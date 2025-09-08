@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
 
@@ -46,6 +46,12 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+pub const MAX_HEADER_CHUNK: u64 = 500_000;
+
+// How much we store in memory of request_account_range and request_storage_ranges
+// before we dump it into the file. This tunes how much memory ethrex uses during
+// the first steps of snap sync
+pub const RANGE_FILE_CHUNK_SIZE: u64 = 1024 * 1024 * 512; // 512MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -128,11 +134,6 @@ async fn ask_peer_head_number(
                 Ok(sync_head_number)
             } else {
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
-                // TODO merge:
-                //Err(format!(
-                //    "Received unexpected response from peer {peer_id}. We expected id {request_id}, and we got {id} and we received {} block headers",
-                //    block_headers.len()
-                //))
             }
         }
         Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
@@ -220,8 +221,9 @@ impl PeerHandler {
         sync_head: H256,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
+        *METRICS.current_step.lock().await = "Downloading Headers".to_string();
 
-        let initial_downloaded_headers = *METRICS.downloaded_headers.lock().await;
+        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
         let mut ret = Vec::<BlockHeader>::new();
 
@@ -266,6 +268,7 @@ impl PeerHandler {
 
             retries += 1;
         }
+        sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
             .elapsed()
@@ -275,8 +278,12 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        *METRICS.sync_head_block.lock().await = sync_head_number;
-        *METRICS.headers_to_download.lock().await = sync_head_number + 1;
+        METRICS
+            .sync_head_block
+            .store(sync_head_number, Ordering::Relaxed);
+        METRICS
+            .headers_to_download
+            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -325,13 +332,6 @@ impl PeerHandler {
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.header_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-
-                *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-            }
-
             if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -354,7 +354,9 @@ impl PeerHandler {
                 metrics_downloaded_count += headers.len() as u64;
 
                 if new_last_metrics_update >= Duration::from_secs(1) {
-                    *METRICS.downloaded_headers.lock().await += metrics_downloaded_count;
+                    METRICS
+                        .downloaded_headers
+                        .fetch_add(metrics_downloaded_count, Ordering::Relaxed);
                     metrics_downloaded_count = 0;
                 }
 
@@ -413,10 +415,6 @@ impl PeerHandler {
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_header_downloaders.lock().await = free_downloaders.len() as u64;
-            }
 
             if free_downloaders.is_empty() {
                 continue;
@@ -512,10 +510,10 @@ impl PeerHandler {
             }
         }
 
-        *METRICS.header_downloads_tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
-        *METRICS.free_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_headers.lock().await = initial_downloaded_headers + downloaded_count;
+        METRICS.downloaded_headers.store(
+            initial_downloaded_headers + downloaded_count,
+            Ordering::Relaxed,
+        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
@@ -789,6 +787,7 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Account Ranges".to_string();
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -842,11 +841,12 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>()
+                >= RANGE_FILE_CHUNK_SIZE as usize
+            {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -890,13 +890,13 @@ impl PeerHandler {
                 .unwrap_or(Duration::from_secs(1));
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.accounts_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_account_tries.lock().await = downloaded_count;
+                METRICS
+                    .downloaded_account_tries
+                    .store(downloaded_count, Ordering::Relaxed);
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+                let mut scores = self.peer_scores.lock().await;
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });
@@ -977,10 +977,6 @@ impl PeerHandler {
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
             if free_downloaders.is_empty() {
                 continue;
             }
@@ -988,6 +984,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
+                let scores = self.peer_scores.lock().await;
                 let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
@@ -1027,9 +1024,14 @@ impl PeerHandler {
 
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
-                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
-                    .await
-                    .expect("Should be able to update pivot")
+                *pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    self,
+                    block_sync_state,
+                )
+                .await
+                .expect("Should be able to update pivot")
             }
 
             tokio::spawn(PeerHandler::request_account_range_worker(
@@ -1069,11 +1071,9 @@ impl PeerHandler {
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
-        *METRICS.accounts_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_account_tries.lock().await = downloaded_count;
-        *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
+        METRICS
+            .downloaded_account_tries
+            .store(downloaded_count, Ordering::Relaxed);
         *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         Ok(())
@@ -1132,8 +1132,6 @@ impl PeerHandler {
                 tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
-                // Too spammy
-                // tracing::error!("Received empty account range");
                 return Ok(());
             }
             // Unzip & validate response
@@ -1207,6 +1205,7 @@ impl PeerHandler {
         &self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Bytecodes".to_string();
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
@@ -1254,25 +1253,14 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
-        *METRICS.bytecodes_to_download.lock().await = all_bytecode_hashes.len() as u64;
-        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        METRICS
+            .bytecodes_to_download
+            .fetch_add(all_bytecode_hashes.len() as u64, Ordering::Relaxed);
 
-        let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
         let mut scores = self.peer_scores.lock().await;
 
         loop {
-            let new_last_metrics_update = last_metrics_update
-                .elapsed()
-                .unwrap_or(Duration::from_secs(1));
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.bytecode_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
-            }
-
             if let Ok(result) = task_receiver.try_recv() {
                 let TaskResult {
                     start_index,
@@ -1330,10 +1318,6 @@ impl PeerHandler {
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
 
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_bytecode_downloaders.lock().await = free_downloaders.len() as u64;
-            }
-
             if free_downloaders.is_empty() {
                 continue;
             }
@@ -1347,17 +1331,6 @@ impl PeerHandler {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -1460,22 +1433,15 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::error!("Failed to get bytecode");
+                    tracing::debug!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                last_metrics_update = SystemTime::now();
-            }
         }
 
-        *METRICS.bytecode_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
-        *METRICS.free_bytecode_downloaders.lock().await = downloaders.len() as u64;
-
+        METRICS
+            .downloaded_bytecodes
+            .fetch_add(downloaded_count, Ordering::Relaxed);
         info!(
             "Finished downloading bytecodes, total bytecodes: {}",
             all_bytecode_hashes.len()
@@ -1498,6 +1464,7 @@ impl PeerHandler {
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
+        *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
@@ -1556,7 +1523,7 @@ impl PeerHandler {
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
+                > RANGE_FILE_CHUNK_SIZE as usize
             {
                 let current_account_storages = std::mem::take(&mut all_account_storages);
                 all_account_storages =
@@ -1601,13 +1568,6 @@ impl PeerHandler {
             let new_last_metrics_update = last_metrics_update
                 .elapsed()
                 .unwrap_or(Duration::from_secs(1));
-
-            /*             if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.storages_downloads_tasks_queued.lock().await =
-                    tasks_queue_not_started.len() as u64;
-                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-                *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-            } */
 
             if let Ok(result) = task_receiver.try_recv() {
                 let StorageTaskResult {
@@ -1726,19 +1686,15 @@ impl PeerHandler {
                     *peer_score += 1;
                 }
 
-                /*                 *downloaded_count += account_storages.len() as u64;
-                // If we didn't finish downloading the account, don't count it
-                if !hash_start.is_zero() {
-                    *downloaded_count -= 1;
-                } */
-
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
-                *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
+                METRICS
+                    .downloaded_storage_slots
+                    .fetch_add(n_slots as u64, Ordering::Relaxed);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
@@ -1773,10 +1729,6 @@ impl PeerHandler {
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
-
-            if new_last_metrics_update >= Duration::from_secs(1) {
-                *METRICS.free_storages_downloaders.lock().await = free_downloaders.len() as u64;
-            }
 
             if free_downloaders.is_empty() {
                 continue;
@@ -1886,12 +1838,6 @@ impl PeerHandler {
             std::fs::write(path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
-
-        /*         *METRICS.storages_downloads_tasks_queued.lock().await =
-            tasks_queue_not_started.len() as u64;
-        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
-        *METRICS.downloaded_storage_tries.lock().await = *downloaded_count;
-        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64; */
         disk_joinset
             .join_all()
             .await

@@ -27,6 +27,7 @@ use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tracing::{debug, trace, warn};
 
 pub mod errors;
 
@@ -128,52 +129,70 @@ impl EthClient {
         )
     }
 
+    /// Send a request to the RPC. Tries each URL until one succeeds.
     pub async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
-            if response.is_ok() {
-                // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
-                // so if the server returns Ok(RpcResponse::Error) we retry with the others
-                if let Ok(RpcResponse::Success(ref _a)) = response {
+            // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
+            // so if the server returns Ok(RpcResponse::Error) we retry with the others
+            match &response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                     return response;
+                }
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
                 }
             }
         }
+
         response
     }
 
+    /// Send a request to **all** RPC URLs.
+    ///
+    /// Return the first successful response, or the last error if all fail.
     async fn send_request_to_all(
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
 
-            if response.is_ok() {
-                continue;
-            }
-
-            response = match &maybe_response {
-                Ok(RpcResponse::Success(_)) => maybe_response,
-                Ok(RpcResponse::Error(err)) => {
-                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+            match &maybe_response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                 }
-                Err(_) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
+                }
             };
+
+            response = response.or(maybe_response);
         }
 
         response
     }
 
+    /// Send a request to a specific URL.
     async fn send_request_to_url(
         &self,
         rpc_url: &Url,
         request: &RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
+        let id = uuid::Uuid::new_v4();
+        trace!(endpoint = %rpc_url, ?request, %id, "Sending RPC request");
+
         self.client
             .post(rpc_url.as_str())
             .header("content-type", "application/json")
@@ -181,9 +200,12 @@ impl EthClient {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await
+            .inspect(|_| trace!(endpoint = %rpc_url, %id, "Request finished successfully"))?
             .json::<RpcResponse>()
             .await
+            .inspect(|body| trace!(endpoint = %rpc_url, %id, ?body, "Response deserialized successfully"))
+            .inspect_err(|err| trace!(endpoint = %rpc_url, %id, %err, "Failed to deserialize response"))
             .map_err(EthClientError::from)
     }
 
@@ -270,57 +292,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                let error_data = if let Some(error_data) = error_response.error.data {
-                    if &error_data == "0x" {
-                        "unknown error".to_owned()
-                    } else {
-                        let abi_decoded_error_data = hex::decode(
-                            error_data.strip_prefix("0x").ok_or(EthClientError::Custom(
-                                "Failed to strip_prefix in estimate_gas".to_owned(),
-                            ))?,
-                        )
-                        .map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to hex::decode in estimate_gas".to_owned(),
-                            )
-                        })?;
-                        let string_length = U256::from_big_endian(
-                            abi_decoded_error_data
-                                .get(36..68)
-                                .ok_or(EthClientError::Custom(
-                                    "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                        .to_owned(),
-                                ))?,
-                        );
-
-                        let string_len = if string_length > usize::MAX.into() {
-                            return Err(EthClientError::Custom(
-                                "Failed to convert string_length to usize in estimate_gas"
-                                    .to_owned(),
-                            ));
-                        } else {
-                            string_length.as_usize()
-                        };
-                        let string_data = abi_decoded_error_data.get(68..68 + string_len).ok_or(
-                            EthClientError::Custom(
-                                "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                    .to_owned(),
-                            ),
-                        )?;
-                        String::from_utf8(string_data.to_vec()).map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to String::from_utf8 in estimate_gas".to_owned(),
-                            )
-                        })?
-                    }
-                } else {
-                    "unknown error".to_owned()
-                };
-                Err(EstimateGasError::RPCError(format!(
-                    "{}: {}",
-                    error_response.error.message, error_data
-                ))
-                .into())
+                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
             }
         }
     }
