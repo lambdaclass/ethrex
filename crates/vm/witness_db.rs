@@ -4,7 +4,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitnessError, GuestProgramState},
+        block_execution_witness::{GuestProgramStateError, GuestProgramState},
     },
 };
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -21,31 +21,31 @@ impl GuestProgramStateWrapper {
         }
     }
 
-    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, ExecutionWitnessError> {
+    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
         self.inner
             .lock()
-            .map_err(|_| ExecutionWitnessError::Database("Failed to lock DB".to_string()))
+            .map_err(|_| GuestProgramStateError::Database("Failed to lock DB".to_string()))
     }
 
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
-    ) -> Result<(), ExecutionWitnessError> {
+    ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?.apply_account_updates(account_updates)
     }
 
-    pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
+    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
         self.lock_mutex()?.state_trie_root()
     }
 
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
         self.lock_mutex()?.get_first_invalid_block_hash()
     }
 
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
-    ) -> Result<BlockHeader, ExecutionWitnessError> {
+    ) -> Result<BlockHeader, GuestProgramStateError> {
         self.lock_mutex()?
             .get_block_parent_header(block_number)
             .cloned()
@@ -54,7 +54,7 @@ impl GuestProgramStateWrapper {
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
-    ) -> Result<(), ExecutionWitnessError> {
+    ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
 }

@@ -5,7 +5,7 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitness, ExecutionWitnessError, GuestProgramState},
+        block_execution_witness::{ExecutionWitness, GuestProgramState, GuestProgramStateError},
     },
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -76,7 +76,7 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-) -> Result<ExecutionWitness, ExecutionWitnessError> {
+) -> Result<ExecutionWitness, GuestProgramStateError> {
     let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
     let codes = rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect();
     let block_headers_bytes = rpc_witness

@@ -13,6 +13,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{NodeHash, NodeRLP, Trie};
+use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -89,7 +90,7 @@ pub struct ExecutionWitness {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ExecutionWitnessError {
+pub enum GuestProgramStateError {
     #[error("Failed to rebuild tries: {0}")]
     RebuildTrie(String),
     #[error("Failed to apply account updates {0}")]
@@ -108,10 +109,78 @@ pub enum ExecutionWitnessError {
     Custom(String),
 }
 
+impl TryFrom<ExecutionWitness> for GuestProgramState {
+    type Error = GuestProgramStateError;
+
+    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+        let block_headers: BTreeMap<u64, BlockHeader> = value
+            .block_headers_bytes
+            .into_iter()
+            .map(|bytes| BlockHeader::decode(bytes.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
+            })?
+            .into_iter()
+            .map(|header| (header.number, header))
+            .collect();
+
+        let parent_number =
+            value
+                .first_block_number
+                .checked_sub(1)
+                .ok_or(GuestProgramStateError::Custom(
+                    "First block number cannot be zero".to_string(),
+                ))?;
+
+        let parent_header = block_headers.get(&parent_number).cloned().ok_or(
+            GuestProgramStateError::MissingParentHeaderOf(value.first_block_number),
+        )?;
+
+        // hash nodes
+        let nodes_hashed = value
+            .nodes
+            .into_iter()
+            .map(|node| {
+                let node = node.to_vec();
+                (keccak(&node), node)
+            })
+            .collect();
+
+        // hash codes
+        let codes_hashed = value
+            .codes
+            .into_iter()
+            .map(|code| (keccak(&code), code))
+            .collect();
+
+        let mut guest_program_state = GuestProgramState {
+            codes_hashed,
+            state_trie: None,
+            storage_tries: BTreeMap::new(),
+            block_headers,
+            parent_block_header: parent_header,
+            first_block_number: value.first_block_number,
+            chain_config: value.chain_config,
+            nodes_hashed,
+            touched_account_storage_slots: BTreeMap::new(),
+            account_hashes_by_address: BTreeMap::new(),
+        };
+
+        guest_program_state.rebuild_state_trie().map_err(|_| {
+            GuestProgramStateError::RebuildTrie(
+                "Failed to rebuild state trie from execution witness".to_owned(),
+            )
+        })?;
+
+        Ok(guest_program_state)
+    }
+}
+
 impl GuestProgramState {
     /// Use the state nodes to build the state trie and store them in `self.state_trie`
     /// This function will fail if the state trie cannot be rebuilt.
-    pub fn rebuild_state_trie(&mut self) -> Result<(), ExecutionWitnessError> {
+    pub fn rebuild_state_trie(&mut self) -> Result<(), GuestProgramStateError> {
         if self.state_trie.is_some() {
             return Ok(());
         }
@@ -121,7 +190,7 @@ impl GuestProgramState {
             &self.nodes_hashed,
         )
         .map_err(|e| {
-            ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
+            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
         })?;
 
         self.state_trie = Some(state_trie);
@@ -155,10 +224,10 @@ impl GuestProgramState {
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
-    ) -> Result<(), ExecutionWitnessError> {
+    ) -> Result<(), GuestProgramStateError> {
         let (Some(state_trie), storage_tries) = (self.state_trie.as_mut(), &mut self.storage_tries)
         else {
-            return Err(ExecutionWitnessError::ApplyAccountUpdates(
+            return Err(GuestProgramStateError::ApplyAccountUpdates(
                 "Tried to apply account updates before rebuilding the tries".to_string(),
             ));
         };
@@ -235,11 +304,11 @@ impl GuestProgramState {
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
-    pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
+    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
         let state_trie = self
             .state_trie
             .as_ref()
-            .ok_or(ExecutionWitnessError::RebuildTrie(
+            .ok_or(GuestProgramStateError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
 
@@ -251,10 +320,10 @@ impl GuestProgramState {
     ///
     /// Keep in mind that the last block hash (which is a batch's parent hash)
     /// can't be validated against the next header, because it has no successor.
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
         // Enforces there's at least one block header, so windows() call doesn't panic.
         if self.block_headers.is_empty() {
-            return Err(ExecutionWitnessError::NoBlockHeaders);
+            return Err(GuestProgramStateError::NoBlockHeaders);
         };
 
         // Sort in ascending order
@@ -267,12 +336,12 @@ impl GuestProgramState {
                 (window.first().cloned(), window.get(1).cloned())
             else {
                 // windows() returns an empty iterator in this case.
-                return Err(ExecutionWitnessError::Unreachable(
+                return Err(GuestProgramStateError::Unreachable(
                     "block header window len is < 2".to_string(),
                 ));
             };
             if *next_number != *number + 1 {
-                return Err(ExecutionWitnessError::NoncontiguousBlockHeaders);
+                return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
 
             if next_header.parent_hash != header.hash() {
@@ -288,10 +357,10 @@ impl GuestProgramState {
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
-    ) -> Result<&BlockHeader, ExecutionWitnessError> {
+    ) -> Result<&BlockHeader, GuestProgramStateError> {
         self.block_headers
             .get(&block_number.saturating_sub(1))
-            .ok_or(ExecutionWitnessError::MissingParentHeaderOf(block_number))
+            .ok_or(GuestProgramStateError::MissingParentHeaderOf(block_number))
     }
 
     /// Retrieves the account info based on what is stored in the state trie.
@@ -299,11 +368,11 @@ impl GuestProgramState {
     pub fn get_account_info(
         &mut self,
         address: Address,
-    ) -> Result<Option<AccountInfo>, ExecutionWitnessError> {
+    ) -> Result<Option<AccountInfo>, GuestProgramStateError> {
         let state_trie = self
             .state_trie
             .as_ref()
-            .ok_or(ExecutionWitnessError::Database(
+            .ok_or(GuestProgramStateError::Database(
                 "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
             ))?;
 
@@ -316,7 +385,7 @@ impl GuestProgramState {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
-            ExecutionWitnessError::Database("Failed to get decode account from trie".to_string())
+            GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
         Ok(Some(AccountInfo {
@@ -328,12 +397,12 @@ impl GuestProgramState {
 
     /// Fetches the block hash for a specific block number.
     /// Looks up `self.block_headers` and computes the hash if it is not already computed.
-    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
+    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, GuestProgramStateError> {
         self.block_headers
             .get(&block_number)
             .map(|header| header.hash())
             .ok_or_else(|| {
-                ExecutionWitnessError::Database(format!(
+                GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
                 ))
             })
@@ -347,7 +416,7 @@ impl GuestProgramState {
         &mut self,
         address: Address,
         key: H256,
-    ) -> Result<Option<U256>, ExecutionWitnessError> {
+    ) -> Result<Option<U256>, GuestProgramStateError> {
         self.touched_account_storage_slots
             .entry(address)
             .or_default()
@@ -357,7 +426,7 @@ impl GuestProgramState {
             storage_trie
         } else {
             if self.state_trie.is_none() {
-                return Err(ExecutionWitnessError::Database(
+                return Err(GuestProgramStateError::Database(
                     "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
                         .to_string(),
                 ));
@@ -372,11 +441,11 @@ impl GuestProgramState {
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
-            .map_err(|e| ExecutionWitnessError::Database(e.to_string()))?
+            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
         {
             U256::decode(&encoded_key)
                 .map_err(|_| {
-                    ExecutionWitnessError::Database("failed to read storage from trie".to_string())
+                    GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
                 .map(Some)
         } else {
@@ -385,13 +454,16 @@ impl GuestProgramState {
     }
 
     /// Retrieves the chain configuration for the execution witness.
-    pub fn get_chain_config(&self) -> Result<ChainConfig, ExecutionWitnessError> {
+    pub fn get_chain_config(&self) -> Result<ChainConfig, GuestProgramStateError> {
         Ok(self.chain_config)
     }
 
     /// Retrieves the account code for a specific account.
     /// Returns an Err if the code is not found.
-    pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
+    pub fn get_account_code(
+        &self,
+        code_hash: H256,
+    ) -> Result<bytes::Bytes, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
@@ -414,7 +486,7 @@ impl GuestProgramState {
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
-    ) -> Result<(), ExecutionWitnessError> {
+    ) -> Result<(), GuestProgramStateError> {
         for block in blocks {
             let header = self
                 .block_headers
@@ -423,7 +495,7 @@ impl GuestProgramState {
 
             // headers hash should happen in the stateless execution
             if header.hash.get().is_some() {
-                return Err(ExecutionWitnessError::Custom(format!(
+                return Err(GuestProgramStateError::Custom(format!(
                     "Block header hash is already set for {}",
                     block.header.number
                 )));
