@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    serde_utils,
     types::{
         ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
@@ -40,31 +38,14 @@ pub struct RpcExecutionWitness {
 
 impl From<ExecutionWitness> for RpcExecutionWitness {
     fn from(value: ExecutionWitness) -> Self {
-        let mut keys = Vec::new();
-
-        // for (address, touched_storage_slots) in touched_account_storage_slots {
-        //     keys.push(Bytes::copy_from_slice(address.as_bytes()));
-        //     for slot in touched_storage_slots.iter() {
-        //         keys.push(Bytes::copy_from_slice(slot.as_bytes()));
-        //     }
-        // }
-
         Self {
-            state: value
-                .nodes
-                .iter()
-                .map(|node| Bytes::copy_from_slice(node))
-                .collect(),
-            keys, // TODO: change this
-            codes: value
-                .codes
-                .iter()
-                .map(|code| Bytes::copy_from_slice(code))
-                .collect(),
+            state: value.nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
                 .block_headers_bytes
-                .iter()
-                .map(|header| Bytes::copy_from_slice(header))
+                .into_iter()
+                .map(Bytes::from)
                 .collect(),
         }
     }
@@ -76,36 +57,17 @@ pub fn execution_witness_from_rpc_chain_config(
     chain_config: ChainConfig,
     first_block_number: u64,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
-    let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
-    let codes = rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect();
-    let block_headers_bytes = rpc_witness
-        .headers
-        .into_iter()
-        .map(|b| b.to_vec())
-        .collect();
-
-    let mut touched_account_storage_slots = BTreeMap::new();
-    let mut address = Address::default();
-    for bytes in rpc_witness.keys {
-        if bytes.len() == Address::len_bytes() {
-            address = Address::from_slice(&bytes);
-        } else {
-            let slot = H256::from_slice(&bytes);
-            // Insert in the vec of the address value
-            touched_account_storage_slots
-                .entry(address)
-                .or_insert_with(Vec::new)
-                .push(slot);
-        }
-    }
-
     let witness = ExecutionWitness {
-        codes,
+        codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
         chain_config,
         first_block_number,
-        block_headers_bytes,
-        nodes,
-        // Do we need to add touched_account_storage_slots??
+        block_headers_bytes: rpc_witness
+            .headers
+            .into_iter()
+            .map(|b| b.to_vec())
+            .collect(),
+        nodes: rpc_witness.state.into_iter().map(|b| b.to_vec()).collect(),
+        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 
     Ok(witness)

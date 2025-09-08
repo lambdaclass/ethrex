@@ -49,11 +49,14 @@ pub async fn run_tx(
         .blocks
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
+
     let mut remaining_gas = block.header.gas_limit;
+
     let execution_witness = cache.witness;
 
     let guest_program_state: GuestProgramState =
         execution_witness.try_into().map_err(eyre::Error::msg)?;
+
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
@@ -64,6 +67,7 @@ pub async fn run_tx(
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
+
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {

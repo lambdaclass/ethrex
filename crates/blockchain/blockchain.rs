@@ -371,12 +371,22 @@ impl Blockchain {
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
+        let mut keys = Vec::new();
+
+        for (address, touched_storage_slots) in touched_account_storage_slots {
+            keys.push(address.as_bytes().to_vec());
+            for slot in touched_storage_slots.iter() {
+                keys.push(slot.as_bytes().to_vec());
+            }
+        }
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config,
             nodes,
+            keys,
         })
     }
 

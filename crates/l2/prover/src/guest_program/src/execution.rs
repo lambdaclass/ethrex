@@ -159,13 +159,7 @@ pub fn stateless_validation_l2(
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let initial_db = ExecutionWitness {
-        block_headers_bytes: db.block_headers_bytes.clone(),
-        chain_config: db.chain_config,
-        codes: db.codes.clone(),
-        first_block_number: db.first_block_number,
-        nodes: db.nodes.clone(),
-    };
+    let initial_db = db.clone();
 
     let StatelessResult {
         receipts,
@@ -180,21 +174,9 @@ pub fn stateless_validation_l2(
         parent_block_header,
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
-    let mut execution_witness = GuestProgramState {
-        codes_hashed,
-        state_trie: None,
-        storage_tries: BTreeMap::new(),
-        block_headers: BTreeMap::new(), // This is not needed
-        parent_block_header,
-        first_block_number: initial_db.first_block_number,
-        chain_config: initial_db.chain_config,
-        nodes_hashed,
-        touched_account_storage_slots: BTreeMap::new(),
-        account_hashes_by_address: BTreeMap::new(),
-    };
-
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
+
     let (l1messages_merkle_root, privileged_transactions_hash) =
         compute_l1messages_and_privileged_transactions_digests(
             &l1messages,
@@ -206,10 +188,25 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
+        let mut execution_witness = GuestProgramState {
+            codes_hashed,
+            parent_block_header,
+            first_block_number: initial_db.first_block_number,
+            chain_config: initial_db.chain_config,
+            nodes_hashed,
+            state_trie: None,
+            // The following fields are not needed for blob validation.
+            storage_tries: BTreeMap::new(),
+            block_headers: BTreeMap::new(),
+            account_hashes_by_address: BTreeMap::new(),
+        };
+
         execution_witness
             .rebuild_state_trie()
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+
         let wrapped_db = GuestProgramStateWrapper::new(execution_witness);
+
         let state_diff = prepare_state_diff(
             last_block_header,
             &wrapped_db,
@@ -217,6 +214,7 @@ pub fn stateless_validation_l2(
             &privileged_transactions,
             account_updates.values().cloned().collect(),
         )?;
+
         verify_blob(state_diff, blob_commitment, blob_proof)?
     } else {
         H256::zero()

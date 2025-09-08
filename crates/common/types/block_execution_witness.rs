@@ -52,12 +52,6 @@ pub struct GuestProgramState {
     pub first_block_number: u64,
     /// The chain configuration.
     pub chain_config: ChainConfig,
-    /// This is a convenience map to track which accounts and storage slots were
-    /// touched during execution.
-    /// It maps an account address to a vector of all storage slots that were
-    /// accessed for that account.
-    /// This is needed for building `RpcExecutionWitness`.
-    pub touched_account_storage_slots: BTreeMap<Address, Vec<H256>>,
     /// Map of account addresses to their corresponding storage tries.
     /// This struct is initialized empty inside the zkVM and storage tries are
     /// built on-demand and cached here during guest program execution.
@@ -74,7 +68,7 @@ pub struct GuestProgramState {
 ///
 /// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
 /// and `first_block_number`.
-#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
@@ -90,6 +84,10 @@ pub struct ExecutionWitness {
     /// RLP-encoded trie nodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub nodes: Vec<Vec<u8>>,
+    /// Flattened map of account addresses and storage keys whose values
+    /// are needed for stateless execution.
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub keys: Vec<Vec<u8>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -166,7 +164,6 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             first_block_number: value.first_block_number,
             chain_config: value.chain_config,
             nodes_hashed,
-            touched_account_storage_slots: BTreeMap::new(),
             account_hashes_by_address: BTreeMap::new(),
         };
 
@@ -420,11 +417,6 @@ impl GuestProgramState {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        self.touched_account_storage_slots
-            .entry(address)
-            .or_default()
-            .push(key);
-
         let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
             storage_trie
         } else {
