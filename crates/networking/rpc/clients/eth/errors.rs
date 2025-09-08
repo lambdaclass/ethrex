@@ -63,8 +63,8 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
-    #[error("All RPC calls failed. Last RPC response: {0}")]
-    FailedAllRPC(String),
+    #[error("All RPC calls failed")]
+    FailedAllRPC,
     #[error("Generic transaction error: {0}")]
     GenericTransactionError(#[from] GenericTransactionError),
     #[error("Failed to parse hex string: {0}")]
