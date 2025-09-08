@@ -105,7 +105,7 @@ pub struct BatchNumberRequest {}
 
 impl RpcHandler for BatchNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        if params.as_ref().is_some_and(|params| params.len() != 0) {
+        if params.as_ref().is_some_and(|params| !params.is_empty()) {
             return Err(ethrex_rpc::RpcErr::BadParams(
                 "Expected 0 params".to_owned(),
             ))?;
