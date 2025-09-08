@@ -38,8 +38,6 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
-use malachite::base::num::arithmetic::traits::ModPow as _;
-use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
 use sha3::Digest;
 use std::borrow::Cow;
@@ -56,6 +54,8 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
+
+mod modexp;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -467,7 +467,7 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         return Ok(Bytes::new());
     }
 
-    let result = mod_exp(base, exponent, modulus);
+    let result = self::modexp::modexp(base, exponent, modulus);
 
     let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size);
@@ -499,19 +499,6 @@ fn get_slice_or_default<'c>(
         }
     }
     Vec::new().into()
-}
-
-#[allow(clippy::arithmetic_side_effects)]
-#[inline(always)]
-fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
-    if modulus == Natural::ZERO {
-        Natural::ZERO
-    } else if exponent == Natural::ZERO {
-        Natural::from(1_u8) % modulus
-    } else {
-        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-        base_mod.mod_pow(&exponent, &modulus)
-    }
 }
 
 /// If the result size is less than needed, pads left with zeros.
