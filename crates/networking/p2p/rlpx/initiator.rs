@@ -78,15 +78,7 @@ impl RLPxInitiator {
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
         let peer_number = self.context.table.peers.lock().await.len() as u64;
 
-        if self.last_log_time.elapsed() > Duration::from_secs(2) {
-            info!(
-                "Resetting list of tried peers. Current peers {}",
-                peer_number,
-            );
-            self.last_log_time = Instant::now();
             already_tried_peers.clear();
-        }
-
         if peer_number > self.target_peers {
             return false;
         }
@@ -106,6 +98,12 @@ impl RLPxInitiator {
                 return true;
             }
         }
+
+        info!(
+            "Resetting list of tried peers. Current peers {}",
+            peer_number,
+        );
+        already_tried_peers.clear();
         false
     }
 
