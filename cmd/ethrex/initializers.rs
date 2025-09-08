@@ -20,7 +20,6 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -116,13 +115,15 @@ pub fn open_store(data_dir: &str) -> Store {
 }
 
 pub fn init_blockchain(
-    evm_engine: EvmEngine,
     store: Store,
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!(evm = %evm_engine, "Initiating blockchain");
-    Blockchain::new(evm_engine, store, blockchain_type, perf_logs_enabled).into()
+    #[cfg(feature = "revm")]
+    info!("Initiating blockchain with revm");
+    #[cfg(not(feature = "revm"))]
+    info!("Initiating blockchain with levm");
+    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -385,7 +386,7 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
 
     let signer = get_signer(&data_dir);
 

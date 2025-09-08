@@ -39,7 +39,6 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
 			--authrpc.port 8551 \
-			--evm levm \
 			--dev \
 			--datadir memory
 
@@ -145,7 +144,6 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
 	-- \
-	--evm $$LEVM \
 	--network fixtures/genesis/l2.json \
 	--http.port 1729 \
 	--dev \

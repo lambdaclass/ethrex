@@ -14,7 +14,7 @@ use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
-use ethrex_vm::{EvmError, ProverDBError};
+use ethrex_vm::EvmError;
 use spawned_concurrency::error::GenServerError;
 use tokio::task::JoinError;
 
@@ -110,8 +110,6 @@ pub enum ProofCoordinatorError {
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
-    #[error("ProofCoordinator failed failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
     #[error("Missing TDX private key")]
@@ -172,8 +170,6 @@ pub enum BlockProducerError {
     ChainError(#[from] ChainError),
     #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
-    #[error("Block Producer failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]
