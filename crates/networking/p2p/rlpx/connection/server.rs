@@ -58,7 +58,7 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    tx_broadcaster::send_tx_hashes,
+    tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
 
@@ -113,6 +113,7 @@ pub struct Established {
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
+    pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
 
 impl Established {
@@ -466,6 +467,14 @@ async fn send_all_pooled_tx_hashes(
         .flatten()
         .collect();
     if !txs.is_empty() {
+        state
+            .tx_broadcaster
+            .cast(InMessage::AddTxs(
+                txs.iter().map(|tx| tx.hash()).collect(),
+                state.node.node_id(),
+            ))
+            .await
+            .map_err(|e| RLPxError::BroadcastError(e.to_string()))?;
         send_tx_hashes(
             txs,
             state.capabilities.clone(),
@@ -748,12 +757,20 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
-                for tx in txs.transactions {
+                for tx in txs.transactions.clone() {
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
                 }
+                state
+                    .tx_broadcaster
+                    .cast(InMessage::AddTxs(
+                        txs.transactions.iter().map(|tx| tx.hash()).collect(),
+                        state.node.node_id(),
+                    ))
+                    .await
+                    .map_err(|e| RLPxError::BroadcastError(e.to_string()))?;
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {

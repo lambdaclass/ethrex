@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::Arc,
-    time::{self, Duration, Instant},
+    time::{Duration, Instant},
 };
 
 use ethrex_blockchain::Blockchain;
@@ -11,7 +11,7 @@ use keccak_hash::H256;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_interval},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
 use tracing::{debug, error, info};
 
@@ -38,6 +38,7 @@ pub struct TxBroadcaster {
 #[derive(Debug, Clone)]
 pub enum InMessage {
     BroadcastTxs,
+    AddTxs(Vec<H256>, H256), // (tx_hashes, peer_id)
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +50,7 @@ impl TxBroadcaster {
     pub async fn spawn(
         kademlia: Kademlia,
         blockchain: Arc<Blockchain>,
-    ) -> Result<(), TxBroadcasterError> {
+    ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
@@ -66,7 +67,16 @@ impl TxBroadcaster {
             InMessage::BroadcastTxs,
         );
 
-        Ok(())
+        Ok(server)
+    }
+
+    fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
+        let now = Instant::now();
+        for tx in txs {
+            self.broadcasted_txs_per_peer
+                .entry((peer_id, tx))
+                .insert_entry(now);
+        }
     }
 
     async fn broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
@@ -111,12 +121,7 @@ impl TxBroadcaster {
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
-            let now = Instant::now();
-            for tx in txs_to_send.iter() {
-                self.broadcasted_txs_per_peer
-                    .entry((peer_id, tx.hash()))
-                    .insert_entry(now);
-            }
+            self.add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
             // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send.clone(),
@@ -159,12 +164,7 @@ impl TxBroadcaster {
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
-        let now = Instant::now();
-        for tx in txs_to_send.iter() {
-            self.broadcasted_txs_per_peer
-                .entry((peer_id, tx.hash()))
-                .insert_entry(now);
-        }
+        self.add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
         send_tx_hashes(
             txs_to_send,
             capabilities,
@@ -225,6 +225,11 @@ impl GenServer for TxBroadcaster {
                     error!("Failed to broadcast transactions");
                 });
 
+                CastResponse::NoReply
+            }
+            Self::CastMsg::AddTxs(txs, peer_id) => {
+                debug!(received = "AddTxs", tx_count = txs.len());
+                self.add_txs(txs, peer_id);
                 CastResponse::NoReply
             }
         }

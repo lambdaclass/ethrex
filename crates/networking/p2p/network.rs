@@ -19,6 +19,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::BTreeMap,
     io,
@@ -47,11 +48,12 @@ pub struct P2PContext {
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     pub based_context: Option<P2PBasedContext>,
+    pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
@@ -61,13 +63,19 @@ impl P2PContext {
         blockchain: Arc<Blockchain>,
         client_version: String,
         based_context: Option<P2PBasedContext>,
-    ) -> Self {
+    ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
             Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
-        P2PContext {
+        let tx_broadcaster = TxBroadcaster::spawn(peer_table.clone(), blockchain.clone())
+            .await
+            .inspect_err(|e| {
+                error!("Failed to start Tx Broadcaster: {e}");
+            })?;
+
+        Ok(P2PContext {
             local_node,
             local_node_record,
             tracker,
@@ -78,7 +86,8 @@ impl P2PContext {
             broadcast: channel_broadcast_send_end,
             client_version,
             based_context,
-        }
+            tx_broadcaster,
+        })
     }
 }
 
@@ -132,12 +141,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
-        })?;
-
-    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));

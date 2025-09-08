@@ -134,6 +134,7 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
+            tx_broadcaster: context.tx_broadcaster.clone(),
         },
         stream,
     ))
