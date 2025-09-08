@@ -47,15 +47,6 @@
         ANSIBLE_INVENTORY: "{{ playbook_dir }}/inventory.ini"
       when: not grafana_stat.stat.exists
 
-    - name: Create alerts directory
-      become: true
-      file:
-        path: "/etc/grafana/provisioning/alerting/"
-        state: directory
-        mode: '0755'
-        owner: grafana
-        group: grafana
-
     - name: Copy ETHREX dashboards to /etc/grafana/dashboards
       become: true
       synchronize:
