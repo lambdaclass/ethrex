@@ -61,7 +61,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
-        default_value = "Merge,Shanghai,Cancun,Prague"
+        default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
     /// For running specific .json files

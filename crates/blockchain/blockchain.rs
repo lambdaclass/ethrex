@@ -30,11 +30,13 @@ use ethrex_storage::{
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -44,6 +46,8 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
+
+const MAX_PAYLOADS: usize = 10;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -64,7 +68,12 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
+    /// Mapping from a payload id to either a complete payload or a payload build task
+    /// We need to keep completed payloads around in case consensus requests them twice
+    pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,13 +95,20 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
+    pub fn new(
+        evm_engine: EvmEngine,
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+    ) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            perf_logs_enabled,
         }
     }
 
@@ -103,6 +119,8 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            perf_logs_enabled: false,
         }
     }
 
@@ -177,7 +195,7 @@ impl Blockchain {
 
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut touched_account_storage_slots = HashMap::new();
+        let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -187,7 +205,7 @@ impl Blockchain {
         })?;
 
         let mut block_hashes = HashMap::new();
-        let mut codes = HashMap::new();
+        let mut codes = BTreeMap::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -326,7 +344,8 @@ impl Blockchain {
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
         needed_block_numbers.sort();
-        // The last block number we need is the parent of the last block we execute
+
+        // Last needed block header for the witness is the parent of the last block we need to execute
         let last_needed_block_number = blocks
             .last()
             .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
@@ -340,7 +359,7 @@ impl Blockchain {
                 first_needed_block_number = **block_number_from_logger;
             }
         }
-        let mut block_headers = HashMap::new();
+        let mut block_headers = BTreeMap::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
@@ -350,7 +369,7 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        let mut state_nodes = HashMap::new();
+        let mut state_nodes = BTreeMap::new();
         for node in used_trie_nodes.into_iter() {
             let hash = Keccak256::digest(&node);
             state_nodes.insert(H256::from_slice(hash.as_slice()), node);
@@ -362,13 +381,14 @@ impl Blockchain {
             state_trie: None,
             block_headers,
             chain_config,
-            storage_tries: HashMap::new(),
+            storage_tries: BTreeMap::new(),
             parent_block_header: self
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             touched_account_storage_slots,
+            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 
@@ -411,7 +431,10 @@ impl Blockchain {
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
-        Self::print_add_block_logs(block, since, executed, merkleized, stored);
+
+        if self.perf_logs_enabled {
+            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        }
         result
     }
 
@@ -600,15 +623,17 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        info!(
-            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len,
-            last_block_number,
-            last_block_gas_limit,
-            transactions_count,
-            total_gas_used,
-            throughput
-        );
+        if self.perf_logs_enabled {
+            info!(
+                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                blocks_len,
+                last_block_number,
+                last_block_gas_limit,
+                transactions_count,
+                total_gas_used,
+                throughput
+            );
+        }
 
         Ok(())
     }
@@ -674,6 +699,14 @@ impl Blockchain {
     /// Remove a transaction from the mempool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
+    }
+
+    /// Remove all transactions in the executed block from the pool (if we have them)
+    pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
+        for tx in &block.body.transactions {
+            self.mempool.remove_transaction(&tx.hash())?;
+        }
+        Ok(())
     }
 
     /*
@@ -1042,7 +1075,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 }
 
 /// Calculates the blob gas required by a transaction
-fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
+pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
