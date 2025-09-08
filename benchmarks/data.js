@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757345596110,
+  "lastUpdate": 1757352676516,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12745,6 +12745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167521717228,
             "range": "± 721455458",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9bf1b52200b8ef4c8a4bbc10e5b761a4f1dd8710",
+          "message": "feat(l2): increase metrics check interval to 5s (#4351)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrently the L2 metrics gatherer component scraps data every 1s,\nincluding L1 data (gas price and last committed/verified batch). This\nconsumes a lot of unnecessary resources.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nIncrease the check interval to 5 seconds\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-08T16:39:40Z",
+          "tree_id": "cac7513921b5f95179b7a75369745d6c9bef9a27",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9bf1b52200b8ef4c8a4bbc10e5b761a4f1dd8710"
+        },
+        "date": 1757352656193,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167242441493,
+            "range": "± 308874089",
             "unit": "ns/iter"
           }
         ]
