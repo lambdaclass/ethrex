@@ -28,6 +28,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
+use std::collections::BTreeSet;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -53,15 +54,15 @@ impl LEVM {
         })?;
 
         // Assume most txs are transfers, so they will have 2 addresses each.
-        let mut addresses = Vec::with_capacity(txs_with_sender.len() * 2);
+        let mut addresses = BTreeSet::new();
 
         for (tx, sender) in &txs_with_sender {
-            addresses.push(*sender);
+            addresses.insert(*sender);
             if let TxKind::Call(to) = tx.to() {
-                addresses.push(to);
+                addresses.insert(to);
             }
         }
-        db.preload_accounts(&addresses)?;
+        db.preload_accounts(&addresses.into_iter().collect::<Vec<_>>())?;
 
         for (tx, tx_sender) in txs_with_sender {
             tx.to();
