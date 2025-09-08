@@ -119,7 +119,10 @@ pub fn init_blockchain(
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!("Initiating blockchain");
+    #[cfg(feature = "revm")]
+    info!("Initiating blockchain with revm");
+    #[cfg(not(feature = "revm"))]
+    info!("Initiating blockchain with levm");
     Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
 }
 
