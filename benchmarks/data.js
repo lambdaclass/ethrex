@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757109486209,
+  "lastUpdate": 1757339042456,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12625,6 +12625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167003374636,
             "range": "± 599472883",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "962f9b1e0595e3f30283ea1773a92ba63cec2fdc",
+          "message": "fix(l1,levm): fix execution result when using levm (#3911)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- ExecutionResult was inaccurate with LEVM, specially the gas used that\nsubtracted the gas refunded but that's already done in LEVM.\n\nWe don't have the ideal endpoints to try this out because the only ones\nthat use this are `eth_estimateGas` and `eth_call`. The only way to see\nif it works fine is to try out the former RPC method with a transaction\nthat triggers refunds... It would be good to have `eth_simulateV1` I\nguess\nHere's evidence that the gas_used in the VM is the `total gas used -\nrefunded gas`\n\nhttps://github.com/lambdaclass/ethrex/blob/1918c5cedaf3f76df1bc01aba3b20d1d95162c84/crates/vm/levm/src/hooks/default_hook.rs#L199-L201\nBear with me, `exec_gas_consumed` is the same as `actual_gas_used`\n\nhttps://github.com/lambdaclass/ethrex/blob/1918c5cedaf3f76df1bc01aba3b20d1d95162c84/crates/vm/levm/src/hooks/default_hook.rs#L164\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-08T12:40:51Z",
+          "tree_id": "b75f179ad9bfbcdaba641c9e597a7ebf23ee72c5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/962f9b1e0595e3f30283ea1773a92ba63cec2fdc"
+        },
+        "date": 1757339022388,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170699837150,
+            "range": "± 2312545237",
             "unit": "ns/iter"
           }
         ]
