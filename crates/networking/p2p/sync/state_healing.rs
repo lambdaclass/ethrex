@@ -224,7 +224,7 @@ async fn heal_state_trie(
                     .peer_scores
                     .lock()
                     .await
-                    .get_peer_channel_with_highest_score(
+                    .get_peer_channel_with_highest_score_and_mark_as_used(
                         &peers.peer_table,
                         &SUPPORTED_SNAP_CAPABILITIES,
                     )
@@ -234,7 +234,6 @@ async fn heal_state_trie(
                     paths.extend(batch);
                     continue;
                 };
-                peers.peer_scores.lock().await.mark_in_use(peer_id);
 
                 let tx = task_sender.clone();
                 inflight_tasks += 1;

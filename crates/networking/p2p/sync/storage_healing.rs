@@ -322,7 +322,10 @@ async fn ask_peers_for_nodes(
             .peer_scores
             .lock()
             .await
-            .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+            .get_peer_channel_with_highest_score_and_mark_as_used(
+                &peers.peer_table,
+                &SUPPORTED_SNAP_CAPABILITIES,
+            )
             .await
         else {
             // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
@@ -330,7 +333,6 @@ async fn ask_peers_for_nodes(
             trace!("We have no free peers for storage healing!");
             return;
         };
-        peers.peer_scores.lock().await.mark_in_use(peer_id);
         let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();

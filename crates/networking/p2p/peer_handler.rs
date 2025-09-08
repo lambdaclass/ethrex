@@ -158,30 +158,6 @@ impl PeerHandler {
         PeerHandler::new(dummy_peer_table)
     }
 
-    // TODO: Implement the logic for recording peer successes
-    /// Helper method to record successful peer response
-    async fn record_peer_success(&self, _peer_id: H256) {}
-
-    // TODO: Implement the logic for recording peer failures
-    /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, _peer_id: H256) {}
-
-    // TODO: Implement the logic for recording critical peer failures
-    /// Helper method to record critical peer failure
-    /// This is used when the peer returns invalid data or is otherwise unreliable
-    async fn record_peer_critical_failure(&self, _peer_id: H256) {}
-
-    /// TODO: docs
-    pub async fn get_peer_channel_with_highest_score(
-        &self,
-        capabilities: &[Capability],
-        scores: &mut PeerScores,
-    ) -> Option<(H256, PeerChannels)> {
-        scores
-            .get_peer_channel_with_highest_score(&self.peer_table, capabilities)
-            .await
-    }
-
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
@@ -374,7 +350,10 @@ impl PeerHandler {
                 .peer_scores
                 .lock()
                 .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_channel_with_highest_score_and_mark_as_used(
+                    &self.peer_table,
+                    &SUPPORTED_ETH_CAPABILITIES,
+                )
                 .await
             else {
                 trace!("We didn't get a peer from the table");
@@ -382,6 +361,7 @@ impl PeerHandler {
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
+                self.peer_scores.lock().await.free_peer(peer_id);
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -397,7 +377,6 @@ impl PeerHandler {
             };
 
             let tx = task_sender.clone();
-            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             debug!("Downloader {peer_id} is now busy");
 
@@ -544,7 +523,7 @@ impl PeerHandler {
             .cast(CastMessage::BackendMessage(request))
             .await
         {
-            self.record_peer_failure(peer_id).await;
+            self.peer_scores.lock().await.record_failure(peer_id);
             debug!("Failed to send message to peer: {err:?}");
             return None;
         }
@@ -569,12 +548,12 @@ impl PeerHandler {
             // Check that the response is not empty and does not contain more bodies than the ones requested
             (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
         }) {
-            self.record_peer_success(peer_id).await;
+            self.peer_scores.lock().await.record_success(peer_id);
             return Some((block_bodies, peer_id));
         }
 
         warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
-        self.record_peer_failure(peer_id).await;
+        self.peer_scores.lock().await.record_failure(peer_id);
         None
     }
 
@@ -618,7 +597,10 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.record_peer_critical_failure(peer_id).await;
+                    self.peer_scores
+                        .lock()
+                        .await
+                        .record_critical_failure(peer_id);
                     break;
                 }
                 res.push(body);
@@ -867,7 +849,10 @@ impl PeerHandler {
                 .peer_scores
                 .lock()
                 .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+                .get_peer_channel_with_highest_score_and_mark_as_used(
+                    &self.peer_table,
+                    &SUPPORTED_SNAP_CAPABILITIES,
+                )
                 .await
             else {
                 trace!("We are missing peers in request_account_range_request");
@@ -875,6 +860,7 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
+                self.peer_scores.lock().await.free_peer(peer_id);
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
@@ -882,7 +868,6 @@ impl PeerHandler {
                 continue;
             };
 
-            self.peer_scores.lock().await.mark_in_use(peer_id);
             let tx = task_sender.clone();
 
             if block_is_stale(pivot_header) {
@@ -1159,20 +1144,23 @@ impl PeerHandler {
                 .peer_scores
                 .lock()
                 .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+                .get_peer_channel_with_highest_score_and_mark_as_used(
+                    &self.peer_table,
+                    &SUPPORTED_SNAP_CAPABILITIES,
+                )
                 .await
             else {
                 continue;
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
+                self.peer_scores.lock().await.free_peer(peer_id);
                 if completed_tasks >= chunk_count {
                     info!("All bytecodes downloaded successfully");
                     break;
                 }
                 continue;
             };
-            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             let tx = task_sender.clone();
 
@@ -1530,20 +1518,22 @@ impl PeerHandler {
                 .peer_scores
                 .lock()
                 .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+                .get_peer_channel_with_highest_score_and_mark_as_used(
+                    &self.peer_table,
+                    &SUPPORTED_SNAP_CAPABILITIES,
+                )
                 .await
             else {
                 continue;
             };
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
+                self.peer_scores.lock().await.free_peer(peer_id);
                 if completed_tasks >= task_count {
                     break;
                 }
                 continue;
             };
-
-            self.peer_scores.lock().await.mark_in_use(peer_id);
 
             let tx = task_sender.clone();
 

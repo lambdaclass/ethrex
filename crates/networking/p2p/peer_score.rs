@@ -117,6 +117,21 @@ impl PeerScores {
             .map(|(k, _, v)| (k, v))
     }
 
+    /// Returns the peer and it's peer channel with the highest score and if found marks it as used
+    pub async fn get_peer_channel_with_highest_score_and_mark_as_used(
+        &mut self,
+        kademlia_table: &kademlia::Kademlia,
+        capabilities: &[Capability],
+    ) -> Option<(H256, PeerChannels)> {
+        let (peer_id, peer_channel) = self
+            .get_peer_channel_with_highest_score(kademlia_table, capabilities)
+            .await?;
+
+        self.mark_in_use(peer_id);
+
+        Some((peer_id, peer_channel))
+    }
+
     pub fn len(&self) -> usize {
         self.scores.len()
     }
