@@ -6077,6 +6077,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "insert-benchmark"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "cfg-if 1.0.3",
+ "clap 4.5.46",
+ "clap_complete",
+ "criterion",
+ "directories 5.0.1",
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-dev",
+ "ethrex-l2",
+ "ethrex-l2-common",
+ "ethrex-l2-rpc",
+ "ethrex-metrics",
+ "ethrex-p2p",
+ "ethrex-prover",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "ethrex-vm",
+ "eyre",
+ "genesis-tool",
+ "hex",
+ "itertools 0.14.0",
+ "keccak-hash",
+ "lazy_static",
+ "local-ip-address",
+ "rand 0.8.5",
+ "reqwest 0.12.23",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "tempdir",
+ "thiserror 2.0.16",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "tui-logger",
+ "url",
+ "vergen-git2",
+]
+
+[[package]]
 name = "instability"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

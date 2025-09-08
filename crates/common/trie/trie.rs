@@ -2,7 +2,7 @@ pub mod db;
 pub mod error;
 pub mod logger;
 mod nibbles;
-mod node;
+pub mod node;
 mod node_hash;
 mod rlp;
 #[cfg(test)]

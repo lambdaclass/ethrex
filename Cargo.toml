@@ -2,6 +2,7 @@
 members = [
   "cmd/ethrex",
   "cmd/ethrex_replay",
+  "cmd/insert_benchmark",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
@@ -69,6 +70,7 @@ ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
+insert-benchmark = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 
 tracing = { version = "0.1", features = ["log"] }
