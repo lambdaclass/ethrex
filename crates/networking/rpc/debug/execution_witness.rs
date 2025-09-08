@@ -77,8 +77,6 @@ pub fn execution_witness_from_rpc_chain_config(
     chain_config: ChainConfig,
     first_block_number: u64,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
-
     let mut touched_account_storage_slots = BTreeMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
@@ -105,7 +103,7 @@ pub fn execution_witness_from_rpc_chain_config(
         first_block_number,
         block_headers_bytes: rpc_witness.headers,
         nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
-        nodes,
+        nodes: rpc_witness.state,
         touched_account_storage_slots,
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };

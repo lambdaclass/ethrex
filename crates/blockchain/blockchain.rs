@@ -8,6 +8,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
+use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -369,7 +370,10 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
+        let nodes = used_trie_nodes
+            .into_iter()
+            .map(Bytes::from)
+            .collect::<Vec<_>>();
 
         Ok(ExecutionWitnessResult {
             codes_hashed: BTreeMap::new(), // This must be filled during stateless execution

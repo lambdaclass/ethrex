@@ -287,7 +287,10 @@ fn execute_stateless(
     db.nodes_hashed = db
         .nodes
         .drain(..)
-        .map(|node| (keccak(&node), node))
+        .map(|node| {
+            let node = node.to_vec();
+            (keccak(&node), node)
+        })
         .collect();
 
     // hash codes

@@ -66,8 +66,8 @@ pub struct ExecutionWitnessResult {
     pub nodes_hashed: BTreeMap<H256, NodeRLP>,
     /// These are the RLP-encoded nodes for the state trie.
     /// They are later encoded and moved to the state_node
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub nodes: Vec<NodeRLP>,
+    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
+    pub nodes: Vec<Bytes>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
