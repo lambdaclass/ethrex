@@ -95,8 +95,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let deposit_recipient_address = get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
+    /// Not thread-safe (fee vault checks).
     test_upgrade(&l1_client, &l2_client).await?;
 
+    /// Not thread-safe.
     test_deposit(
         &l1_client,
         &l2_client,
@@ -105,10 +107,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    // Thread-safe, but
     // this test should go before the withdrawal ones
     // it's failure case is making a batch invalid due to invalid privileged transactions
     test_privileged_spammer(&l1_client).await?;
 
+    /// Not thread-safe
     test_transfer(
         &l2_client,
         &rich_wallet_private_key,
@@ -116,6 +120,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    /// Thread-safe
     test_transfer_with_privileged_tx(
         &l1_client,
         &l2_client,
@@ -124,13 +129,17 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    /// Thread-safe
     test_gas_burning(&l1_client, &rich_wallet_private_key).await?;
 
+    /// Not thread-safe (fee vault checks)
     test_privileged_tx_with_contract_call(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
+    /// Not thread-safe (fee vault checks)
     test_privileged_tx_with_contract_call_revert(&l1_client, &l2_client, &rich_wallet_private_key)
         .await?;
 
+    /// Thread-safe
     test_privileged_tx_not_enough_balance(
         &l1_client,
         &l2_client,
@@ -139,10 +148,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    /// Thread-safe
     test_aliasing(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
+    /// Not thread-safe (fee vault checks).
     test_erc20_roundtrip(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
+    /// Thread-safe
     test_erc20_failed_deposit(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
     test_forced_withdrawal(&l1_client, &l2_client, &rich_wallet_private_key).await?;
@@ -169,6 +181,11 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Test upgrading the CommonBridgeL2 contract
+/// 1. Deploys a contract in the L2.
+/// 2. Upgrades the contract through the CommonBridge contract in L1.
+/// 3. Checks that the implementation address has changed.
+/// Not thread-safe (fee vault checks).
 async fn test_upgrade(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -385,6 +402,7 @@ async fn find_withdrawal_with_widget(
         .cloned()
 }
 
+/// Not thread-safe (fee vault checks).
 async fn test_erc20_roundtrip(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -554,6 +572,11 @@ async fn test_erc20_roundtrip(
     Ok(())
 }
 
+/// Tests that the aliasing is done correctly when calling from L1 to L2
+/// 1. Deploys a contract on L1 that will call the CommonBridge contract sendToL2 function
+/// 2. Calls the contract to send a message to L2
+/// 3. Checks that the message was sent from the aliased address
+/// Thread-safe
 async fn test_aliasing(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -599,6 +622,11 @@ async fn test_aliasing(
     Ok(())
 }
 
+/// Tests that a failed deposit can be withdrawn back to L1
+/// 1. Deploys an ERC20 token on L1
+/// 2. Attempts to deposit the token to an invalid address on L2
+/// 3. Claims the withdrawal on L1
+/// Thread-safe
 async fn test_erc20_failed_deposit(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -836,6 +864,11 @@ async fn test_send(
         .unwrap()
 }
 
+/// Test depositing ETH from L1 to L2
+/// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and fee vault on L2.
+/// 2. Perform deposit from L1 to L2
+/// 3. Check final balances.
+/// Not thread-safe.
 async fn test_deposit(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -963,6 +996,12 @@ async fn test_privileged_spammer(l1_client: &EthClient) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Test transferring ETH on L2
+/// 1. Fetch initial balances of transferer and returner on L2.
+/// 2. Perform transfer from transferer to returner.
+/// 3. Perform return transfer from returner to transferer.
+/// 4. Check final balances.
+/// Not thread-safe
 async fn test_transfer(
     l2_client: &EthClient,
     transferer_private_key: &SecretKey,
@@ -1001,6 +1040,11 @@ async fn test_transfer(
     Ok(())
 }
 
+/// Test transferring ETH on L2 through a privileged transaction (deposit from L1)
+/// 1. Fetch initial balance of receiver on L2.
+/// 2. Perform transfer through a deposit.
+/// 3. Check final balance of receiver on L2.
+/// Thread-safe
 async fn test_transfer_with_privileged_tx(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -1057,6 +1101,10 @@ async fn test_transfer_with_privileged_tx(
     Ok(())
 }
 
+/// Test that gas is burned from the L1 account when making a deposit with a specified L2 gas limit.
+/// 1. Perform deposit with specified L2 gas limit.
+/// 2. Check that the gas used on L1 is within expected range.
+/// Thread-safe
 async fn test_gas_burning(
     l1_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
@@ -1087,6 +1135,11 @@ async fn test_gas_burning(
     Ok(())
 }
 
+/// Test transferring ETH on L2 through a privileged transaction (deposit from L1) with insufficient balance
+/// 1. Fetch initial balance of receiver on L2.
+/// 2. Perform transfer through a deposit with value greater than sender's balance.
+/// 3. Check final balance of receiver on L2 (should be unchanged).
+/// Thread-safe
 async fn test_privileged_tx_not_enough_balance(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -1145,6 +1198,11 @@ async fn test_privileged_tx_not_enough_balance(
     Ok(())
 }
 
+/// Test helper
+/// 1. Fetch initial balances of transferer and recipient on L2 and fee vault on L2.
+/// 2. Perform transfer on L2
+/// 3. Check final balances.
+/// Not thread-safe (as it assumes no other transfers are happening).
 async fn perform_transfer(
     l2_client: &EthClient,
     transferer_private_key: &SecretKey,
@@ -1445,6 +1503,11 @@ async fn test_total_eth_l2(
     Ok(())
 }
 
+/// Test deploying a contract on L2
+/// 1. Fetch initial balances of deployer on L2 and fee vault on L2.
+/// 2. Perform deploy on L2.
+/// 3. Check final balances.
+/// Not thread-safe (as it assumes no other deploys are happening).
 async fn test_deploy(
     l2_client: &EthClient,
     init_code: &[u8],
